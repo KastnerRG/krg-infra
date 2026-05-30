@@ -19,6 +19,22 @@
   krg.base = {
     enable      = true;
     autoUpgrade = true;
+    # Compute profile RELAXES the fleet-default strict-SSH policy.
+    # base.nix sets `serviceHost = true` (sshSources = ucsd + ops only)
+    # for every host; compute opts OUT so SSH 22 stays globally open
+    # behind the fleet CrowdSec stack. Reasons:
+    #   * Compute is for lab users + visiting researchers — anyone with
+    #     a key on a residential ISP or visiting institution can SSH in;
+    #     ucsd-restricted SSH would block them.
+    #   * Key-only auth is the actual security control; CrowdSec
+    #     (community blocklists + ssh-bf scenarios) is the noise-
+    #     reduction layer. Country enrichment isn't wired in this PR
+    #     (no scenario branches on country; add per-host
+    #     services.geoipupdate + crowdsecurity/geoip-enrich later if
+    #     a country-aware scenario lands).
+    #   * `ops` whitelist entries pass through CrowdSec unmolested for
+    #     edge cases. See docs/working-remotely.md for the workflow.
+    serviceHost = false;
   };
 
   krg.docker = {
@@ -42,7 +58,7 @@
     autoSnapshot.enable = true;
   };
 
-  # krg.fail2ban.enable is set by base.nix (true on every host).
+  # krg.fail2ban is OFF fleet-wide (superseded by CrowdSec — see base.nix).
 
   krg.nvidia = {
     enable     = true;
@@ -77,8 +93,16 @@
   krg.users.defaultGroups = [ "docker" "cuda" ];
 
   # waiter is physical, so base.nix keeps the NixOS firewall enabled.
+  # SSH (22) inherits from base.nix's `allowedTCPPorts = [22]` default;
+  # `serviceHost = false` above leaves it globally open behind the fleet
+  # CrowdSec stack. See docs/working-remotely.md for the traveling-staff
+  # `ops` workflow (CrowdSec whitelist).
+  # NOTE: dcgm 9400 is intentionally NOT in allowedTCPPorts — the
+  # Docker DNAT path bypasses nftables INPUT (see CLAUDE.md "Docker
+  # published-port firewall bypass"), so the bouncer's nftables drop
+  # chain doesn't catch it either. The DOCKER-USER follow-up is tracked
+  # in CLAUDE.md; meanwhile 9400 is bound to 0.0.0.0 by intention.
   krg.firewall = {
-    allowedTCPPorts = [ 22 ];
     allowRDP        = config.krg.xrdp.enable;  # 3389 only when the XRDP desktop is up
     # node-exporter (9100), docker metrics (9323), prometheus client (9000),
     # IPMI exporter (9290). DCGM (9400) is contributed by the nvidia module

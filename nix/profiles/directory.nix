@@ -15,12 +15,13 @@
   };
 
   # Ingress for the directory role. The in-guest firewall is ON (base.nix runs it
-  # on every host); modules/samba-ad.nix contributes the AD DC port set. SSH (22)
-  # is source-restricted to the trusted UCSD nets in-guest (serviceHost), and the
-  # Proxmox perimeter (ansible proxmox_firewall → 100.fw) source-restricts the AD
-  # ports from there.
+  # on every host); modules/samba-ad.nix contributes the AD DC port set as
+  # sourcedPorts (sealab + machines + ops — stricter than the fleet CrowdSec
+  # default since these protocols are infrastructure-internal). SSH (22) is in
+  # base.nix's default allowedTCPPorts; serviceHost=true routes it through
+  # sshSources (ucsd + ops). The Proxmox perimeter (ansible proxmox_firewall →
+  # 100.fw) is the additive outer layer.
   krg.firewall = {
-    allowedTCPPorts = [ 22 ];
     # node exporter (enabled in base.nix)
     monitoringPorts = [ 9100 ];
   };
