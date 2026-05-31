@@ -29,8 +29,35 @@ firewall:
       adapters: [eth0, global]    # what the live profile actually scopes; confirm + extend
       rules: []                   # TODO from live load
 
-  # Geoip blocking — capture errored (114); follow-up to grab; spec target TBD.
-  # geoip: { enable: false }
+  # Geoip blocking — DSM's native country-allowlist enforcement at the
+  # firewall layer, applied to all configured adapters. This is the
+  # NAS's answer to issue #74's "US is the floor" policy intent — and
+  # actually delivers what CrowdSec on the rest of the fleet doesn't
+  # (CrowdSec drops if the source IP is on a community blocklist OR
+  # trips a behavioral scenario; it has no country gate today). See
+  # docs/e4e-nas-crowdsec-evaluation.md for the path comparison and why
+  # we picked native Firewall.Geoip over CrowdSec for the Synology.
+  #
+  # API surface: SYNO.Core.Security.Firewall.Geoip (get/list per the
+  # security.lib). The synology_security role's apply_security.py
+  # implements `geoip` + `probe-geoip` subcommands; the apply uses
+  # BEST-GUESS field names (`enable_geoip` / `policy` / `country_list`,
+  # matching DSM's `enable_<feature>` naming pattern). The 2026-05-28
+  # pre-reset capture errored 114 on the GET, so the first live-probe
+  # is the authoritative source for the actual shape — if it differs
+  # from the guess, edit the `desired` dict in apply_security.py:do_geoip
+  # and re-apply (the apply_full_object pattern FAILs LOUDLY on field
+  # mismatch rather than silently misconfiguring, which on a country
+  # gate matters — wrong field could block ALL traffic instead of just
+  # non-US).
+  geoip:
+    enable: true
+    # ISO 3166-1 alpha-2; DSM accepts a list. US-only matches the
+    # fleet intent. ops travelers reach the NAS via the existing
+    # ucsd/ops allowlist (DSM Firewall rules) which takes precedence
+    # over geoip in DSM's filter chain — same per-admin escape hatch
+    # pattern as nix krg.firewall.sshSources.
+    allow_countries: [US]
 
 auto_block:
   # Live: 3 attempts in 1440 min (24h), no expiry (0). Aggressive — matches the

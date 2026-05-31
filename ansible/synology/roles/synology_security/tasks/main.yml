@@ -117,6 +117,56 @@
   failed_when: "ab_apply.rc != 0 or 'FAIL' in ab_apply.stdout"
   check_mode: false
 
+# --- Firewall.Geoip — country allowlist enforcement ---------------------------
+# DSM's native country-allowlist firewall feature; the NAS's answer to issue
+# #74's "US is the floor" policy. See docs/e4e-nas-crowdsec-evaluation.md for
+# the rationale (DSM ships this natively where the NixOS fleet's CrowdSec
+# stack doesn't enforce country; we picked DSM-native over a Container-Manager
+# CrowdSec for the Synology).
+#
+# Two-step: probe first to surface the actual API shape (the 2026-05-28
+# capture errored 114 on get; first apply on a real NAS will tell us if our
+# best-guess field names match), THEN apply if the spec wants geoip on.
+- name: Probe Firewall.Geoip (read-only; surfaces actual API shape)
+  ansible.builtin.script: apply_security.py probe-geoip
+  register: geoip_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - security_spec.firewall.geoip is defined
+    - security_spec.firewall.geoip.enable | default(false)
+
+- name: Surface geoip probe result (operator visibility)
+  ansible.builtin.debug:
+    msg: |
+      Firewall.Geoip probe: {{ geoip_probe.stdout | trim }}
+      If this is the FIRST run and the apply task below FAILs with a
+      param-shape error, check the GEOIP-OK output above for the real
+      field names and adjust the `desired` dict in
+      files/apply_security.py:do_geoip accordingly. See the field-name
+      candidates note in that function's docstring.
+  changed_when: false
+  when:
+    - security_spec.firewall.geoip is defined
+    - security_spec.firewall.geoip.enable | default(false)
+
+- name: Apply Firewall.Geoip (country allowlist) — fails loudly on API-shape mismatch
+  ansible.builtin.script: >-
+    apply_security.py geoip
+    --enable {{ security_spec.firewall.geoip.enable }}
+    --policy allow
+    --countries {{ security_spec.firewall.geoip.allow_countries | join(',') | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: geoip_apply
+  changed_when: "'CHANGED' in geoip_apply.stdout or 'WOULD-CHANGE' in geoip_apply.stdout"
+  failed_when: "geoip_apply.rc != 0 or 'FAIL' in geoip_apply.stdout"
+  check_mode: false
+  when:
+    - security_spec.firewall.geoip is defined
+    - security_spec.firewall.geoip.enable | default(false)
+    - security_spec.firewall.geoip.allow_countries | default([]) | length > 0
+
 # --- Drift export (read-only) — only with `--tags export` -----------------------
 - name: Export live state for drift detection
   ansible.builtin.import_tasks: export.yml

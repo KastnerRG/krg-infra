@@ -5,10 +5,20 @@ Subcommands:
   fw-conf      — SYNO.Core.Security.Firewall.Conf set (port_check) — full-object.
   autoblock    — SYNO.Core.Security.AutoBlock set (enable, attempts, within_mins,
                  expire_day) — full-object.
+  geoip        — SYNO.Core.Security.Firewall.Geoip set (enable + country allowlist)
+                 — full-object. Field names below are BEST GUESSES based on the
+                 DSM 7.x API naming pattern (`enable_*`); first dry-run output
+                 will surface the actual shape — adjust the dict keys if the
+                 live response disagrees.
 
 Per-rule firewall config (Firewall.Profile + Firewall.Rules load/save_start) and
 AutoBlock allow/deny lists are NOT yet covered — the capture errored on them (wrong
 param shape); add subcommands once the param shape is empirically confirmed.
+
+Read-only diagnostics (no SET; safe to run any time):
+  probe-profile — read Firewall.Profile active profile, report rule count.
+  probe-geoip   — read Firewall.Geoip, report current field shape so the apply
+                  function can be tuned to whatever DSM actually returns.
 """
 import argparse
 import json
@@ -101,6 +111,65 @@ def do_autoblock(a):
     return apply_full_object("SYNO.Core.Security.AutoBlock", 1, desired, a.check)
 
 
+# --- Firewall.Geoip — country allowlist enforcement at the firewall layer -----
+# DSM ships a per-country block/allow firewall feature; the API surface is
+# SYNO.Core.Security.Firewall.Geoip (get/list/set per the security.lib).
+# Field names below are BEST GUESSES based on the established DSM 7.x naming
+# pattern (`enable_<feature>`, `*_list`). The 2026-05-28 pre-reset capture
+# errored 114 on the GET — likely "no such API on this version" or "wrong
+# version param" — so the first live probe is the authoritative source for
+# the real shape. apply_full_object will surface the actual current values
+# on first run; if our desired keys don't match (e.g. DSM returns
+# `country_code_list` but we send `country_list`), the SET will FAIL loudly
+# instead of silently misconfiguring — which on a country gate is critical
+# (a wrong field could end up blocking ALL traffic rather than just non-US).
+#
+# Field-name candidates worth checking once the probe runs:
+#   enable        : enable_geoip / enable / enabled
+#   policy        : policy / mode / direction  (values: allow/deny/0/1)
+#   countries     : country_list / country_code_list / countries / geoip_list
+GEOIP_API = "SYNO.Core.Security.Firewall.Geoip"
+
+
+def do_geoip(a):
+    desired = {}
+    if a.enable is not None:
+        desired["enable_geoip"] = _bool(a.enable)
+    if a.policy is not None:
+        # `allow` = whitelist mode (allow only listed countries; block rest)
+        # `deny`  = blacklist mode (block listed countries; allow rest)
+        # For "US is the floor" we want `allow` + countries=[US].
+        desired["policy"] = a.policy
+    if a.countries is not None:
+        # Comma-separated ISO 3166-1 alpha-2 codes from the spec → list.
+        # DSM may take a JSON list or a comma-separated string; the
+        # _args_from helper JSON-encodes lists already, so a list value
+        # is the safer bet.
+        codes = [c.strip().upper() for c in a.countries.split(",") if c.strip()]
+        desired["country_list"] = codes
+    return apply_full_object(GEOIP_API, 1, desired, a.check)
+
+
+def do_probe_geoip(a):
+    """Read-only: dump the current Firewall.Geoip object so the operator can
+    confirm the actual field names against the BEST GUESS above. Prints one
+    of:
+      GEOIP-OK <json>         — got a usable response; json shows the real shape
+      GEOIP-UNKNOWN <reason>  — API call failed; do_geoip will likely also fail
+    """
+    try:
+        res = _exec(GEOIP_API, "version=1", "method=get")
+    except RuntimeError as e:
+        print("GEOIP-UNKNOWN " + json.dumps({"error": str(e)[:200]}))
+        return 0
+    if not res.get("success"):
+        print("GEOIP-UNKNOWN " + json.dumps(res)[:200])
+        return 0
+    data = res.get("data", {})
+    print("GEOIP-OK " + json.dumps({"keys": sorted(data.keys()), "data": data}))
+    return 0
+
+
 # --- Anti-lockout probe (H2) ---------------------------------------------------
 # Enabling SYNO.Core.Security.Firewall on a profile with NO rules is a
 # default-deny posture — DSM blocks all inbound, including the SSH session
@@ -167,6 +236,21 @@ def main(argv=None):
                         help="Read-only: report whether the named firewall profile has any rules.")
     pp.add_argument("--profile", required=True)
     pp.set_defaults(func=do_probe_profile)
+
+    g = sub.add_parser("geoip",
+                       help="Firewall.Geoip set (enable + policy + country allowlist).")
+    g.add_argument("--enable")
+    g.add_argument("--policy", choices=["allow", "deny"],
+                   help="`allow` = whitelist mode (only listed countries allowed); "
+                        "`deny` = blacklist mode. For 'US is the floor' use allow.")
+    g.add_argument("--countries",
+                   help="Comma-separated ISO 3166-1 alpha-2 codes, e.g. 'US' or 'US,CA'.")
+    g.add_argument("--check", action="store_true")
+    g.set_defaults(func=do_geoip)
+
+    pg = sub.add_parser("probe-geoip",
+                        help="Read-only: dump current Firewall.Geoip object (real field names).")
+    pg.set_defaults(func=do_probe_geoip)
 
     a = ap.parse_args(argv)
     return a.func(a)

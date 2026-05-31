@@ -120,3 +120,98 @@ def test_probe_profile_exec_failure_is_unknown(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert out.startswith("PROFILE-UNKNOWN")
     assert "PROFILE-EMPTY" not in out   # critical: must NOT be misclassified
+
+
+# --- Firewall.Geoip — country allowlist (BEST-GUESS field names) ---------------
+def test_geoip_no_change_when_matching(monkeypatch, capsys):
+    """Current state matches desired → no-op."""
+    monkeypatch.setattr(m, "_exec", _exec_factory(
+        {"enable_geoip": True, "policy": "allow", "country_list": ["US"]}))
+    rc = m.main(["geoip", "--enable", "true", "--policy", "allow", "--countries", "US"])
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
+
+
+def test_geoip_check_reports_drift(monkeypatch, capsys):
+    """--check reports drift without applying."""
+    monkeypatch.setattr(m, "_exec", _exec_factory(
+        {"enable_geoip": False, "policy": "deny", "country_list": []}))
+    rc = m.main(["geoip", "--enable", "true", "--policy", "allow",
+                  "--countries", "US", "--check"])
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("WOULD-CHANGE")
+    assert "enable_geoip" in out and "policy" in out and "country_list" in out
+
+
+def test_geoip_apply_normalizes_country_codes(monkeypatch, capsys):
+    """Comma-split + uppercase + strip whitespace; sent as JSON list."""
+    captured = []
+    monkeypatch.setattr(m, "_exec", _exec_factory(
+        {"enable_geoip": False, "policy": "deny", "country_list": []},
+        set_capture=captured))
+    rc = m.main(["geoip", "--enable", "true", "--policy", "allow",
+                  "--countries", "us, ca, mx"])
+    assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
+    rest = set(captured[0][1][2:])
+    assert "enable_geoip=true" in rest
+    assert "policy=allow" in rest
+    # _args_from JSON-encodes the list; codes upper-cased, whitespace stripped
+    assert 'country_list=["US", "CA", "MX"]' in rest
+
+
+def test_geoip_apply_preserves_unmanaged_fields(monkeypatch, capsys):
+    """Any DSM fields we don't manage are preserved in the SET (full-object pattern)."""
+    captured = []
+    monkeypatch.setattr(m, "_exec", _exec_factory(
+        {"enable_geoip": False, "policy": "deny", "country_list": [],
+         "future_dsm_field": "preserved"},
+        set_capture=captured))
+    rc = m.main(["geoip", "--enable", "true", "--policy", "allow", "--countries", "US"])
+    assert rc == 0
+    rest = set(captured[0][1][2:])
+    assert "future_dsm_field=preserved" in rest
+
+
+def test_geoip_partial_args_only_drifts_managed_keys(monkeypatch, capsys):
+    """Passing only --enable leaves policy + countries untouched in the drift dict."""
+    monkeypatch.setattr(m, "_exec", _exec_factory(
+        {"enable_geoip": False, "policy": "allow", "country_list": ["US"]}))
+    rc = m.main(["geoip", "--enable", "true", "--check"])
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("WOULD-CHANGE")
+    # Only enable_geoip should show in the drift — not policy or country_list.
+    assert "enable_geoip" in out
+    assert '"policy"' not in out and '"country_list"' not in out
+
+
+# --- probe-geoip — read-only diagnostic ----------------------------------------
+def test_probe_geoip_ok(monkeypatch, capsys):
+    """Successful get → GEOIP-OK with keys + data dump for operator inspection."""
+    monkeypatch.setattr(m, "_exec", _exec_factory(
+        {"enable_geoip": True, "policy": "allow", "country_list": ["US"]}))
+    rc = m.main(["probe-geoip"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out.startswith("GEOIP-OK")
+    # Should surface the field names so the operator can confirm them vs do_geoip's guesses
+    assert "enable_geoip" in out and "country_list" in out
+
+
+def test_probe_geoip_exec_failure_is_unknown(monkeypatch, capsys):
+    """RuntimeError from _exec → GEOIP-UNKNOWN (no apply attempt should follow)."""
+    def fake(api, *params):
+        raise RuntimeError("api 114 unknown")
+    monkeypatch.setattr(m, "_exec", fake)
+    rc = m.main(["probe-geoip"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out.startswith("GEOIP-UNKNOWN") and "GEOIP-OK" not in out
+
+
+def test_probe_geoip_unsuccessful_response_is_unknown(monkeypatch, capsys):
+    """API returns success=false → GEOIP-UNKNOWN."""
+    def fake(api, *params):
+        return {"success": False, "error": {"code": 114}}
+    monkeypatch.setattr(m, "_exec", fake)
+    rc = m.main(["probe-geoip"])
+    assert rc == 0
+    assert capsys.readouterr().out.startswith("GEOIP-UNKNOWN")
