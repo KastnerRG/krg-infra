@@ -29,34 +29,35 @@ firewall:
       adapters: [eth0, global]    # what the live profile actually scopes; confirm + extend
       rules: []                   # TODO from live load
 
-  # Geoip blocking — DSM's native country-allowlist enforcement at the
-  # firewall layer, applied to all configured adapters. This is the
-  # NAS's answer to issue #74's "US is the floor" policy intent — and
-  # actually delivers what CrowdSec on the rest of the fleet doesn't
-  # (CrowdSec drops if the source IP is on a community blocklist OR
-  # trips a behavioral scenario; it has no country gate today). See
-  # docs/e4e-nas-crowdsec-evaluation.md for the path comparison and why
-  # we picked native Firewall.Geoip over CrowdSec for the Synology.
+  # Geoip blocking — DSM's native country-allowlist at the firewall layer,
+  # the NAS's answer to issue #74's "US is the floor" policy (CrowdSec on
+  # the rest of the fleet has no country gate; see
+  # docs/e4e-nas-crowdsec-evaluation.md for the path comparison).
   #
-  # API surface: SYNO.Core.Security.Firewall.Geoip (get/list per the
-  # security.lib). The synology_security role's apply_security.py
-  # implements `geoip` + `probe-geoip` subcommands; the apply uses
-  # BEST-GUESS field names (`enable_geoip` / `policy` / `country_list`,
-  # matching DSM's `enable_<feature>` naming pattern). The 2026-05-28
-  # pre-reset capture errored 114 on the GET, so the first live-probe
-  # is the authoritative source for the actual shape — if it differs
-  # from the guess, edit the `desired` dict in apply_security.py:do_geoip
-  # and re-apply (the apply_full_object pattern FAILs LOUDLY on field
-  # mismatch rather than silently misconfiguring, which on a country
-  # gate matters — wrong field could block ALL traffic instead of just
-  # non-US).
+  # ⚠️ ENFORCEMENT IS MANUAL TODAY. Empirically probed on DSM 7.2.2
+  # (2026-05-30): SYNO.Core.Security.Firewall.Geoip has only {list, get} —
+  # there is no `set` method. Geoip lives as a per-rule source-type
+  # (set_type=geoip, src="US") on a Firewall.Profile rule. Pushing rules
+  # via Firewall.Rules.save_start (the two-phase save flow) DOES work for
+  # empty rules but `synowebapi --exec` SEGFAULTS on rule objects with
+  # concrete fields, and `synofirewall --import` is destructive on parse
+  # error (wipes /usr/syno/etc/firewall.d/*.json). Until a HTTP-webapi
+  # implementation lands (matching the rule-list and AutoBlock.Rules
+  # deferrals), the synology_security role debug-surfaces the intended
+  # state and the operator sets it in the DSM UI per the runbook section
+  # "Firewall: US-only country allowlist (manual)" in
+  # docs/e4e-nas-dsm.md.
+  #
+  # The values below ARE the declarative source of truth — the role will
+  # consume them once the HTTP-path apply lands; today they drive the
+  # debug-surface text only (so drift between spec and DSM UI stays visible).
   geoip:
     enable: true
-    # ISO 3166-1 alpha-2; DSM accepts a list. US-only matches the
-    # fleet intent. ops travelers reach the NAS via the existing
-    # ucsd/ops allowlist (DSM Firewall rules) which takes precedence
-    # over geoip in DSM's filter chain — same per-admin escape hatch
-    # pattern as nix krg.firewall.sshSources.
+    # ISO 3166-1 alpha-2. US-only matches the fleet intent. Ops travelers
+    # reach the NAS via the existing ucsd/ops allowlist (separate DSM
+    # Firewall rules — these take precedence over the geoip rule in DSM's
+    # filter chain, same per-admin escape hatch pattern as nix
+    # krg.firewall.sshSources).
     allow_countries: [US]
 
 auto_block:

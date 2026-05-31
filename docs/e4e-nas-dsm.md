@@ -156,6 +156,55 @@ is cheap, reverted drop-ins are re-asserted in one shot):
 ansible-playbook playbooks/synology.yml
 ```
 
+## Firewall: US-only country allowlist (manual)
+
+DSM 7.2.2 has no API to set the country allowlist as a standalone toggle —
+`SYNO.Core.Security.Firewall.Geoip` exposes only `list` + `get`, and geoip
+lives as a per-rule source-type. The rule-push CLI path is unsafe
+(`synowebapi --exec` segfaults on rule objects; `synofirewall --import`
+wipes profile files on parse error). Until somebody wires the HTTP-webapi
+path (the route the DSM UI uses), the country gate is a manual step.
+
+Setup, in the DSM web UI as `e4e-admin`:
+
+1. **Control Panel > Security > Firewall**.
+2. In the **Firewall Profile** dropdown make sure the active profile matches
+   `firewall.active_profile` in [`../spec/e4e-nas/security.yml`](../spec/e4e-nas/security.yml)
+   (default: `default`). If it doesn't, fix the spec first and re-apply
+   `synology_security` so the active-profile assertion matches reality.
+3. Click **Edit Rules** on the active profile. Add the explicit per-source
+   `allow` rules FIRST (sealab / machines / monitoring / ucsd — the
+   IPs/CIDRs `synology_security` debug-prints under "autoblock_allow_ips";
+   the rule list itself is also deferred and lives next to this one in the
+   same role). These take precedence over the geoip rule below.
+4. Add a final **Allow** rule:
+   - **Source IP**: "Specific IP from country"
+   - **Country**: United States (matches `firewall.geoip.allow_countries`
+     in the spec; widen here in lock-step if the spec ever lists more
+     than `[US]`)
+   - **Port** / **Protocol**: "All" (the per-service restrictions belong
+     in the explicit allow rules above)
+   - **Action**: Allow
+5. Set the profile's default policy at the bottom to **Deny access**
+   (everything that didn't match an explicit allow OR the geoip-US rule
+   gets dropped). This is the "US is the floor" half of the policy
+   (issue #74) — without it the geoip rule is informational only.
+6. **Apply**. DSM does its own two-phase save-then-test; if the test
+   strands you, it auto-reverts after ~60s.
+
+Verify from outside UCSD (mobile hotspot, a VPN endpoint, etc.) that
+DSM web (`:6021`) and SSH refuse the connection — the geoip rule is
+silent on success, so a positive test from off-net is the only way to
+prove it took.
+
+Drift-check from the next routine apply: `synology_security` runs
+`apply_security.py probe-geoip` and prints the `geoip_rule_count`
+across adapters alongside the spec's intended `allow_countries` — if
+the count drops to zero the manual setup got reverted (DSM major-update,
+operator unchecked it, etc.) and needs the steps above re-run. When the
+HTTP-webapi push lands this whole section turns into a one-line
+`ansible-playbook` invocation.
+
 ## The ACL-SID-mismatch migration (one-time, post-AD-rebuild)
 
 Preserved-volume files carry the old `KRG.UCSD.EDU` SIDs. After the new

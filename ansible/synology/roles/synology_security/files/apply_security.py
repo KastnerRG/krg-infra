@@ -5,20 +5,22 @@ Subcommands:
   fw-conf      — SYNO.Core.Security.Firewall.Conf set (port_check) — full-object.
   autoblock    — SYNO.Core.Security.AutoBlock set (enable, attempts, within_mins,
                  expire_day) — full-object.
-  geoip        — SYNO.Core.Security.Firewall.Geoip set (enable + country allowlist)
-                 — full-object. Field names below are BEST GUESSES based on the
-                 DSM 7.x API naming pattern (`enable_*`); first dry-run output
-                 will surface the actual shape — adjust the dict keys if the
-                 live response disagrees.
 
-Per-rule firewall config (Firewall.Profile + Firewall.Rules load/save_start) and
-AutoBlock allow/deny lists are NOT yet covered — the capture errored on them (wrong
-param shape); add subcommands once the param shape is empirically confirmed.
+Per-rule firewall config (Firewall.Rules.save_start/save_status/save_stop) and
+AutoBlock allow/deny lists (AutoBlock.Rules) are NOT yet covered — both error on
+the CLI surface (Rules.save_start with concrete rule objects segfaults
+synowebapi --exec; AutoBlock.Rules errors 5100). The synology_security tasks
+debug-surface the intended state (geoip + autoblock allow-list) so an operator
+can verify in the DSM UI; the apply lands when those API gaps are bridged via
+the HTTP webapi path. See the DSM-side runbook (`docs/e4e-nas-dsm.md`) for the
+manual UI steps in the meantime.
 
 Read-only diagnostics (no SET; safe to run any time):
-  probe-profile — read Firewall.Profile active profile, report rule count.
-  probe-geoip   — read Firewall.Geoip, report current field shape so the apply
-                  function can be tuned to whatever DSM actually returns.
+  probe-profile — read Firewall.Profile, report whether active profile has rules.
+  probe-geoip   — surface DSM's geoip state: confirm Firewall.Geoip.list works,
+                  dump current per-adapter rule policies + whether any rule uses
+                  set_type=geoip. Used by the role to give operators a visible
+                  snapshot until the rule-push API is implemented.
 """
 import argparse
 import json
@@ -112,61 +114,77 @@ def do_autoblock(a):
 
 
 # --- Firewall.Geoip — country allowlist enforcement at the firewall layer -----
-# DSM ships a per-country block/allow firewall feature; the API surface is
-# SYNO.Core.Security.Firewall.Geoip (get/list/set per the security.lib).
-# Field names below are BEST GUESSES based on the established DSM 7.x naming
-# pattern (`enable_<feature>`, `*_list`). The 2026-05-28 pre-reset capture
-# errored 114 on the GET — likely "no such API on this version" or "wrong
-# version param" — so the first live probe is the authoritative source for
-# the real shape. apply_full_object will surface the actual current values
-# on first run; if our desired keys don't match (e.g. DSM returns
-# `country_code_list` but we send `country_list`), the SET will FAIL loudly
-# instead of silently misconfiguring — which on a country gate is critical
-# (a wrong field could end up blocking ALL traffic rather than just non-US).
+# DSM ships a per-country firewall feature but the API surface is read-only on
+# the CLI path we have. The shape (empirically probed on DSM 7.2.2):
 #
-# Field-name candidates worth checking once the probe runs:
-#   enable        : enable_geoip / enable / enabled
-#   policy        : policy / mode / direction  (values: allow/deny/0/1)
-#   countries     : country_list / country_code_list / countries / geoip_list
-GEOIP_API = "SYNO.Core.Security.Firewall.Geoip"
-
-
-def do_geoip(a):
-    desired = {}
-    if a.enable is not None:
-        desired["enable_geoip"] = _bool(a.enable)
-    if a.policy is not None:
-        # `allow` = whitelist mode (allow only listed countries; block rest)
-        # `deny`  = blacklist mode (block listed countries; allow rest)
-        # For "US is the floor" we want `allow` + countries=[US].
-        desired["policy"] = a.policy
-    if a.countries is not None:
-        # Comma-separated ISO 3166-1 alpha-2 codes from the spec → list.
-        # DSM may take a JSON list or a comma-separated string; the
-        # _args_from helper JSON-encodes lists already, so a list value
-        # is the safer bet.
-        codes = [c.strip().upper() for c in a.countries.split(",") if c.strip()]
-        desired["country_list"] = codes
-    return apply_full_object(GEOIP_API, 1, desired, a.check)
+#   SYNO.Core.Security.Firewall.Geoip
+#     methods: list (countries picker), get (per-country IP-range lookup
+#              for the UI's country-detail dialog — needs country_code +
+#              is_ipv6 params).
+#     There is NO Geoip set method. The descriptor lists only {list, get}.
+#
+# Geoip is therefore NOT a standalone toggle — it lives as a per-RULE source
+# type on a Firewall.Profile rule:
+#   { "enabled": true, "service_policy": "allow",
+#     "set_type": "geoip", "src": "US", ... }
+# Pushing that rule goes through SYNO.Core.Security.Firewall.Rules.save_start
+# (adapter + policy + rules → task_id; poll save_status; save_stop). That call
+# DOES work for empty rules, but synowebapi --exec SEGFAULTS on rule objects
+# with concrete fields (DSM bug in the CLI parser, reproduced on 7.2.2). The
+# DSM web UI uses the HTTP webapi path with a session cookie — that's the
+# path future work should take. synofirewall --import is NOT a safe alternative:
+# it deletes /usr/syno/etc/firewall.d/*.json on any parse failure (witnessed
+# 2026-05-30; restored from /usr/syno/etc.defaults/firewall.d/).
+#
+# Until the HTTP-path implementation lands, geoip enforcement is a MANUAL UI
+# step (Control Panel > Security > Firewall > Edit default profile > +Create
+# rule: source = "Specific IP from country" / United States / action = Allow,
+# then default-deny everything else). Runbook: docs/e4e-nas-dsm.md.
+#
+# probe-geoip surfaces enough state for an operator to verify the manual setup:
+# Firewall.Geoip.list (confirms geoip subsystem is available), Firewall.get
+# (active profile + enabled), and per-adapter rule policies + a count of any
+# rule using set_type=geoip.
 
 
 def do_probe_geoip(a):
-    """Read-only: dump the current Firewall.Geoip object so the operator can
-    confirm the actual field names against the BEST GUESS above. Prints one
-    of:
-      GEOIP-OK <json>         — got a usable response; json shows the real shape
-      GEOIP-UNKNOWN <reason>  — API call failed; do_geoip will likely also fail
+    """Read-only: surface DSM's geoip-related state for operator verification.
+    Prints one of:
+      GEOIP-OK <json>         — JSON with: countries_available (Geoip.list
+                                worked), firewall (enable + active profile),
+                                per_adapter (rules.load summary for each
+                                configured adapter), geoip_rule_count (rules
+                                with set_type=geoip across adapters).
+      GEOIP-UNKNOWN <reason>  — couldn't read; operator should check DSM logs.
     """
+    out = {"countries_available": None, "firewall": None, "per_adapter": [],
+           "geoip_rule_count": 0}
     try:
-        res = _exec(GEOIP_API, "version=1", "method=get")
+        listing = _exec("SYNO.Core.Security.Firewall.Geoip", "version=1", "method=list")
+        if listing.get("success"):
+            out["countries_available"] = len(listing.get("data", {}).get("countries", []))
+        fw = _exec("SYNO.Core.Security.Firewall", "version=1", "method=get")
+        if fw.get("success"):
+            out["firewall"] = fw.get("data", {})
+        adapters = _exec("SYNO.Core.Security.Firewall.Adapter",
+                         "version=1", "method=list")
+        names = adapters.get("data", {}).get("adapter_names", []) if adapters.get("success") else []
+        for name in names:
+            rl = _exec("SYNO.Core.Security.Firewall.Rules", "version=1",
+                       "method=load", "adapter=\"%s\"" % name)
+            d = rl.get("data", {}) if rl.get("success") else {}
+            rules = d.get("rules") or []
+            out["per_adapter"].append({
+                "adapter": name, "policy": d.get("policy"),
+                "total": d.get("total", 0),
+            })
+            out["geoip_rule_count"] += sum(
+                1 for r in rules if isinstance(r, dict) and r.get("set_type") == "geoip"
+            )
     except RuntimeError as e:
         print("GEOIP-UNKNOWN " + json.dumps({"error": str(e)[:200]}))
         return 0
-    if not res.get("success"):
-        print("GEOIP-UNKNOWN " + json.dumps(res)[:200])
-        return 0
-    data = res.get("data", {})
-    print("GEOIP-OK " + json.dumps({"keys": sorted(data.keys()), "data": data}))
+    print("GEOIP-OK " + json.dumps(out, sort_keys=True))
     return 0
 
 
@@ -237,19 +255,10 @@ def main(argv=None):
     pp.add_argument("--profile", required=True)
     pp.set_defaults(func=do_probe_profile)
 
-    g = sub.add_parser("geoip",
-                       help="Firewall.Geoip set (enable + policy + country allowlist).")
-    g.add_argument("--enable")
-    g.add_argument("--policy", choices=["allow", "deny"],
-                   help="`allow` = whitelist mode (only listed countries allowed); "
-                        "`deny` = blacklist mode. For 'US is the floor' use allow.")
-    g.add_argument("--countries",
-                   help="Comma-separated ISO 3166-1 alpha-2 codes, e.g. 'US' or 'US,CA'.")
-    g.add_argument("--check", action="store_true")
-    g.set_defaults(func=do_geoip)
-
     pg = sub.add_parser("probe-geoip",
-                        help="Read-only: dump current Firewall.Geoip object (real field names).")
+                        help="Read-only: surface DSM geoip-related state "
+                             "(countries listable, firewall enable/profile, "
+                             "per-adapter rule policies, count of geoip rules).")
     pg.set_defaults(func=do_probe_geoip)
 
     a = ap.parse_args(argv)

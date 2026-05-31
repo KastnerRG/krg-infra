@@ -10,7 +10,11 @@ DSM-native security stack instead:
    pending live capture).
 3. **DSM Firewall.Geoip** — country-allowlist (US-only) enforcement
    for everything not covered by the explicit allow-list rules. Spec
-   target now in `security.yml`; implementation pending the API capture.
+   target now in `security.yml`; enforcement is **MANUAL via DSM UI
+   today** — the API only exposes geoip as a per-rule source-type and
+   the CLI rule-push path is unsafe (see "What we found probing the
+   API" below). The role debug-surfaces the intended state so drift
+   stays visible; the operator sets it in the DSM UI per the runbook.
 
 Notably, **#3 actually delivers issue #74's "US is the floor" policy
 literally** — the NAS's protection model is in some ways stricter than
@@ -123,10 +127,12 @@ benefit doesn't outweigh the integration risk on a closed appliance OS.
 
 1. **Turn on DSM Firewall.Geoip** with `allow_countries: [US]`. Spec
    target now in [`spec/e4e-nas/security.yml`](../spec/e4e-nas/security.yml);
-   needs the API capture (the live-probe errored 114 on get) before
-   `apply_security.py` can push it. This is the load-bearing
-   recommendation — it's the literal "US is the floor" enforcement,
-   built into DSM, no third-party packages.
+   set up MANUALLY in the DSM UI per the
+   "Firewall: US-only country allowlist (manual)" section of
+   [`docs/e4e-nas-dsm.md`](e4e-nas-dsm.md) until the HTTP-webapi push
+   lands (see "What we found probing the API" below). This is still
+   the load-bearing recommendation — it's the literal "US is the floor"
+   enforcement, built into DSM, no third-party packages.
 2. **Finish the DSM Firewall rules** in the same spec file — the
    profile rules are still `TODO from live load`. Restrict DSM web UI
    to UCSD nets, SMB to sealab+e4e users, SSH to ucsd+ops (matches the
@@ -158,6 +164,53 @@ Consider CrowdSec on the NAS later if any of these change:
   be worth it even without enforcement.
 - **A targeted attack happens against the NAS** that CrowdSec would
   have caught — concrete forcing function.
+
+## What we found probing the API (2026-05-30, DSM 7.2.2)
+
+Empirically captured before the cabled bring-up, on `e4e-nas-tmp`:
+
+- **`SYNO.Core.Security.Firewall.Geoip`** v1 has exactly two methods:
+  `list` (returns ~250 countries — for the UI picker) and `get` (needs
+  `country_code` + `is_ipv6`; returns the IP ranges for ONE country, for
+  the UI's per-country detail dialog). **There is no `set` method.** The
+  earlier `apply_security.py do_geoip` (commit `0d90d48`) called
+  `Firewall.Geoip.set` with best-guess fields (`enable_geoip` /
+  `policy` / `country_list`) — that call simply does not exist in the
+  API descriptor and was removed.
+- Geoip is therefore a per-RULE source-type, not a standalone config.
+  The DSM UI sets a rule like
+  `{enabled: true, service_policy: "allow", set_type: "geoip", src: "US"}`
+  on a `Firewall.Profile` rule, with the profile's default policy flipped
+  to deny so non-US traffic falls through to the deny.
+- The intended push path is
+  `SYNO.Core.Security.Firewall.Rules.save_start adapter=<ifname> policy=<deny|allow> rules=[…]`
+  → returns a `task_id` → poll `save_status` → `save_stop` (a wrapper
+  around the internal `Firewall.Profile.Apply.start`). The empty-rules
+  case works — the synowebapi log even shows the wrapped
+  `Profile.Apply.start name=default profile_applying=true` call — but
+  every concrete rule object we tried (with `enabled`, `service_policy`,
+  `set_type`, `src`, `destination`, `ports`, `protocol`) **segfaulted
+  the `synowebapi --exec` binary**. The DSM web UI uses the HTTP webapi
+  path with a session cookie, which is a different code path that
+  appears to handle the rule parsing correctly — that's where the future
+  implementation should live.
+- **`synofirewall --import` is not a workaround.** On any parse failure
+  it deletes `/usr/syno/etc/firewall.d/{1,2}.json` (the on-disk
+  representation of the default+custom profiles). Witnessed on
+  2026-05-30; restored from `/usr/syno/etc.defaults/firewall.d/`.
+  Profiles re-appear in `Profile.list` immediately after the file
+  restore, so recovery is cheap — but it's still a foot-cannon.
+- `synofirewall --export` is a useful read-only audit tool: it dumps
+  the firewall settings + every profile (`adapterPolicyMap` as
+  per-adapter int enum + `rules` array) in one JSON blob. Good for
+  drift snapshots; bad for IaC source-of-truth (the policy ints aren't
+  documented and the export format isn't the same as the API rule shape).
+
+Bottom line: the country-gate enforcement is still the right answer
+(the spec keeps `geoip.enable: true, allow_countries: [US]`), but the
+PUSH lands when somebody wires the HTTP-webapi auth + replays the rule
+shape the UI uses. The role debug-surfaces the intended state so drift
+between spec and DSM-UI stays visible in every apply run.
 
 ## Out of scope
 

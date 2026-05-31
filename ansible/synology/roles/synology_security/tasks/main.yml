@@ -117,17 +117,22 @@
   failed_when: "ab_apply.rc != 0 or 'FAIL' in ab_apply.stdout"
   check_mode: false
 
-# --- Firewall.Geoip — country allowlist enforcement ---------------------------
-# DSM's native country-allowlist firewall feature; the NAS's answer to issue
-# #74's "US is the floor" policy. See docs/e4e-nas-crowdsec-evaluation.md for
-# the rationale (DSM ships this natively where the NixOS fleet's CrowdSec
-# stack doesn't enforce country; we picked DSM-native over a Container-Manager
-# CrowdSec for the Synology).
+# --- Firewall.Geoip — country allowlist (PROBE + DEBUG-SURFACE ONLY) ----------
+# DSM's native country-allowlist firewall feature is the NAS's answer to issue
+# #74's "US is the floor" policy (see docs/e4e-nas-crowdsec-evaluation.md).
+# But the API surface is read-only on the CLI path: SYNO.Core.Security.Firewall.Geoip
+# has only {list, get} methods — geoip lives as a per-rule source-type
+# (set_type=geoip, src="US") on a Firewall.Profile rule, and Rules.save_start
+# via `synowebapi --exec` SEGFAULTS on rule objects with concrete fields
+# (DSM 7.2.2 CLI parser bug; reproduced 2026-05-30). `synofirewall --import`
+# is destructive on parse error (witnessed wiping /usr/syno/etc/firewall.d/*.json).
 #
-# Two-step: probe first to surface the actual API shape (the 2026-05-28
-# capture errored 114 on get; first apply on a real NAS will tell us if our
-# best-guess field names match), THEN apply if the spec wants geoip on.
-- name: Probe Firewall.Geoip (read-only; surfaces actual API shape)
+# So this role debug-surfaces the intended geoip state (matches the
+# autoblock allow-list pattern just above) and the enforcement is a MANUAL
+# UI step — see the "Firewall: US-only country allowlist (manual)" section
+# of docs/e4e-nas-dsm.md. Push lands when the HTTP webapi path is wired up
+# (own follow-up alongside the rule-list and AutoBlock.Rules deferrals).
+- name: Probe Firewall.Geoip state (read-only; surfaces what DSM currently has)
   ansible.builtin.script: apply_security.py probe-geoip
   register: geoip_probe
   changed_when: false
@@ -137,35 +142,23 @@
     - security_spec.firewall.geoip is defined
     - security_spec.firewall.geoip.enable | default(false)
 
-- name: Surface geoip probe result (operator visibility)
+- name: Surface intended geoip allow-list + probe result (operator must verify in DSM UI)
   ansible.builtin.debug:
     msg: |
-      Firewall.Geoip probe: {{ geoip_probe.stdout | trim }}
-      If this is the FIRST run and the apply task below FAILs with a
-      param-shape error, check the GEOIP-OK output above for the real
-      field names and adjust the `desired` dict in
-      files/apply_security.py:do_geoip accordingly. See the field-name
-      candidates note in that function's docstring.
+      Firewall.Geoip — INTENDED (spec): enable={{ security_spec.firewall.geoip.enable }}
+                       allow_countries={{ security_spec.firewall.geoip.allow_countries | default([]) }}
+      Firewall.Geoip — CURRENT (probe): {{ geoip_probe.stdout | trim }}
+      Note: enforcement is a MANUAL UI step today (DSM 7.2.2 has no setter
+      API for the country allowlist — geoip lives as a per-rule attribute,
+      and the rule-push CLI path is unsafe). Set in Control Panel >
+      Security > Firewall > edit profile "{{ security_spec.firewall.active_profile | default('default') }}":
+      add an Allow rule with source = "Specific IP from country" / United
+      States, then default-deny everything else. Runbook section in
+      docs/e4e-nas-dsm.md.
   changed_when: false
   when:
     - security_spec.firewall.geoip is defined
     - security_spec.firewall.geoip.enable | default(false)
-
-- name: Apply Firewall.Geoip (country allowlist) — fails loudly on API-shape mismatch
-  ansible.builtin.script: >-
-    apply_security.py geoip
-    --enable {{ security_spec.firewall.geoip.enable }}
-    --policy allow
-    --countries {{ security_spec.firewall.geoip.allow_countries | join(',') | quote }}
-    {{ '--check' if ansible_check_mode else '' }}
-  register: geoip_apply
-  changed_when: "'CHANGED' in geoip_apply.stdout or 'WOULD-CHANGE' in geoip_apply.stdout"
-  failed_when: "geoip_apply.rc != 0 or 'FAIL' in geoip_apply.stdout"
-  check_mode: false
-  when:
-    - security_spec.firewall.geoip is defined
-    - security_spec.firewall.geoip.enable | default(false)
-    - security_spec.firewall.geoip.allow_countries | default([]) | length > 0
 
 # --- Drift export (read-only) — only with `--tags export` -----------------------
 - name: Export live state for drift detection
