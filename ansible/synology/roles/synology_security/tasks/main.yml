@@ -83,13 +83,23 @@
   loop_control:
     loop_var: ip
 
-# ops admin personal IPs (chris/sean — `ops` in trusted.json) are NOT in the
-# trusted-net all-ports allow above (those are sealab + machines + monitoring
-# only). ops get a narrower allow restricted to SSH (TCP 22) so admins can
-# break-glass from a hotel wifi outside the US without opening the entire
-# admin port surface (DSM web, SMB, etc.) to whatever IP they're on. SSH itself
-# is key-only via synology_ssh + AutoBlock-protected, so the attack surface
-# of "allow ops IP to SSH" is tight.
+# SSH source restriction — match the nix `krg.firewall.sshSources` pattern
+# for SERVICE hosts (`ucsd + ops`, see nix/profiles/base.nix). The NAS is a
+# service host (storage appliance, not compute), so SSH should NOT be open
+# to the wider "US is the floor" geoip allow — only ucsd + ops + the
+# trusted-net all-ports allows above. Implementation:
+#   (a) ops admin personal IPs (chris/sean — `ops` in trusted.json) get a
+#       per-IP TCP-22 allow. Lets admins break-glass from a hotel wifi
+#       without opening DSM web/SMB/etc. to whatever IP they're on.
+#   (b) ucsd CIDRs get a per-CIDR TCP-22 allow. UCSD-wide SSH access
+#       (campus office, UCSD VPN, etc.) — wider than `sealab` but narrower
+#       than the world. Mirrors `nix/profiles/base.nix` line 124's
+#       `sshSources = ucsd ++ ops`.
+#   (c) a single drop-ssh-fall-through static rule in the spec below
+#       (placed AFTER all allow rules but BEFORE the geoip-US all-ports
+#       allow) catches SSH from anything not matched by (a)/(b) or by the
+#       earlier trusted-net all-ports allows. Without that rule, geoip-US
+#       would silently re-open SSH to the entire US.
 - name: Build ops SSH allow rules (one per ops admin IP, port 22 TCP only)
   ansible.builtin.set_fact:
     firewall_ops_ssh_rules: "{{ firewall_ops_ssh_rules | default([]) + [_rule] }}"
@@ -106,6 +116,25 @@
       source_ip_group: ip
       source_ip: "{{ ip }}"
   loop: "{{ krg_trusted.ipsets.ops | default([]) | map(attribute='cidr') | list }}"
+  loop_control:
+    loop_var: ip
+
+- name: Build ucsd SSH allow rules (one per ucsd CIDR, port 22 TCP only)
+  ansible.builtin.set_fact:
+    firewall_ucsd_ssh_rules: "{{ firewall_ucsd_ssh_rules | default([]) + [_rule] }}"
+  vars:
+    _rule:
+      name: "ucsd-ssh-{{ ip | regex_replace('[./:]', '_') }}"
+      enable: true
+      log: false
+      policy: allow
+      port_direction: destination
+      port_group: custom
+      ports: "22"
+      protocol: tcp
+      source_ip_group: ip
+      source_ip: "{{ ip }}"
+  loop: "{{ krg_trusted.ipsets.ucsd | default([]) | map(attribute='cidr') | list }}"
   loop_control:
     loop_var: ip
 
@@ -133,14 +162,17 @@
     - security_spec.firewall.geoip.enable | default(false)
     - _geoip_rule_sources | length > 0
 
-- name: Compose firewall_managed_adapters dict (per-adapter; trusted+ops rules prepended to `global`)
+- name: Compose firewall_managed_adapters dict (per-adapter; trusted+ops+ucsd-SSH prepended to `global`)
   ansible.builtin.set_fact:
     firewall_managed_adapters: >-
       {{
         firewall_managed_adapters | default({}) | combine({
           item.key: {
             'policy': item.value.policy,
-            'rules': (firewall_trusted_rules + (firewall_ops_ssh_rules | default([])) + item.value.rules) if item.key == 'global' else item.value.rules
+            'rules': (firewall_trusted_rules
+                      + (firewall_ops_ssh_rules | default([]))
+                      + (firewall_ucsd_ssh_rules | default([]))
+                      + item.value.rules) if item.key == 'global' else item.value.rules
           }
         })
       }}

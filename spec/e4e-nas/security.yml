@@ -64,22 +64,49 @@ firewall:
       # Rule evaluation order is top-down within each block, first match
       # wins; global rules evaluate before per-adapter rules.
       adapters:
-        # `global` carries the rules that apply to EVERY adapter:
+        # `global` carries the rules that apply to EVERY adapter, in
+        # top-down evaluation order (first match wins):
         # (1) trusted-net allows (sealab + machines + monitoring,
         #     all ports) — prepended at apply time from trusted.json
-        # (2) ops admin SSH allows (chris + sean personal IPs, port 22
-        #     TCP ONLY — narrower than trusted-nets so a hotel-wifi IP
-        #     can't reach DSM web/SMB) — also prepended from trusted.json
-        # (3) the static rules below (geoip US floor)
+        # (2) ops admin SSH allows (chris + sean personal IPs,
+        #     port 22 TCP ONLY) — prepended from trusted.json `ops`
+        # (3) ucsd SSH allows (8 ucsd CIDRs, port 22 TCP ONLY) —
+        #     prepended from trusted.json `ucsd`. Mirrors the nix
+        #     service-host pattern `sshSources = ucsd ++ ops`
+        #     (nix/profiles/base.nix:124).
+        # (4) the static rules below (ssh-deny-fall-through, then
+        #     geoip-US-floor). Order in (4) matters: the SSH drop must
+        #     fire BEFORE geoip-US-floor, otherwise geoip-US would
+        #     silently re-open SSH to the entire US (the bug this
+        #     section closes).
         global:
           policy: none
           rules:
-            # Country gate. Allows researchers/admins from anywhere in the
-            # US. Combined with the trusted-net allows prepended above,
-            # this is the DSM-side answer to "the most public it should be
-            # is access within the United States". See
-            # docs/e4e-nas-crowdsec-evaluation.md for why DSM-native geoip
-            # (vs CrowdSec) for the Synology.
+            # Drop SSH from anyone not explicitly allowed above (trusted-
+            # nets / ops / ucsd). Without this rule, the geoip-US-floor
+            # below would allow SSH from arbitrary US IPs — making the
+            # NAS less restricted than the nix service-host pattern.
+            # The NAS is a service host (storage appliance, not compute),
+            # so SSH source must match `sshSources` from nix base
+            # (ucsd + ops) — and ONLY those.
+            - name: ssh-deny-fall-through
+              enable: true
+              log: false
+              policy: drop
+              port_direction: destination
+              port_group: custom
+              ports: "22"
+              protocol: tcp
+              source_ip_group: all
+              source_ip: all
+
+            # Country gate. Allows researchers/admins from anywhere in
+            # the US for NON-SSH (DSM web file browser, etc.). SSH is
+            # already drop'd above for non-trusted/non-ucsd/non-ops
+            # sources, so this rule's all-ports allow effectively
+            # covers everything EXCEPT SSH (which the earlier drop
+            # caught). See docs/e4e-nas-crowdsec-evaluation.md for why
+            # DSM-native geoip (vs CrowdSec) for the Synology.
             - name: geoip-US-floor
               enable: true
               log: false
