@@ -1,17 +1,25 @@
 # DSM security perimeter for e4e-nas — firewall + auto-block.
-# Source of truth for the post-rebuild state. Values CONFIRMED / DRIFT-MARKED from the
-# 2026-05-28 live pre-reset capture (archived locally). Defense-in-depth: this is the
+# Source of truth for the post-rebuild state. Defense-in-depth: this is the
 # in-DSM layer, complementary to the Proxmox/in-guest layers handled elsewhere.
 #
-# IaC home: `synology_security` Ansible role — `apply_security.py` GET→merge→SET on
-# SYNO.Core.Security.Firewall + Firewall.Profile (rules) + AutoBlock + AutoBlock.Rules.
-# The Firewall API surface (per .lib) is:
-#   Firewall      get/set                          (enable + active profile_name)
-#   Firewall.Conf get/set                          (port_check, etc.)
+# IaC home: `synology_security` Ansible role.
+#   - Globals (Firewall, Firewall.Conf, AutoBlock):    apply_security.py via synowebapi --exec
+#   - Per-adapter rules (Firewall.Profile.set/Apply):  apply_security.py firewall-profile
+#                                                      via files/dsm_http.py over HTTP webapi
+#     (the `synowebapi --exec Rules.save_start` CLI path SEGFAULTs on rule
+#     objects; the DSM web UI uses Firewall.Profile.set + Profile.Apply
+#     over HTTP, and so do we.)
+#
+# The Firewall API surface (per .lib):
+#   Firewall              get/set                  (enable + active profile_name)
+#   Firewall.Conf         get/set                  (port_check, etc.)
 #   Firewall.Adapter      list                     (adapter_names: eth0..eth3, vpn, …)
-#   Firewall.Profile      get/list/clone/create/delete/rename/set
-#   Firewall.Rules        load + save_start/save_status/save_stop  (two-phase save)
-#   Firewall.Geoip        get/list
+#   Firewall.Profile      get/list/clone/create/delete/rename/set    ← rule push
+#   Firewall.Profile.Apply  start/status/stop      ← two-phase commit
+#   Firewall.Rules        load                     (read-only; the *.save_start
+#                                                  path segfaults — don't use)
+#   Firewall.Geoip        get/list                 (per-country IP-range lookup,
+#                                                  not a country-allowlist toggle)
 
 firewall:
   enable: true
@@ -19,44 +27,96 @@ firewall:
   port_check: true
 
   profiles:
-    # The default profile holds the per-rule list. Rules detail wasn't captured cleanly
-    # (FW-PROFILE-DEFAULT/RULES-LOAD errored 120 — wrong param name; follow-up needed
-    # with profile_id= or rule_set= per the .lib's load semantics).
-    # TODO: capture the actual rule list (sources → ports/protocols, by adapter), then
-    # encode here. Adapters covered: eth0 (LAN), eth1/2/3 (link-down today), global,
-    # pppoe, vpn, wlan0.
+    # The `synology_security` role pushes per-adapter rules via the
+    # `firewall-profile` subcommand in apply_security.py, which uses
+    # files/dsm_http.py over the HTTP webapi (Profile.set + Profile.Apply
+    # two-phase). The CLI `synowebapi --exec ... Rules.save_start` SEGFAULTs
+    # on rule objects; the UI uses Profile.set instead, and so do we.
+    #
+    # Adapters listed here are MANAGED; adapters NOT listed (eth1..eth3, vpn,
+    # pppoe, wlan0) keep their current DSM state untouched (so operators can
+    # add per-adapter emergency rules in the UI without us nuking them on the
+    # next run). DSM exposes: eth0..eth3 + global + vpn + pppoe + wlan0.
+    #
+    # Rule field shape (canonical, post-DSM-normalization — matches what
+    # Profile.get returns; using these exact field names + values avoids
+    # spurious drift):
+    #   enable           bool      rule on/off
+    #   log              bool      log hits to /var/log/synolog/synofirewall
+    #   name             str       display name (free text, "" allowed)
+    #   policy           enum      "allow" | "deny" | "drop"  (rule action)
+    #   port_direction   enum      "destination" | "source" | ""
+    #   port_group       str       "all" or specific service id
+    #   ports            str       "all" or csv ports
+    #   protocol         str       "all" | "tcp" | "udp" | "icmp"
+    #   source_ip_group  enum      "all" | "ip" (single IP or CIDR) | "iprange"
+    #                              | "ipset" (named group) | "geoip" (country)
+    #   source_ip        str       value matching source_ip_group
     default:
-      adapters: [eth0, global]    # what the live profile actually scopes; confirm + extend
-      rules: []                   # TODO from live load
+      # Per-adapter policy is the DEFAULT action when no rule matches.
+      # DSM accepts {"allow", "drop", "none"} — note the absence of
+      # "deny". For default-deny enforcement use "drop" (silent drop,
+      # no reject — doesn't reveal the box's presence to probes).
+      # "none" is the special "no default policy here" value; DSM uses
+      # it on `global` because global rules apply across ALL adapters
+      # (the catch-all default lives on each per-adapter block instead).
+      #
+      # Rule evaluation order is top-down within each block, first match
+      # wins; global rules evaluate before per-adapter rules.
+      adapters:
+        # `global` carries the rules that apply to EVERY adapter: the
+        # trusted-net allows (prepended at apply time in tasks/main.yml,
+        # computed from nix/networks/trusted.json) + the US geoip floor.
+        global:
+          policy: none
+          rules:
+            # Country gate. Allows researchers/admins from anywhere in the
+            # US. Combined with the trusted-net allows prepended above,
+            # this is the DSM-side answer to "the most public it should be
+            # is access within the United States". See
+            # docs/e4e-nas-crowdsec-evaluation.md for why DSM-native geoip
+            # (vs CrowdSec) for the Synology.
+            - name: geoip-US-floor
+              enable: true
+              log: false
+              policy: allow
+              port_direction: destination
+              port_group: all
+              ports: all
+              protocol: all
+              source_ip_group: geoip
+              source_ip: US
 
-  # Geoip blocking — DSM's native country-allowlist at the firewall layer,
-  # the NAS's answer to issue #74's "US is the floor" policy (CrowdSec on
-  # the rest of the fleet has no country gate; see
-  # docs/e4e-nas-crowdsec-evaluation.md for the path comparison).
+        # eth0 is the planned public interface (132.239.17.124; currently
+        # disconnected, gets cabled later). Default-DROP everything that
+        # didn't match a global allow rule — that's the actual "US is the
+        # floor" enforcement.
+        eth0:
+          policy: drop
+          rules: []
+
+        # eth1..eth3, vpn, pppoe, wlan0 are NOT listed here → they keep
+        # whatever DSM has live (the role's per-adapter merge preserves
+        # unmanaged adapters). eth1 is the lab interface (192.168.1.x)
+        # today during bring-up — leaving it default-allow until the
+        # cable swap means lab access keeps working through the
+        # transition; flip it to drop once eth0 is the live path.
+
+  # Geoip block — the country-allowlist INTENT (what countries are
+  # allowed). The actual ENFORCEMENT lives as the `geoip-US-floor` rule
+  # under `profiles.default.adapters.global.rules` above, because DSM 7.2.2
+  # has no standalone geoip setter (Firewall.Geoip has only {list, get}).
+  # Geoip is a per-RULE source-type, not a config flag — so the rule list
+  # is where it lives.
   #
-  # ⚠️ ENFORCEMENT IS MANUAL TODAY. Empirically probed on DSM 7.2.2
-  # (2026-05-30): SYNO.Core.Security.Firewall.Geoip has only {list, get} —
-  # there is no `set` method. Geoip lives as a per-rule source-type
-  # (set_type=geoip, src="US") on a Firewall.Profile rule. Pushing rules
-  # via Firewall.Rules.save_start (the two-phase save flow) DOES work for
-  # empty rules but `synowebapi --exec` SEGFAULTS on rule objects with
-  # concrete fields, and `synofirewall --import` is destructive on parse
-  # error (wipes /usr/syno/etc/firewall.d/*.json). Until a HTTP-webapi
-  # implementation lands (matching the rule-list and AutoBlock.Rules
-  # deferrals), the synology_security role debug-surfaces the intended
-  # state and the operator sets it in the DSM UI per the runbook section
-  # "Firewall: US-only country allowlist (manual)" in
-  # docs/e4e-nas-dsm.md.
-  #
-  # The values below ARE the declarative source of truth — the role will
-  # consume them once the HTTP-path apply lands; today they drive the
-  # debug-surface text only (so drift between spec and DSM UI stays visible).
+  # At apply time, tasks/main.yml asserts the global geoip rule's
+  # `source_ip` matches `allow_countries | join(',')` — drift between
+  # this block and the rule above gets flagged.
   geoip:
     enable: true
     # ISO 3166-1 alpha-2. US-only matches the fleet intent. Ops travelers
-    # reach the NAS via the existing ucsd/ops allowlist (separate DSM
-    # Firewall rules — these take precedence over the geoip rule in DSM's
-    # filter chain, same per-admin escape hatch pattern as nix
+    # reach the NAS via the trusted-net allow rules prepended ahead of
+    # the geoip rule (same per-admin escape hatch pattern as nix
     # krg.firewall.sshSources).
     allow_countries: [US]
 

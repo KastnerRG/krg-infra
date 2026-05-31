@@ -1,3 +1,17 @@
 ---
 synology_security_spec: "{{ nas_spec_dir }}/security.yml"
 synology_export_dir: "/var/lib/krg-deploy/synology-export"
+
+# Local DSM admin used to authenticate the HTTP webapi for the per-adapter
+# rule push (Firewall.Profile.set + Profile.Apply). Defaults to e4e-admin
+# (the break-glass account from synology_users). Override per-host if you
+# stand up a krg-side NAS that uses krg-admin.
+synology_admin_user: e4e-admin
+
+# Password for synology_admin_user. Defaults to picking it up from
+# `synology_user_passwords[synology_admin_user]` which is loaded via
+# `-e @~/.config/krg/secrets-syno.yml` (same source synology_users uses to
+# rotate user passwords). Empty string = rule push is SKIPPED with a warning
+# rather than hard-failing — matches the graceful-skip pattern from
+# synology_ad's ad_join_password.
+nas_admin_password: "{{ synology_user_passwords[synology_admin_user] | default('') }}"

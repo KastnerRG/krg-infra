@@ -1,17 +1,21 @@
 ---
-# synology_security — manage DSM firewall + auto-block from spec/e4e-nas/security.yml
-# via synowebapi (full-object set; logic in files/apply_security.py via `script`).
+# synology_security — manage DSM firewall + auto-block from spec/e4e-nas/security.yml.
+#
+# Globals (Firewall, Firewall.Conf, AutoBlock): apply_security.py via synowebapi --exec
+# Per-adapter rules (Firewall.Profile.set + Profile.Apply): apply_security.py
+#   firewall-profile via files/dsm_http.py over the HTTP webapi
+#   (the `synowebapi --exec Rules.save_start` CLI path SEGFAULTs on rule objects
+#   — see the comment in apply_security.py:do_firewall_profile).
 #
 # CROSS-REFERENCE: counterpart of nix `krg.firewall` (`nix/modules/security/firewall.nix`)
 # and ansible `roles/proxmox_firewall` + the in-guest fail2ban allow-list pattern.
 # All three layers read `nix/networks/trusted.json` (single source of truth) for
 # allow-listed source nets — edit there, not here.
 #
-# Per-rule firewall list (Firewall.Profile + Firewall.Rules load/save_start) and
-# AutoBlock allow/deny lists are CURRENTLY OUT OF SCOPE — the captures errored
-# (120, 5100) on those param shapes; see "Deferred items" in plan.md. The role
-# emits a DEBUG of the intended allow-list IPs so a drift detector / operator can
-# verify against the UI until the API is in.
+# AutoBlock allow/deny lists (AutoBlock.Rules) are still deferred — the capture
+# errored 5100 on that param shape. The role debug-surfaces the intended allow
+# list (computed from trusted.json) so an operator can verify against the UI
+# until that API is wired up too.
 
 - name: Load the security spec
   ansible.builtin.include_vars:
@@ -50,37 +54,114 @@
       allow-list manually in the DSM UI to match.
   changed_when: false
 
-# --- Anti-lockout probe (H2) -------------------------------------------------
-# Enabling the DSM firewall on an empty profile = default-deny inbound, which
-# severs the SSH session this play is running over. The role's per-rule push
-# is still deferred (capture errored 120 on Firewall.Profile.Rules), so we
-# can't populate the profile ourselves yet — but we MUST refuse to flip
-# `enable_firewall: true` while the active profile is empty.
-- name: Probe the active firewall profile (anti-lockout — see role README)
-  ansible.builtin.script: >-
-    apply_security.py probe-profile
-    --profile {{ security_spec.firewall.active_profile | default('default') | quote }}
-  register: profile_probe
-  changed_when: false
-  failed_when: false
-  check_mode: false
-  when: security_spec.firewall.enable | default(true)
+# --- Per-adapter firewall rule push (Profile.set + Profile.Apply via HTTP) ---
+# Build the desired per-adapter state from the spec + trusted.json (single
+# source of truth). The spec lists STATIC rules (geoip-US-floor); we prepend
+# DYNAMIC trusted-source allow rules (one per sealab + machines + monitoring
+# IP) so a change to trusted.json flows automatically.
+#
+# The active profile must be NON-EMPTY when firewall.enable=true (default-deny
+# + no rules = locked out). apply_security.py:do_firewall_profile asserts this
+# against the MERGED target (more precise than the old probe-profile that
+# checked only current state).
+- name: Build trusted-source allow rules (one per sealab + machines + monitoring IP)
+  ansible.builtin.set_fact:
+    firewall_trusted_rules: "{{ firewall_trusted_rules | default([]) + [_rule] }}"
+  vars:
+    _rule:
+      name: "trusted-{{ ip | regex_replace('[./:]', '_') }}"
+      enable: true
+      log: false
+      policy: allow
+      port_direction: destination
+      port_group: all
+      ports: all
+      protocol: all
+      source_ip_group: ip
+      source_ip: "{{ ip }}"
+  loop: "{{ autoblock_allow_ips }}"
+  loop_control:
+    loop_var: ip
 
-- name: Refuse to enable firewall when the active profile has no rules (anti-lockout)
+- name: Drift-check geoip rule(s) against geoip.allow_countries (spec internal consistency)
   ansible.builtin.assert:
     that:
-      - "'PROFILE-EMPTY' not in profile_probe.stdout"
-      - "'PROFILE-UNKNOWN' not in profile_probe.stdout"
+      - "(_geoip_rule_sources | unique | sort) == [security_spec.firewall.geoip.allow_countries | join(',')]"
     fail_msg: >-
-      Refusing to enable the DSM firewall on host {{ inventory_hostname }}:
-      the active profile ({{ security_spec.firewall.active_profile | default('default') }})
-      reports {{ profile_probe.stdout | trim }}. Enabling now would deny ALL
-      inbound (including this SSH session). Populate the profile rules
-      manually in the DSM UI first (or set firewall.enable: false in
-      spec/e4e-nas/security.yml). The role's per-rule push is deferred until
-      SYNO.Core.Security.Firewall.Profile.Rules param shape is empirically
-      probed (capture errored 120) — see plan.md deferred items.
-  when: security_spec.firewall.enable | default(true)
+      spec drift: geoip rules under
+      firewall.profiles.default.adapters.*.rules have source_ip values
+      {{ _geoip_rule_sources | unique | sort }} but
+      firewall.geoip.allow_countries=
+      '{{ security_spec.firewall.geoip.allow_countries | join(",") }}'.
+      Edit the spec so they agree, then re-run.
+  vars:
+    _geoip_rule_sources: >-
+      {{
+        security_spec.firewall.profiles.default.adapters.values()
+        | map(attribute='rules') | list | sum(start=[])
+        | selectattr('source_ip_group', 'equalto', 'geoip')
+        | map(attribute='source_ip') | list
+      }}
+  when:
+    - security_spec.firewall.geoip is defined
+    - security_spec.firewall.geoip.enable | default(false)
+    - _geoip_rule_sources | length > 0
+
+- name: Compose firewall_managed_adapters dict (per-adapter from spec; trusted rules prepended to `global`)
+  ansible.builtin.set_fact:
+    firewall_managed_adapters: >-
+      {{
+        firewall_managed_adapters | default({}) | combine({
+          item.key: {
+            'policy': item.value.policy,
+            'rules': (firewall_trusted_rules + item.value.rules) if item.key == 'global' else item.value.rules
+          }
+        })
+      }}
+  loop: "{{ security_spec.firewall.profiles.default.adapters | dict2items }}"
+
+- name: Encode firewall_managed_adapters as JSON (for --desired arg)
+  ansible.builtin.set_fact:
+    firewall_managed_adapters_json: "{{ firewall_managed_adapters | to_json }}"
+
+- name: Surface managed adapter rules (operator visibility + drift detector)
+  ansible.builtin.debug:
+    msg: |
+      Managed firewall adapters (will be pushed to DSM profile '{{ security_spec.firewall.active_profile | default('default') }}'):
+      {{ firewall_managed_adapters_json | from_json | to_nice_yaml(indent=2) }}
+  changed_when: false
+
+- name: Push per-adapter firewall rules (Profile.set + Profile.Apply via HTTP webapi)
+  ansible.builtin.script: >-
+    apply_security.py firewall-profile
+    --account {{ synology_admin_user | default('e4e-admin') | quote }}
+    --password {{ nas_admin_password | quote }}
+    --profile-name {{ security_spec.firewall.active_profile | default('default') | quote }}
+    --desired {{ firewall_managed_adapters_json | quote }}
+    --apply
+    {{ '--check' if ansible_check_mode else '' }}
+  register: fw_profile
+  no_log: true        # password on argv
+  changed_when: "'CHANGED' in fw_profile.stdout or 'WOULD-CHANGE' in fw_profile.stdout"
+  failed_when: "fw_profile.rc != 0 or 'FAIL' in fw_profile.stdout"
+  check_mode: false
+  when:
+    - nas_admin_password | default('') | length > 0
+    - security_spec.firewall.profiles.default is defined
+
+- name: Warn when no NAS admin password supplied (rule push skipped)
+  ansible.builtin.debug:
+    msg: >-
+      nas_admin_password not supplied — per-adapter rule push SKIPPED.
+      Re-run with `-e nas_admin_password='<e4e-admin password>'` (or via
+      -e @~/.config/krg/secrets-syno.yml which has `synology_user_passwords.e4e-admin`)
+      to populate the firewall profile. Skipping means
+      firewall.enable=true below would proceed against whatever DSM has
+      live today — UNSAFE if the profile is empty.
+  when:
+    - nas_admin_password | default('') | length == 0
+    - security_spec.firewall.enable | default(true)
+  changed_when: false
 
 # --- Globals (full-object SETs) -----------------------------------------------
 - name: Apply firewall (Firewall set — enable + active profile)
@@ -116,49 +197,6 @@
   changed_when: "'CHANGED' in ab_apply.stdout or 'WOULD-CHANGE' in ab_apply.stdout"
   failed_when: "ab_apply.rc != 0 or 'FAIL' in ab_apply.stdout"
   check_mode: false
-
-# --- Firewall.Geoip — country allowlist (PROBE + DEBUG-SURFACE ONLY) ----------
-# DSM's native country-allowlist firewall feature is the NAS's answer to issue
-# #74's "US is the floor" policy (see docs/e4e-nas-crowdsec-evaluation.md).
-# But the API surface is read-only on the CLI path: SYNO.Core.Security.Firewall.Geoip
-# has only {list, get} methods — geoip lives as a per-rule source-type
-# (set_type=geoip, src="US") on a Firewall.Profile rule, and Rules.save_start
-# via `synowebapi --exec` SEGFAULTS on rule objects with concrete fields
-# (DSM 7.2.2 CLI parser bug; reproduced 2026-05-30). `synofirewall --import`
-# is destructive on parse error (witnessed wiping /usr/syno/etc/firewall.d/*.json).
-#
-# So this role debug-surfaces the intended geoip state (matches the
-# autoblock allow-list pattern just above) and the enforcement is a MANUAL
-# UI step — see the "Firewall: US-only country allowlist (manual)" section
-# of docs/e4e-nas-dsm.md. Push lands when the HTTP webapi path is wired up
-# (own follow-up alongside the rule-list and AutoBlock.Rules deferrals).
-- name: Probe Firewall.Geoip state (read-only; surfaces what DSM currently has)
-  ansible.builtin.script: apply_security.py probe-geoip
-  register: geoip_probe
-  changed_when: false
-  failed_when: false
-  check_mode: false
-  when:
-    - security_spec.firewall.geoip is defined
-    - security_spec.firewall.geoip.enable | default(false)
-
-- name: Surface intended geoip allow-list + probe result (operator must verify in DSM UI)
-  ansible.builtin.debug:
-    msg: |
-      Firewall.Geoip — INTENDED (spec): enable={{ security_spec.firewall.geoip.enable }}
-                       allow_countries={{ security_spec.firewall.geoip.allow_countries | default([]) }}
-      Firewall.Geoip — CURRENT (probe): {{ geoip_probe.stdout | trim }}
-      Note: enforcement is a MANUAL UI step today (DSM 7.2.2 has no setter
-      API for the country allowlist — geoip lives as a per-rule attribute,
-      and the rule-push CLI path is unsafe). Set in Control Panel >
-      Security > Firewall > edit profile "{{ security_spec.firewall.active_profile | default('default') }}":
-      add an Allow rule with source = "Specific IP from country" / United
-      States, then default-deny everything else. Runbook section in
-      docs/e4e-nas-dsm.md.
-  changed_when: false
-  when:
-    - security_spec.firewall.geoip is defined
-    - security_spec.firewall.geoip.enable | default(false)
 
 # --- Drift export (read-only) — only with `--tags export` -----------------------
 - name: Export live state for drift detection

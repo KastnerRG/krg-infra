@@ -24,6 +24,7 @@ Read-only diagnostics (no SET; safe to run any time):
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 
@@ -188,6 +189,91 @@ def do_probe_geoip(a):
     return 0
 
 
+# --- Firewall.Profile.set + Profile.Apply via HTTP webapi --------------------
+# The CLI `synowebapi --exec ... Firewall.Rules.save_start` SEGFAULTS on rule
+# objects with concrete fields (DSM 7.2.2 parser bug, reproduced; synoscgi
+# also crashes via that path → nginx 502). The DSM web UI uses a different
+# API entirely: `Firewall.Profile.set` (full-profile push) followed by
+# `Firewall.Profile.Apply.start/status/stop` (two-phase commit) over the HTTP
+# webapi. dsm_http.DSMSession is the stdlib client for that path.
+#
+# This subcommand is the IaC firewall-rule push: read current Profile.get,
+# MERGE the spec's per-adapter blocks over it (preserves unmanaged adapters
+# — operator can keep manual per-adapter overrides without us nuking them),
+# diff, push if changed. Two-phase apply commits to live nftables.
+#
+# Anti-lockout: refuses to apply if the merged target would leave the active
+# profile's `global` adapter with policy=deny + no allow rules (would block
+# the SSH session this play runs over).
+def do_firewall_profile(a):
+    desired_adapters = json.loads(a.desired)  # {adapter: {policy, rules}, ...}
+    if not isinstance(desired_adapters, dict):
+        print("FAIL desired must be a JSON object of {adapter: {policy, rules}}")
+        return 1
+    password = a.password or os.environ.get("DSM_PASSWORD") or ""
+    if not password:
+        print("FAIL no password supplied (pass --password on argv or set "
+              "DSM_PASSWORD env)")
+        return 1
+
+    # Late import — module file is sibling, copied by ansible script:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from dsm_http import DSMSession, DSMError
+
+    try:
+        with DSMSession(account=a.account, password=password) as s:
+            current = s.profile_get(a.profile_name)
+            # Merge: replace declared adapters, preserve the rest + the name key
+            target = dict(current)
+            target["name"] = a.profile_name
+            for adapter, block in desired_adapters.items():
+                target[adapter] = block
+
+            # Per-adapter drift — only on adapters we manage
+            drift = {ad: {"current": current.get(ad), "desired": target[ad]}
+                     for ad in desired_adapters if current.get(ad) != target[ad]}
+
+            if not drift:
+                print("OK no-change")
+                return 0
+
+            # Anti-lockout: if any MANAGED adapter would have a default-DROP
+            # (DSM's silent default-deny — "deny" gets normalized to "none",
+            # so "drop" is the real enforcement enum) with no allow rules
+            # anywhere in the merged profile, we'd lock ourselves out. Refuse.
+            # An allow rule anywhere (global OR per-adapter) is sufficient —
+            # global rules apply across all interfaces.
+            drop_adapters = [ad for ad in desired_adapters
+                             if (target.get(ad) or {}).get("policy") == "drop"]
+            if drop_adapters:
+                allow_anywhere = any(
+                    isinstance(r, dict) and r.get("policy") == "allow"
+                    for ad in target if ad != "name"
+                    for r in (target[ad].get("rules") or [])
+                )
+                if not allow_anywhere:
+                    print("FAIL anti-lockout: target has default-drop on %s "
+                          "with no allow rules anywhere. Refusing to push "
+                          "(would block SSH). Add at least one allow rule."
+                          % drop_adapters)
+                    return 1
+
+            if a.check:
+                print("WOULD-CHANGE " + json.dumps(sorted(drift.keys())))
+                return 0
+
+            s.profile_set(target, applying=False)
+            if a.apply:
+                s.profile_apply(a.profile_name)
+                print("CHANGED " + json.dumps(sorted(drift.keys())))
+            else:
+                print("CHANGED-NO-APPLY " + json.dumps(sorted(drift.keys())))
+            return 0
+    except DSMError as e:
+        print("FAIL %s" % str(e)[:200])
+        return 1
+
+
 # --- Anti-lockout probe (H2) ---------------------------------------------------
 # Enabling SYNO.Core.Security.Firewall on a profile with NO rules is a
 # default-deny posture — DSM blocks all inbound, including the SSH session
@@ -254,6 +340,25 @@ def main(argv=None):
                         help="Read-only: report whether the named firewall profile has any rules.")
     pp.add_argument("--profile", required=True)
     pp.set_defaults(func=do_probe_profile)
+
+    fp = sub.add_parser("firewall-profile",
+                        help="Push per-adapter rules to a DSM firewall profile via the "
+                             "HTTP webapi (Profile.set + Profile.Apply two-phase). "
+                             "Unmanaged adapters are preserved. Reads DSM_PASSWORD from env.")
+    fp.add_argument("--account", default="e4e-admin")
+    fp.add_argument("--password", default=None,
+                    help="DSM password. Falls back to DSM_PASSWORD env if "
+                         "omitted. Use `no_log: true` on the Ansible task.")
+    fp.add_argument("--profile-name", dest="profile_name", default="default")
+    fp.add_argument("--desired", required=True,
+                    help="JSON object: {adapter: {policy, rules: [...]}}. "
+                         "Only listed adapters are managed.")
+    fp.add_argument("--apply", action="store_true",
+                    help="After Profile.set, also Profile.Apply (commit to "
+                         "live nftables). Without this, the profile is saved "
+                         "to disk but not activated.")
+    fp.add_argument("--check", action="store_true")
+    fp.set_defaults(func=do_firewall_profile)
 
     pg = sub.add_parser("probe-geoip",
                         help="Read-only: surface DSM geoip-related state "

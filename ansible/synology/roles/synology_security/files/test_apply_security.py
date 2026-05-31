@@ -211,3 +211,215 @@ def test_geoip_apply_subcommand_removed(monkeypatch, capsys):
         m.main(["geoip", "--enable", "true", "--countries", "US"])
     # argparse exits with code 2 on invalid choice
     assert exc.value.code == 2
+
+
+# --- firewall-profile — HTTP webapi rule push (Profile.set + Profile.Apply) ---
+
+class _FakeDSMSession:
+    """Stand-in for dsm_http.DSMSession that records calls and returns canned data.
+
+    Test seeds `_FakeDSMSession.current_profile` before the call; tests assert
+    against `_FakeDSMSession.last_set_profile` + `last_apply_name` afterward.
+    """
+    current_profile = None
+    last_set_profile = None
+    last_apply_name = None
+    raise_on_set = None  # if set, profile_set raises this exception
+
+    def __init__(self, account=None, password=None, **kwargs):
+        self.account = account
+        self.password = password
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def profile_get(self, name):
+        # Return a deep-copied dict so tests don't mutate the seed accidentally
+        import copy
+        return copy.deepcopy(_FakeDSMSession.current_profile)
+
+    def profile_set(self, profile, applying=False):
+        if _FakeDSMSession.raise_on_set:
+            raise _FakeDSMSession.raise_on_set
+        _FakeDSMSession.last_set_profile = profile
+        return {}
+
+    def profile_apply(self, name, **kw):
+        _FakeDSMSession.last_apply_name = name
+        return {"finish": True}
+
+
+def _install_fake_dsm(monkeypatch):
+    """Stub dsm_http with the FakeDSMSession class + a DSMError exception.
+
+    do_firewall_profile late-imports dsm_http, so we inject a fake module into
+    sys.modules and reset class state between tests.
+    """
+    import types
+    import sys as _sys
+    fake_mod = types.ModuleType("dsm_http")
+    class _DSMError(Exception): pass
+    fake_mod.DSMSession = _FakeDSMSession
+    fake_mod.DSMError = _DSMError
+    monkeypatch.setitem(_sys.modules, "dsm_http", fake_mod)
+    _FakeDSMSession.current_profile = None
+    _FakeDSMSession.last_set_profile = None
+    _FakeDSMSession.last_apply_name = None
+    _FakeDSMSession.raise_on_set = None
+    return _DSMError
+
+
+def _argv(desired, **overrides):
+    """Build a firewall-profile argv list with sensible defaults."""
+    import json as _j
+    args = ["firewall-profile",
+            "--account", overrides.get("account", "e4e-admin"),
+            "--password", overrides.get("password", "pw"),
+            "--profile-name", overrides.get("profile_name", "default"),
+            "--desired", _j.dumps(desired)]
+    if overrides.get("apply"):
+        args.append("--apply")
+    if overrides.get("check"):
+        args.append("--check")
+    return args
+
+
+def test_firewall_profile_no_change(monkeypatch, capsys):
+    """Identical desired vs current → OK no-change, no set, no apply."""
+    _install_fake_dsm(monkeypatch)
+    rule = {"enable": True, "log": False, "name": "geoip-US-floor",
+            "policy": "allow", "port_direction": "destination",
+            "port_group": "all", "ports": "all", "protocol": "all",
+            "source_ip_group": "geoip", "source_ip": "US"}
+    _FakeDSMSession.current_profile = {
+        "name": "default",
+        "global": {"policy": "none", "rules": [rule]},
+    }
+    desired = {"global": {"policy": "none", "rules": [rule]}}
+    rc = m.main(_argv(desired, apply=True))
+    assert rc == 0
+    assert "OK no-change" in capsys.readouterr().out
+    assert _FakeDSMSession.last_set_profile is None
+    assert _FakeDSMSession.last_apply_name is None
+
+
+def test_firewall_profile_check_reports_drift_no_mutation(monkeypatch, capsys):
+    """--check reports WOULD-CHANGE but does NOT call set/apply."""
+    _install_fake_dsm(monkeypatch)
+    _FakeDSMSession.current_profile = {
+        "name": "default",
+        "global": {"policy": "none", "rules": []},
+        "eth0": {"policy": "allow", "rules": []},
+    }
+    desired = {"global": {"policy": "none", "rules": [
+        {"name": "geoip-US", "policy": "allow", "enable": True, "log": False,
+         "port_direction": "destination", "port_group": "all", "ports": "all",
+         "protocol": "all", "source_ip_group": "geoip", "source_ip": "US"}]}}
+    rc = m.main(_argv(desired, check=True))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out.startswith("WOULD-CHANGE") and "global" in out
+    assert _FakeDSMSession.last_set_profile is None
+
+
+def test_firewall_profile_apply_preserves_unmanaged_adapters(monkeypatch, capsys):
+    """eth1 is in current but NOT in desired — it must survive the merge."""
+    _install_fake_dsm(monkeypatch)
+    eth1_block = {"policy": "allow", "rules": [
+        {"name": "user-manual", "policy": "allow", "enable": True, "log": False,
+         "port_direction": "destination", "port_group": "all", "ports": "all",
+         "protocol": "all", "source_ip_group": "all", "source_ip": "all"}]}
+    _FakeDSMSession.current_profile = {
+        "name": "default",
+        "eth1": eth1_block,
+        "global": {"policy": "none", "rules": []},
+    }
+    desired = {"global": {"policy": "none", "rules": [
+        {"name": "geoip-US", "policy": "allow", "enable": True, "log": False,
+         "port_direction": "destination", "port_group": "all", "ports": "all",
+         "protocol": "all", "source_ip_group": "geoip", "source_ip": "US"}]}}
+    rc = m.main(_argv(desired, apply=True))
+    assert rc == 0 and "CHANGED" in capsys.readouterr().out
+    assert _FakeDSMSession.last_set_profile["eth1"] == eth1_block
+    assert _FakeDSMSession.last_set_profile["global"]["rules"][0]["name"] == "geoip-US"
+    assert _FakeDSMSession.last_apply_name == "default"
+
+
+def test_firewall_profile_anti_lockout_refuses_default_drop_no_allows(monkeypatch, capsys):
+    """drop default (DSM's "deny") + zero allow rules anywhere = lockout. Must refuse."""
+    _install_fake_dsm(monkeypatch)
+    _FakeDSMSession.current_profile = {"name": "default",
+                                        "eth0": {"policy": "allow", "rules": []},
+                                        "global": {"policy": "none", "rules": []}}
+    # Spec sets eth0 to drop with no allow rules in target → would lock out
+    desired = {"eth0": {"policy": "drop", "rules": []}}
+    rc = m.main(_argv(desired, apply=True))
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL anti-lockout")
+    assert _FakeDSMSession.last_set_profile is None
+
+
+def test_firewall_profile_anti_lockout_allows_when_allow_rule_present(monkeypatch, capsys):
+    """drop default WITH an allow rule (covering admin source) = safe. Proceeds."""
+    _install_fake_dsm(monkeypatch)
+    _FakeDSMSession.current_profile = {"name": "default",
+                                        "global": {"policy": "none", "rules": []},
+                                        "eth0": {"policy": "allow", "rules": []}}
+    # eth0 default-drop is safe because global has an allow rule covering it
+    desired = {
+        "eth0": {"policy": "drop", "rules": []},
+        "global": {"policy": "none", "rules": [
+            {"name": "allow-trusted", "policy": "allow", "enable": True, "log": False,
+             "port_direction": "destination", "port_group": "all", "ports": "all",
+             "protocol": "all", "source_ip_group": "ip", "source_ip": "192.168.1.0/24"}]},
+    }
+    rc = m.main(_argv(desired, apply=True))
+    assert rc == 0 and "CHANGED" in capsys.readouterr().out
+    assert _FakeDSMSession.last_set_profile is not None
+
+
+def test_firewall_profile_no_apply_flag_skips_commit(monkeypatch, capsys):
+    """Without --apply, Profile.set runs but Profile.Apply does NOT."""
+    _install_fake_dsm(monkeypatch)
+    _FakeDSMSession.current_profile = {"name": "default",
+                                        "global": {"policy": "none", "rules": []}}
+    desired = {"global": {"policy": "none", "rules": [
+        {"name": "allow-trusted", "policy": "allow", "enable": True, "log": False,
+         "port_direction": "destination", "port_group": "all", "ports": "all",
+         "protocol": "all", "source_ip_group": "geoip", "source_ip": "US"}]}}
+    rc = m.main(_argv(desired))  # no apply, no check
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED-NO-APPLY")
+    assert _FakeDSMSession.last_set_profile is not None
+    assert _FakeDSMSession.last_apply_name is None
+
+
+def test_firewall_profile_no_password_fails_loud(monkeypatch, capsys):
+    """No --password and no DSM_PASSWORD env → FAIL, no mutation."""
+    _install_fake_dsm(monkeypatch)
+    monkeypatch.delenv("DSM_PASSWORD", raising=False)
+    desired = {"global": {"policy": "deny", "rules": []}}
+    rc = m.main(["firewall-profile", "--account", "e4e-admin",
+                  "--profile-name", "default",
+                  "--desired", '{"global":{"policy":"deny","rules":[]}}',
+                  "--apply"])
+    assert rc == 1 and capsys.readouterr().out.startswith("FAIL")
+
+
+def test_firewall_profile_dsm_error_surfaces_as_fail(monkeypatch, capsys):
+    """A DSMError from profile_set bubbles up as FAIL (no apply attempted)."""
+    DSMError = _install_fake_dsm(monkeypatch)
+    _FakeDSMSession.current_profile = {"name": "default",
+                                        "global": {"policy": "none", "rules": []}}
+    _FakeDSMSession.raise_on_set = DSMError("Profile.set failed (code=120)")
+    desired = {"global": {"policy": "none", "rules": [
+        {"name": "allow-trusted", "policy": "allow", "enable": True, "log": False,
+         "port_direction": "destination", "port_group": "all", "ports": "all",
+         "protocol": "all", "source_ip_group": "geoip", "source_ip": "US"}]}}
+    rc = m.main(_argv(desired, apply=True))
+    out = capsys.readouterr().out
+    assert rc == 1 and "FAIL" in out and "120" in out
+    assert _FakeDSMSession.last_apply_name is None  # never reached Apply
