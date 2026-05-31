@@ -83,6 +83,32 @@
   loop_control:
     loop_var: ip
 
+# ops admin personal IPs (chris/sean — `ops` in trusted.json) are NOT in the
+# trusted-net all-ports allow above (those are sealab + machines + monitoring
+# only). ops get a narrower allow restricted to SSH (TCP 22) so admins can
+# break-glass from a hotel wifi outside the US without opening the entire
+# admin port surface (DSM web, SMB, etc.) to whatever IP they're on. SSH itself
+# is key-only via synology_ssh + AutoBlock-protected, so the attack surface
+# of "allow ops IP to SSH" is tight.
+- name: Build ops SSH allow rules (one per ops admin IP, port 22 TCP only)
+  ansible.builtin.set_fact:
+    firewall_ops_ssh_rules: "{{ firewall_ops_ssh_rules | default([]) + [_rule] }}"
+  vars:
+    _rule:
+      name: "ops-ssh-{{ ip | regex_replace('[./:]', '_') }}"
+      enable: true
+      log: false
+      policy: allow
+      port_direction: destination
+      port_group: custom
+      ports: "22"
+      protocol: tcp
+      source_ip_group: ip
+      source_ip: "{{ ip }}"
+  loop: "{{ krg_trusted.ipsets.ops | default([]) | map(attribute='cidr') | list }}"
+  loop_control:
+    loop_var: ip
+
 - name: Drift-check geoip rule(s) against geoip.allow_countries (spec internal consistency)
   ansible.builtin.assert:
     that:
@@ -107,14 +133,14 @@
     - security_spec.firewall.geoip.enable | default(false)
     - _geoip_rule_sources | length > 0
 
-- name: Compose firewall_managed_adapters dict (per-adapter from spec; trusted rules prepended to `global`)
+- name: Compose firewall_managed_adapters dict (per-adapter; trusted+ops rules prepended to `global`)
   ansible.builtin.set_fact:
     firewall_managed_adapters: >-
       {{
         firewall_managed_adapters | default({}) | combine({
           item.key: {
             'policy': item.value.policy,
-            'rules': (firewall_trusted_rules + item.value.rules) if item.key == 'global' else item.value.rules
+            'rules': (firewall_trusted_rules + (firewall_ops_ssh_rules | default([])) + item.value.rules) if item.key == 'global' else item.value.rules
           }
         })
       }}

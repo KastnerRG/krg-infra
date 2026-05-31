@@ -64,9 +64,13 @@ firewall:
       # Rule evaluation order is top-down within each block, first match
       # wins; global rules evaluate before per-adapter rules.
       adapters:
-        # `global` carries the rules that apply to EVERY adapter: the
-        # trusted-net allows (prepended at apply time in tasks/main.yml,
-        # computed from nix/networks/trusted.json) + the US geoip floor.
+        # `global` carries the rules that apply to EVERY adapter:
+        # (1) trusted-net allows (sealab + machines + monitoring,
+        #     all ports) — prepended at apply time from trusted.json
+        # (2) ops admin SSH allows (chris + sean personal IPs, port 22
+        #     TCP ONLY — narrower than trusted-nets so a hotel-wifi IP
+        #     can't reach DSM web/SMB) — also prepended from trusted.json
+        # (3) the static rules below (geoip US floor)
         global:
           policy: none
           rules:
