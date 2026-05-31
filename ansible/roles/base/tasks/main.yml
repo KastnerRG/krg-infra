@@ -68,7 +68,21 @@
   ansible.builtin.import_role:
     name: ssh_hardening
 
-- name: fail2ban (sshd brute-force jail)
+# ORDER IS LOAD-BEARING: CrowdSec installs + registers + starts FIRST,
+# then fail2ban runs (stops + disables itself when superseded). If
+# CrowdSec install/registration fails on a host that had fail2ban
+# running, the play fails and fail2ban stays UP — host keeps
+# brute-force protection rather than ending up with neither stack
+# active. During a successful apply there's a brief overlap (both
+# stacks running) — that's benign: CrowdSec writes to its own
+# `CROWDSEC` iptables chain and fail2ban to `f2b-sshd`, no cross-stack
+# conflict; the double-ban window closes when fail2ban stops a few
+# tasks later.
+- name: CrowdSec (community CTI + local scenarios — replaces fail2ban)
+  ansible.builtin.import_role:
+    name: crowdsec
+
+- name: Fail2ban (sshd brute-force jail — SUPERSEDED by crowdsec; gated off fleet-wide)
   ansible.builtin.import_role:
     name: fail2ban
 

@@ -1,0 +1,13 @@
+- name: Refresh apt cache
+  ansible.builtin.apt:
+    update_cache: true
+
+- name: Restart crowdsec
+  ansible.builtin.service:
+    name: crowdsec
+    state: restarted
+
+- name: Restart crowdsec-firewall-bouncer
+  ansible.builtin.service:
+    name: crowdsec-firewall-bouncer
+    state: restarted
