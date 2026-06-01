@@ -9,16 +9,6 @@ Subcommands:
                   (SYNO.Core.Directory.Domain.Join doesn't exist on DSM 7.3.)
   join            One-shot AD join via Directory.Domain.set (full creds bundle).
                   Needs Domain Admin password; passed on argv (--no-log).
-  admin-groups    Write /etc/synoinfo.conf Ad_Domain_Admin_Groups via
-                  synosetkeyvalue. THIS is the global "AD-group → @administrators"
-                  bridge that makes admins see every share without per-share
-                  grants. Pre-reset config (e4e-nas 2026-05-21 backup) confirmed
-                  it as `KRG-UCSD-EDU\\Engineers for Exploration NAS Admins`.
-                  pkgctl-SMBService must be restarted to pick up the change
-                  (role task handles that). Idempotent: GET via synogetkeyvalue,
-                  SET only on drift. Webapi paths (Domain.Conf.set v2/v3 with
-                  domain_admin_groups) accept the field but silently no-op —
-                  validated empirically 2026-06-01.
 
 Invoked by synology_ad ansible role via `script` (DSM py3.8). Same
 OK/WOULD-CHANGE/CHANGED/FAIL contract as the other apply_*.py helpers.
@@ -34,8 +24,16 @@ idmap_mode / idmap_uid_range / idmap_gid_range / allowed_groups are DEFERRED —
 no matching field on Directory.Domain or Directory.Domain.Conf (validated by
 API.Info enumeration 2026-06-01: idmap is hardcoded to `idmap config * :
 backend = syno`, a Synology-proprietary backend with no webapi tuning surface).
-admin_groups is handled by the `admin-groups` subcommand above (synoinfo.conf
-key, NOT a Directory.Domain.set field).
+
+admin_groups is NOT pushed by this script either — DSM 7.3 has NO global
+"AD-group → NAS admin tier" mechanism (we exhaustively probed: synoinfo.conf
+Ad_Domain_Admin_Groups is ignored, Directory.Domain.Conf.set's
+domain_admin_groups silently no-ops, synogroup --memberadd doesn't propagate
+through DSM's share-resolver, the UI doesn't let you add AD groups to local
+groups). The supported pattern is per-share grants via synoshare ACLs —
+handled by synology_acls's admin-grants subcommand (which reads admin_groups
+from spec/e4e-nas/ad.yml and additively grants `@KRG\\<group>` RW on every
+share in spec/e4e-nas/shares.yml).
 """
 import argparse
 import json
@@ -43,15 +41,6 @@ import subprocess
 import sys
 
 WEBAPI = "/usr/syno/bin/synowebapi"
-SYNOGETKEYVALUE = "/usr/syno/bin/synogetkeyvalue"
-SYNOSETKEYVALUE = "/usr/syno/bin/synosetkeyvalue"
-SYNOINFO_CONF = "/etc/synoinfo.conf"
-# DSM stores the "AD groups whose members are NAS administrators" in
-# /etc/synoinfo.conf under this key, as a single comma-separated string of
-# `<NETBIOS>\<group>` entries (e.g. `KRG\Domain Admins,KRG\E4E Admin`).
-# Confirmed from the 2026-05-21 pre-reset config backup (confbkp_config_tb)
-# and validated live on e4e-nas 2026-06-01.
-ADMIN_GROUPS_KEY = "Ad_Domain_Admin_Groups"
 DOMAIN_API = "SYNO.Core.Directory.Domain"
 # Note: SYNO.Core.Directory.Domain.Join doesn't exist on DSM 7.3 (returns
 # err 102 "API does not exist"). Both the join itself AND the joined-state
@@ -263,69 +252,6 @@ def do_join(a):
     return 1
 
 
-# --- admin-groups (Ad_Domain_Admin_Groups via synosetkeyvalue) ----------------
-def _get_keyvalue(path, key):
-    """Read a synoinfo.conf-style key. Returns the value (no trailing newline)
-    or "" if unset. Raises on synogetkeyvalue invocation failure."""
-    out = subprocess.run([SYNOGETKEYVALUE, path, key], capture_output=True, text=True)
-    if out.returncode != 0:
-        raise RuntimeError("synogetkeyvalue failed: " + (out.stderr or out.stdout).strip())
-    return out.stdout.rstrip("\n")
-
-
-def _set_keyvalue(path, key, value):
-    """Write a key via synosetkeyvalue. Raises on failure."""
-    out = subprocess.run([SYNOSETKEYVALUE, path, key, value],
-                         capture_output=True, text=True)
-    if out.returncode != 0:
-        raise RuntimeError("synosetkeyvalue failed: " + (out.stderr or out.stdout).strip())
-
-
-def do_admin_groups(a):
-    """Set /etc/synoinfo.conf Ad_Domain_Admin_Groups to a comma-separated list
-    of `<NETBIOS>\\<group>` entries. This is the global "AD-group → NAS
-    administrator tier" mechanism — members of any listed group inherit
-    @administrators-equivalent access on every share automatically, with no
-    per-share grant required.
-
-    Why not via webapi: Directory.Domain.Conf.set v2/v3 with domain_admin_groups
-    returns success but silently no-ops (validated 2026-06-01 — the field is
-    accepted but not in the GET schema and changes don't take effect). The
-    pre-reset NAS used this same synoinfo.conf key (2026-05-21 confbkp_config_tb
-    backup); synosetkeyvalue is the path that actually persists.
-
-    The ansible role restarts pkgctl-SMBService when this task reports CHANGED
-    so the new value takes effect immediately (validated 2026-06-01: removing
-    a per-share grant left the share STILL visible to Domain Admins because
-    Ad_Domain_Admin_Groups was set, confirming the mechanism is live).
-    """
-    groups = json.loads(a.groups)
-    if not isinstance(groups, list) or not all(isinstance(g, str) for g in groups):
-        raise SystemExit("--groups must be a JSON array of strings")
-    if not a.netbios:
-        raise SystemExit("--netbios is required (typically realm.split('.')[0])")
-    desired = ",".join(a.netbios + "\\" + g for g in groups)
-    try:
-        current = _get_keyvalue(SYNOINFO_CONF, ADMIN_GROUPS_KEY)
-    except RuntimeError as e:
-        print("FAIL " + json.dumps({"error": str(e)}))
-        return 1
-    if current == desired:
-        print("OK no-change")
-        return 0
-    drift = {"current": current, "desired": desired}
-    if a.check:
-        print("WOULD-CHANGE " + json.dumps(drift, sort_keys=True))
-        return 0
-    try:
-        _set_keyvalue(SYNOINFO_CONF, ADMIN_GROUPS_KEY, desired)
-    except RuntimeError as e:
-        print("FAIL " + json.dumps({"error": str(e)}))
-        return 1
-    print("CHANGED " + json.dumps(drift, sort_keys=True))
-    return 0
-
-
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Apply DSM AD join + winbind config via synowebapi.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -357,15 +283,6 @@ def main(argv=None):
     j.add_argument("--join-user", dest="join_user", required=True)
     j.add_argument("--join-password", dest="join_password", required=True)
     j.set_defaults(func=do_join)
-
-    g = sub.add_parser("admin-groups",
-                       help="Set /etc/synoinfo.conf Ad_Domain_Admin_Groups (global admin-tier bridge)")
-    g.add_argument("--groups", required=True,
-                   help="JSON array of AD group names (e.g. [\"Domain Admins\", \"E4E Admin\"])")
-    g.add_argument("--netbios", required=True,
-                   help="NETBIOS domain name (typically realm.split('.')[0], e.g. KRG)")
-    g.add_argument("--check", action="store_true")
-    g.set_defaults(func=do_admin_groups)
 
     a = ap.parse_args(argv)
     return a.func(a)

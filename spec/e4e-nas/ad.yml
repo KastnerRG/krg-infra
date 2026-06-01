@@ -26,23 +26,30 @@ ad:
   allowed_groups:
     - Domain Admins
 
-  # Admin elevation — global "AD-group → NAS administrator tier" bridge.
-  # Each AD group listed here is written into /etc/synoinfo.conf's
-  # `Ad_Domain_Admin_Groups` key (as `KRG\<group>,KRG\<group>,...`) by the
-  # synology_ad role's admin-groups task. Members of any listed group then
-  # inherit @administrators-equivalent access on every share automatically —
-  # no per-share ACL grant required (the share-resolver consults this key
-  # at access-check time).
+  # AD groups that should be NAS admins. DSM 7.3 has NO global mechanism to
+  # express this — every candidate we probed 2026-06-01 either silently
+  # no-ops or doesn't propagate through DSM's share-permission resolver:
+  #   * synoinfo Ad_Domain_Admin_Groups — DSM 6 used this; DSM 7.3 ignores it
+  #   * Directory.Domain.Conf.set v2/v3 domain_admin_groups — returns success,
+  #     field isn't in the GET schema, changes never apply
+  #   * smb.conf `admin users=@KRG\Domain Admins` — Samba override AFTER
+  #     DSM's per-share ACL gate, doesn't bypass it
+  #   * synogroup --memberadd administrators KRG\<group> — entry persists in
+  #     synogroup but the DSM resolver doesn't walk it backwards; also
+  #     DSM 7.3's UI no longer offers to add AD groups to local groups at
+  #     all (Edit administrators → Members shows local users only)
+  # The pre-reset NAS that "just worked" accumulated per-share grants in the
+  # filesystem ACL (Advanced Permissions UI) over years — the orphan SIDs
+  # showing as "Unknown user/group: 2841642074" on live shares today are
+  # the remnants of `KRG-UCSD-EDU\Engineers for Exploration NAS Admins`
+  # that the new KRG.LOCAL domain can't resolve.
   #
-  # Mechanism confirmed from the 2026-05-21 pre-reset confbkp_config_tb
-  # backup (the prior NAS used this exact key with old-domain
-  # "Engineers for Exploration NAS Admins") and validated live 2026-06-01:
-  # per-share Domain-Admins grants stripped from `admin` share → Domain
-  # Admins still see it because this key is set.
-  #
-  # NOT the API path: Directory.Domain.Conf.set v2/v3 with
-  # domain_admin_groups returns success but silently no-ops on DSM 7.3;
-  # synosetkeyvalue against /etc/synoinfo.conf is what actually persists.
+  # So this list is consumed by `synology_acls`'s admin-grants subcommand,
+  # which additively grants `@KRG\<group>` RW on every share in
+  # spec/e4e-nas/shares.yml (the DSM 7.3-supported per-share model).
+  # apply_ad.py validates the field for the role contract but does NOT push
+  # it (no working API surface). See ansible/synology/roles/synology_ad/
+  # tasks/main.yml for the architectural note.
   admin_groups:
     - Domain Admins
     - E4E Admin

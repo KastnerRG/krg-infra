@@ -19,10 +19,16 @@
 # share-level grant model mirrors what nix/profiles/server.nix would express
 # with `users.users.*.groups` on a non-DSM host, but at the filesystem layer.
 
-- name: Load the ACL grant spec
+- name: Load the ACL + shares + AD specs
   ansible.builtin.include_vars:
-    file: "{{ synology_acls_spec }}"
-    name: acls_spec
+    file: "{{ item.file }}"
+    name: "{{ item.name }}"
+  loop:
+    - { file: "{{ synology_acls_spec }}",   name: acls_spec }
+    - { file: "{{ synology_shares_spec }}", name: shares_spec }
+    - { file: "{{ synology_ad_spec }}",     name: ad_spec }
+  loop_control:
+    label: "{{ item.name }}"
 
 # --- Mode 1: share-level grants (always runs) ---------------------------------
 - name: Apply share-level ACL grants (synoshare --setuser; groups @-prefixed)
@@ -38,6 +44,41 @@
   changed_when: "'CHANGED' in acl_apply.stdout or 'WOULD-CHANGE' in acl_apply.stdout"
   failed_when: "acl_apply.rc != 0 or 'FAIL' in acl_apply.stdout"
   check_mode: false # run in --check too; apply_acls.py --check self-gates (read-only)
+
+# --- Mode 1b: admin_groups → RW on every share in shares.yml (additive bridge) ---
+# The acls.yml `setuser` matrix above is authoritative per-share (omitting a
+# principal REMOVES it). That makes "Domain Admins RW on every share" tedious
+# to express — you'd have to add the same admin grants to every per-share
+# entry in acls.yml. This task is the cross-cutting bridge instead: it loops
+# the shares.yml share list and additively grants each ad.yml admin_groups
+# entry on the RW tier. Idempotent (`+` adds only what's missing).
+#
+# CRITICAL SAFETY: drives from spec.shares — NOT from `synoshare --enum`. The
+# DSM-auto-managed shares (homes, web, photo, NetBackup) are intentionally
+# NOT listed in shares.yml because their on-disk perms are sshd-critical
+# (a homes-share grant change cascades to /volume1/homes/<user>/.ssh/ and
+# can lock SSH out — we hit this 2026-06-01). NEVER widen this loop to use
+# --enum or to include those system shares.
+- name: Bridge AD admin_groups → RW on every spec'd share (additive; skips system shares by spec design)
+  vars:
+    _netbios: "{{ ad_spec.ad.realm.split('.')[0] }}"
+    _shares: "{{ shares_spec.shares | default([]) | map(attribute='name') | list }}"
+    _grants: >-
+      {{ (ad_spec.ad.admin_groups | default([]))
+         | map('regex_replace', '^', '@' ~ _netbios ~ '\\') | list }}
+  ansible.builtin.script: >-
+    apply_acls.py admin-grants
+    --shares {{ _shares | to_json | quote }}
+    --grants {{ _grants | to_json | quote }}
+    --tier RW
+    {{ '--check' if ansible_check_mode else '' }}
+  register: admin_grants_apply
+  changed_when: "'CHANGED' in admin_grants_apply.stdout or 'WOULD-CHANGE' in admin_grants_apply.stdout"
+  failed_when: "admin_grants_apply.rc != 0 or 'FAIL' in admin_grants_apply.stdout"
+  check_mode: false
+  when:
+    - (ad_spec.ad.admin_groups | default([])) | length > 0
+    - (shares_spec.shares | default([])) | length > 0
 
 # --- Mode 2: recursive filesystem stamp (opt-in, --tags acls-recursive) -------
 # Walks <path>/** and re-applies the share-root ACL to every entry. The
