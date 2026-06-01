@@ -39,10 +39,24 @@ in {
   environment.variables.VAULT_ADDR = "https://krg-vault.ucsd.edu:8200";
 
   krg.firewall = {
-    # 80: public, ACME HTTP-01 challenge only (nginx handles it)
-    allowedTCPPorts = [ 22 80 ];
+    # SSH (22) inherits from base.nix's default allowedTCPPorts = [22];
+    # serviceHost = true (also from base.nix default) restricts it to
+    # ucsd + ops via sshSources (stricter than the fleet CrowdSec floor).
     monitoringPorts = [ 9100 ];
-    # 8200: OpenBao API — sealab + ops admins only, matching the Proxmox perimeter
+    # 80 → globally public for ACME HTTP-01 ONLY. Let's Encrypt does
+    # multi-perspective validation from US + EU + Asia validators with
+    # unpredictable source IPs; ANY source restriction (geo allowlist,
+    # behavioral ban, even an accidental community-blocklist hit on an
+    # LE infrastructure IP) would risk breaking cert issuance/renewal.
+    # nginx serves only the /.well-known/acme-challenge/ path on 80;
+    # everything else 404s — small attack surface. DNS-01 migration to
+    # close this entirely was considered but is out of scope (would need
+    # RFC2136 / acme-dns infra) — see closed issue #89 for the analysis.
+    publicPorts = [ 80 ];  # reason: ACME HTTP-01 (LE multi-perspective)
+    # 8200: OpenBao API — sealab + ops + machines only, matching the
+    # Proxmox perimeter. Strictly tighter than the fleet CrowdSec default;
+    # sourcedPorts always takes precedence over the globally-open list, so
+    # 8200 doesn't double-gate.
     sourcedPorts = [{
       port    = 8200;
       sources = map (e: e.cidr) trusted.ipsets.sealab
