@@ -2,28 +2,30 @@
 """Apply DSM AD domain join (KRG.LOCAL) + winbind config idempotently.
 
 Subcommands:
-  domain-config   SYNO.Core.Directory.Domain set (v1) — realm + DC + idmap +
-                  allowed/admin groups. FULL-OBJECT (partial = err 2001).
-  test-join       SYNO.Core.Directory.Domain.Join test (v1) — read-only check.
+  domain-config   SYNO.Core.Directory.Domain set (v1) — realm + DC + OU only.
+                  See OUT_KEYS / deferred-fields note below.
+  test-join       Read-only join check via Directory.Domain.get → enable_domain.
                   Prints "JOINED <realm>" / "NOT-JOINED <reason>".
-  join            SYNO.Core.Directory.Domain.Join start (v1) — one-shot join.
-                  Needs Domain Admin creds; password is on argv (--no-log).
+                  (SYNO.Core.Directory.Domain.Join doesn't exist on DSM 7.3.)
+  join            One-shot AD join via Directory.Domain.set (full creds bundle).
+                  Needs Domain Admin password; passed on argv (--no-log).
 
 Invoked by synology_ad ansible role via `script` (DSM py3.8). Same
 OK/WOULD-CHANGE/CHANGED/FAIL contract as the other apply_*.py helpers.
 
-Field mapping (DSM 7.3 best-known — empirical confirmation pending; flip
-OUT_KEYS on first-apply drift):
-  realm                  -> realm
-  domain                 -> nbns_name (DSM's "domain NETBIOS name" slot — verify)
-  dc_host                -> server_address
-  dc_ip                  -> server_ip
-  ou                     -> ou
-  idmap_mode             -> idmap_type     ("rid"|"autorid")
-  idmap_uid_range        -> idmap_uid
-  idmap_gid_range        -> idmap_gid
-  allowed_groups         -> allowed_groups
-  admin_groups           -> domain_admin_groups
+Field mapping (DSM 7.3, validated empirically 2026-06-01 — see OUT_KEYS):
+  realm    -> realm           # KRG.LOCAL (uppercase Kerberos realm)
+  domain   -> domain_name     # krg.local (lowercase AD DNS domain)
+  dc_host  -> server_address
+  dc_ip    -> server_ip
+  ou       -> ou
+
+idmap_mode / idmap_uid_range / idmap_gid_range / allowed_groups / admin_groups
+are DEFERRED — no matching field on Directory.Domain or Directory.Domain.Conf
+(validated by API.Info enumeration 2026-06-01: idmap is hardcoded to
+`idmap config * : backend = syno`, a Synology-proprietary backend with no
+webapi tuning surface). The CLI args stay on `domain-config` so the role
+contract holds; values live declaratively in spec/e4e-nas/ad.yml.
 """
 import argparse
 import json
