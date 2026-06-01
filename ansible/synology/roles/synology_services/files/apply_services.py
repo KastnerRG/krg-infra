@@ -152,6 +152,20 @@ def do_snmp(a):
             # Simplest: delete from desired so apply_service treats it as
             # unmanaged for this run.
             del desired["enable_snmp_v3"]
+            # ALSO defer enable_snmp itself when no other protocol is enabled.
+            # DSM errors 2202 on a SET that enables the daemon without at least
+            # one working protocol — v1v2 is off here and v3 just got deferred,
+            # so enable_snmp=true would land a daemon-with-no-protocols which
+            # DSM rejects. The metadata fields (contact / location / name /
+            # rouser) still go through; only the daemon-enable + v3 flag wait
+            # for credentials to land in secrets-syno.yml. Validated against
+            # the e4e-nas live API 2026-05-31.
+            if desired.get("enable_snmp") and not _bool(a.v1v2 or "false"):
+                sys.stderr.write(
+                    "WARN: snmp.enable_snmp=true ALSO deferred — DSM err 2202 "
+                    "rejects daemon-enable with no protocol active "
+                    "(v1v2=false, v3 deferred). Metadata fields still apply.\n")
+                del desired["enable_snmp"]
             # Also don't push rouser (would be a v3-only field with no v3 enabled)
             # — fall through; we never add it in this branch.
     else:
