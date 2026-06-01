@@ -4,17 +4,20 @@
 Subcommands:
   terminal      SYNO.Core.Terminal set (v1) — ssh.enable + ssh.port + telnet.enable +
                 sftp.enable. FULL-OBJECT (partial = err 2001): GET → overlay → SET.
-  sshd-drop-in  Write /etc/ssh/sshd_config.d/10-krg-hardening.conf
-                (PasswordAuthentication no / PermitRootLogin no / pubkey algos).
-                Writes the candidate atomically, then validates with `sshd -t`
-                and rolls back if validation fails (BEFORE any restart, so the
-                running daemon never reads a broken config). Restarts sshd via
-                `systemctl restart sshd` only on change — DSM 7.x is
-                systemd-based and `sshd.service` is a standard OpenBSD-style
-                unit. DSM has no UI toggle for these settings, so they must
-                live in sshd_config — and `template:`/`copy:` ansible modules
-                don't work on DSM's python 3.8 (below ansible's module floor),
-                so the script ships the file itself.
+  sshd-drop-in  Configure three coupled files as ONE transaction:
+                  (a) /etc/ssh/sshd_config.d/10-krg-hardening.conf — hardening
+                  (b) /etc/ssh/sshd_config — prepend `Include /etc/ssh/sshd_config.d/*.conf`
+                      (DSM ships sshd_config without an Include — without this
+                      prepend, the drop-in is orphaned)
+                  (c) /usr/local/bin/krg-ad-authkeys — AuthorizedKeysCommand helper
+                      that fetches sshPublicKey from AD via `net ads search`
+                Atomic-writes all three, validates with `sshd -t`, rolls back
+                ALL on validation failure (so the running daemon never reads a
+                broken config), restarts sshd via `systemctl restart sshd` only
+                on change. DSM 7.x is systemd-based and `sshd.service` is a
+                standard OpenBSD-style unit. DSM has no UI toggle for these
+                settings; `template:`/`copy:` don't work on DSM's python 3.8
+                (below ansible's module floor), so this script ships the bytes.
 
 Invoked by the synology_ssh ansible role via the `script` module.
 Prints OK no-change / WOULD-CHANGE <json> / CHANGED <json> / FAIL <json>.
@@ -43,6 +46,8 @@ TERMINAL_API = "SYNO.Core.Terminal"
 # idempotent re-applies).
 TERMINAL_VER = 3
 SSHD_DROP_IN = "/etc/ssh/sshd_config.d/10-krg-hardening.conf"
+SSHD_MAIN = "/etc/ssh/sshd_config"
+AD_AUTHKEYS_PATH = "/usr/local/bin/krg-ad-authkeys"
 
 OUT_KEYS = {
     "ssh_enable":    "enable_ssh",
@@ -124,31 +129,89 @@ def do_terminal(a):
     return _result(drift, a.check, apply)
 
 
-# --- sshd-drop-in (write /etc/ssh/sshd_config.d/10-krg-hardening.conf) -------------
+# --- sshd-drop-in (drop-in + main-config Include + AD-keys helper) ----------------
+# OpenSSH-version note: DSM 7.3 ships OpenSSH 8.2p1 (verified 2026-06-01).
+# `PubkeyAcceptedAlgorithms` was introduced in 8.5 — on 8.2 it's a hard parse
+# error (`Bad configuration option: PubkeyAcceptedAlgorithms` → drop-in is
+# rejected). The older name `PubkeyAcceptedKeyTypes` works on 8.2 AND on 8.5+
+# (kept as a backwards-compat alias). Using the old name is the safe choice.
 SSHD_TEMPLATE = """\
 # Managed by Ansible (krg-infra synology_ssh) — DO NOT EDIT.
 # Mirrors ansible/roles/ssh_hardening/templates/10-krg-hardening.conf.j2 and
 # nix/profiles/base.nix services.openssh.settings. DSM's UI has no toggle for
-# these settings, so they live here. A DSM major update can REVERT this file —
-# re-apply synology_base after upgrades.
+# these settings, so they live here. A DSM major update can REVERT this file
+# AND the main-config Include directive — re-apply synology_base after upgrades.
 
 PasswordAuthentication {pw}
 PermitRootLogin {root}
 ChallengeResponseAuthentication no
 KbdInteractiveAuthentication no
-{algos}"""
+{algos}AuthorizedKeysCommand {ad_authkeys}
+AuthorizedKeysCommandUser root
+"""
 
 
 def _render_drop_in(allow_password, allow_root, allowed_algos):
     algos = ""
     if allowed_algos:
-        algos = ("PubkeyAcceptedAlgorithms " + allowed_algos + "\n"
+        # PubkeyAcceptedKeyTypes (NOT PubkeyAcceptedAlgorithms — see version note above).
+        algos = ("PubkeyAcceptedKeyTypes " + allowed_algos + "\n"
                  "HostKeyAlgorithms " + allowed_algos + "\n")
     return SSHD_TEMPLATE.format(
         pw="yes" if allow_password else "no",
         root="yes" if allow_root else "no",
         algos=algos,
+        ad_authkeys=AD_AUTHKEYS_PATH,
     )
+
+
+# --- main /etc/ssh/sshd_config — Include directive at top -------------------------
+# DSM ships sshd_config without an `Include` directive, so the drop-in is
+# orphaned. We prepend our own Include block at the top so OpenSSH's first-wins
+# semantics apply our PasswordAuthentication=no BEFORE the main file's
+# PasswordAuthentication=yes further down. Idempotent via marker detection.
+INCLUDE_BEGIN_MARKER = "# --- BEGIN KRG-MANAGED Include (synology_ssh) ---"
+INCLUDE_END_MARKER = "# --- END KRG-MANAGED Include (synology_ssh) ---"
+INCLUDE_BLOCK = (INCLUDE_BEGIN_MARKER + "\n"
+                 "# DSM ships sshd_config without an `Include` directive, leaving the drop-in at\n"
+                 "# /etc/ssh/sshd_config.d/*.conf orphaned. Prepended at the top so first-wins\n"
+                 "# semantics give the drop-in's PasswordAuthentication=no priority over the\n"
+                 "# `PasswordAuthentication yes` line further down in this file.\n"
+                 "Include /etc/ssh/sshd_config.d/*.conf\n"
+                 + INCLUDE_END_MARKER + "\n\n")
+
+
+def _ensure_include_block(content):
+    """Idempotent: prepend INCLUDE_BLOCK iff our marker isn't already present."""
+    if INCLUDE_BEGIN_MARKER in content:
+        return content
+    return INCLUDE_BLOCK + content
+
+
+# --- AD-keys helper (/usr/local/bin/krg-ad-authkeys) ------------------------------
+# sshd's AuthorizedKeysCommand. Looks up the sshPublicKey attribute on
+# sAMAccountName=$1 in KRG.LOCAL via `net ads search`, which uses the machine
+# account's secret in /var/lib/samba/private/secrets.tdb (root-only — that's
+# why AuthorizedKeysCommandUser=root above). No separate keytab/kinit needed.
+#
+# Why a wrapper at all (instead of pointing AuthorizedKeysCommand at `net`):
+# sshd refuses commands with arguments or quoting in the AuthorizedKeysCommand
+# value; the username has to come from %u in the script.
+AD_AUTHKEYS_SCRIPT = """\
+#!/bin/sh
+# Managed by Ansible (krg-infra synology_ssh) — DO NOT EDIT.
+# AuthorizedKeysCommand for sshd: prints AD-served sshPublicKey lines for $1.
+set -eu
+USER="${1:-}"
+[ -n "$USER" ] || exit 0
+# Whitelist sAMAccountName characters; reject anything else (LDAP-injection /
+# shell-meta guard — sshd already passes %u which is unescaped).
+case "$USER" in
+  *[!A-Za-z0-9._-]*) exit 0 ;;
+esac
+/usr/local/bin/net ads search "(sAMAccountName=$USER)" sshPublicKey 2>/dev/null \\
+  | sed -n 's/^sshPublicKey: //p'
+"""
 
 
 def _read_existing(path):
@@ -159,52 +222,90 @@ def _read_existing(path):
         return None
 
 
+def _atomic_write(path, content, mode):
+    """Atomic-write `content` to `path` with `mode` perms. Returns nothing;
+    raises OSError on failure. Uses a sibling tempfile + os.replace so
+    readers never see a half-written file."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=os.path.dirname(path),
+                                     delete=False, prefix="." + os.path.basename(path) + ".",
+                                     suffix=".tmp") as tf:
+        tf.write(content)
+        tmp = tf.name
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def _restore(path, old_content):
+    """Put `old_content` back at `path`. If old_content is None, the file
+    didn't exist before — remove it. Used to roll back after sshd -t fails."""
+    if old_content is None:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+    else:
+        with open(path, "w") as f:
+            f.write(old_content)
+
+
+# File-mode policy. Helper is executable; the two sshd_config files are
+# 0644 (sshd checks both are readable + not world-writable).
+_FILE_MODES = {
+    AD_AUTHKEYS_PATH: 0o755,
+    SSHD_DROP_IN:     0o644,
+    SSHD_MAIN:        0o644,
+}
+
+
 def do_sshd_drop_in(a):
-    desired = _render_drop_in(_bool(a.allow_password), _bool(a.allow_root),
-                              a.allowed_algos or "")
-    current = _read_existing(SSHD_DROP_IN)
-    if current == desired:
+    """Three-file transaction: drop-in + main-config Include + AD-keys helper.
+
+    Each file is diffed; only changed files are written. After all writes
+    land, run `sshd -t` once. If validation fails, ALL changed files are
+    rolled back to their prior content before any restart attempt — so the
+    running daemon never reads a broken config. Restart sshd via systemctl
+    only if anything actually changed and validation passed.
+    """
+    desired_dropin = _render_drop_in(_bool(a.allow_password), _bool(a.allow_root),
+                                     a.allowed_algos or "")
+    desired_helper = AD_AUTHKEYS_SCRIPT
+    current_main = _read_existing(SSHD_MAIN) or ""
+    desired_main = _ensure_include_block(current_main)
+
+    plan = []  # list of (path, old_content_or_None, new_content)
+    for path, desired in (
+        (SSHD_DROP_IN, desired_dropin),
+        (AD_AUTHKEYS_PATH, desired_helper),
+        (SSHD_MAIN, desired_main),
+    ):
+        old = _read_existing(path)
+        if old != desired:
+            plan.append((path, old, desired))
+
+    if not plan:
         print("OK no-change")
         return 0
-    drift_summary = {
-        "path": SSHD_DROP_IN,
-        "exists": current is not None,
-        "bytes_current": len(current) if current is not None else 0,
-        "bytes_desired": len(desired),
-    }
+
+    drift_summary = {p: {"exists": old is not None,
+                         "bytes_current": len(old) if old is not None else 0,
+                         "bytes_desired": len(new)}
+                     for p, old, new in plan}
     if a.check:
         print("WOULD-CHANGE " + json.dumps(drift_summary, sort_keys=True))
         return 0
 
-    # Write the candidate via a tempfile + os.replace (atomic), THEN validate
-    # with `sshd -t`. If validation fails, restore the previous drop-in
-    # content (or remove the file if there was none) BEFORE restarting sshd,
-    # so the running daemon never reads a broken config. Net effect = safe;
-    # a sibling "validate-before-replace" approach was considered but reading
-    # sshd's full config-load path from a tempfile is brittle (Include
-    # directives + ordering), so we use the replace-then-validate-with-rollback
-    # variant. The comment near the docstring used to claim the other order —
-    # corrected here per reviewer 4577021512.
+    # Apply: write all candidates atomically. If `sshd -t` rejects, walk back
+    # through the plan in reverse and restore prior contents BEFORE any restart
+    # attempt — so the running daemon's view of disk is identical to before.
+    # `os.replace` is the atomicity primitive across all three writes.
     try:
-        os.makedirs(os.path.dirname(SSHD_DROP_IN), exist_ok=True)
-        with tempfile.NamedTemporaryFile("w", dir=os.path.dirname(SSHD_DROP_IN),
-                                         delete=False, prefix=".10-krg-hardening.",
-                                         suffix=".tmp") as tf:
-            tf.write(desired)
-            tmp = tf.name
-        os.chmod(tmp, 0o644)
-        # Move the temp into place; old drop-in (if any) is overwritten atomically
-        # by os.replace. sshd -t after replacement, then restart; if validation
-        # fails AFTER replacement we put the old content back.
-        old_content = current
-        os.replace(tmp, SSHD_DROP_IN)
+        for path, _old, new in plan:
+            _atomic_write(path, new, _FILE_MODES[path])
         v = subprocess.run(["sshd", "-t"], capture_output=True, text=True)
         if v.returncode != 0:
-            if old_content is None:
-                os.remove(SSHD_DROP_IN)
-            else:
-                with open(SSHD_DROP_IN, "w") as f:
-                    f.write(old_content)
+            for path, old, _new in reversed(plan):
+                _restore(path, old)
             print("FAIL " + json.dumps({"sshd -t": v.stderr.strip()[:400]}))
             return 1
         # Restart sshd via systemd (DSM 7.x IS systemd-based — `sshd.service`
