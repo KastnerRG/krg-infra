@@ -17,9 +17,7 @@
   };
 
   krg.firewall = {
-    # SSH (22) inherits from base.nix's default allowedTCPPorts = [22];
-    # serviceHost = true (also from base.nix default) restricts it to
-    # ucsd + ops via sshSources. node-exporter monitoring on 9100.
+    allowedTCPPorts = [ 22 ];
     monitoringPorts = [ 9100 ];
   };
 

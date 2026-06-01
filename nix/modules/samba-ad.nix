@@ -152,28 +152,12 @@ in {
       };
     };
 
-    # AD DC well-known ports. Source-restricted to sealab + machines + ops
-    # in-guest as STRICTER defense-in-depth than the fleet-default US+trusted
-    # geoIP gate (issue #74). AD clients are infrastructure-internal — they
-    # never legitimately connect from outside our trusted nets, and the
-    # Proxmox perimeter already restricts this same port set in
-    # ansible/roles/proxmox_firewall/files/krg-ldap.fw (VMID 100) — these
-    # in-guest rules mirror that perimeter so a misconfigured PVE rule can't
-    # silently widen exposure to US+trusted via the geoIP default.
-    # Trusted IPSets are read here from the shared trusted.json (same
-    # source-of-truth as the Proxmox layer); ops is included so an admin
-    # joining their workstation to the AD doesn't need a Proxmox-side
-    # exception.
-    krg.firewall = mkIf cfg.openFirewall (let
-      trusted = builtins.fromJSON (builtins.readFile ../networks/trusted.json);
-      adSources = map (e: e.cidr) (
-        trusted.ipsets.sealab
-        ++ trusted.ipsets.machines
-        ++ (trusted.ipsets.ops or [])
-      );
-      mk = port: { inherit port; sources = adSources; };
-    in {
-      sourcedPorts = map mk [
+    # AD DC well-known ports. These concatenate with the host's other
+    # krg.firewall port declarations (NixOS merges listOf options).
+    # CROSS-REFERENCE: the Proxmox perimeter source-restricts this same port set
+    # in ansible/roles/proxmox_firewall/files/krg-ldap.fw (VMID 100) — keep aligned.
+    krg.firewall = mkIf cfg.openFirewall {
+      allowedTCPPorts = [
         53    # DNS
         88    # Kerberos
         135   # RPC endpoint mapper
@@ -185,7 +169,7 @@ in {
         3268  # Global Catalog
         3269  # Global Catalog over SSL
       ];
-      sourcedUDPPorts = map mk [
+      allowedUDPPorts = [
         53    # DNS
         88    # Kerberos
         137   # NetBIOS name service
@@ -193,33 +177,12 @@ in {
         389   # LDAP / CLDAP
         464   # kpasswd
       ];
-    });
+    };
 
-    # Dynamic RPC range (TCP 49152-65535): source-restrict via raw nftables
-    # to match the well-known ports above. krg.firewall.sourcedPorts doesn't
-    # express ranges (listOf port can't); emit the rule directly here.
-    # CROSS-REFERENCE: ansible/roles/proxmox_firewall/files/krg-ldap.fw —
-    # keep these source lists aligned. Inert unless openDynamicRpc is set.
-    networking.firewall.extraInputRules =
-      mkIf (cfg.openFirewall && cfg.openDynamicRpc) (let
-        trusted = builtins.fromJSON (builtins.readFile ../networks/trusted.json);
-        adSources = map (e: e.cidr) (
-          trusted.ipsets.sealab
-          ++ trusted.ipsets.machines
-          ++ (trusted.ipsets.ops or [])
-        );
-        # Split by family — same colon-detection krg.firewall uses. If
-        # trusted.json grows v6 entries later, this stays correct (a
-        # hardcoded `ip saddr` against a v6 address would silently
-        # produce invalid nftables and drop the v6 restriction).
-        isV6 = src: lib.hasInfix ":" src;
-        v4 = lib.filter (s: !(isV6 s)) adSources;
-        v6 = lib.filter isV6 adSources;
-        mkRange = family: srcs:
-          lib.optionalString (srcs != []) ''
-            ${family} { ${lib.concatStringsSep ", " srcs} } tcp dport 49152-65535 accept
-          '';
-      in mkRange "ip saddr" v4 + mkRange "ip6 saddr" v6);
+    # Dynamic RPC range — listOf port can't express a 16k-port range, so set it
+    # straight on networking.firewall (the value merges with the krg.firewall one).
+    networking.firewall.allowedTCPPortRanges =
+      mkIf (cfg.openFirewall && cfg.openDynamicRpc) [ { from = 49152; to = 65535; } ];
   };
 
   # ── One-time provisioning (run on the box, after the first deploy) ──────────
