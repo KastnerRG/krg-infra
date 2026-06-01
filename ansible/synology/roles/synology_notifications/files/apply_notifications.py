@@ -115,7 +115,12 @@ def do_mail(a):
 def do_sms(a):
     desired = {}
     if a.enable is not None:
-        desired["enable"] = _bool(a.enable)
+        # DSM field is `enable_sms`, not `enable` (validated 2026-05-31:
+        # SYNO.Core.Notification.SMS.Conf v=2 GET keys are {api_id,
+        # enable_sms, msg_interval, phone_info, provider_name, sender, user}).
+        # Using `enable` made the SET silently drop the field AND the diff
+        # saw current=null vs desired=false every run → false-positive CHANGED.
+        desired["enable_sms"] = _bool(a.enable)
     return apply_full("SYNO.Core.Notification.SMS.Conf", 2, desired, a.check)
 
 
@@ -133,7 +138,11 @@ def do_push(a):
 def do_cms(a):
     desired = {}
     if a.enable is not None:
-        desired["enable"] = _bool(a.enable)
+        # DSM field is `cms_enable`, not `enable` (validated 2026-05-31:
+        # SYNO.Core.Notification.CMS.Conf v=2 GET keys are
+        # {available_templates, cms_enable, join_dsm_cms, template_id}).
+        # Same false-positive CHANGED bug pattern as SMS above.
+        desired["cms_enable"] = _bool(a.enable)
     return apply_full("SYNO.Core.Notification.CMS.Conf", 2, desired, a.check)
 
 

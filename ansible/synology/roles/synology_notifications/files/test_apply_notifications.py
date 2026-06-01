@@ -57,11 +57,16 @@ def test_mail_apply_preserves_nested(monkeypatch, capsys):
 
 
 def test_sms_apply(monkeypatch, capsys):
-    fake, captured = _factory({"SYNO.Core.Notification.SMS.Conf": {"enable": True}})
+    """DSM's SMS.Conf field is `enable_sms`, not `enable` — script
+    translates the CLI's bare --enable to that field name (fixed
+    2026-05-31; was producing false-positive CHANGED every run because
+    current.get('enable') was None vs desired=false)."""
+    fake, captured = _factory({"SYNO.Core.Notification.SMS.Conf": {"enable_sms": True}})
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["sms", "--enable", "false"])
     assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
-    assert "enable=false" in captured[0][1]
+    set_args = next(p for a, p in [captured[0]] if "method=set" in p)
+    assert "enable_sms=false" in set_args
 
 
 def test_push_check(monkeypatch, capsys):
@@ -74,7 +79,9 @@ def test_push_check(monkeypatch, capsys):
 
 
 def test_cms_no_change(monkeypatch, capsys):
-    fake, _ = _factory({"SYNO.Core.Notification.CMS.Conf": {"enable": False}})
+    """DSM's CMS.Conf field is `cms_enable`, not `enable` — same fix
+    pattern as SMS above."""
+    fake, _ = _factory({"SYNO.Core.Notification.CMS.Conf": {"cms_enable": False}})
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["cms", "--enable", "false"])
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
