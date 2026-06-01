@@ -67,7 +67,7 @@
 #   * krg.crowdsecBouncer.enable = true (applies decisions to nftables).
 #   * trusted.json (read directly here for the local whitelist — no
 #     option duplication; same source as krg.firewall.sshSources).
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 with lib;
 let
   cfg = config.krg.crowdsec;
@@ -235,12 +235,47 @@ in {
         # they ever try us. The local ssh-bf scenario catches the gap
         # for first-of-kind attackers within ~5-10 failed auths.
         # FIRST-RUN REQUIREMENT: outbound TCP/443 to api.crowdsec.net
-        # at activation. If unreachable on first deploy, the registration
-        # fails and the file stays empty — the setup script retries on
-        # every rebuild (the grep-for-password gate makes it idempotent),
-        # so the next successful rebuild fills it in.
+        # at activation. The file must already EXIST (even empty) before
+        # any cscli command runs — see the crowdsec-seed-capi-credfile
+        # ExecStartPre below for why. Once it exists, registration is
+        # idempotent: the upstream setup's grep-for-password gate skips
+        # `cscli capi register` after the first success, and an empty
+        # file just downgrades to a "missing login field" warning (the
+        # daemon still starts, CAPI pull is simply inactive) so a host
+        # that can't reach api.crowdsec.net on first deploy fills the
+        # file in on the next reachable rebuild instead of wedging.
         capi.credentialsFile = "/var/lib/crowdsec/state/online_api_credentials.yaml";
       };
     };
+
+    # Seed an EMPTY online_api_credentials.yaml before the upstream
+    # crowdsec setup runs. WHY: setting capi.credentialsFile above puts
+    # `api.server.online_client.credentials_path` into config.yaml, and
+    # cscli EAGERLY loads that file on every command that loads the
+    # Local API. The file is only created by `cscli capi register` —
+    # but the upstream setup runs `cscli machine add` FIRST, which also
+    # loads the LAPI, so on a fresh host machine-add dies with
+    #   "failed to load Local API: loading online client credentials:
+    #    open .../online_api_credentials.yaml: no such file or directory"
+    # That aborts the setup script (set -euo pipefail), fails
+    # crowdsec.service, and the firewall-bouncer-register service (which
+    # only `wants` crowdsec.service) then runs anyway and fails with a
+    # 243/CREDENTIALS error — the failure that rolled back PR #96.
+    #
+    # cscli treats a MISSING file as fatal but an EMPTY file as a soft
+    # "missing login field" warning, so pre-creating it breaks the
+    # bootstrap deadlock: machine-add warns+succeeds, then the setup's
+    # own `cscli capi register` fills in the real CAPI credentials.
+    # mkBefore runs this as the first ExecStartPre so it executes under
+    # the same (DynamicUser) service identity as the setup script —
+    # ownership is therefore correct without any static crowdsec user.
+    systemd.services.crowdsec.serviceConfig.ExecStartPre = lib.mkBefore [
+      (pkgs.writeShellScript "crowdsec-seed-capi-credfile" ''
+        set -eu
+        f=${lib.escapeShellArg config.services.crowdsec.settings.capi.credentialsFile}
+        ${pkgs.coreutils}/bin/mkdir -p "$(${pkgs.coreutils}/bin/dirname "$f")"
+        [ -e "$f" ] || : > "$f"
+      '')
+    ];
   };
 }
