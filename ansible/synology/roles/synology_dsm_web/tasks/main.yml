@@ -26,7 +26,6 @@
     --avahi {{ web_spec.web.enable_avahi | default(false) }}
     --ssdp {{ web_spec.web.enable_ssdp | default(false) }}
     --http2 {{ web_spec.web.enable_spdy | default(true) }}
-    --https {{ web_spec.web.enable_https | default(true) }}
     --https-redirect {{ web_spec.web.enable_https_redirect | default(true) }}
     --server-header {{ web_spec.web.enable_server_header | default(false) }}
     --http-port {{ web_spec.web.http_port | default(6020) }}
