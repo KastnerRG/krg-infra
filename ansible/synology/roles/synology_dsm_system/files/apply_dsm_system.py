@@ -76,7 +76,11 @@ def apply_full(api, version, desired, check):
 def do_network(a):
     desired = {}
     if a.hostname is not None:
-        desired["hostname"] = a.hostname
+        # DSM's SYNO.Core.Network field is `server_name`, not `hostname`.
+        # Setting `hostname` is silently dropped on older DSM and outright
+        # errors 4302 on DSM 7.3 (validated post-cable-swap 2026-05-31 —
+        # GET returns `server_name`, SET rejects unknown fields).
+        desired["server_name"] = a.hostname
     if a.gateway is not None:
         desired["gateway"] = a.gateway
     if a.dns_primary is not None:

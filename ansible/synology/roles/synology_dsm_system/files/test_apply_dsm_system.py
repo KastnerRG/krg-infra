@@ -18,7 +18,7 @@ def _exec_factory(get_data, set_capture=None):
 
 def test_network_no_change(monkeypatch, capsys):
     monkeypatch.setattr(m, "_exec", _exec_factory({
-        "hostname": "e4e-nas", "gateway": "132.239.17.1",
+        "server_name": "e4e-nas", "gateway": "132.239.17.1",
         "dns_primary": "132.239.95.109", "dns_secondary": "1.1.1.1",
         "dns_manual": True, "ipv4_first": False,
     }))
@@ -33,7 +33,7 @@ def test_network_no_change(monkeypatch, capsys):
 def test_network_apply_hostname_drift(monkeypatch, capsys):
     captured = []
     monkeypatch.setattr(m, "_exec", _exec_factory(
-        {"hostname": "e4e_nas", "gateway": "132.239.17.1",
+        {"server_name": "e4e_nas", "gateway": "132.239.17.1",
          "dns_primary": "132.239.95.109", "extra_unmanaged": "stays"},
         set_capture=captured))
     rc = m.main(["network", "--hostname", "e4e-nas"])
@@ -41,22 +41,22 @@ def test_network_apply_hostname_drift(monkeypatch, capsys):
     api, params = captured[0]
     assert api == "SYNO.Core.Network" and "version=2" in params
     rest = set(params[2:])
-    assert "hostname=e4e-nas" in rest
+    assert "server_name=e4e-nas" in rest
     assert "extra_unmanaged=stays" in rest          # unmanaged preserved
     assert "gateway=132.239.17.1" in rest           # unmanaged preserved
 
 
 def test_network_check_reports_drift(monkeypatch, capsys):
-    monkeypatch.setattr(m, "_exec", _exec_factory({"hostname": "e4e_nas"}))
+    monkeypatch.setattr(m, "_exec", _exec_factory({"server_name": "e4e_nas"}))
     rc = m.main(["network", "--hostname", "e4e-nas", "--check"])
     out = capsys.readouterr().out
-    assert rc == 0 and out.startswith("WOULD-CHANGE") and "hostname" in out
+    assert rc == 0 and out.startswith("WOULD-CHANGE") and "server_name" in out
 
 
 def test_network_fail(monkeypatch, capsys):
     def fake(api, *params):
         if "method=get" in params:
-            return {"data": {"hostname": "x"}, "success": True}
+            return {"data": {"server_name": "x"}, "success": True}
         return {"success": False, "error": {"code": 2001}}
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["network", "--hostname", "y"])
