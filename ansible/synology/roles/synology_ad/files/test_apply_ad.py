@@ -26,6 +26,13 @@ def _factory(live):
 
 # --- domain-config -----------------------------------------------------------
 _DESIRED_BASE = {
+    # Simulate a joined state — do_domain_config short-circuits to
+    # "OK no-change (deferred — not joined)" when current.enable_domain
+    # is False (validated 2026-05-31 against live DSM: pre-join GET
+    # returns only {enable_domain: false}, and SET silently drops the
+    # other fields). Tests below exercise the joined path; the
+    # unjoined short-circuit has its own test.
+    "enable_domain": True,
     "realm": "KRG.LOCAL",
     "nbns_name": "krg.local",
     "server_address": "krg-ldap.krg.local",
@@ -61,6 +68,23 @@ def test_domain_no_change(monkeypatch, capsys):
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(_argv_domain_config())
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
+
+
+def test_domain_unjoined_short_circuits_to_no_change(monkeypatch, capsys):
+    """When DSM reports `enable_domain: false` (NAS hasn't joined yet),
+    do_domain_config short-circuits to OK no-change instead of trying
+    to SET unjoinable fields. DSM silently drops realm/dc_host/idmap
+    when not joined (validated 2026-05-31 on live e4e-nas), which made
+    the role report false-positive CHANGED every run."""
+    fake, captured = _factory({m.DOMAIN_API: {"get": {"enable_domain": False}}})
+    monkeypatch.setattr(m, "_exec", fake)
+    rc = m.main(_argv_domain_config())
+    out_err = capsys.readouterr()
+    assert rc == 0
+    assert "OK no-change" in out_err.out and "deferred" in out_err.out
+    assert "not joined" in out_err.err
+    # No SET attempted — only the GET happened
+    assert not any("method=set" in p for a, p in captured)
 
 
 def test_domain_idmap_drift(monkeypatch, capsys):

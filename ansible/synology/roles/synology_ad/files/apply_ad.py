@@ -119,6 +119,26 @@ def do_domain_config(a):
         OUT_KEYS["admin_groups"]:   sorted(admins),
     }
     current = _exec(DOMAIN_API, "version=1", "method=get")["data"]
+    # Validated 2026-05-31 against e4e-nas: when NOT joined, DSM's
+    # Directory.Domain GET returns only {"enable_domain": false} — none
+    # of the realm/dc_host/idmap fields exist yet, and SET on them
+    # returns success=true but silently drops the values. So a pre-join
+    # apply would report CHANGED every run while nothing persisted.
+    #
+    # The "stage Domain config" intent was to pre-populate fields so the
+    # eventual join is one-step, but this DSM version doesn't support
+    # that — the staging IS the join, and the join needs creds (handled
+    # by do_join). Until joined, this subcommand is a no-op + WARN.
+    if not current.get("enable_domain", False):
+        sys.stderr.write(
+            "WARN: Directory.Domain config staging deferred — DSM returns "
+            "only {enable_domain: false} until joined, and SET silently "
+            "drops realm/dc_host/idmap fields when not joined. Run "
+            "`ansible-playbook ... -e ad_join_password='<pass>'` to join; "
+            "the join subcommand passes the full config in one shot.\n")
+        print("OK no-change (deferred — not joined)")
+        return 0
+
     # Compare lists order-invariantly.
     cur_norm = {k: _normalize(v) for k, v in current.items()}
     drift = {k: {"current": cur_norm.get(k), "desired": v}
