@@ -64,7 +64,10 @@
   ansible.builtin.script: >-
     apply_ad.py join
     --realm {{ ad_spec.ad.realm | quote }}
+    --domain {{ ad_spec.ad.domain | quote }}
     --dc-host {{ ad_spec.ad.dc_host | quote }}
+    --dc-ip {{ ad_spec.ad.dc_ip | quote }}
+    --ou {{ ad_spec.ad.ou | quote }}
     --join-user {{ ad_join_user | quote }}
     --join-password {{ ad_join_password | quote }}
   register: ad_join_run
