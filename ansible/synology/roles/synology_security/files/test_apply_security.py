@@ -39,7 +39,7 @@ def test_firewall_apply_preserves_unmanaged(monkeypatch, capsys):
     rc = m.main(["firewall", "--enable", "true"])
     assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
     rest = set(captured[0][1][2:])
-    assert "enable_firewall=true" in rest and "extra_unmanaged=stays" in rest
+    assert "enable_firewall=true" in rest and 'extra_unmanaged="stays"' in rest
 
 
 def test_fw_conf_check(monkeypatch, capsys):

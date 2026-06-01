@@ -88,7 +88,7 @@ def test_terminal_preserves_unmanaged_keys(monkeypatch, capsys):
     ])
     capsys.readouterr()
     set_call = next(p for a, p in captured if a == m.TERMINAL_API)
-    assert "snmp_unrelated_key=preserve_me" in set_call
+    assert 'snmp_unrelated_key="preserve_me"' in set_call
 
 
 def test_terminal_port_change(monkeypatch, capsys):

@@ -49,7 +49,7 @@ def test_ftp_apply_full_object(monkeypatch, capsys):
     assert api == "SYNO.Core.FileServ.FTP" and "version=1" in params and "method=set" in params
     rest = set(params[2:])
     assert "enable_ftps=false" in rest
-    assert "custom_port=55536:55899" in rest  # unmanaged field retained
+    assert 'custom_port="55536:55899"' in rest  # unmanaged field retained
 
 
 def test_afp_check_reports_drift(monkeypatch, capsys):
@@ -73,10 +73,14 @@ def test_snmp_v3_apply_with_creds(monkeypatch, capsys):
                  "--v3-priv-protocol", "AES", "--v3-priv-password", "secret-priv-pw-min8"])
     assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
     rest = set(captured[0][1][2:])
+    # String values are JSON-quoted on the wire (the `_args_from`
+    # json.dumps fix landed 2026-06-01 to avoid synowebapi parsing IP/path
+    # tokens as malformed floats). Bools and ints stay bare.
     for tok in ("enable_snmp=true", "enable_snmp_v3=true", "enable_snmp_v1v2=false",
-                "name=e4e-nas", "rouser=krg-monitor", "contact=admin@x", "location=UCSD",
-                "v3_auth_proto=SHA", "v3_auth_passwd=secret-auth-pw-min8",
-                "v3_priv_proto=AES", "v3_priv_passwd=secret-priv-pw-min8"):
+                'name="e4e-nas"', 'rouser="krg-monitor"', 'contact="admin@x"',
+                'location="UCSD"',
+                'v3_auth_proto="SHA"', 'v3_auth_passwd="secret-auth-pw-min8"',
+                'v3_priv_proto="AES"', 'v3_priv_passwd="secret-priv-pw-min8"'):
         assert tok in rest, "missing token: " + tok
 
 

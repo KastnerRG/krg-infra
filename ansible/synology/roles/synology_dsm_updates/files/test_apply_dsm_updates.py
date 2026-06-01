@@ -68,7 +68,7 @@ def test_setting_drift_applies_real_field_names(monkeypatch, capsys):
     set_call = next(p for a, v, mth, p in captured
                     if a == m.UPD_SETTING_API and mth == "set")
     assert "autoupdate_enable=true" in set_call
-    assert "autoupdate_type=hotfix-security" in set_call
+    assert 'autoupdate_type="hotfix-security"' in set_call
 
 
 def test_setting_uses_v2_not_v1(monkeypatch, capsys):
@@ -137,8 +137,8 @@ def test_setting_preserves_unmanaged_keys(monkeypatch, capsys):
     set_call = next(p for a, v, mth, p in captured
                     if a == m.UPD_SETTING_API and mth == "set")
     assert "smart_nano_enabled=true" in set_call
-    assert "upgrade_type=hotfix" in set_call
-    assert "unknown_dsm_internal_key=preserve_me" in set_call
+    assert 'upgrade_type="hotfix"' in set_call
+    assert 'unknown_dsm_internal_key="preserve_me"' in set_call
 
 
 def test_setting_check_mode_no_apply(monkeypatch, capsys):

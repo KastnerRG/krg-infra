@@ -158,5 +158,5 @@ def test_delete_falls_back_to_alias_when_no_id(monkeypatch, capsys):
     assert out.startswith("CHANGED")
     # The delete call MUST carry alias=, not an empty id= (the prior bug).
     del_call = next(p for _, p in captured if "method=delete" in p)
-    assert "alias=no_id_entry" in del_call
+    assert 'alias="no_id_entry"' in del_call
     assert not any(tok.startswith("id=") and tok.endswith("=") for tok in del_call)

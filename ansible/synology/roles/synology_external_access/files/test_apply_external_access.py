@@ -59,8 +59,8 @@ def test_ddns_drift_and_full_object_preservation(monkeypatch, capsys):
     set_call = next(p for a, p in captured if a == m.DDNS_API)
     assert "enabled=false" in set_call
     # Unmanaged keys preserved (DSM full-object set requires them)
-    assert "provider=Synology" in set_call
-    assert "hostname=e4e-nas.synology.me" in set_call
+    assert 'provider="Synology"' in set_call
+    assert 'hostname="e4e-nas.synology.me"' in set_call
 
 
 def test_each_surface_targets_correct_api(monkeypatch, capsys):

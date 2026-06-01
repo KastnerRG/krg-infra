@@ -83,7 +83,7 @@ def test_web_apply_sends_full_object_overlay(monkeypatch, capsys):
     rest = set(params[2:])
     assert "enable_hsts=true" in rest and "enable_avahi=false" in rest and "enable_ssdp=false" in rest
     # unmanaged fields retained (full-object preserved)
-    assert "main_app=DSM" in rest
+    assert 'main_app="DSM"' in rest
 
 
 def test_web_fail_on_unsuccessful_set(monkeypatch, capsys):

@@ -67,6 +67,12 @@ def _args_from(data):
             val = "true" if val else "false"
         elif isinstance(val, (dict, list)):
             val = json.dumps(val)
+        elif isinstance(val, str):
+            # synowebapi --exec parses key=value as JSON. Bare strings like
+            # /volume1 or 132.239.17.1 are invalid JSON tokens; DSM either
+            # drops them (3103 "missing field") or truncates them (4302).
+            # JSON-quote so DSM gets the exact string. Validated 2026-06-01.
+            val = json.dumps(val)
         args.append("{}={}".format(key, val))
     return args
 
