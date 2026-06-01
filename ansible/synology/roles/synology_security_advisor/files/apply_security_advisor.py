@@ -52,11 +52,12 @@ OUT_KEYS = {
 DAY_MAP = {"Sun": "0", "Mon": "1", "Tue": "2", "Wed": "3",
            "Thu": "4", "Fri": "5", "Sat": "6"}
 
-# `Conf get` returns these keys inside `data` but `Conf set` rejects/ignores
-# them — strip before SET to keep the full-object round-trip valid.
+# `Conf get` returns these keys inside `data` but `Conf set` rejects them —
+# strip before SET. Only `success` qualifies; `scheduleTaskId` LOOKS internal
+# but the UI's SET payload (captured 2026-06-01 from HAR) DOES include it,
+# and omitting it gets a 114 back. So we round-trip it.
 #   * success         — synthetic OK marker DSM stuffs into data dicts
-#   * scheduleTaskId  — DSM-internal task handle (assigned by the daemon)
-READ_ONLY_KEYS = {"success", "scheduleTaskId"}
+READ_ONLY_KEYS = {"success"}
 
 # DSM error code 102 == "API does not exist" (rare for Conf — handled
 # defensively in case a stripped/older DSM image is in play).
@@ -188,8 +189,14 @@ def do_main(a):
              if _coerce_like(v, set_payload.get(k)) != v}
 
     def apply():
+        # SecurityScan.Conf SET requires its params wrapped in an `Input`
+        # envelope (validated 2026-06-01 from a HAR of the DSM UI — flat
+        # params return err 114 "Bad parameters" on this DSM, even when the
+        # payload is the unmodified GET response). All other DSM SETs in
+        # this repo take flat params; only this one needs the envelope.
         set_payload.update(desired)
-        return _exec(SA_CONF_API, "version=1", "method=set", *_args_from(set_payload))
+        return _exec(SA_CONF_API, "version=1", "method=set",
+                     "Input=" + json.dumps(set_payload))
 
     return _result(drift, a.check, apply)
 

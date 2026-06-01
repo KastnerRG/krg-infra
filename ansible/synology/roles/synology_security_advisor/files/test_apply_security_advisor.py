@@ -48,8 +48,20 @@ def test_main_no_change(monkeypatch, capsys):
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
 
 
+def _set_input(captured, api):
+    """Extract the Input envelope dict from a captured SET call (parses the
+    single Input= form arg). All SecurityScan.Conf SETs wrap params in Input
+    per the DSM API (validated 2026-06-01 from a UI HAR — flat params err 114)."""
+    set_call = next(p for a, p in captured if a == api and "method=set" in p)
+    input_args = [p for p in set_call if p.startswith("Input=")]
+    assert len(input_args) == 1, "expected single Input= envelope: " + str(set_call)
+    import json as _j
+    return _j.loads(input_args[0][len("Input="):])
+
+
 def test_main_drift_translates_day_and_enable(monkeypatch, capsys):
-    """spec.day "Wed" must SET weekday="3"; spec.enable maps to enableSchedule."""
+    """spec.day "Wed" must SET weekday="3"; spec.enable maps to enableSchedule.
+    All params go inside an Input envelope (DSM SET requirement)."""
     drift_live = dict(_CONVERGED_GET)
     drift_live.update({"enableSchedule": False, "weekday": "1", "hour": 9, "minute": 0})
     fake, captured = _factory({m.SA_CONF_API: {"get": drift_live}})
@@ -60,16 +72,18 @@ def test_main_drift_translates_day_and_enable(monkeypatch, capsys):
     ])
     assert rc == 0
     assert capsys.readouterr().out.startswith("CHANGED")
-    set_call = next(p for a, p in captured if a == m.SA_CONF_API)
-    assert "enableSchedule=true" in set_call
-    assert "weekday=3" in set_call
-    assert "hour=4" in set_call
-    assert "minute=15" in set_call
+    payload = _set_input(captured, m.SA_CONF_API)
+    assert payload["enableSchedule"] is True
+    assert payload["weekday"] == "3"
+    assert payload["hour"] == 4
+    assert payload["minute"] == 15
 
 
-def test_main_strips_read_only_keys_before_set(monkeypatch, capsys):
-    """`scheduleTaskId` and `success` come back on GET but DSM rejects them
-    on SET — they MUST be stripped from the round-trip payload."""
+def test_main_strips_success_but_keeps_scheduleTaskId(monkeypatch, capsys):
+    """`success` is a synthetic GET-only marker and must be stripped;
+    `scheduleTaskId` LOOKS internal but DSM's SET actually requires it
+    round-tripped (UI HAR 2026-06-01: omitting it → err 114). All fields
+    are wrapped in an `Input` envelope on the wire."""
     drift_live = dict(_CONVERGED_GET)
     drift_live["weekday"] = "1"  # force drift so SET fires
     fake, captured = _factory({m.SA_CONF_API: {"get": drift_live}})
@@ -79,16 +93,28 @@ def test_main_strips_read_only_keys_before_set(monkeypatch, capsys):
         "--categories", "[]", "--notify-email", "true",
     ])
     capsys.readouterr()
-    set_call = next(p for a, p in captured if a == m.SA_CONF_API)
-    assert not any(p.startswith("scheduleTaskId=") for p in set_call), \
-        "scheduleTaskId must be stripped (DSM read-only): " + str(set_call)
+    set_call = next(p for a, p in captured
+                    if a == m.SA_CONF_API and "method=set" in p)
+    # `success` stripped
     assert not any(p.startswith("success=") for p in set_call), \
-        "success must be stripped (DSM read-only): " + str(set_call)
+        "success must be stripped (synthetic GET marker): " + str(set_call)
+    # All real fields go through one Input= envelope param, not flat key=val
+    input_args = [p for p in set_call if p.startswith("Input=")]
+    assert len(input_args) == 1, "expected single Input= envelope: " + str(set_call)
+    import json as _j
+    payload = _j.loads(input_args[0][len("Input="):])
+    # scheduleTaskId IS in the envelope (round-tripped, required by SET)
+    assert payload.get("scheduleTaskId") == 2, \
+        "scheduleTaskId must round-trip (UI does — DSM 114s without it): " + str(payload)
+    # `success` is NOT in the envelope
+    assert "success" not in payload, str(payload)
+    # The drift target IS in the envelope
+    assert payload.get("weekday") == "3"
 
 
 def test_main_preserves_unmanaged_keys_like_defaultGroup(monkeypatch, capsys):
     """`defaultGroup` is unmanaged HERE (categories follow-up) but must round-trip
-    so we don't reset DSM's custom group profile to a default."""
+    inside the Input envelope so we don't reset DSM's custom group profile."""
     drift_live = dict(_CONVERGED_GET, weekday="1", defaultGroup="custom")
     fake, captured = _factory({m.SA_CONF_API: {"get": drift_live}})
     monkeypatch.setattr(m, "_exec", fake)
@@ -97,8 +123,8 @@ def test_main_preserves_unmanaged_keys_like_defaultGroup(monkeypatch, capsys):
         "--categories", "[]", "--notify-email", "true",
     ])
     capsys.readouterr()
-    set_call = next(p for a, p in captured if a == m.SA_CONF_API)
-    assert "defaultGroup=custom" in set_call
+    payload = _set_input(captured, m.SA_CONF_API)
+    assert payload.get("defaultGroup") == "custom"
 
 
 def test_main_check_mode_does_not_apply(monkeypatch, capsys):
@@ -147,7 +173,9 @@ def test_all_seven_weekdays_map_correctly(monkeypatch, capsys):
             assert not set_calls
         else:
             assert set_calls, "expected SET for " + spec_day
-            assert ("weekday=" + dsm_str) in set_calls[0], \
+            # weekday lives inside the Input envelope, not as a flat form arg
+            payload = _set_input([(m.SA_CONF_API, set_calls[0])], m.SA_CONF_API)
+            assert payload["weekday"] == dsm_str, \
                 spec_day + " should map to weekday=" + dsm_str
 
 
