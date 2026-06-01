@@ -20,12 +20,15 @@ Field mapping (DSM 7.3, validated empirically 2026-06-01 — see OUT_KEYS):
   dc_ip    -> server_ip
   ou       -> ou
 
-idmap_mode / idmap_uid_range / idmap_gid_range / allowed_groups / admin_groups
-are DEFERRED — no matching field on Directory.Domain or Directory.Domain.Conf
-(validated by API.Info enumeration 2026-06-01: idmap is hardcoded to
-`idmap config * : backend = syno`, a Synology-proprietary backend with no
-webapi tuning surface). The CLI args stay on `domain-config` so the role
-contract holds; values live declaratively in spec/e4e-nas/ad.yml.
+idmap_mode / idmap_uid_range / idmap_gid_range / allowed_groups are DEFERRED —
+no matching field on Directory.Domain or Directory.Domain.Conf (validated by
+API.Info enumeration 2026-06-01: idmap is hardcoded to `idmap config * :
+backend = syno`, a Synology-proprietary backend with no webapi tuning surface).
+admin_groups is NOT deferred here — it's pushed by the role's post-join task
+via `synogroup --memberadd administrators KRG\\<group>` (the synogroup CLI
+exposes what Directory.Domain.set doesn't). The CLI args stay on
+`domain-config` so the role contract holds; values live declaratively in
+spec/e4e-nas/ad.yml.
 """
 import argparse
 import json
@@ -158,14 +161,17 @@ def do_domain_config(a):
     drift = {k: {"current": current.get(k), "desired": v}
              for k, v in desired.items() if current.get(k) != v}
 
-    # Surface the idmap/groups deferral on every apply (not just no-drift)
-    # so it's visible in the log — they live on a different API surface
-    # that we haven't probed yet.
+    # Surface the deferred fields on every apply (not just no-drift) so it's
+    # visible in the log. admin_groups is HANDLED — pushed by the synology_ad
+    # role's post-join `synogroup --memberadd` task; only the other four lack
+    # an API surface on Directory.Domain.set.
     sys.stderr.write(
         "INFO: idmap_mode / idmap_uid_range / idmap_gid_range / "
-        "allowed_groups / admin_groups are NOT pushed (no matching field "
-        "on SYNO.Core.Directory.Domain.set; need API probe). Spec values "
-        "in spec/e4e-nas/ad.yml are the declarative source of truth.\n")
+        "allowed_groups are NOT pushed (no matching field on "
+        "SYNO.Core.Directory.Domain.set). Spec values in spec/e4e-nas/ad.yml "
+        "stay the source of truth; idmap tuning is gated on the Synology "
+        "`syno` idmap backend (no webapi). admin_groups IS pushed via the "
+        "post-join synogroup --memberadd task in the role.\n")
 
     if not drift:
         print("OK no-change")

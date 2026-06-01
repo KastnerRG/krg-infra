@@ -26,12 +26,18 @@ ad:
   allowed_groups:
     - Domain Admins
 
-  # Admin elevation. DSM doesn't have sudo (uses DSM-RBAC roles), so this maps
-  # to "members of these groups land in the DSM 'administrators' local group on
-  # login" — winbind's `winbind nss info = template` style. Best-known DSM
-  # field: domain_admin_groups (verify on rig).
+  # Admin elevation. Each AD group listed here is nested as a MEMBER of the
+  # local DSM `administrators` group via `synogroup --memberadd <local-group>
+  # KRG\<ad-group>` (validated 2026-06-01). Why this matters: an AD user's NT
+  # token carries AD group SIDs only, NOT local-group SIDs — so a share grant
+  # to `@administrators` (the local group) wouldn't cover AD admins without
+  # this nesting. After the bind, DSM's share access engine walks synogroup
+  # membership and resolves AD admins through to the local administrators
+  # grant. Idempotent + additive — synogroup --memberadd accepts re-adds and
+  # we never REMOVE here (operator UI adds stay until the spec catches them).
   admin_groups:
     - Domain Admins
+    - E4E Admin
 
   ssh_keys_from_ad: false                     # OpenSSH-LPK on DSM is not native; probe later
 
