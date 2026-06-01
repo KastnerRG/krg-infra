@@ -31,6 +31,10 @@ def test_network_no_change(monkeypatch, capsys):
 
 
 def test_network_apply_hostname_drift(monkeypatch, capsys):
+    """SET payload uses JSON-quoted string values (validated 2026-06-01:
+    synowebapi --exec parses each key=value as JSON; bare `132.239.17.1`
+    became float `132.239` and DSM rejected with err 4302). Asserts
+    JSON-quoted form `server_name="e4e-nas"` not bare `server_name=e4e-nas`."""
     captured = []
     monkeypatch.setattr(m, "_exec", _exec_factory(
         {"server_name": "e4e_nas", "gateway": "132.239.17.1",
@@ -41,9 +45,9 @@ def test_network_apply_hostname_drift(monkeypatch, capsys):
     api, params = captured[0]
     assert api == "SYNO.Core.Network" and "version=2" in params
     rest = set(params[2:])
-    assert "server_name=e4e-nas" in rest
-    assert "extra_unmanaged=stays" in rest          # unmanaged preserved
-    assert "gateway=132.239.17.1" in rest           # unmanaged preserved
+    assert 'server_name="e4e-nas"' in rest                # JSON-quoted string
+    assert 'extra_unmanaged="stays"' in rest              # unmanaged preserved + JSON-quoted
+    assert 'gateway="132.239.17.1"' in rest               # unmanaged preserved + JSON-quoted
 
 
 def test_network_check_reports_drift(monkeypatch, capsys):

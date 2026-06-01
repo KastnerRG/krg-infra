@@ -32,9 +32,20 @@ network:
     mtu: 1500
   gateway: 132.239.17.1
   dns:
-    primary: 132.239.95.109   # UCSD recursive
-    secondary: 1.1.1.1
-    manual: true              # don't take DHCP DNS
+    # krg-ldap (the KRG.LOCAL AD DC) MUST be the primary DNS for the NAS as
+    # an AD member — DSM's winbind/Kerberos resolver consults resolv.conf
+    # directly and DOESN'T honor /etc/hosts pins for AD names, so without
+    # this the NAS can't resolve `krg-ldap.krg.local` and the AD join +
+    # subsequent winbind sessions fail (validated 2026-06-01:
+    # `test_dc` returns `test_join_success: false` and `nslookup
+    # krg-ldap.krg.local` returns NXDOMAIN from UCSD recursive).
+    # Mirrors the nix `krg.adClient` pattern (nix/modules/sssd-ad-client.nix:296
+    # uses `networking.nameservers = mkBefore [ DC_IP ]` for the same reason).
+    # krg-ldap runs SAMBA_INTERNAL DNS that forwards non-AD queries upstream,
+    # so public name resolution still works through it.
+    primary:   137.110.161.109   # krg-ldap (KRG.LOCAL DC; required for AD join)
+    secondary: 132.239.95.109    # UCSD recursive (fallback for non-krg-local queries)
+    manual: true                 # don't take DHCP DNS
   proxy:
     enabled: false
   # IPv6, MAC clone, PPPoE, traffic control — all stay default-off; capture confirmed.

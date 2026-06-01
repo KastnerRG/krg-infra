@@ -42,6 +42,15 @@ def _args_from(data):
             val = "true" if val else "false"
         elif isinstance(val, (dict, list)):
             val = json.dumps(val)
+        elif isinstance(val, str):
+            # synowebapi --exec parses each `key=value` as JSON. Bare
+            # strings like `132.239.17.1` are interpreted as malformed
+            # floats (synowebapi truncates to `132.239` and SET returns
+            # err 4302). JSON-quote so DSM gets the exact string back.
+            # Validated 2026-06-01 against e4e-nas: without quoting,
+            # `gateway=132.239.17.1` → SET payload had gateway:132.239
+            # → 4302; with quoting, the SET lands cleanly.
+            val = json.dumps(val)
         args.append("{}={}".format(key, val))
     return args
 
