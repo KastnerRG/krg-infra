@@ -33,10 +33,14 @@ def test_terminal_no_change(monkeypatch, capsys):
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
 
 
-def test_terminal_drift_disables_telnet_sftp(monkeypatch, capsys):
+def test_terminal_drift_disables_telnet(monkeypatch, capsys):
+    """SFTP no longer goes through Terminal (it lives on
+    SYNO.Core.FileServ.SFTP — synology_services). --sftp-enable still
+    accepts the arg for backward-compat with the role task, but the
+    value is dropped — only enable_ssh / ssh_port / enable_telnet flow
+    into the SET payload."""
     fake, captured = _factory({m.TERMINAL_API: {"get": {
-        "enable_ssh": True, "ssh_port": 22,
-        "enable_telnet": True, "enable_sftp": True,
+        "enable_ssh": True, "ssh_port": 22, "enable_telnet": True,
     }}})
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main([
@@ -46,9 +50,14 @@ def test_terminal_drift_disables_telnet_sftp(monkeypatch, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert out.startswith("CHANGED")
-    set_call = next(p for a, p in captured if a == m.TERMINAL_API)
+    set_call = next(p for a, p in captured
+                    if a == m.TERMINAL_API and "method=set" in p)
     assert "enable_telnet=false" in set_call
-    assert "enable_sftp=false" in set_call
+    # v=3 is used (v=1 lacks ssh_port in the GET → spurious drift)
+    assert "version=3" in set_call
+    # SFTP must NOT be in the Terminal SET payload (wrong API entirely)
+    assert not any("enable_sftp" in arg for arg in set_call), \
+        "enable_sftp belongs on FileServ.SFTP, not Terminal: " + str(set_call)
 
 
 def test_terminal_check_mode_no_apply(monkeypatch, capsys):

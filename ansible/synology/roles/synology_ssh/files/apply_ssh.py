@@ -35,13 +35,23 @@ import tempfile
 
 WEBAPI = "/usr/syno/bin/synowebapi"
 TERMINAL_API = "SYNO.Core.Terminal"
+# DSM 7.3 Terminal: minVersion=1, maxVersion=3. v=1 GET returns only
+# {enable_ssh, enable_telnet, forbid_console} — no ssh_port. v=3 returns
+# those plus {ssh_port, ssh_cipher, ssh_kex, ssh_mac}. Using v=3 so the
+# ssh_port diff has a real current value to compare against (otherwise
+# current.get("ssh_port") is None, drift fires every run → CHANGED on
+# idempotent re-applies).
+TERMINAL_VER = 3
 SSHD_DROP_IN = "/etc/ssh/sshd_config.d/10-krg-hardening.conf"
 
 OUT_KEYS = {
     "ssh_enable":    "enable_ssh",
     "ssh_port":      "ssh_port",
     "telnet_enable": "enable_telnet",
-    "sftp_enable":   "enable_sftp",
+    # sftp_enable lives on SYNO.Core.FileServ.SFTP, NOT SYNO.Core.Terminal.
+    # Pushing it via Terminal SET was a silent no-op, and the GET-diff saw
+    # current=null vs desired=false every run → false-positive CHANGED.
+    # SFTP belongs to synology_services.
 }
 
 
@@ -95,15 +105,15 @@ def do_terminal(a):
         OUT_KEYS["ssh_enable"]:    _bool(a.ssh_enable),
         OUT_KEYS["ssh_port"]:      int(a.ssh_port),
         OUT_KEYS["telnet_enable"]: _bool(a.telnet_enable),
-        OUT_KEYS["sftp_enable"]:   _bool(a.sftp_enable),
     }
-    current = _exec(TERMINAL_API, "version=1", "method=get")["data"]
+    current = _exec(TERMINAL_API, "version=%d" % TERMINAL_VER, "method=get")["data"]
     drift = {k: {"current": current.get(k), "desired": v}
              for k, v in desired.items() if current.get(k) != v}
 
     def apply():
         current.update(desired)
-        return _exec(TERMINAL_API, "version=1", "method=set", *_args_from(current))
+        return _exec(TERMINAL_API, "version=%d" % TERMINAL_VER, "method=set",
+                     *_args_from(current))
 
     return _result(drift, a.check, apply)
 
@@ -221,7 +231,12 @@ def main(argv=None):
     t.add_argument("--ssh-enable", dest="ssh_enable", required=True)
     t.add_argument("--ssh-port", dest="ssh_port", required=True)
     t.add_argument("--telnet-enable", dest="telnet_enable", required=True)
-    t.add_argument("--sftp-enable", dest="sftp_enable", required=True)
+    # --sftp-enable accepted but ignored — SFTP lives on
+    # SYNO.Core.FileServ.SFTP (synology_services), not SYNO.Core.Terminal.
+    # Argparse continues to accept the flag so callers don't break; the
+    # value is just dropped. Remove this whole line once the synology_ssh
+    # role drops --sftp-enable from its task invocation.
+    t.add_argument("--sftp-enable", dest="sftp_enable", default=None)
     t.add_argument("--check", action="store_true")
     t.set_defaults(func=do_terminal)
 
