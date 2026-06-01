@@ -1,11 +1,11 @@
-"""Unit tests for dsm_http.py — mock urllib at the opener level."""
+"""Unit tests for the inlined DSMSession in apply_security.py — mock urllib at the opener level."""
 import io
 import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-import dsm_http as m  # noqa: E402
+import apply_security as m  # noqa: E402  (DSMSession + DSMError live here now)
 
 
 class _FakeResp(io.BytesIO):

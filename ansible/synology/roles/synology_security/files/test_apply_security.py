@@ -253,18 +253,16 @@ class _FakeDSMSession:
 
 
 def _install_fake_dsm(monkeypatch):
-    """Stub dsm_http with the FakeDSMSession class + a DSMError exception.
+    """Replace m.DSMSession with FakeDSMSession + m.DSMError with a local class.
 
-    do_firewall_profile late-imports dsm_http, so we inject a fake module into
-    sys.modules and reset class state between tests.
+    DSMSession is now defined IN apply_security (was a sibling module until
+    we inlined it — ansible's `script:` only ships one file, so siblings
+    couldn't be imported on the target). Tests monkeypatch the module attrs
+    directly. Returns the DSMError class so tests can raise it.
     """
-    import types
-    import sys as _sys
-    fake_mod = types.ModuleType("dsm_http")
     class _DSMError(Exception): pass
-    fake_mod.DSMSession = _FakeDSMSession
-    fake_mod.DSMError = _DSMError
-    monkeypatch.setitem(_sys.modules, "dsm_http", fake_mod)
+    monkeypatch.setattr(m, "DSMSession", _FakeDSMSession)
+    monkeypatch.setattr(m, "DSMError", _DSMError)
     _FakeDSMSession.current_profile = None
     _FakeDSMSession.last_set_profile = None
     _FakeDSMSession.last_apply_name = None

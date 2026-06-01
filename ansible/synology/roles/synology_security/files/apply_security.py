@@ -23,12 +23,188 @@ Read-only diagnostics (no SET; safe to run any time):
                   snapshot until the rule-push API is implemented.
 """
 import argparse
+import http.cookiejar
 import json
 import os
+import ssl
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 WEBAPI = "/usr/syno/bin/synowebapi"
+
+
+# ---- HTTP webapi client (inlined; matches former dsm_http.py) ----------------
+# This was a sibling module (`dsm_http.py`) until 2026-05-31. Ansible's
+# `script:` module only ships the named script to the target — not siblings —
+# so `from dsm_http import …` fails with ModuleNotFoundError when the role
+# runs. Inlining keeps the single-file pattern every other synology_* role
+# uses. Tests still cover this surface directly (test_apply_security.py).
+#
+# Transport details (captured from the DSM 7.3 web UI's XHRs):
+#   - POST to https://localhost:6021/webapi/entry.cgi
+#   - Content-Type: application/x-www-form-urlencoded
+#   - JSON values in form fields are JSON-quoted (name="default", not bare)
+#   - X-SYNO-TOKEN header required for state-changing calls; returned by
+#     login when enable_syno_token=yes
+#   - X-SYNO-HASH is OPTIONAL (server validates only if present — omitted
+#     → success). We omit.
+
+
+class DSMError(Exception):
+    """A DSM webapi call returned success=false or non-200 HTTP."""
+
+    def __init__(self, msg, code=None, payload=None):
+        super().__init__(msg)
+        self.code = code
+        self.payload = payload
+
+
+class DSMSession(object):
+    """HTTP webapi session — context-manage to ensure logout on exit."""
+
+    def __init__(self, host="localhost", port=6021, account="e4e-admin",
+                 password=None, timeout=30):
+        if not password:
+            raise ValueError("password is required")
+        self.base = "https://%s:%d/webapi/entry.cgi" % (host, port)
+        self.account = account
+        self._password = password
+        self.timeout = timeout
+        self.token = None  # X-SYNO-TOKEN, populated by login()
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        cj = http.cookiejar.CookieJar()
+        self._opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ctx),
+            urllib.request.HTTPCookieProcessor(cj),
+        )
+
+    def __enter__(self):
+        self.login()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            self.logout()
+        except Exception:
+            pass  # never mask the original exception
+
+    def _post(self, params, raw_headers=None):
+        headers = {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"}
+        if self.token:
+            headers["X-SYNO-TOKEN"] = self.token
+        if raw_headers:
+            headers.update(raw_headers)
+        data = urllib.parse.urlencode(params).encode("utf-8")
+        req = urllib.request.Request(self.base, data=data, headers=headers)
+        try:
+            with self._opener.open(req, timeout=self.timeout) as resp:
+                body = resp.read()
+        except urllib.error.HTTPError as e:
+            raise DSMError("HTTP %d on %s" % (e.code, params.get("api", "?")),
+                           code=e.code, payload=e.read()[:300])
+        try:
+            return json.loads(body)
+        except ValueError:
+            raise DSMError("non-JSON response on %s" % params.get("api", "?"),
+                           payload=body[:300])
+
+    @staticmethod
+    def _check(resp, what):
+        if not resp.get("success"):
+            err = resp.get("error", {})
+            raise DSMError("%s failed (code=%s)" % (what, err.get("code")),
+                           code=err.get("code"), payload=resp)
+        return resp.get("data", {})
+
+    def login(self):
+        resp = self._post({
+            "api": "SYNO.API.Auth", "version": "7", "method": "login",
+            "account": self.account, "passwd": self._password,
+            "session": "FileStation", "format": "cookie",
+            "enable_syno_token": "yes",
+        })
+        data = self._check(resp, "login")
+        self.token = data.get("synotoken")
+        if not self.token:
+            raise DSMError("login succeeded but no SynoToken returned",
+                           payload=data)
+        return data
+
+    def logout(self):
+        if not self.token:
+            return
+        try:
+            self._post({"api": "SYNO.API.Auth", "version": "7", "method": "logout"})
+        finally:
+            self.token = None
+
+    def call(self, api, method, version=1, **params):
+        """Generic webapi call. String params get JSON-quoted (UI convention)."""
+        form = {"api": api, "method": method, "version": str(version)}
+        for k, v in params.items():
+            if isinstance(v, bool):
+                form[k] = "true" if v else "false"
+            elif isinstance(v, (int, float)):
+                form[k] = str(v)
+            elif isinstance(v, str):
+                form[k] = json.dumps(v)  # JSON-quoted string
+            else:
+                form[k] = json.dumps(v, separators=(",", ":"))
+        return self._post(form)
+
+    def profile_get(self, name):
+        return self._check(self.call(
+            "SYNO.Core.Security.Firewall.Profile", "get", name=name,
+        ), "Profile.get(%s)" % name)
+
+    def profile_set(self, profile, applying=False):
+        """Save profile (write to /usr/syno/etc/firewall.d/*.json). Not live until profile_apply()."""
+        form = {
+            "api": "SYNO.Core.Security.Firewall.Profile",
+            "method": "set",
+            "version": "1",
+            "profile": json.dumps(profile, separators=(",", ":")),
+            "profile_applying": "true" if applying else "false",
+        }
+        return self._check(self._post(form), "Profile.set")
+
+    def profile_apply(self, name, poll_interval=0.5, timeout=60):
+        """Commit a saved profile to live nftables (Profile.Apply two-phase).
+
+        `profile_applying=False` matches the UI's call — True errors 117 on
+        DSM 7.x. The flag is a context hint, not a do-it toggle.
+        """
+        started = self._check(self.call(
+            "SYNO.Core.Security.Firewall.Profile.Apply", "start",
+            name=name, profile_applying=False,
+        ), "Profile.Apply.start")
+        task_id = started.get("task_id")
+        if not task_id:
+            raise DSMError("Profile.Apply.start returned no task_id",
+                           payload=started)
+        try:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                status = self._check(self.call(
+                    "SYNO.Core.Security.Firewall.Profile.Apply", "status",
+                    task_id=task_id,
+                ), "Profile.Apply.status")
+                if status.get("finish"):
+                    return status
+                time.sleep(poll_interval)
+            raise DSMError("Profile.Apply timed out after %ds (task=%s)"
+                           % (timeout, task_id))
+        finally:
+            try:
+                self.call("SYNO.Core.Security.Firewall.Profile.Apply", "stop")
+            except DSMError:
+                pass
 
 
 def _exec(api, *params):
@@ -215,10 +391,6 @@ def do_firewall_profile(a):
         print("FAIL no password supplied (pass --password on argv or set "
               "DSM_PASSWORD env)")
         return 1
-
-    # Late import — module file is sibling, copied by ansible script:
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from dsm_http import DSMSession, DSMError
 
     try:
         with DSMSession(account=a.account, password=password) as s:
