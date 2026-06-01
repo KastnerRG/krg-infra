@@ -7,23 +7,66 @@ sys.path.insert(0, os.path.dirname(__file__))
 import apply_users as m  # noqa: E402
 
 
-def _factory(live):
+def _factory(live, silently_drop=None):
+    """Build a fake _exec.
+
+    SET calls update the simulated live[api]["get"] state so that any
+    subsequent GET (e.g. do_home's verify-after-set re-GET) returns the
+    new state — matching how a real DSM behaves.
+
+    `silently_drop`: optional set of (api, key) tuples. When a SET would
+    set one of those keys, the fake KEEPS the old value on the verify-GET
+    — simulating DSM's silent-success-no-persist behaviour (e.g. User.Home
+    `enable_domain=true` post-join when winbind isn't ready). The script's
+    verify-after-set defer logic should detect this and report no-change.
+
+    The AD-probe (DIRECTORY_DOMAIN_API GET) is called by do_home before
+    any User.Home work; default to "joined" so existing tests aren't
+    accidentally gated.
+    """
+    silently_drop = set(silently_drop or [])
     captured = []
-    # The AD-probe (DIRECTORY_DOMAIN_API GET) is called by do_home before any
-    # User.Home work. Default it to "joined" so existing User.Home tests
-    # aren't accidentally gated by the AD-aware logic. Tests that exercise
-    # the gate itself pass an explicit DIRECTORY_DOMAIN_API entry.
+    live = {api: {**v, "get": dict(v["get"])} for api, v in live.items()}
     if m.DIRECTORY_DOMAIN_API not in live:
-        live = dict(live)
         live[m.DIRECTORY_DOMAIN_API] = {"get": {"enable_domain": True}}
 
     def fake(api, *params):
         if "method=get" in params:
             return {"data": dict(live[api]["get"]), "success": True}
         captured.append((api, params))
+        # Parse Input envelope OR flat key=val args, apply to live state.
+        new_fields = {}
+        for p in params:
+            if p.startswith("Input="):
+                try:
+                    new_fields.update(json.loads(p[len("Input="):]))
+                except (ValueError, TypeError):
+                    pass
+            elif "=" in p and not p.startswith(("api=", "version=", "method=")):
+                k, v = p.split("=", 1)
+                # JSON-decode the value (since _args_from quotes strings)
+                try:
+                    new_fields[k] = json.loads(v)
+                except (ValueError, TypeError):
+                    new_fields[k] = v
+        if api in live:
+            for k, v in new_fields.items():
+                if (api, k) in silently_drop:
+                    continue  # simulate DSM's silent-drop on this field
+                live[api]["get"][k] = v
         return {"success": True}
 
     return fake, captured
+
+
+def _home_input(captured):
+    """Extract the User.Home.set Input envelope dict from a captured call.
+    DSM 7.3 requires User.Home.set params wrapped in Input (validated
+    2026-06-01)."""
+    set_call = next(p for a, p in captured
+                    if a == m.HOME_API and "method=set" in p)
+    iarg = next(p for p in set_call if p.startswith("Input="))
+    return json.loads(iarg[len("Input="):])
 
 
 # --- home (SYNO.Core.User.Home) -----------------------------------------------
@@ -38,6 +81,8 @@ def test_home_no_change(monkeypatch, capsys):
 
 
 def test_home_drift_enables(monkeypatch, capsys):
+    """SET goes via Input envelope (DSM 7.3 requirement); verify-after-set
+    sees the new live state via the factory's SET-updates-live behavior."""
     fake, captured = _factory({m.HOME_API: {"get": {
         "enable": False,
         "enable_domain": False,
@@ -47,9 +92,9 @@ def test_home_drift_enables(monkeypatch, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert out.startswith("CHANGED")
-    set_call = next(p for a, p in captured if a == m.HOME_API)
-    assert "enable=true" in set_call
-    assert "enable_domain=true" in set_call
+    payload = _home_input(captured)
+    assert payload["enable"] is True
+    assert payload["enable_domain"] is True
 
 
 def test_home_check_mode_no_apply(monkeypatch, capsys):
@@ -71,8 +116,8 @@ def test_home_preserves_unmanaged_keys(monkeypatch, capsys):
     monkeypatch.setattr(m, "_exec", fake)
     m.main(["home", "--enable", "true", "--include-domain-users", "true"])
     capsys.readouterr()
-    set_call = next(p for a, p in captured if a == m.HOME_API)
-    assert "home_quota_default=10GB" in set_call
+    # Unmanaged key round-trips inside the Input envelope, not as flat arg
+    assert _home_input(captured)["home_quota_default"] == "10GB"
 
 
 # --- AD-aware gate on enable_domain (DSM err 3103 when not joined) ----------
@@ -98,8 +143,9 @@ def test_home_ad_not_joined_pins_enable_domain_to_current(monkeypatch, capsys):
 
 
 def test_home_ad_joined_applies_enable_domain_normally(monkeypatch, capsys):
-    """When AD IS joined, the gate is inert — enable_domain=true flows
-    through to the SET payload as usual."""
+    """When AD IS joined AND DSM accepts enable_domain=true (verify-GET
+    sees the new value), the gate is inert — enable_domain=true flows
+    through the Input envelope to the SET payload."""
     fake, captured = _factory({
         m.HOME_API: {"get": {"enable": True, "enable_domain": False}},
         m.DIRECTORY_DOMAIN_API: {"get": {"enable_domain": True}},  # joined
@@ -109,8 +155,29 @@ def test_home_ad_joined_applies_enable_domain_normally(monkeypatch, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert out.startswith("CHANGED")
-    set_call = next(p for a, p in captured if a == m.HOME_API)
-    assert "enable_domain=true" in set_call
+    assert _home_input(captured)["enable_domain"] is True
+
+
+def test_home_set_silently_dropped_reports_no_change(monkeypatch, capsys):
+    """DSM 7.3 post-join can silently drop enable_domain=true on User.Home
+    (SET returns success=true but verify-GET shows the field unchanged —
+    validated 2026-06-01 on e4e-nas). do_home must detect this and report
+    OK no-change (deferred) instead of CHANGED, otherwise every apply
+    would falsely report drift forever."""
+    fake, captured = _factory(
+        {m.HOME_API: {"get": {"enable": True, "enable_domain": False}}},
+        silently_drop={(m.HOME_API, "enable_domain")},
+    )
+    monkeypatch.setattr(m, "_exec", fake)
+    rc = m.main(["home", "--enable", "true", "--include-domain-users", "true"])
+    assert rc == 0
+    out_err = capsys.readouterr()
+    # SET attempted (the Input envelope went through)
+    assert any(a == m.HOME_API and "method=set" in p for a, p in captured)
+    # …but DSM silently dropped enable_domain — script reports no-change
+    assert "OK no-change" in out_err.out
+    assert "silently dropped" in out_err.out or "silently dropped" in out_err.err
+    assert "enable_domain" in out_err.out or "enable_domain" in out_err.err
 
 
 def test_home_ad_probe_failure_pins_conservatively(monkeypatch, capsys):
@@ -147,8 +214,8 @@ def test_home_ad_not_joined_with_already_enabled_enable_domain_is_noop(monkeypat
 
 
 def test_home_ad_not_joined_but_spec_false_is_unaffected(monkeypatch, capsys):
-    """When spec already asks for include_domain_users=false, the gate
-    must not fire (nothing to defer). The set proceeds normally."""
+    """When spec asks for include_domain_users=false, the gate must not
+    fire (nothing to defer). The SET proceeds via the Input envelope."""
     fake, captured = _factory({
         m.HOME_API: {"get": {"enable": False, "enable_domain": False}},
         m.DIRECTORY_DOMAIN_API: {"get": {"enable_domain": False}},
@@ -159,9 +226,9 @@ def test_home_ad_not_joined_but_spec_false_is_unaffected(monkeypatch, capsys):
     captured_out = capsys.readouterr()
     assert captured_out.out.startswith("CHANGED")
     assert "deferred" not in captured_out.err  # no WARN
-    set_call = next(p for a, p in captured if a == m.HOME_API)
-    assert "enable=true" in set_call
-    assert "enable_domain=false" in set_call
+    payload = _home_input(captured)
+    assert payload["enable"] is True
+    assert payload["enable_domain"] is False
 
 
 # --- authorized-keys ----------------------------------------------------------

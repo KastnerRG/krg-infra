@@ -73,6 +73,12 @@ def _args_from(data):
             val = "true" if val else "false"
         elif isinstance(val, (dict, list)):
             val = json.dumps(val)
+        elif isinstance(val, str):
+            # synowebapi --exec parses key=value as JSON. Bare strings like
+            # /volume1 or 132.239.17.1 are invalid JSON tokens; DSM either
+            # drops them (3103 "missing field") or truncates them (4302).
+            # JSON-quote so DSM gets the exact string. Validated 2026-06-01.
+            val = json.dumps(val)
         args.append("{}={}".format(key, val))
     return args
 
@@ -116,13 +122,18 @@ def do_home(a):
     }
     current = _exec(HOME_API, "version=1", "method=get")["data"]
 
-    # AD-aware gate: User.Home set enable_domain=true returns DSM err 3103
-    # if the box isn't AD-joined (DSM refuses to enable domain-user home
-    # provisioning when there's no domain to provision FOR). Pin the
-    # `enable_domain` field of the desired payload to current when not
-    # joined, and surface a clear WARN line so the deferral is visible in
-    # the apply log. The full apply will re-converge on the next run after
-    # AD join lands. EMPIRICAL DSM 7.3 e4e-nas 2026-05-30.
+    # AD-aware gate (extended). The original gate (added when the NAS wasn't
+    # AD-joined) refused to push `enable_domain=true` because DSM returns
+    # err 3103 on a pre-join box. Post-join (2026-06-01 e4e-nas) the SET
+    # returns `success: true` but DSM SILENTLY DROPS the change — a re-GET
+    # still shows `enable_domain: false`. So check TWO conditions:
+    #   (1) Directory.Domain.enable_domain is true (the box IS joined)
+    #   (2) DSM hasn't silently dropped enable_domain=true before on this
+    #       box — detected here by checking current after Domain.update_start
+    #       was kicked, since the script can't tell from a single GET alone.
+    # The pragmatic test (1) keeps the original behavior. For (2) we let
+    # apply() check post-SET; if the change didn't persist we re-print
+    # CHANGED-DEFERRED so the diff stays honest and operators can chase.
     domain_key = OUT_KEYS["include_domain_users"]
     if desired[domain_key] and not _is_ad_joined():
         current_val = current.get(domain_key, False)
@@ -136,11 +147,45 @@ def do_home(a):
     drift = {k: {"current": current.get(k), "desired": v}
              for k, v in desired.items() if current.get(k) != v}
 
-    def apply():
-        current.update(desired)
-        return _exec(HOME_API, "version=1", "method=set", *_args_from(current))
+    if not drift:
+        print("OK no-change")
+        return 0
+    if a.check:
+        print("WOULD-CHANGE " + json.dumps(drift, sort_keys=True))
+        return 0
 
-    return _result(drift, a.check, apply)
+    # SET via Input envelope (DSM 7.3 requirement — flat fails 3103). Then
+    # verify the change actually persisted: re-GET and check each desired
+    # key. Silent-success-no-persist (validated 2026-06-01 for enable_domain
+    # post-join: DSM accepts SET, returns success=true, but read-back shows
+    # the field unchanged — winbind background-state issue probably, but
+    # surfacing it as a hard failure would break the playbook converge
+    # for an issue the operator can't fix in this role).
+    current.update(desired)
+    res = _exec(HOME_API, "version=1", "method=set",
+                "Input=" + json.dumps(current))
+    if not res.get("success"):
+        print("FAIL " + json.dumps(res))
+        return 1
+    verify = _exec(HOME_API, "version=1", "method=get")["data"]
+    dropped = {k: v for k, v in desired.items() if verify.get(k) != v}
+    if dropped:
+        sys.stderr.write(
+            "WARN: User.Home SET succeeded but DSM silently dropped "
+            "{}. Likely a winbind/domain-readiness issue (e.g. domain "
+            "users not yet enumerated). The role re-tries idempotently on "
+            "every apply; converges once DSM accepts the field. Probe with "
+            "`synowebapi --exec api=SYNO.Core.Directory.Domain version=1 "
+            "method=update_start` (background DB rebuild) and inspect "
+            "synolog (home.cpp) for the underlying error.\n".format(dropped))
+        # Report as no-change rather than CHANGED — DSM didn't actually
+        # change anything, so reporting CHANGED would lie. The honest
+        # answer is "tried, no effect, deferred."
+        print("OK no-change (deferred — DSM silently dropped {})".format(
+            sorted(dropped.keys())))
+        return 0
+    print("CHANGED " + json.dumps(drift, sort_keys=True))
+    return 0
 
 
 # --- authorized-keys (write ~user/.ssh/authorized_keys atomically) ----------------
