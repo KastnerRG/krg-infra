@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Apply DSM share-level ACL grants + optional recursive filesystem-ACL stamp.
 
-Three subcommands:
+Two subcommands:
 
   setuser           Apply the share -> principal grant matrix from
                     spec/e4e-nas/acls.yml. Each grant names a `group` (DSM needs
@@ -11,14 +11,6 @@ Three subcommands:
                     that drift, using the `=` operator (sets each tier EXACTLY).
                     Validated on the DSM 7.3.2-86009 rig.
 
-  admin-grants      Additively grant a set of @-prefixed principals (typically AD
-                    admin groups like `@KRG\\Domain Admins`) to a tier on every
-                    share in --shares. Uses the `+` operator — does NOT touch
-                    other grants on the tier. Idempotent: GETs current state,
-                    only `+`-adds entries that are MISSING. The bridge from
-                    ad.yml `admin_groups` to share visibility without enumerating
-                    every share in acls.yml. Independent of the `setuser` matrix.
-
   recursive-stamp   Runs `synoacltool -reset -R <path>` to re-apply the share-root
                     filesystem ACL down the entire subtree. This is the
                     "apply to this folder, sub-folders and files" pass from
@@ -26,6 +18,11 @@ Three subcommands:
                     dead old-domain SIDs that won't resolve under KRG.LOCAL.
                     Intended to run with `--tags acls-recursive` (explicit), NOT
                     on every synology_base re-apply (it walks the whole tree).
+
+The earlier `admin-grants` subcommand (additive per-share AD-admin bridge,
+introduced in 2d36a05) is superseded by `apply_ad.py admin-groups` (the
+global synoinfo.conf Ad_Domain_Admin_Groups mechanism). Removed in favour
+of the cleaner architecture — see synology_ad/files/apply_ad.py docstring.
 
 Run by the synology_acls role via the `script` module (DSM's Python 3.8). Prints
 OK no-change / WOULD-CHANGE <json> / CHANGED <json> / FAIL <msg>.
@@ -99,58 +96,6 @@ def do_setuser(a):
     return 0
 
 
-# --- admin-grants (additive AD-admin-groups bridge across many shares) ------------
-def do_admin_grants(a):
-    """Additively grant a set of @-prefixed principals to one tier across many
-    shares. Independent of the `setuser` matrix in acls.yml — this is the
-    bridge from ad.yml `admin_groups` to share access without enumerating
-    every share+grant pair in acls.yml.
-
-    Behaviour:
-      * Reads each share's current ACL via `--list_acl`.
-      * For each share, computes the SET-DIFFERENCE of (desired grants) -
-        (current tier members) and only `+`-adds the missing entries.
-      * Skips shares where every desired grant is already present (per-share
-        no-op when converged; whole-task no-op when ALL shares are converged).
-      * NEVER touches other tiers and NEVER removes principals already on the
-        target tier — `+` is purely additive.
-
-    Why this exists separately from setuser: the setuser matrix is authoritative
-    per-share (a principal omitted there is REMOVED), so listing one share
-    forces you to write the FULL grant list for it — including every project
-    group and admin. admin-grants is for cross-cutting "all shares get this
-    admin tier" rules; acls.yml stays free to add per-share project grants
-    without re-asserting the admins on every entry.
-    """
-    desired = set(json.loads(a.grants))
-    shares = json.loads(a.shares)
-    tier = a.tier
-    if tier not in TIER.values():
-        print("FAIL " + json.dumps({"error": "--tier must be one of " + ",".join(sorted(TIER.values())),
-                                    "got": tier}))
-        return 1
-    per_share = {}
-    for share in shares:
-        current = current_tiers(share).get(tier, set())
-        missing = sorted(desired - current)
-        if not missing:
-            continue
-        per_share[share] = missing
-    if not per_share:
-        print("OK no-change")
-        return 0
-    if a.check:
-        print("WOULD-CHANGE " + json.dumps(per_share, sort_keys=True))
-        return 0
-    for share, missing in sorted(per_share.items()):
-        r = _run([SYNOSHARE, "--setuser", share, tier, "+", ",".join(missing)])
-        if r.returncode != 0:
-            print("FAIL admin-grants %s: %s" % (share, (r.stderr or r.stdout).strip()[:300]))
-            return 1
-    print("CHANGED " + json.dumps(per_share, sort_keys=True))
-    return 0
-
-
 # --- recursive-stamp (runbook §4 "apply to this folder, sub-folders and files") ----
 def do_recursive_stamp(a):
     """Reset every file/dir under <path> to inherit the share root's ACL.
@@ -188,15 +133,6 @@ def main(argv=None):
     s.add_argument("--grants", required=True, help="JSON array of {group|user, access}")
     s.add_argument("--check", action="store_true")
     s.set_defaults(func=do_setuser)
-
-    g = sub.add_parser("admin-grants",
-                       help="Additively grant @-prefixed principals to a tier across N shares")
-    g.add_argument("--shares", required=True, help="JSON array of share names")
-    g.add_argument("--grants", required=True, help="JSON array of @-prefixed principals")
-    g.add_argument("--tier", required=True, choices=list(TIER.values()),
-                   help="RW | RO | NA")
-    g.add_argument("--check", action="store_true")
-    g.set_defaults(func=do_admin_grants)
 
     r = sub.add_parser("recursive-stamp",
                        help="Re-apply share-root ACL to entire subtree (runbook §4)")

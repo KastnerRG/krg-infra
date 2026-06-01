@@ -79,48 +79,51 @@
     - "'JOINED' not in ad_test.stdout"
     - ad_join_password | length > 0
 
-# --- Nest AD admin_groups into local `administrators` (post-join) ------------
-# AD users authenticate via winbind, but their NT token only carries AD group
-# SIDs — it does NOT include local DSM group SIDs unless the local group has
-# the AD group as a NESTED MEMBER. Share ACLs that grant `@administrators`
-# therefore don't cover AD admins out of the box. `synogroup --memberadd
-# administrators KRG\<ad-group>` (validated 2026-06-01 on e4e-nas) creates the
-# nesting; DSM's share access engine then walks synogroup membership and
-# resolves AD admin-tier users through to the local administrators grant.
+# --- Ad_Domain_Admin_Groups: the global "AD-group → NAS admin tier" bridge ---
+# Members of any group listed here inherit @administrators-equivalent access
+# on every share AUTOMATICALLY — no per-share ACL grant needed. Stored in
+# /etc/synoinfo.conf as a comma-separated `<NETBIOS>\<group>` string. Confirmed
+# from the pre-reset 2026-05-21 confbkp_config_tb backup; validated live
+# 2026-06-01 (per-share Domain-Admins grants stripped from `admin` share,
+# Domain Admins still saw it because Ad_Domain_Admin_Groups was set).
 #
-# Pre-join the AD group name won't resolve and the call would fail, so this
-# task is gated on `JOINED` (either pre-existing, or just-completed in
-# `Join the AD domain` above). Additive + idempotent at DSM level.
-- name: Nest AD admin_groups into local `administrators` (post-join bridge)
-  vars:
-    _netbios: "{{ ad_spec.ad.realm.split('.')[0] }}"
-    _ad_group: "{{ _netbios }}\\{{ item }}"
-  # PATH={{ syno_path }} so synogroup resolves (/usr/syno/sbin not in root's PATH);
-  # 255 → 1 translation so a real synogroup failure (missing group/user) isn't
-  # misclassified as SSH-unreachable. Same pattern as synology_users.
-  ansible.builtin.raw: |
-    PATH={{ syno_path }}:$PATH synogroup --memberadd administrators {{ _ad_group | quote }}
-    rc=$?
-    [ "$rc" = 255 ] && exit 1 || exit $rc
-  loop: "{{ ad_spec.ad.admin_groups | default([]) }}"
-  loop_control:
-    label: "{{ _ad_group }} -> @administrators"
-  register: admin_nest
-  # DSM 7.3 synogroup --memberadd behaviour (verified 2026-05-31):
-  #   true add:      rc=0 + minimal/empty stdout
-  #   re-add no-op:  rc=0 + stdout has "Group Members:" header + listing
-  # So "Group Members:" presence means already-a-member, NOT a change.
-  changed_when:
-    - admin_nest.rc == 0
-    - "'Group Members:' not in (admin_nest.stdout | default(''))"
-  # Real failure (unknown group/user) is rc != 0 AND the target name is absent
-  # from the post-state listing — same idempotence pattern as synology_users.
-  failed_when:
-    - admin_nest.rc != 0
-    - _ad_group not in (admin_nest.stdout | default(''))
+# Why not webapi: Directory.Domain.Conf.set v2/v3 with domain_admin_groups
+# accepts the field and returns success, but it's silently no-op'd — the
+# field isn't in the GET schema and the change never lands. synosetkeyvalue
+# against /etc/synoinfo.conf is the path that actually persists. The earlier
+# attempt at this bridge (commit 1ee9f37, `synogroup --memberadd
+# administrators KRG\<grp>`) added the entries to the administrators group
+# but DSM doesn't walk that nesting backwards at share-resolver time, so it
+# was a no-op for access — superseded by this task.
+#
+# Gated on JOINED (pre-join the AD group names don't resolve and SMBService
+# would refuse).
+- name: Apply Ad_Domain_Admin_Groups (global admin-tier bridge — synoinfo.conf)
+  ansible.builtin.script: >-
+    apply_ad.py admin-groups
+    --groups {{ (ad_spec.ad.admin_groups | default([])) | to_json | quote }}
+    --netbios {{ ad_spec.ad.realm.split('.')[0] | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: admin_groups_apply
+  changed_when: "'CHANGED' in admin_groups_apply.stdout or 'WOULD-CHANGE' in admin_groups_apply.stdout"
+  failed_when: "admin_groups_apply.rc != 0 or 'FAIL' in admin_groups_apply.stdout"
+  check_mode: false
   when:
     - (ad_spec.ad.admin_groups | default([])) | length > 0
     - ('JOINED' in ad_test.stdout) or ('CHANGED' in (ad_join_run.stdout | default('')))
+
+- name: Restart pkgctl-SMBService to pick up Ad_Domain_Admin_Groups change
+  # Required only when admin_groups_apply landed a change — the synoinfo.conf
+  # key is read by SMBService at startup. Validated 2026-06-01: ssh access
+  # survives this restart cleanly (the earlier ssh-lockout was from
+  # `synoshare --setuser homes` cascading to /volume1/homes/<user>/.ssh
+  # filesystem ACLs, NOT from systemctl restart).
+  ansible.builtin.raw: |
+    systemctl restart pkgctl-SMBService
+    rc=$?
+    [ "$rc" = 255 ] && exit 1 || exit $rc
+  changed_when: true
+  when: admin_groups_apply is defined and admin_groups_apply.changed
 
 # --- Drift export (read-only) — only with `--tags export` -------------------
 - name: Export live state for drift detection

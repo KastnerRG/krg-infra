@@ -26,15 +26,23 @@ ad:
   allowed_groups:
     - Domain Admins
 
-  # Admin elevation. Each AD group listed here is nested as a MEMBER of the
-  # local DSM `administrators` group via `synogroup --memberadd <local-group>
-  # KRG\<ad-group>` (validated 2026-06-01). Why this matters: an AD user's NT
-  # token carries AD group SIDs only, NOT local-group SIDs — so a share grant
-  # to `@administrators` (the local group) wouldn't cover AD admins without
-  # this nesting. After the bind, DSM's share access engine walks synogroup
-  # membership and resolves AD admins through to the local administrators
-  # grant. Idempotent + additive — synogroup --memberadd accepts re-adds and
-  # we never REMOVE here (operator UI adds stay until the spec catches them).
+  # Admin elevation — global "AD-group → NAS administrator tier" bridge.
+  # Each AD group listed here is written into /etc/synoinfo.conf's
+  # `Ad_Domain_Admin_Groups` key (as `KRG\<group>,KRG\<group>,...`) by the
+  # synology_ad role's admin-groups task. Members of any listed group then
+  # inherit @administrators-equivalent access on every share automatically —
+  # no per-share ACL grant required (the share-resolver consults this key
+  # at access-check time).
+  #
+  # Mechanism confirmed from the 2026-05-21 pre-reset confbkp_config_tb
+  # backup (the prior NAS used this exact key with old-domain
+  # "Engineers for Exploration NAS Admins") and validated live 2026-06-01:
+  # per-share Domain-Admins grants stripped from `admin` share → Domain
+  # Admins still see it because this key is set.
+  #
+  # NOT the API path: Directory.Domain.Conf.set v2/v3 with
+  # domain_admin_groups returns success but silently no-ops on DSM 7.3;
+  # synosetkeyvalue against /etc/synoinfo.conf is what actually persists.
   admin_groups:
     - Domain Admins
     - E4E Admin
