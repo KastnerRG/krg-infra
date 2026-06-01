@@ -186,7 +186,7 @@
   # the other researchers. FPGA is opt-in in the compute profile now, so this is
   # explicit/deliberate — waiter IS the FPGA box, so flip to true once confirmed.
   # The /tools dataset is unaffected (modules/hardware/fpga.nix).
-  krg.fpga.enable = false;
+  krg.fpga.enable = true;
 
   # Login access: Domain Admins (infra admins — own-account login + sudo) PLUS the
   # "Waiter" AD group (this box's researchers). Overrides base.nix's Domain-Admins-only
