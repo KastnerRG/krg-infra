@@ -161,11 +161,21 @@ def do_snmp(a):
             # for credentials to land in secrets-syno.yml. Validated against
             # the e4e-nas live API 2026-05-31.
             if desired.get("enable_snmp") and not _bool(a.v1v2 or "false"):
+                # Validated 2026-05-31 against e4e-nas: when daemon is off,
+                # DSM's Notification.SNMP set returns success=true but
+                # SILENTLY DROPS metadata changes (contact / location / name
+                # stay at their factory defaults). The role would then
+                # report CHANGED on every run while nothing actually
+                # persisted. Clearing all desired keeps the diff honest
+                # (OK no-change with WARN) — the metadata gets applied
+                # alongside enable_snmp once creds land in secrets-syno.yml.
                 sys.stderr.write(
                     "WARN: snmp.enable_snmp=true ALSO deferred — DSM err 2202 "
                     "rejects daemon-enable with no protocol active "
-                    "(v1v2=false, v3 deferred). Metadata fields still apply.\n")
-                del desired["enable_snmp"]
+                    "(v1v2=false, v3 deferred). Metadata (contact/location/"
+                    "name) is ALSO deferred because DSM silently drops "
+                    "metadata changes when the daemon is off.\n")
+                desired.clear()
             # Also don't push rouser (would be a v3-only field with no v3 enabled)
             # — fall through; we never add it in this branch.
     else:

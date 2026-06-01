@@ -81,10 +81,14 @@ def test_snmp_v3_apply_with_creds(monkeypatch, capsys):
 
 
 def test_snmp_v3_soft_defer_without_creds(monkeypatch, capsys):
-    """v3-enable WITHOUT USM creds AND v1v2 off → soft-defer BOTH:
-    enable_snmp_v3 and enable_snmp drop from desired (DSM err 2202 on a
-    SET that enables the daemon with no working protocol). The metadata
-    fields (contact / name / location) still flow through.
+    """v3-enable WITHOUT USM creds AND v1v2 off → soft-defer EVERYTHING:
+    the whole desired dict clears so the role reports OK no-change with
+    a WARN. Validated 2026-05-31 against live e4e-nas: when the SNMP
+    daemon is off, DSM silently drops metadata changes (contact /
+    location / name) too — pushing them produced a false-positive
+    CHANGED every run while nothing actually persisted. Everything
+    converges in one shot once snmp_v3_*_password lands in
+    secrets-syno.yml.
     """
     captured = []
     live = {"enable_snmp": False, "enable_snmp_v1v2": False, "enable_snmp_v3": False,
@@ -96,21 +100,14 @@ def test_snmp_v3_soft_defer_without_creds(monkeypatch, capsys):
                  "--contact", "admin@x", "--location", "UCSD"])
     assert rc == 0
     out_err = capsys.readouterr()
-    assert out_err.out.startswith("CHANGED") or "OK no-change" in out_err.out
-    # BOTH defers WARN on stderr
+    # No SET attempted at all — apply_service sees empty desired → no drift
+    assert "OK no-change" in out_err.out
+    # BOTH defers WARN on stderr — the v3 cred reason + the metadata-also-deferred reason
     assert "enable_snmp_v3=true deferred" in out_err.err
     assert "enable_snmp=true ALSO deferred" in out_err.err
-    # NO enable_snmp_v3=true / v3_* / rouser on the wire — those need creds
-    rest = set(captured[0][1][2:])
-    assert "enable_snmp_v3=true" not in rest
-    assert "enable_snmp=true" not in rest  # ALSO deferred (no protocol enabled)
-    assert not any(t.startswith("v3_") for t in rest), \
-        "v3 fields must not be sent without creds: " + str(rest)
-    assert "rouser=krg-monitor" not in rest, \
-        "rouser is a v3-only concept; must not be sent when v3 is deferred"
-    # Metadata fields DO flow through
-    assert "contact=admin@x" in rest
-    assert "name=e4e-nas" in rest
+    assert "Metadata" in out_err.err  # operator visibility on the metadata defer
+    # No SET captured (apply_service short-circuits when desired is empty)
+    assert captured == [], "no SET should fire when daemon is deferred: " + str(captured)
 
 
 def test_snmp_v3_defer_keeps_enable_when_v1v2_on(monkeypatch, capsys):
