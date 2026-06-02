@@ -39,6 +39,18 @@ import sys
 import tempfile
 
 
+# DSM Container Manager ships docker under non-standard paths that sudo's
+# secure_path doesn't include — `docker` is invisible to subprocess unless we
+# prepend the install locations. Adding both v7.2+ (Container Manager) and
+# legacy (Docker package) targets so this works across DSM versions.
+_DSM_DOCKER_PATHS = (
+    "/usr/local/bin",                                  # symlink target on most DSM 7.x
+    "/var/packages/ContainerManager/target/usr/bin",   # DSM 7.2+ Container Manager
+    "/var/packages/Docker/target/usr/bin",             # legacy DSM ≤ 7.1 Docker package
+)
+os.environ["PATH"] = ":".join(_DSM_DOCKER_PATHS) + ":" + os.environ.get("PATH", "")
+
+
 # ---------------------------------------------------------------------------
 # garage.toml template
 # ---------------------------------------------------------------------------
