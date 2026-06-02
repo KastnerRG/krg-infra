@@ -119,6 +119,27 @@ def test_package_defaults_fail_propagates(monkeypatch, capsys):
     assert rc == 1 and capsys.readouterr().out.startswith("FAIL")
 
 
+def test_package_defaults_get_failure_yields_structured_fail(monkeypatch, capsys):
+    """If SYNO.Core.Package.Setting.get returns {success:false,...} (auth
+    timeout, permission denied, API rename), the subcommand must emit a
+    structured FAIL line + exit 1 rather than raising KeyError on the
+    missing `data` field. Regression guard against accidentally
+    re-introducing the `["data"]` access without the success check."""
+    def fake(api, *params):
+        if "method=get" in params:
+            return {"success": False, "error": {"code": 403, "errors": "permission denied"}}
+        # SET path should never be reached if GET fails
+        raise AssertionError("SET path called despite GET failure")
+    monkeypatch.setattr(m, "_exec", fake)
+    rc = m.main(["package-defaults", "--install-volume", "/volume1"])
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    import json as _j
+    payload = _j.loads(out.split(" ", 1)[1])
+    assert "GET failed" in payload["reason"]
+    assert payload["response"]["success"] is False
+
+
 # --- package-state (workaround for upstream provider Run-field bug) ----------
 # `synology_core_package.run=true` is silently dropped by the upstream library;
 # this subcommand converges named packages to started via `synopkg start`.
@@ -276,3 +297,13 @@ def test_package_state_rejects_bad_json():
     import pytest as _pt
     with _pt.raises(SystemExit):
         m.main(["package-state", "--packages", '"not a list"'])
+
+
+def test_package_state_rejects_malformed_json():
+    """Malformed JSON (not just non-list) must SystemExit with a clear
+    message rather than letting json.JSONDecodeError surface as a Python
+    traceback (which Ansible would re-wrap unhelpfully)."""
+    import pytest as _pt
+    with _pt.raises(SystemExit) as exc:
+        m.main(["package-state", "--packages", "this-is-not-json{"])
+    assert "valid JSON" in str(exc.value)

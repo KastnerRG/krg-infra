@@ -136,7 +136,10 @@ def do_package_state(a):
     where ansible runs first shouldn't be a hard error. The operator sees the
     warning and knows to run `tofu apply` (or the missing package's spec
     entry is a typo)."""
-    desired = json.loads(a.packages)
+    try:
+        desired = json.loads(a.packages)
+    except json.JSONDecodeError as e:
+        raise SystemExit("--packages must be valid JSON (got error: %s)" % e)
     if not isinstance(desired, list) or not all(isinstance(p, str) for p in desired):
         raise SystemExit("--packages must be a JSON array of package names")
 
@@ -186,7 +189,15 @@ def do_package_defaults(a):
     this API path) and NOT `volume`/`vol` (silently no-op, GET unchanged).
     """
     desired = {"default_vol": a.install_volume}
-    current = _exec("SYNO.Core.Package.Setting", "version=1", "method=get")["data"]
+    get_res = _exec("SYNO.Core.Package.Setting", "version=1", "method=get")
+    if not get_res.get("success"):
+        # Auth/session timeout, permission denied, API rename, etc. — surface
+        # structured FAIL with exit code 1 instead of letting `["data"]` raise
+        # KeyError + a traceback (which Ansible would re-wrap unhelpfully).
+        print("FAIL " + json.dumps({"reason": "SYNO.Core.Package.Setting GET failed",
+                                    "response": get_res}))
+        return 1
+    current = get_res["data"]
     drift = {k: {"current": current.get(k), "desired": v}
              for k, v in desired.items() if current.get(k) != v}
 

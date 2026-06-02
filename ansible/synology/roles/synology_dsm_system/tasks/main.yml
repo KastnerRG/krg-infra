@@ -40,7 +40,13 @@
   changed_when: "'CHANGED' in pkg_def_apply.stdout or 'WOULD-CHANGE' in pkg_def_apply.stdout"
   failed_when: "pkg_def_apply.rc != 0 or 'FAIL' in pkg_def_apply.stdout"
   check_mode: false
-  when: sys_spec.packages.default_install_volume is defined
+  # Guard `packages` parent too — Jinja resolves the nested attribute lookup
+  # before `is defined` evaluates, so a spec without a `packages:` key would
+  # raise AnsibleUndefinedVariable. Hierarchical check makes the role usable
+  # with older/minimal specs that pre-date the packages block.
+  when:
+    - sys_spec.packages is defined
+    - sys_spec.packages.default_install_volume is defined
 
 # Workaround for upstream provider bug — see spec/e4e-nas/dsm-system.yml
 # `packages.ensure_running:` for the why.
@@ -53,7 +59,10 @@
   changed_when: "'CHANGED' in pkg_state_apply.stdout or 'WOULD-CHANGE' in pkg_state_apply.stdout"
   failed_when: "pkg_state_apply.rc != 0 or 'FAIL' in pkg_state_apply.stdout"
   check_mode: false
-  when: (sys_spec.packages.ensure_running | default([])) | length > 0
+  # Same hierarchical-guard pattern as package-defaults above.
+  when:
+    - sys_spec.packages is defined
+    - (sys_spec.packages.ensure_running | default([])) | length > 0
 
 # NTP and per-interface static IP — TODO once API surfaces confirmed.
 
