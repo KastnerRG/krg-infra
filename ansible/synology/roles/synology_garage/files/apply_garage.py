@@ -3,9 +3,13 @@
 
 Subcommands:
   render-config  Write /volume1/docker/garage/garage.toml (root:root 0400) from
-                 structural CLI flags + 3 secrets. Atomic write; sha256
-                 compare for idempotency. SECRETS PASS ON CLI — invoker MUST
-                 set no_log:true on the ansible task.
+                 structural CLI flags + 3 secrets read from environment
+                 (GARAGE_RPC_SECRET, GARAGE_ADMIN_TOKEN, GARAGE_METRICS_TOKEN —
+                 NOT cmdline args, to keep them out of /proc/<pid>/cmdline /
+                 `ps`/`top`). Atomic write; sha256 compare for idempotency.
+                 Stdout payload deliberately omits secret values; it only
+                 emits `desired_sha256` so the operator can confirm a
+                 meaningful change without the bytes leaking.
   deploy         Write docker-compose.yml + `docker compose up -d` when the
                  effective container state (image / mounts / env / restart)
                  drifts from spec. garage.toml must exist before this runs
@@ -27,7 +31,8 @@ just not as a "Project".
 Invoked by the synology_garage ansible role via the `script` module. Prints
 OK no-change / WOULD-CHANGE <json> / CHANGED <json> / FAIL <json>. The
 render-config output deliberately omits the secret values from any
-WOULD-CHANGE/CHANGED payload (only marks `secrets_changed: true`).
+WOULD-CHANGE/CHANGED payload (only emits `desired_sha256`, a fingerprint
+of the rendered config that lets operators confirm meaningful change).
 """
 import argparse
 import hashlib
@@ -165,14 +170,25 @@ def _fail(payload):
 # ---------------------------------------------------------------------------
 # render-config — write garage.toml from CLI flags + secrets
 # ---------------------------------------------------------------------------
+_SECRET_ENV_VARS = ("GARAGE_RPC_SECRET", "GARAGE_ADMIN_TOKEN", "GARAGE_METRICS_TOKEN")
+
+
 def do_render_config(a):
+    # Secrets come from the environment, not argv, so they don't appear in
+    # /proc/<pid>/cmdline / `ps` / `top` while the script runs. Ansible's
+    # `script:` task passes them via `environment:` (no_log:true keeps them
+    # out of the ansible-side capture too).
+    missing = [v for v in _SECRET_ENV_VARS if not os.environ.get(v)]
+    if missing:
+        return _fail({"reason": "required secret env vars unset",
+                      "vars": missing})
     fields = {
         "db_engine":           a.db_engine,
         "replication_factor":  int(a.replication_factor),
         "compression_level":   int(a.compression_level),
         "rpc_bind_addr":       a.rpc_bind_addr,
         "rpc_public_addr":     a.rpc_public_addr,
-        "rpc_secret":          a.rpc_secret,
+        "rpc_secret":          os.environ["GARAGE_RPC_SECRET"],
         "s3_api_bind_addr":    a.s3_api_bind_addr,
         "s3_region":           a.s3_region,
         "s3_root_domain":      a.s3_root_domain,
@@ -180,8 +196,8 @@ def do_render_config(a):
         "s3_web_root_domain":  a.s3_web_root_domain,
         "s3_web_index":        a.s3_web_index,
         "admin_api_bind_addr": a.admin_api_bind_addr,
-        "admin_token":         a.admin_token,
-        "metrics_token":       a.metrics_token,
+        "admin_token":         os.environ["GARAGE_ADMIN_TOKEN"],
+        "metrics_token":       os.environ["GARAGE_METRICS_TOKEN"],
     }
     # Reject ", " in any string field — would close the TOML literal early
     # and inject content. Cheap defense; the template uses double-quoted
@@ -399,9 +415,8 @@ def main(argv):
     rc.add_argument("--s3-web-root-domain", required=True)
     rc.add_argument("--s3-web-index", required=True)
     rc.add_argument("--admin-api-bind-addr", required=True)
-    rc.add_argument("--rpc-secret", required=True)
-    rc.add_argument("--admin-token", required=True)
-    rc.add_argument("--metrics-token", required=True)
+    # Secrets read from os.environ — NOT argv (avoids `ps`/`top` exposure).
+    # See _SECRET_ENV_VARS + the render-config docstring at the top.
     rc.add_argument("--meta-dir", required=True)   # accepted for tasks/main.yml symmetry; not used by template
     rc.add_argument("--data-dir", required=True)
     rc.add_argument("--check", action="store_true")

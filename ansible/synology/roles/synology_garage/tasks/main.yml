@@ -18,11 +18,17 @@
 # invoke `docker compose` directly (the underlying primitive); container
 # still shows in DSM Container Manager's Container tab.
 #
-# CROSS-REFERENCE: terraform/e4e-nas/containers.tf still creates three
-# `synology_filestation_folder` resources (/docker/garage, /s3-data/{meta,data}).
-# DSM's FileStation API only sees dirs created through itself, so any
-# container bind-mount source needs index-registration. This role can rely
-# on those dirs existing without a `sudo mkdir` workaround.
+# CROSS-REFERENCE: terraform/e4e-nas/containers.tf creates three
+# `synology_filestation_folder` resources for the FileStation paths
+# /docker/garage and /s3-data/{meta,data} — DSM's FileStation API only
+# sees dirs created through itself, so any container bind-mount source
+# needs index-registration. The mapping from those FileStation paths to
+# on-disk absolute paths (which volume hosts the `docker` and `s3-data`
+# shares) is whatever DSM's share catalogue says; this role takes the
+# resolved disk paths via spec (`compose_path`, `config_path`, `meta_dir`,
+# `data_dir`) and assumes they already exist on disk + are FileStation-
+# tracked. If you change which volume hosts a share, update both the
+# share spec AND these path fields in spec/e4e-nas/garage.yml.
 
 - name: Load the Garage spec
   ansible.builtin.include_vars:
@@ -47,9 +53,14 @@
       eventually replaces this with a vault-backed lookup.
 
 # --- 1. garage.toml ------------------------------------------------------------
-# Secrets pass on the cmdline → no_log:true. The script's stdout payload
-# deliberately omits secret values; it only reports `secrets_changed: true`
-# via a sha256 hash so the operator can confirm a meaningful change without
+# Secrets pass via ENVIRONMENT (not cmdline argv) — argv is visible to other
+# processes on the NAS via `ps`/`top`/`/proc/<pid>/cmdline` even for the
+# brief window the script runs, so cmdline secrets would leak to local
+# users despite ansible's no_log. apply_garage.py reads GARAGE_* env vars
+# directly (os.environ). no_log:true keeps secret values out of ansible's
+# stdout-capture machinery too. The script's stdout payload deliberately
+# omits secret values; it only reports `desired_sha256` (the rendered
+# config's hash) so the operator can confirm a meaningful change without
 # the bytes leaking.
 - name: Render garage.toml (atomic write, root:root 0400)
   ansible.builtin.script: >-
@@ -69,10 +80,11 @@
     --s3-web-root-domain {{ garage_spec.config.s3_web.root_domain | quote }}
     --s3-web-index {{ garage_spec.config.s3_web.index | quote }}
     --admin-api-bind-addr {{ garage_spec.config.admin.api_bind_addr | quote }}
-    --rpc-secret {{ garage_rpc_secret | quote }}
-    --admin-token {{ garage_admin_token | quote }}
-    --metrics-token {{ garage_metrics_token | quote }}
     {{ '--check' if ansible_check_mode else '' }}
+  environment:
+    GARAGE_RPC_SECRET: "{{ garage_rpc_secret }}"
+    GARAGE_ADMIN_TOKEN: "{{ garage_admin_token }}"
+    GARAGE_METRICS_TOKEN: "{{ garage_metrics_token }}"
   register: cfg_apply
   changed_when: "'CHANGED' in cfg_apply.stdout or 'WOULD-CHANGE' in cfg_apply.stdout"
   failed_when: "cfg_apply.rc != 0 or 'FAIL' in cfg_apply.stdout"

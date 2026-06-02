@@ -32,15 +32,19 @@ def _render_args(**overrides):
         "s3_web_root_domain":  ".web.garage.e4e-nas.ucsd.edu",
         "s3_web_index":        "index.html",
         "admin_api_bind_addr": "[::]:3903",
-        "rpc_secret":          "a" * 64,
-        "admin_token":         "b" * 64,
-        "metrics_token":       "c" * 64,
         "meta_dir":            "/volume2/s3-data/meta",
         "data_dir":            "/volume2/s3-data/data",
         "check":               False,
     }
     base.update(overrides)
     return type("A", (), base)()
+
+
+def _set_secret_env(monkeypatch, rpc="a" * 64, admin="b" * 64, metrics="c" * 64):
+    """Default-set the three secret env vars; tests can override or unset."""
+    monkeypatch.setenv("GARAGE_RPC_SECRET", rpc)
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", admin)
+    monkeypatch.setenv("GARAGE_METRICS_TOKEN", metrics)
 
 
 def _deploy_args(**overrides):
@@ -81,6 +85,7 @@ class _RunResult:
 
 # --- render-config ------------------------------------------------------------
 def test_render_config_writes_when_missing(monkeypatch, capsys):
+    _set_secret_env(monkeypatch)
     monkeypatch.setattr(m, "_read", lambda p: None)
     writes = []
     monkeypatch.setattr(m, "_atomic_write",
@@ -105,8 +110,24 @@ def test_render_config_writes_when_missing(monkeypatch, capsys):
     assert 'root_domain = ".s3.garage.e4e-nas.ucsd.edu"' in content
 
 
+def test_render_config_fails_clean_when_secret_env_unset(monkeypatch, capsys):
+    """Missing secret env var → structured FAIL with clear reason (NOT a
+    Python KeyError traceback). Confirms the env-var contract is enforced."""
+    monkeypatch.delenv("GARAGE_RPC_SECRET", raising=False)
+    monkeypatch.delenv("GARAGE_ADMIN_TOKEN", raising=False)
+    monkeypatch.delenv("GARAGE_METRICS_TOKEN", raising=False)
+
+    rc = m.do_render_config(_render_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert set(payload["vars"]) == {
+        "GARAGE_RPC_SECRET", "GARAGE_ADMIN_TOKEN", "GARAGE_METRICS_TOKEN"}
+
+
 def test_render_config_no_change_on_identical(monkeypatch, capsys):
     # Pre-render the desired output, hand it back as the existing file content.
+    _set_secret_env(monkeypatch)
     a = _render_args()
     fields = {
         "db_engine": a.db_engine,
@@ -114,7 +135,7 @@ def test_render_config_no_change_on_identical(monkeypatch, capsys):
         "compression_level": int(a.compression_level),
         "rpc_bind_addr": a.rpc_bind_addr,
         "rpc_public_addr": a.rpc_public_addr,
-        "rpc_secret": a.rpc_secret,
+        "rpc_secret": os.environ["GARAGE_RPC_SECRET"],
         "s3_api_bind_addr": a.s3_api_bind_addr,
         "s3_region": a.s3_region,
         "s3_root_domain": a.s3_root_domain,
@@ -122,8 +143,8 @@ def test_render_config_no_change_on_identical(monkeypatch, capsys):
         "s3_web_root_domain": a.s3_web_root_domain,
         "s3_web_index": a.s3_web_index,
         "admin_api_bind_addr": a.admin_api_bind_addr,
-        "admin_token": a.admin_token,
-        "metrics_token": a.metrics_token,
+        "admin_token": os.environ["GARAGE_ADMIN_TOKEN"],
+        "metrics_token": os.environ["GARAGE_METRICS_TOKEN"],
     }
     existing = m.GARAGE_TOML_TEMPLATE % fields
     monkeypatch.setattr(m, "_read", lambda p: existing)
@@ -137,6 +158,7 @@ def test_render_config_no_change_on_identical(monkeypatch, capsys):
 
 
 def test_render_config_check_mode_doesnt_write(monkeypatch, capsys):
+    _set_secret_env(monkeypatch)
     monkeypatch.setattr(m, "_read", lambda p: None)
     writes = []
     monkeypatch.setattr(m, "_atomic_write",
@@ -151,8 +173,9 @@ def test_render_config_check_mode_doesnt_write(monkeypatch, capsys):
 def test_render_config_rejects_double_quote_in_secret(monkeypatch, capsys):
     # Defense against TOML literal-break injection — even though the operator
     # generates secrets with openssl, validate at the bottleneck.
+    _set_secret_env(monkeypatch, rpc='abc"def')
     monkeypatch.setattr(m, "_read", lambda p: None)
-    rc = m.do_render_config(_render_args(rpc_secret='abc"def'))
+    rc = m.do_render_config(_render_args())
     out = capsys.readouterr().out
     assert rc == 1 and out.startswith("FAIL ")
     payload = json.loads(out.split(" ", 1)[1])
@@ -160,9 +183,10 @@ def test_render_config_rejects_double_quote_in_secret(monkeypatch, capsys):
 
 
 def test_render_config_secret_redacted_in_changed_payload(monkeypatch, capsys):
+    _set_secret_env(monkeypatch, rpc="SUPERSECRET" * 4)
     monkeypatch.setattr(m, "_read", lambda p: None)
     monkeypatch.setattr(m, "_atomic_write", lambda *a, **kw: None)
-    rc = m.do_render_config(_render_args(rpc_secret="SUPERSECRET" * 4))
+    rc = m.do_render_config(_render_args())
     out = capsys.readouterr().out
     assert rc == 0
     assert "SUPERSECRET" not in out
@@ -394,9 +418,7 @@ def test_main_dispatches_to_subcommand(monkeypatch, capsys):
         "--s3-web-root-domain", ".y",
         "--s3-web-index", "index.html",
         "--admin-api-bind-addr", "[::]:3903",
-        "--rpc-secret", "a" * 32,
-        "--admin-token", "b" * 32,
-        "--metrics-token", "c" * 32,
+        # Secrets are read from env vars now, not argv — see do_render_config.
         "--meta-dir", "/m", "--data-dir", "/d",
     ])
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
