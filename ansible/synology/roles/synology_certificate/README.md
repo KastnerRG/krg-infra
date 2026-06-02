@@ -9,13 +9,14 @@ swaps are drift ([ADR 0001](../../../../docs/adr/0001-iac-source-of-truth.md)).
 ## How it works
 
 [`files/apply_certificate.py`](files/apply_certificate.py) (shipped via the
-`script` module; DSM py3.8) — three subcommands, run in load-bearing order
+`script` module; DSM py3.8) — four subcommands, run in load-bearing order
 by `tasks/main.yml`:
 
 | subcommand | what it does | idempotency |
 |---|---|---|
-| `letsencrypt-create` | Issue / re-issue an LE cert for one domain. Probes `SYNO.Core.Certificate.CRT.list`; no-op if a matching cert (by common-name) has > `renewal_buffer_days` of life left, otherwise calls `SYNO.Core.Certificate.LetsEncrypt.create`. | Common-name match + valid_till compare |
-| `set-default`        | Bind the matching cert as DSM's default (`SYNO.Core.Certificate.CRT.set_default`). | `is_default` flag |
+| `letsencrypt-create` | Issue / re-issue an LE cert for one domain. Probes `SYNO.Core.Certificate.CRT.list`; no-op if a matching cert (by common-name) has > `renewal_buffer_days` of life left, otherwise calls `SYNO.Core.Certificate.LetsEncrypt.create` with the wizard-captured shape (`desc + domain_name + email`). | Common-name match + valid_till compare |
+| `set-default`        | Mark the matching cert as DSM's default for NEW services (`SYNO.Core.Certificate.CRT.set` with `as_default=true` + `desc` + `id` — *not* `set_default`; the latter doesn't exist on DSM 7.3, the wizard uses `set`). | `is_default` flag |
+| `bind-services`      | Migrate EXISTING service bindings (DSM web, FTPS, KMIP, ...) onto the spec's cert (`SYNO.Core.Certificate.Service.set` with nested `service` object + `old_id` + `id`). Required because `as_default=true` only flags which cert NEW services get — it does not migrate the bindings DSM already has. | Skips (service, subscriber) tuples already on the target cert |
 | `list`               | Read-only — dump certs in trimmed JSON. Used by the drift-export tag. | n/a |
 
 The role does **not** drive LE renewal cadence — DSM has its own cron-driven
@@ -45,7 +46,7 @@ provider-modeled-surface rule, this concern belongs in Ansible.
   vantage points including outside the US. A US-only geoip allow blocks
   LE's non-US secondary validators → cert issuance fails with "Timeout
   during connect" in DSM's cert log. The `lets-encrypt-http-01` rule in
-  `spec/e4e-nas/security.yml` `firewall.profiles.default.global.rules`
+  `spec/e4e-nas/security.yml` `firewall.profiles.default.adapters.global.rules`
   carries this allow; `synology_security` enforces it. If you applied
   this role and `synology_security` isn't applied (or its spec doesn't
   have that rule), expect 5503/timeout errors regardless of how correct
@@ -60,7 +61,7 @@ ansible-playbook playbook.yml --tags=synology_certificate
 # Dry-run (preview without issuing)
 ansible-playbook playbook.yml --tags=synology_certificate --check --diff
 
-# Drift snapshot to /var/lib/krg-deploy/synology-export/<host>-certificates.json
+# Drift snapshot to /var/lib/krg-deploy/synology-export/<host>-certificates.yml
 ansible-playbook playbook.yml --tags=export
 ```
 
@@ -78,8 +79,9 @@ Pytest suite under `files/test_apply_certificate.py` covers:
 - domain-match lookup including ambiguity refusal (multiple certs sharing CN)
 - `letsencrypt-create`: no-change with buffer, re-issue inside buffer, first-issuance, check-mode dry-run, defensive re-issue on unparseable expiry, structured FAIL on LE API failure / list-API failure / bad SANs JSON
 - `set-default`: no-change when already default, bind when not, FAIL on missing cert, check-mode dry-run
+- `bind-services`: no-change when already on target cert, migrate when on factory/other cert, partial change across multiple bindings, warn-and-skip on services DSM doesn't have, FAIL on bad bindings JSON / missing cert, check-mode dry-run
 - `list`: trim-shape contract, structured FAIL on API failure
-- argparse plumbing for both write subcommands
+- argparse plumbing for all three write subcommands
 
 Run from the repo root: `pytest ansible/synology/roles/synology_certificate/files/test_apply_certificate.py`
 
@@ -102,4 +104,4 @@ Run from the repo root: `pytest ansible/synology/roles/synology_certificate/file
 ## Roadmap
 
 - Wildcard certs once `garage.e4e-nas.ucsd.edu` ([#118](https://github.com/KastnerRG/krg-infra/issues/118)) lands and we want `*.s3.garage.e4e-nas.ucsd.edu` for virtual-host-style S3 routing.
-- Service-binding subcommand (one-line wrapper around `SYNO.Core.Certificate.Service`) — defer until we have a second cert to bind to a service explicitly.
+- DNS-01 challenge integration (would let us close port 80 entirely; needs programmatic update access to the `ucsd.edu` zone, which we don't have today — see security.yml comment on `lets-encrypt-http-01`).

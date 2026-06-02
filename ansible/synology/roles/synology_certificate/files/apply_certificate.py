@@ -26,19 +26,23 @@ Subcommands:
 Invoked by the synology_certificate ansible role via the `script` module.
 Prints OK no-change / WOULD-CHANGE <json> / CHANGED <json> / FAIL <json>.
 
-API field-name confidence (DSM 7.3):
+API field-name confidence (DSM 7.3 — wizard-captured on e4e-nas 2026-06-02,
+field names match what DSM itself sends through Chrome DevTools network traces):
 - `SYNO.Core.Certificate.CRT method=list` returns
     {"data": {"certificates": [{"id", "desc", "subject": {"common_name"},
-     "is_default", "valid_till"}]}}
-  Confirmed empirically on e4e-nas 2026-06-02.
-- `SYNO.Core.Certificate.LetsEncrypt method=create` accepts:
-    domain (str), email (str), SAN_list (JSON list), server ("prod"/"stg")
-  Field names best-known from community DSM 7.x captures — expect a flip
-  on first apply against a real box; same iteration pattern as the other
-  synology_* role apply scripts.
-- `SYNO.Core.Certificate.CRT method=set_default` takes the cert `id` as
-  the SET parameter. ID is the 6-char short id from list output (e.g.
-  "xPpc1W").
+     "is_default", "valid_till", "services": [{"service", "subscriber",
+     "display_name", "isPkg", "owner"}]}]}}
+- `SYNO.Core.Certificate.LetsEncrypt method=create version=1` accepts the
+  short form `desc + domain_name + email` (NOT the longer `domain + SAN_list +
+  server` shape from community DSM-6 captures). DSM defaults to the LE prod
+  server; no `server=` param is sent by the wizard.
+- `SYNO.Core.Certificate.CRT method=set version=1` takes `as_default=true +
+  desc + id`. There is NO `method=set_default` on DSM 7.3 — the older string
+  is from DSM-6 captures and returns "API not found" (102).
+- `SYNO.Core.Certificate.Service method=set version=1` takes a `settings`
+  JSON array of `{service: {display_name, isPkg, owner, service, subscriber},
+  old_id, id}` entries — one per (service, subscriber) tuple being migrated.
+  Used by bind-services to move existing bindings off the factory cert.
 """
 import argparse
 import json
