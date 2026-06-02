@@ -170,10 +170,17 @@ def test_render_config_check_mode_doesnt_write(monkeypatch, capsys):
     assert writes == []
 
 
-def test_render_config_rejects_double_quote_in_secret(monkeypatch, capsys):
-    # Defense against TOML literal-break injection — even though the operator
-    # generates secrets with openssl, validate at the bottleneck.
-    _set_secret_env(monkeypatch, rpc='abc"def')
+@pytest.mark.parametrize("bad_secret", [
+    'abc"def',          # double-quote breaks the TOML basic-string literal
+    "abc\ndef",         # raw newline can't appear in a basic string
+    "abc\rdef",         # raw CR likewise
+    'multi"line\nbad',  # combo
+])
+def test_render_config_rejects_injection_chars_in_secret(monkeypatch, capsys, bad_secret):
+    """Defense against TOML literal-break injection — `openssl rand -hex 32`
+    can't produce these but validate at the bottleneck. Quote OR newline
+    closes a basic string early."""
+    _set_secret_env(monkeypatch, rpc=bad_secret)
     monkeypatch.setattr(m, "_read", lambda p: None)
     rc = m.do_render_config(_render_args())
     out = capsys.readouterr().out

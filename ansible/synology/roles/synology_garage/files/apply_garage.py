@@ -210,12 +210,15 @@ def do_render_config(a):
         "admin_token":         os.environ["GARAGE_ADMIN_TOKEN"],
         "metrics_token":       os.environ["GARAGE_METRICS_TOKEN"],
     }
-    # Reject any literal double-quote character (`"`) in a string field —
-    # would close the TOML literal early and inject content. Cheap defense;
-    # the template uses double-quoted strings only, no triple-quoted blocks.
+    # Reject any literal `"`, `\n`, or `\r` in a string field — these
+    # would close the TOML basic-string literal early and inject content
+    # (basic strings can't contain raw newlines either). Cheap defense at
+    # the bottleneck; the template uses double-quoted basic strings only,
+    # no triple-quoted blocks.
     for k, v in fields.items():
-        if isinstance(v, str) and '"' in v:
-            return _fail({"reason": "field contains unescaped double-quote", "field": k})
+        if isinstance(v, str) and ('"' in v or "\n" in v or "\r" in v):
+            return _fail({"reason": "field contains unescaped quote or newline",
+                          "field": k})
 
     desired = GARAGE_TOML_TEMPLATE % fields
     desired_hash = _sha256(desired)
