@@ -39,6 +39,17 @@ provider-modeled-surface rule, this concern belongs in Ansible.
   surfaces a clean FAIL with DSM's response if these aren't met.
 - DSM web reachable from the operator's network (so the role's `script:`
   invocation lands).
+- **Firewall must allow inbound TCP/80 from ANY source** — not just US
+  geoip. LE's Multi-Perspective Issuance Corroboration (MPIC, enforced
+  since 2024-06-15) validates from multiple geographically distributed
+  vantage points including outside the US. A US-only geoip allow blocks
+  LE's non-US secondary validators → cert issuance fails with "Timeout
+  during connect" in DSM's cert log. The `lets-encrypt-http-01` rule in
+  `spec/e4e-nas/security.yml` `firewall.profiles.default.global.rules`
+  carries this allow; `synology_security` enforces it. If you applied
+  this role and `synology_security` isn't applied (or its spec doesn't
+  have that rule), expect 5503/timeout errors regardless of how correct
+  the API params are.
 
 ## Run
 
