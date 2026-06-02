@@ -1,0 +1,54 @@
+---
+# synology_nfs — manage DSM NFS service + per-share export rules from
+# spec/e4e-nas/nfs-exports.yml via synowebapi. Two synowebapi surfaces, both idempotent
+# (GET/load -> diff -> SET/save, only on drift); the logic lives in files/apply_nfs.py,
+# shipped via the `script` module (runs on DSM's Python 3.8 — below ansible-core's module
+# floor, same constraint as synology_users/_shares/_smb). Git is truth; UI = drift (ADR 0001).
+#
+#   * Global NFS settings: SYNO.Core.FileServ.NFS `set` needs the FULL object (partial =
+#     error 2001), like SMB.
+#   * Per-share rules: SYNO.Core.FileServ.NFS.SharePrivilege load/save (param share_name=);
+#     `load` returns {"rule":[...]} in the exact shape `save` takes back, so the spec carries
+#     DSM-native rule objects (the exporter's load output drops straight into the spec).
+# Validated on the DSM 7.3.2-86009 rig (global + per-share; drift/--check/apply/idempotent;
+# /etc/exports rendered). Cross-ref: docs/krg-prod-iac.md, ADR 0005.
+#
+# uid CAVEAT (runbook/spec): DSM winbind RID-maps AD identities; the SSSD fleet uses
+# algorithmic mapping — same AD user, different uid on the NAS vs Linux clients. SMB is
+# SID-based (fine); NFS is uid-based and will NOT line up. Confirm uids on fabricant first.
+
+- name: Load the NFS spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_nfs_spec }}"
+    name: nfs_spec
+
+- name: Apply global NFS service settings (full-object set; partial = DSM err 2001)
+  ansible.builtin.script: >-
+    apply_nfs.py global
+    --enable {{ nfs_spec.nfs.enable | default(true) }}
+    --nfsv4 {{ nfs_spec.nfs.nfsv4 | default(true) }}
+    --v4-domain {{ nfs_spec.nfs.v4_domain | default('') | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: nfs_global
+  changed_when: "'CHANGED' in nfs_global.stdout or 'WOULD-CHANGE' in nfs_global.stdout"
+  failed_when: "nfs_global.rc != 0 or 'FAIL' in nfs_global.stdout"
+  check_mode: false # run in --check too; apply_nfs.py --check self-gates (read-only GET)
+
+- name: Apply per-share NFS export rules (SharePrivilege load/diff/save)
+  ansible.builtin.script: >-
+    apply_nfs.py share-rules
+    --share {{ item.share | quote }}
+    --rules {{ item.rules | default([]) | to_json | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  loop: "{{ nfs_spec.exports | default([]) }}"
+  loop_control:
+    label: "{{ item.share }}"
+  register: nfs_rules
+  changed_when: "'CHANGED' in nfs_rules.stdout or 'WOULD-CHANGE' in nfs_rules.stdout"
+  failed_when: "nfs_rules.rc != 0 or 'FAIL' in nfs_rules.stdout"
+  check_mode: false
+
+# --- Drift export (read-only) — only with `--tags export` -----------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

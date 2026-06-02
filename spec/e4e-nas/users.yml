@@ -1,0 +1,50 @@
+# Local DSM accounts on e4e-nas — declarative source of truth.
+# Consumed by the `synology_users` Ansible role (wraps `synouser`/`synogroup` over
+# `raw` for DSM py3.8 compatibility). Human users come from KRG.LOCAL via winbind
+# (synology_ad), so this file owns ONLY:
+#   * the break-glass admin (mirrors nix/users/admin.nix + ansible/roles/krg_admin)
+#   * the automation API account used by the Terraform synology provider
+#   * the built-in accounts we want DISABLED (admin, guest — runbook §1)
+#   * the DSM Home Service toggle (required for SSH login + AD user homes — runbook §1, §2)
+#
+# CROSS-REFERENCE: e4e-nas is E4E hardware — break-glass admin is `e4e-admin`
+# (not the lab-wide `krg-admin`). See [[break-glass-admin-account]] memory rule.
+# Same shared keys file (nix/keys/admins.json), just the `e4e-admin` slot.
+#
+# Passwords NEVER live in this file. The role pulls them from
+# `synology_user_passwords` (Ansible vault / `-e @secrets.yml`). The break-glass
+# console password hash for the admin comes from nix/keys/admin-passwords.json
+# (same as Debian/NixOS layers).
+
+# Local users. Each entry:
+#   name:                synouser --add target
+#   description:         comment field
+#   email:               optional, for DSM notifications
+#   groups:              local groups to add to (administrators = sudo on DSM)
+#   ssh_keys_from:       "nix/keys/admins.json#<account-key>" — slot to read keys from
+#                        (lookup happens in the role via the shared admin_ssh_keys var)
+#   api_only:            true → don't drop SSH authorized_keys (web-API account only)
+users:
+  - name: e4e-admin
+    description: "Break-glass admin (E4E hardware; same role as nix users/admin.nix on the krg side)"
+    groups: [administrators]
+    ssh_keys_from: nix/keys/admins.json#e4e-admin
+  - name: e4e-automation
+    description: "OpenTofu / Ansible API account (terraform.tfvars dsm_user)"
+    groups: [administrators]
+    api_only: true
+
+# Built-in DSM accounts to DISABLE (synouser --disable). Runbook §1: kill the
+# attack-surface defaults. The role probes existence first; disabling a missing
+# account is a no-op (idempotent).
+disable_builtin:
+  - admin
+  - guest
+
+# DSM Home Service. Required for SSH login (sshd uses $HOME) AND for AD user
+# homes (winbind users get /var/services/homes/<name>). Runbook §1 step 5 + §2.
+# Best-known API: SYNO.Core.User.Home set v1 — flip the field mapping in
+# files/apply_home.py if first-apply shows different DSM field names.
+home_service:
+  enable: true
+  include_domain_users: true     # winbind/AD users need this for home creation

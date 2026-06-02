@@ -1,0 +1,39 @@
+---
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get DSM Directory.Domain config
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Directory.Domain method=get version=1"
+  register: dom_get
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Get DSM WinBind config
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Directory.WinBind method=get version=1"
+  register: wb_get
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Probe current join state (test method)
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Directory.Domain.Join method=test version=1"
+  register: join_test
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-ad.yml"
+    mode: "0600"
+    content: |
+      domain_raw: {{ dom_get.stdout_lines | default([]) | to_json }}
+      winbind_raw: {{ wb_get.stdout_lines | default([]) | to_json }}
+      join_test_raw: {{ join_test.stdout_lines | default([]) | to_json }}
+  delegate_to: localhost

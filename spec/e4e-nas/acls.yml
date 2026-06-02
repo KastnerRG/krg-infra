@@ -1,0 +1,51 @@
+# Per-share ACLs (the share -> principal grant matrix) on e4e-nas — source of truth.
+# Consumed by the `synology_acls` role, which wraps `synoshare --setuser` (validated on
+# the DSM 7.3 rig). Git is truth; UI = drift (ADR 0001).
+#
+# Each grant names a `group` (applied @-prefixed; a bare group name silently no-ops on DSM)
+# or a `user`, with `access: rw | ro | no` (-> DSM tiers RW/RO/NA). The grant list is
+# AUTHORITATIVE: a principal omitted from a share's grants is REMOVED — so include
+# `administrators` explicitly where it should keep access (a fresh share defaults to
+# `@administrators` RW).
+#
+# Schema:
+#   acls:
+#     - share: maya
+#       grants:
+#         - { group: maya, access: rw }
+#         - { group: leads, access: ro }
+#         - { user: someuser, access: rw }
+#
+# ✅ 2026-05-28: PRE-RESET CAPTURE TAKEN — all 55 live shares' grants captured via
+# `synoshare --list_acl` (read-only). Archived locally (off-repo, since it's audit data,
+# not repo material). That capture is the authoritative REFERENCE but is NOT pasted here
+# verbatim, because many grants reference the DEAD old domain (e.g.
+# `KRG-UCSD-EDU\Engineers for Exploration NAS Admins`). Those principals won't exist after
+# the Mode-2 reset + KRG.LOCAL join — committing them as desired state would encode dead
+# SIDs back into the spec.
+#
+# TODO (post-AD-join, before applying synology_acls):
+#   1. Map dead `KRG-UCSD-EDU\…` group refs in the capture to their KRG.LOCAL equivalents
+#      (largely the groups.yml set + the local `administrators`).
+#   2. Decide which per-user grants (service-account NA deny lists, etc.) carry over and
+#      to which new user objects.
+#   3. Populate the `acls:` list below; the role and drift detector then enforce it.
+#   4. Separately, run the recursive on-disk re-apply (`synoacltool` per share) for
+#      preserved data carrying dead SIDs (runbook post-join step, not this role).
+
+defaults:
+  # Recursive filesystem-ACL stamp (synoacltool -reset -R) — runbook §4.
+  # The role only runs this with `--tags acls-recursive` even when true here
+  # (expensive: walks entire share tree). Operator workflow: flip to true,
+  # apply once with --tags acls-recursive post-AD-join, leave on (idempotent).
+  apply_recursive: false           # flip to true post-AD-join, then run with the tag
+
+acls: [] # populated from the capture + dead-SID translation, post-AD-join
+
+# Per-share schema (when populating):
+#   - share: maya
+#     path: /volume1/maya            # optional; defaults to /volume1/<share>
+#     apply_recursive: true           # optional per-share override of defaults
+#     grants:
+#       - { group: maya, access: rw }
+#       - { group: leads, access: ro }

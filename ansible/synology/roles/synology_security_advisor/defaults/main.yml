@@ -1,0 +1,13 @@
+---
+synology_security_advisor_spec: "{{ nas_spec_dir }}/security-advisor.yml"
+synology_export_dir: "/var/lib/krg-deploy/synology-export"
+
+# Bring-up operator flag: skip the Conf set when DSM returns err 114 from
+# `synowebapi --exec` (likely requires UI-session token / different priv path
+# than what --exec provides). Empirical e4e-nas 2026-05-30: bare --exec
+# calls hit err 114 consistently even with full payload incl. scheduleTaskId.
+# Schedule stays at DSM defaults until the helper learns the right invocation
+# OR the operator sets the schedule via DSM UI. SA itself still runs scans
+# on its default schedule; only the schedule-time is unmanaged while deferred.
+# Override via -e: `ansible-playbook ... -e synology_security_advisor_defer_set=true`
+synology_security_advisor_defer_set: false

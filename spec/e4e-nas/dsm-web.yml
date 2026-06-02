@@ -1,0 +1,52 @@
+# DSM web service config for e4e-nas — ports, HTTPS, HSTS, HTTP/2, mDNS/SSDP, TLS profile.
+# Source of truth for the post-rebuild state. Values from the 2026-05-28 live pre-reset
+# capture (archived locally) — drift items marked "HARDEN" below.
+#
+# IaC home: `synology_dsm_web` Ansible role — `apply_dsm_web.py` does GET→merge→SET on
+# SYNO.Core.Web.DSM (v2; partial = err 2001) plus the simpler `default-level` set on
+# SYNO.Core.Web.Security.TLSProfile. DSM may need a httpd restart on web-config changes;
+# DSM handles it (set returns httpd_restart hint).
+
+web:
+  # Already non-default 5000/5001 — looks like prior hardening; keep.
+  http_port: 6020
+  https_port: 6021
+  enable_https: true
+  enable_https_redirect: true       # http://*:6020 → https://*:6021
+
+  # HSTS — HARDEN. Live: false. Spec: true. (Tells browsers HTTPS-only for the host.)
+  enable_hsts: true
+
+  # HTTP/2 — DSM calls this "SPDY" in the API. Live: true. Keep.
+  enable_spdy: true
+
+  # mDNS (Avahi/Bonjour). Live: true. HARDEN to off — server discovery noise.
+  enable_avahi: false
+
+  # SSDP / UPnP discovery. Live: true. HARDEN to off — same reason.
+  enable_ssdp: false
+
+  enable_server_header: false       # don't advertise DSM version banner; keep off
+  enable_custom_domain: false
+  fqdn: e4e-nas.ucsd.edu            # external hostname (SYNO.Core.Web.DSM.External)
+
+  main_app: DSM
+
+# --- TLS compatibility profile ---
+# DSM 7.3 maps the UI's three options to integer levels in
+# SYNO.Core.Web.Security.TLSProfile.set { default-level: N }. The live capture showed:
+#   default-level: 2     (all services use the default — no per-service overrides)
+# User-decided target: **Modern Compatibility** (TLS 1.3 / TLS 1.2+). The integer for
+# "Modern" hasn't been empirically confirmed on this box yet — best-known mapping per
+# DSM community docs is {0: Modern, 1: Intermediate, 2: Old}; the live `2` reading would
+# then be "Old", which is plausible for a long-running box. Confirm via the UI dropdown
+# or by setting once on the rebuilt rig before applying to prod.
+tls:
+  profile: modern        # name; the IaC resource maps it to the integer DSM expects.
+  per_service_overrides: {}   # capture shows none — all services follow the default.
+
+# --- Hardening notes (drift the role will fix on apply) ---
+# - enable_hsts: false → true
+# - enable_avahi: true → false (mDNS off)
+# - enable_ssdp:  true → false (SSDP/UPnP discovery off)
+# - tls.profile:  Old (?) → Modern

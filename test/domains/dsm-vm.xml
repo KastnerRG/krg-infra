@@ -1,0 +1,55 @@
+<!-- libvirt domain template for an XPEnology DSM rig VM (DS3622xs+/broadwellnk, DSM 7.3).
+     Placeholders (@VM_NAME@/@BOOT_IMG@/@DATA_IMG@) are substituted by the dsm-vm app.
+     Legacy BIOS (SeaBIOS) — RR/redpill loaders page-fault OVMF/UEFI on the GRUB→kernel
+     handoff. Disk bus + NIC are the usual XPEnology-friendly choices (SATA disks,
+     virtio NIC — e1000e flaps link Up/Down under DSM); tune per RR docs if needed. -->
+<domain type="kvm">
+  <name>@VM_NAME@</name>
+  <memory unit="GiB">4</memory>
+  <vcpu>2</vcpu>
+
+  <os>
+    <type arch="x86_64" machine="q35">hvm</type>
+    <boot dev="hd"/>
+  </os>
+
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+
+  <!-- host-passthrough so the guest sees a real (post-Ivy-Bridge) CPU; DSM 7.3 needs it -->
+  <cpu mode="host-passthrough" check="none" migratable="off"/>
+  <clock offset="utc"/>
+
+  <devices>
+    <!-- RR loader (writable copy of the pinned rr.img); DSM marks this as synoboot -->
+    <disk type="file" device="disk">
+      <driver name="qemu" type="raw"/>
+      <source file="@BOOT_IMG@"/>
+      <target dev="sda" bus="sata"/>
+      <boot order="1"/>
+    </disk>
+    <!-- data disk DSM installs onto -->
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2"/>
+      <source file="@DATA_IMG@"/>
+      <target dev="sdb" bus="sata"/>
+    </disk>
+
+    <controller type="sata" index="0"/>
+    <controller type="usb" model="qemu-xhci"/>
+
+    <interface type="network">
+      <source network="default"/>
+      <model type="virtio"/>
+    </interface>
+
+    <serial type="pty"><target port="0"/></serial>
+    <console type="pty"><target type="serial" port="0"/></console>
+
+    <graphics type="vnc" port="-1" autoport="yes" listen="127.0.0.1"/>
+    <video><model type="vga"/></video>
+    <memballoon model="none"/>
+  </devices>
+</domain>

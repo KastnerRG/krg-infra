@@ -1,0 +1,31 @@
+---
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: List Hyper Backup tasks
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.SDS.Backup.Client.Task method=list version=1"
+  register: hb_tasks
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: List backup destinations
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.SDS.Backup.Client.Common.Storage method=list version=1"
+  register: hb_dests
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-hyper-backup.yml"
+    mode: "0600"
+    content: |
+      tasks_raw: {{ hb_tasks.stdout_lines | default([]) | to_json }}
+      dests_raw: {{ hb_dests.stdout_lines | default([]) | to_json }}
+  delegate_to: localhost

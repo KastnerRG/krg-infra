@@ -1,0 +1,10 @@
+# Copy to terraform.tfvars (gitignored) and fill in. Or export TF_VAR_* instead.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+
+dsm_host = "https://e4e-nas.ucsd.edu:6021"
+dsm_user = "e4e-admin" # E4E hardware → e4e-admin slot; an administrators-group account, NOT the built-in 'admin'
+
+# Secrets — prefer `export TF_VAR_dsm_password=...` over writing them here.
+# dsm_password   = "CHANGE_ME"
+# dsm_otp_secret = "" # only if the API account has TOTP 2FA

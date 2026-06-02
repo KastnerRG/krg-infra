@@ -1,0 +1,39 @@
+---
+# Exporter (read-only): capture live DSM users/groups so the drift_exporter can diff
+# them against spec/e4e-nas/. The paired half of every synology_* role (ADR 0001 —
+# UI changes are drift). Run: ansible-playbook playbook.yml --tags export
+#
+# ⚠️ The enum output FORMAT is undocumented/version-specific; for now we capture the
+# raw lines and the structured parse into the spec shape is finished once validated
+# on the rig. The drift_exporter (milestone 6) consumes this snapshot.
+
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Enumerate local groups
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synogroup --enum local" # VALIDATE enum syntax/output on rig
+  register: synogroup_enum
+  changed_when: false
+  check_mode: false
+
+- name: Enumerate local users
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synouser --enum local"
+  register: synouser_enum
+  changed_when: false
+  check_mode: false
+
+- name: Write the live-state snapshot (spec-shaped once parsing is validated)
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-identity.yml"
+    mode: "0600"
+    content: |
+      # Live DSM identity on {{ inventory_hostname }} — synology_users exporter.
+      # raw enum output pending rig-validated parsing into {groups,users} spec shape.
+      groups_raw: {{ synogroup_enum.stdout_lines | to_json }}
+      users_raw: {{ synouser_enum.stdout_lines | to_json }}
+  delegate_to: localhost

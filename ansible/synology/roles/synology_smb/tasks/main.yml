@@ -1,0 +1,42 @@
+---
+# synology_smb — manage DSM SMB *global* service settings from spec/e4e-nas/smb-globals.yml.
+#
+# DSM's SYNO.Core.FileServ.SMB `set` rejects a PARTIAL object (error code 2001), so the
+# apply logic GETs the full settings object (API version 3), overlays only the managed
+# keys, and SETs the whole thing back — and only on drift (idempotent). That logic lives
+# in files/apply_smb.py and is shipped via the `script` module, which runs over DSM's
+# Python 3.8 (below ansible-core's >=3.9 *module* floor — the same reason synology_users/
+# _shares wrap the CLI with `raw`). Git is truth; UI = drift (ADR 0001).
+#
+# WHY synowebapi and not /etc/samba/smb.conf: DSM regenerates smb.conf from its own config
+# store, so a direct file edit would not survive — synowebapi is the supported surface.
+# Validated on the DSM 7.3.2-86009 rig: drift -> --check (WOULD-CHANGE) -> apply (CHANGED)
+# -> re-run (OK no-change); min/max protocol render into smb.conf as SMB3.
+# Cross-ref: docs/krg-prod-iac.md, ADR 0005, spec/e4e-nas/smb-globals.yml.
+
+- name: Load the SMB global spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_smb_spec }}"
+    name: smb_spec
+
+- name: Apply SMB global settings (full-object set via synowebapi; partial set = DSM err 2001)
+  ansible.builtin.script: >-
+    apply_smb.py
+    --enable {{ smb_spec.smb.enable | default(true) }}
+    --min-protocol {{ smb_spec.smb.min_protocol | default('SMB2') }}
+    --max-protocol {{ smb_spec.smb.max_protocol | default('SMB3') }}
+    --server-signing {{ smb_spec.smb.server_signing | default(true) }}
+    --ntlmv1-auth {{ smb_spec.smb.ntlmv1_auth | default(false) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: smb_apply
+  changed_when: "'CHANGED' in smb_apply.stdout or 'WOULD-CHANGE' in smb_apply.stdout"
+  failed_when: "smb_apply.rc != 0 or 'FAIL' in smb_apply.stdout"
+  check_mode: false # run in --check too; apply_smb.py --check self-gates (read-only GET)
+  # NOTE: spec `smb1: false` is enforced via min_protocol >= SMB2 (DSM has no separate API
+  # field). The non-SMB pointers in smb-globals.yml (ftp/afp/snmp/ntp/...) belong to other
+  # roles (synology_base/_nfs/_firewall), not here.
+
+# --- Drift export (read-only) — only with `--tags export` -----------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

@@ -1,0 +1,53 @@
+---
+# synology_quotas — per-share (+ optional per-user) quota policy from
+# spec/e4e-nas/quotas.yml. Drives `synoquota` CLI via files/apply_quotas.py
+# (script: module, DSM py3.8). Idempotent: read current, diff by share, only
+# update on drift. `size_gib: 0` means "no quota" (REMOVE any existing).
+#
+# CROSS-REFERENCE: counterpart of `ansible/roles/zfs_limits` on the Proxmox/ZFS
+# side and `nix/modules/scratch.nix` per-dataset `quota=` properties. All three
+# layers: "cap regenerable / user-facing storage so essential data wins."
+#
+# Empty spec lists (no shares, no users) = no-op. The role is safe to leave in
+# synology_base even when quotas haven't been ported yet.
+
+- name: Load the quotas spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_quotas_spec }}"
+    name: quotas_spec
+
+- name: Apply per-share quotas (synoquota)
+  ansible.builtin.script: >-
+    apply_quotas.py share
+    --share {{ item.share | quote }}
+    --size-gib {{ item.size_gib | default(0) }}
+    --hard {{ item.hard | default(quotas_spec.defaults.hard | default(false)) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  loop: "{{ quotas_spec.share_quotas | default([]) }}"
+  loop_control:
+    label: "{{ item.share }}"
+  register: q_share_apply
+  changed_when: "'CHANGED' in q_share_apply.stdout or 'WOULD-CHANGE' in q_share_apply.stdout"
+  failed_when: "q_share_apply.rc != 0 or 'FAIL' in q_share_apply.stdout"
+  check_mode: false
+
+- name: Apply per-user quotas (synoquota)
+  ansible.builtin.script: >-
+    apply_quotas.py user
+    --user {{ item.user | quote }}
+    --volume {{ item.volume | default('/volume1') | quote }}
+    --size-gib {{ item.size_gib | default(0) }}
+    --hard {{ item.hard | default(quotas_spec.defaults.hard | default(false)) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  loop: "{{ quotas_spec.user_quotas | default([]) }}"
+  loop_control:
+    label: "{{ item.user }}@{{ item.volume | default('/volume1') }}"
+  register: q_user_apply
+  changed_when: "'CHANGED' in q_user_apply.stdout or 'WOULD-CHANGE' in q_user_apply.stdout"
+  failed_when: "q_user_apply.rc != 0 or 'FAIL' in q_user_apply.stdout"
+  check_mode: false
+
+# --- Drift export (read-only) — only with `--tags export` ---------------------
+- name: Export live quota state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

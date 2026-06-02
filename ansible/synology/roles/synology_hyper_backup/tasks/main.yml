@@ -1,0 +1,52 @@
+---
+# synology_hyper_backup — declarative Hyper Backup jobs from
+# spec/e4e-nas/hyper-backup.yml. The OFF-BOX DR layer (runbook §5):
+# snapshots are local recovery; this is the remote-disaster copy.
+#
+# CROSS-REFERENCE: there's no Linux counterpart in this repo today —
+# fabricant's nfs_server snapshots aren't replicated off-box. When/if a
+# fabricant off-box backup lands, mirror the destination/encryption decisions
+# here.
+#
+# Declarative list sync model (same as synology_app_portal): diff desired jobs
+# vs live by `name` → create / update / delete. Empty spec list → all live
+# jobs deleted (no DR jobs configured). Destination passwords are bootstrap
+# secrets (`hyper_backup_secrets` group_var, supplied at runtime — never in
+# this file).
+
+- name: Load the Hyper Backup spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_hyper_backup_spec }}"
+    name: hb_spec
+
+- name: Warn when an encrypted job lacks its bootstrap secret (apply step will skip it)
+  ansible.builtin.debug:
+    msg: >-
+      Hyper Backup job '{{ item.name }}' is declared encrypted but
+      hyper_backup_secrets['{{ item.name }}'] is empty. apply_hyper_backup.py
+      will SKIP creating it until the secret is supplied at runtime:
+      `ansible-playbook ... -e @secrets-hb.yml`.
+  loop: "{{ hb_spec.jobs | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - item.encrypt | default(hb_spec.defaults.encrypt | default(true))
+    - hyper_backup_secrets[item.name] is not defined
+
+- name: Apply Hyper Backup job set (declarative list sync by name)
+  ansible.builtin.script: >-
+    apply_hyper_backup.py jobs
+    --desired {{ (hb_spec.jobs | default([])) | to_json | quote }}
+    --defaults {{ (hb_spec.defaults | default({})) | to_json | quote }}
+    --secrets {{ hyper_backup_secrets | to_json | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: hb_apply
+  no_log: true              # secrets pass on argv
+  changed_when: "'CHANGED' in hb_apply.stdout or 'WOULD-CHANGE' in hb_apply.stdout"
+  failed_when: "hb_apply.rc != 0 or 'FAIL' in hb_apply.stdout"
+  check_mode: false
+
+# --- Drift export (read-only) — only with `--tags export` -------------------
+- name: Export live Hyper Backup jobs for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

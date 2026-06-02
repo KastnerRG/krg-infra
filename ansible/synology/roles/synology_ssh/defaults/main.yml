@@ -1,0 +1,8 @@
+---
+synology_ssh_spec: "{{ nas_spec_dir }}/ssh.yml"
+synology_export_dir: "/var/lib/krg-deploy/synology-export"
+
+# Path to the shared admin keys file (nix/keys/admins.json — same one read by
+# group_vars/all.yml for `admin_ssh_keys`). The role asserts the list is
+# non-empty before disabling password auth (anti-lockout).
+synology_ssh_admin_keys: "{{ admin_ssh_keys | default([]) }}"

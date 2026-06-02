@@ -1,0 +1,68 @@
+---
+# synology_ssh — DSM SSH/Telnet/SFTP hardening from spec/e4e-nas/ssh.yml.
+# Two surfaces, BOTH driven by files/apply_ssh.py via the `script` module (DSM
+# python 3.8 is below ansible's module floor, so `template:` and `copy:` are
+# unavailable — script is the only mechanism that works):
+#   1. SYNO.Core.Terminal (synowebapi) — ssh.enable + ssh.port + telnet + sftp
+#   2. /etc/ssh/sshd_config.d/10-krg-hardening.conf — PasswordAuthentication no,
+#      PermitRootLogin no, ed25519-only. Script validates `sshd -t` BEFORE
+#      committing and restarts sshd via synoservicectl on change.
+#
+# CROSS-REFERENCE: counterpart of nix `services.openssh.settings` and
+# `ansible/roles/ssh_hardening`. Anti-lockout guard mirrors the Debian role:
+# refuse to disable password auth unless admin_ssh_keys is populated.
+#
+# ORDER CONSTRAINT: this role MUST run AFTER synology_users so the break-glass
+# admin (e4e-admin on this NAS — E4E hardware) exists with authorized SSH keys
+# BEFORE we turn password auth off. The synology_base composer enforces that
+# order.
+#
+# DSM-update fragility: a DSM major upgrade can REVERT the sshd_config drop-in
+# (runbook §1 historical note). Re-apply synology_base after upgrades.
+
+- name: Load the SSH spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_ssh_spec }}"
+    name: ssh_spec
+
+# --- Anti-lockout guard -------------------------------------------------------
+- name: Refuse to disable password auth without an authorized key (anti-lockout)
+  ansible.builtin.assert:
+    that:
+      - synology_ssh_admin_keys | length > 0
+    fail_msg: >-
+      synology_ssh_admin_keys is empty. Disabling password auth without an authorized
+      key would lock the NAS out. Set the keys in nix/keys/admins.json first.
+  when: not (ssh_spec.ssh.allow_password | default(false))
+
+# --- Surface 1: SYNO.Core.Terminal (ssh + telnet + sftp toggles + port) -------
+- name: Apply DSM Terminal config (Terminal set — full-object; partial = err 2001)
+  ansible.builtin.script: >-
+    apply_ssh.py terminal
+    --ssh-enable {{ ssh_spec.ssh.enable | default(true) }}
+    --ssh-port {{ ssh_spec.ssh.port | default(22) }}
+    --telnet-enable {{ ssh_spec.telnet.enable | default(false) }}
+    --sftp-enable {{ ssh_spec.sftp.enable | default(false) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: term_apply
+  changed_when: "'CHANGED' in term_apply.stdout or 'WOULD-CHANGE' in term_apply.stdout"
+  failed_when: "term_apply.rc != 0 or 'FAIL' in term_apply.stdout"
+  check_mode: false
+
+# --- Surface 2: sshd_config.d drop-in (validate + restart in the script) ------
+- name: Install hardened sshd drop-in (script writes + validates + restarts sshd)
+  ansible.builtin.script: >-
+    apply_ssh.py sshd-drop-in
+    --allow-password {{ ssh_spec.ssh.allow_password | default(false) }}
+    --allow-root {{ ssh_spec.ssh.allow_root | default(false) }}
+    --allowed-algos {{ ssh_spec.ssh.allowed_pubkey_algos | default('') | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: sshd_apply
+  changed_when: "'CHANGED' in sshd_apply.stdout or 'WOULD-CHANGE' in sshd_apply.stdout"
+  failed_when: "sshd_apply.rc != 0 or 'FAIL' in sshd_apply.stdout"
+  check_mode: false
+
+# --- Drift export (read-only) — only with `--tags export` ---------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

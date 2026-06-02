@@ -1,0 +1,3 @@
+---
+synology_snapshots_spec: "{{ nas_spec_dir }}/snapshots.yml"
+synology_export_dir: "/var/lib/krg-deploy/synology-export"

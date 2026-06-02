@@ -1,0 +1,81 @@
+# synology_base — the "secure + monitored + enrolled by default" baseline that
+# EVERY managed DSM host gets. Composes the per-concern synology_* primitives
+# below in load-bearing order.
+#
+# CROSS-REFERENCE: this is the DSM counterpart of nix/profiles/base.nix and
+# ansible/roles/base/tasks/main.yml. When you change the baseline on ANY layer
+# (which security/monitoring concerns are default, the order of locking down
+# vs creating admins, the AD-join policy), apply the equivalent change to the
+# others. Platform differences (DSM webapi/synowebapi instead of systemd units,
+# winbind instead of SSSD, no apt) are expected and fine.
+#
+# The primitive roles are composed with import_role (not meta dependencies) so
+# the order below stays explicit and auditable — see the anti-lockout note.
+#
+# ORDER IS LOAD-BEARING:
+#   1. dsm_system        — set hostname/network FIRST so we can be reached
+#   2. users             — break-glass e4e-admin (E4E hardware; +AD home service +
+#                          disable admin/guest) BEFORE we lock down SSH
+#                          (ANTI-LOCKOUT — see synology_ssh). Same rule as
+#                          ansible/roles/base krg_admin -> ssh_hardening.
+#   3. ssh               — key-only, no password, no root, telnet+sftp off (the breach fix)
+#   4. security          — DSM firewall + autoblock thresholds (defense-in-depth)
+#   5. external_access   — QuickConnect/UPnP off — AFTER perimeter, so nothing punches around it
+#   6. dsm_web           — HTTPS/HSTS/HTTP2 + TLS Modern profile
+#   7. services          — FTP off / AFP off / SNMPv3 on (host-metrics path)
+#   8. notifications     — admin email channel (used by security_advisor + dsm_updates notify)
+#   9. security_advisor  — DSM-native vuln/config scan (replaces OEC on Linux hosts;
+#                          rationale in docs/adr/0006-no-oec-on-dsm.md)
+#  10. dsm_updates       — hotfix-security auto-install (DSM may revert sshd drop-in
+#                          on major upgrades — re-apply synology_base after upgrades)
+#  11. ad                — KRG.LOCAL domain join LAST. Failure here MUST NOT lock out
+#                          local e4e-admin; mirrors ansible/roles/base ad_client order.
+
+- name: DSM identity & network (hostname/gateway/DNS — make the box reachable)
+  ansible.builtin.import_role:
+    name: synology_dsm_system
+
+- name: Local users + groups (break-glass admin BEFORE SSH lockdown)
+  ansible.builtin.import_role:
+    name: synology_users
+
+- name: SSH hardening (key-only, no root, telnet/sftp off — the breach fix)
+  ansible.builtin.import_role:
+    name: synology_ssh
+
+- name: Firewall + autoblock (DSM perimeter)
+  ansible.builtin.import_role:
+    name: synology_security
+
+- name: External Access (QuickConnect/UPnP off — no relay around the firewall)
+  ansible.builtin.import_role:
+    name: synology_external_access
+
+- name: DSM web settings (HSTS / HTTP2 / TLS Modern)
+  ansible.builtin.import_role:
+    name: synology_dsm_web
+
+- name: File services (FTP/AFP off, SNMPv3 read-only for host metrics)
+  ansible.builtin.import_role:
+    name: synology_services
+
+- name: Notifications (mail / SMS / push / CMS channels)
+  ansible.builtin.import_role:
+    name: synology_notifications
+
+- name: Security Advisor (DSM-native vuln/config scan — replaces OEC; see ADR 0006)
+  ansible.builtin.import_role:
+    name: synology_security_advisor
+
+- name: DSM auto-updates (hotfix-security policy)
+  ansible.builtin.import_role:
+    name: synology_dsm_updates
+
+# AD enrollment runs LAST: synology_users + synology_ssh have already guaranteed
+# a local key-only break-glass admin, so even a misconfigured allowed-groups
+# filter or idmap can't lock you out (local accounts bypass winbind). The
+# one-time join needs `-e ad_join_password=...`; without it on an un-joined NAS
+# the role stages config + warns (never fails) — same ergonomics as ad_client.
+- name: Active Directory enrollment (KRG.LOCAL — winbind + idmap)
+  ansible.builtin.import_role:
+    name: synology_ad

@@ -1,0 +1,80 @@
+---
+# synology_notifications — DSM notification channels (mail, SMS, push, CMS) from
+# spec/e4e-nas/notifications.yml via synowebapi (full-object set per API).
+# Gmail OAuth token bootstrap is one-time + interactive in DSM UI — not in this role.
+#
+# CROSS-REFERENCE: parallels nix `services.smartd.notifyEmail` /
+# `services.zfs.zed.settings.ZED_EMAIL_ADDR` on the Linux side — same intent
+# (admin alerts for health/security events), DSM-curated channel here. The
+# email channel configured here is consumed by `synology_security_advisor`
+# (notify-on-finding) and `synology_dsm_updates` (notify-on-install).
+
+- name: Load the notifications spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_notifications_spec }}"
+    name: notif_spec
+
+- name: Mail.Conf DEFERRED (bring-up) — operator flagged synology_notifications_defer_mail=true
+  ansible.builtin.debug:
+    msg: |
+      Skipping Mail.Conf SET — synology_notifications_defer_mail is true.
+      DSM Notification.Mail.Conf.set validates the SMTP relay path and
+      returns err 4600 when unreachable (common during bring-up before
+      the NAS is on its production network).
+      Re-run without `-e synology_notifications_defer_mail=true` to apply.
+  when: synology_notifications_defer_mail | bool
+
+- name: Apply Mail.Conf (Notification.Mail.Conf set v2)
+  ansible.builtin.script: >-
+    apply_notifications.py mail
+    --enable {{ notif_spec.mail.enable | default(true) }}
+    --oauth {{ notif_spec.mail.enable_oauth | default(true) }}
+    --sender-mail {{ (notif_spec.mail.sender_mail | default('')) | quote }}
+    --sender-name {{ (notif_spec.mail.sender_name | default('')) | quote }}
+    --subject-prefix {{ (notif_spec.mail.subject_prefix | default('')) | quote }}
+    --smtp-server {{ (notif_spec.mail.smtp.server | default('')) | quote }}
+    --smtp-port {{ notif_spec.mail.smtp.port | default(465) }}
+    --smtp-ssl {{ notif_spec.mail.smtp.ssl | default(true) }}
+    --auth-user {{ (notif_spec.mail.smtp.auth.user | default('')) | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: mail_apply
+  changed_when: "'CHANGED' in mail_apply.stdout or 'WOULD-CHANGE' in mail_apply.stdout"
+  failed_when: "mail_apply.rc != 0 or 'FAIL' in mail_apply.stdout"
+  check_mode: false
+  when: not (synology_notifications_defer_mail | bool)
+
+- name: Apply SMS.Conf (Notification.SMS.Conf set v2)
+  ansible.builtin.script: >-
+    apply_notifications.py sms
+    --enable {{ notif_spec.sms.enable | default(false) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: sms_apply
+  changed_when: "'CHANGED' in sms_apply.stdout or 'WOULD-CHANGE' in sms_apply.stdout"
+  failed_when: "sms_apply.rc != 0 or 'FAIL' in sms_apply.stdout"
+  check_mode: false
+
+- name: Apply Push.Conf (Notification.Push.Conf set v1 — legacy push transports)
+  ansible.builtin.script: >-
+    apply_notifications.py push
+    --msn {{ notif_spec.push.msn_enable | default(false) }}
+    --skype {{ notif_spec.push.skype_enable | default(false) }}
+    --mobile {{ notif_spec.push.mobile_enable | default(false) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: push_apply
+  changed_when: "'CHANGED' in push_apply.stdout or 'WOULD-CHANGE' in push_apply.stdout"
+  failed_when: "push_apply.rc != 0 or 'FAIL' in push_apply.stdout"
+  check_mode: false
+
+- name: Apply CMS.Conf (Notification.CMS.Conf set v2)
+  ansible.builtin.script: >-
+    apply_notifications.py cms
+    --enable {{ notif_spec.cms.enable | default(false) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: cms_apply
+  changed_when: "'CHANGED' in cms_apply.stdout or 'WOULD-CHANGE' in cms_apply.stdout"
+  failed_when: "cms_apply.rc != 0 or 'FAIL' in cms_apply.stdout"
+  check_mode: false
+
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

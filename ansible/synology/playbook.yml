@@ -1,0 +1,38 @@
+# Synology DSM (e4e-nas) — declarative config via the synology_* CLI/webapi-wrapping roles.
+# DSM is not Debian: roles wrap synouser/synogroup/synoshare/synowebapi over SSH. Spec lives
+# in spec/e4e-nas/*.yml; git is truth, UI changes are drift (ADR 0001). Prereqs are
+# in inventory/group_vars/synology.yml.
+#
+#   ansible-playbook playbook.yml                                       # apply
+#   ansible-playbook playbook.yml --check --diff                        # dry run
+#   ansible-playbook playbook.yml --tags export                         # drift snapshot (read-only)
+#   ansible-playbook playbook.yml --tags acls-recursive                 # post-AD-join one-shot
+#   ansible-playbook playbook.yml -e ad_join_password='<pass>'          # AD domain join
+#   ansible-playbook playbook.yml -e @secrets-hb.yml                    # Hyper Backup secrets
+#
+# Deliberately a SEPARATE play from site.yml's Debian/PVE baseline — DSM shares none
+# of that (no apt, no systemd baseline, no OEC). Validate on the test rig first.
+- name: Synology DSM — base + identity + storage + portal
+  hosts: synology
+  become: true
+  gather_facts: false # DSM fact-gathering is unreliable; roles use explicit commands
+  roles:
+    # --- BASELINE COMPOSER ---
+    # synology_base is the DSM counterpart of nix/profiles/base.nix and
+    # ansible/roles/base. It composes (in load-bearing order):
+    #   dsm_system, users, ssh, security, external_access, dsm_web,
+    #   services, notifications, security_advisor, dsm_updates, ad
+    # See ansible/synology/roles/synology_base/README.md for the rationale of that order.
+    - synology_base
+
+    # --- STORAGE LAYER (per-share / per-volume; runs after baseline) ---
+    - synology_shares                  # shared folder catalogue (synoshare)
+    - synology_acls                    # share -> principal grant matrix (synoshare --setuser)
+    - synology_quotas                  # per-share + per-user quotas (synoquota)
+    - synology_smb                     # SMB global protocol settings
+    - synology_nfs                     # NFS exports + per-share SharePrivilege
+    - synology_snapshot_replication    # per-share Btrfs snapshot schedules
+    - synology_hyper_backup            # off-box DR jobs (runbook §5)
+
+    # --- APP / WEB LAYER ---
+    - synology_app_portal              # AppPortal config + reverse-proxy + access-control

@@ -1,0 +1,41 @@
+# Per-share quota policy for e4e-nas — declarative source of truth.
+# Consumed by the `synology_quotas` Ansible role.
+#
+# Runbook reference: the live capture flagged "~8,900 quota rows" on the old
+# box, most of which is per-user history we don't want to drag forward. This
+# spec is the POLICY (per-share caps), not the history — port selectively.
+#
+# Per-share quota model:
+#   - DSM stores quotas at the share level (volume-wide quotas are a thing too,
+#     but we manage shares here). Hard quotas BLOCK writes once full; soft (a.k.a.
+#     "warn") just emit a notification (channel from synology_notifications).
+#   - DSM API surface (best-known from synowebapi probes):
+#       SYNO.Core.Quota         get/set/list   (per-volume / per-user; uncertain)
+#       SYNO.Core.Share.Quota   get/set        (per-share, what we want — verify)
+#     `synoquota` CLI also exists (live capture confirmed it's there). Helper
+#     defaults to the synowebapi surface; flip the API in apply_quotas.py if
+#     first apply shows the call shape differs.
+#
+# Sizing units: spec uses GiB integers (multiply by 1<<30 for bytes in the
+# helper). `0` = no quota (drift the role will REMOVE any existing quota).
+
+defaults:
+  hard: false           # default soft (warn-only); flip per share for caps that BLOCK
+
+share_quotas: []
+  # Examples (uncomment + size to taste post-rebuild):
+  # - share: temp
+  #   size_gib: 500
+  #   hard: true                # block-on-full — temp shouldn't run away
+  # - share: data_staging
+  #   size_gib: 2000
+  #   hard: false               # warn only
+  # - share: nextcloud
+  #   size_gib: 5000
+  #   hard: false
+
+# Per-user quotas (when they need to be ported, NOT the captured ~8,900 history).
+# Schema:
+#   user_quotas:
+#     - { user: alice, volume: /volume1, size_gib: 200, hard: false }
+user_quotas: []

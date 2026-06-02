@@ -1,0 +1,35 @@
+---
+# Exporter (read-only): snapshot the live DSM web + TLS profile config so the
+# drift_detector can diff them against spec/e4e-nas/dsm-web.yml. Paired half of the role
+# (ADR 0001 — UI = drift). Run: ansible-playbook playbook.yml --tags export
+
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get live DSM web settings (v2)
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Web.DSM method=get version=2"
+  register: web_get
+  changed_when: false
+  check_mode: false
+
+- name: Get live TLS profile
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Web.Security.TLSProfile method=get version=1"
+  register: tls_get
+  changed_when: false
+  check_mode: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-dsm-web.yml"
+    mode: "0600"
+    content: |
+      # Live DSM web/TLS state on {{ inventory_hostname }} — synology_dsm_web exporter.
+      # raw synowebapi output (preamble on stderr; stdout is the JSON pretty-print).
+      web_raw: {{ web_get.stdout_lines | to_json }}
+      tls_raw: {{ tls_get.stdout_lines | to_json }}
+  delegate_to: localhost

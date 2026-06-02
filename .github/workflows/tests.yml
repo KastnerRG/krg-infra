@@ -1,0 +1,32 @@
+name: Python unit tests
+
+# Unit tests for the control-side Python: the synology_* DSM apply_*.py helpers and the
+# drift_detector. Pure stdlib + pytest (+ pyyaml for the detector) — no DSM/NAS needed, so
+# plain setup-python (not nix) keeps this fast. Gates main + PRs like the nix build
+# (build.yml). Enforcement (required status check) is a branch-protection setting on
+# KastnerRG/krg-infra — configure it there so a red run blocks merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    name: pytest (python helpers + drift detector)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # The DSM apply_*.py helpers run on DSM's Python 3.8; keep the floor there so
+          # the tests catch any accidentally-newer syntax.
+          python-version: "3.8"
+
+      - name: Install test deps
+        run: pip install pytest pyyaml
+
+      - name: Run unit tests
+        run: pytest ansible/ drift/ -q

@@ -1,0 +1,47 @@
+# DSM Hyper Backup jobs for e4e-nas — declarative source of truth.
+# Consumed by the `synology_hyper_backup` Ansible role.
+#
+# Off-box DR copy of critical shares (runbook §5). Snapshots in
+# spec/e4e-nas/snapshots.yml are the LOCAL recovery story; Hyper Backup is the
+# REMOTE one (different failure domains — disk pool dead, NAS stolen, room
+# burned). At least one off-box destination per critical share.
+#
+# DSM API surface (best-known from /usr/syno/synoman/webapi/SYNO.SDS.Backup*.lib
+# and SYNO.Backup.Server.lib — empirical confirmation pending; flip OUT_KEYS in
+# apply_hyper_backup.py on first-apply drift):
+#   SYNO.SDS.Backup.Client.Task            list/get/create/update/delete
+#   SYNO.SDS.Backup.Client.Common.Storage  list/get   (destinations)
+#   SYNO.Backup.Service                    list/get   (legacy surface)
+# The `synobackup` CLI also exists.
+#
+# Destination credentials (rsync passwd, S3 key, etc.) are BOOTSTRAP SECRETS:
+# pass at runtime, NEVER store in the spec:
+#   ansible-playbook ... -e @secrets-hb.yml
+# secrets-hb.yml maps job name -> destination password/key.
+
+defaults:
+  encrypt: true                       # ALWAYS encrypt off-box
+  enabled: true
+
+jobs:
+  # No jobs declared until the destination is decided. Open question in plan.md:
+  # rsync target on krg-prod? S3 (Garage)? External NAS / cloud? See ADR pending.
+  []
+  # Example schema (uncomment + parametrize once destination is chosen):
+  #
+  # - name: critical-shares-offbox
+  #   destination:
+  #     type: rsync                    # rsync | s3 | webdav | hyperbackup-vault | ...
+  #     host: krg-prod.ucsd.edu        # or s3-endpoint, etc.
+  #     path: /var/backup/e4e-nas/hyperbackup
+  #     # password/key supplied at runtime via -e hyper_backup_secrets, NOT in this file
+  #   sources:
+  #     - admin
+  #     - programmatics
+  #     - label_studio
+  #     - hardware_dev
+  #     # (subset of shares.yml — pick the critical ones)
+  #   schedule:
+  #     daily: "03:00"
+  #     retain_versions: 30
+  #   encrypt: true

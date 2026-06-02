@@ -1,0 +1,70 @@
+---
+# synology_services — manage DSM file/system services (FTP/AFP/SNMP) from
+# spec/e4e-nas/services.yml via synowebapi. Each API is full-object set
+# (partial = err 2001); logic in files/apply_services.py via `script` module.
+# SFTP/WebDAV/Rsync surfaces are not yet mapped (capture errored 102 — TODO).
+#
+# CROSS-REFERENCE: FTP/AFP are DSM-specific (no Debian/NixOS equivalents in
+# this repo). SNMP intent (read-only host metrics) parallels
+# `services.prometheus.exporters.node` in nix and `ansible/roles/monitoring`
+# (node_exporter) — same goal (let Prometheus scrape the box), different
+# protocol. SSH/SFTP toggles live in [`synology_ssh`](../synology_ssh) for
+# anti-lockout-order reasons.
+
+- name: Load the services spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_services_spec }}"
+    name: services_spec
+
+- name: Apply FTP / FTPS (SYNO.Core.FileServ.FTP set)
+  ansible.builtin.script: >-
+    apply_services.py ftp
+    --enable-ftp {{ services_spec.ftp.enable_ftp | default(false) }}
+    --enable-ftps {{ services_spec.ftp.enable_ftps | default(false) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: ftp_apply
+  changed_when: "'CHANGED' in ftp_apply.stdout or 'WOULD-CHANGE' in ftp_apply.stdout"
+  failed_when: "ftp_apply.rc != 0 or 'FAIL' in ftp_apply.stdout"
+  check_mode: false
+
+- name: Apply AFP (SYNO.Core.FileServ.AFP set)
+  ansible.builtin.script: >-
+    apply_services.py afp
+    --enable {{ services_spec.afp.enable | default(false) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: afp_apply
+  changed_when: "'CHANGED' in afp_apply.stdout or 'WOULD-CHANGE' in afp_apply.stdout"
+  failed_when: "afp_apply.rc != 0 or 'FAIL' in afp_apply.stdout"
+  check_mode: false
+
+- name: Apply SNMP (SYNO.Core.SNMP set + v3 USM credentials when supplied)
+  # SNMPv3 USM credentials come from secrets-syno.yml (operator-side) via the
+  # `snmp_v3_*` keys. The helper soft-defers v3-enable when creds are missing
+  # (WARN on stderr, pins to current — like the AD-aware gate on User.Home).
+  # The v3 cred passwords go on the cmdline → kept under no_log:true so they
+  # don't end up in apply logs. Field-name plumbing is best-known; expect a
+  # flip on first real apply with creds (helper has a clear note).
+  ansible.builtin.script: >-
+    apply_services.py snmp
+    --enable {{ services_spec.snmp.enable_snmp | default(false) }}
+    --v1v2 {{ services_spec.snmp.enable_snmp_v1v2 | default(false) }}
+    --v3 {{ services_spec.snmp.enable_snmp_v3 | default(false) }}
+    --contact {{ (services_spec.snmp.contact | default('')) | quote }}
+    --location {{ (services_spec.snmp.location | default('')) | quote }}
+    --name {{ (services_spec.snmp.name | default('')) | quote }}
+    --rouser {{ (services_spec.snmp.v3_user | default('')) | quote }}
+    --v3-auth-protocol {{ (services_spec.snmp.v3_auth_protocol | default('SHA')) | quote }}
+    --v3-auth-password {{ (snmp_v3_auth_password | default('')) | quote }}
+    --v3-priv-protocol {{ (services_spec.snmp.v3_priv_protocol | default('AES')) | quote }}
+    --v3-priv-password {{ (snmp_v3_priv_password | default('')) | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: snmp_apply
+  changed_when: "'CHANGED' in snmp_apply.stdout or 'WOULD-CHANGE' in snmp_apply.stdout"
+  failed_when: "snmp_apply.rc != 0 or 'FAIL' in snmp_apply.stdout"
+  check_mode: false
+  no_log: true  # v3 USM passwords on the cmdline
+
+# --- Drift export (read-only) — only with `--tags export` -----------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

@@ -1,0 +1,21 @@
+# OpenTofu / Terraform working files — never commit state (holds DSM secrets)
+# or real tfvars.
+.terraform/
+# .terraform.lock.hcl is COMMITTED per workspace (the convention sibling
+# workspaces — authentik/, grafana/, openbao/ — already follow). A committed
+# lockfile pins provider versions across operators and CI. No global ignore.
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+# DSM config exports / SQL dumps — secret + PII-bearing, never commit (review locally only)
+*.dss
+*.sql
+*.db
+*_ConfBkp*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
