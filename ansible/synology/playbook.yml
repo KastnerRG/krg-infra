@@ -35,7 +35,10 @@
     - synology_hyper_backup            # off-box DR jobs (runbook §5)
 
     # --- APP / WEB LAYER ---
-    # synology_certificate tagged so an operator can target it alone:
-    #   ansible-playbook playbook.yml --tags=synology_certificate
-    - { role: synology_certificate, tags: ['synology_certificate', 'tls', 'app_web'] }
+    # synology_certificate tasks are tagged INSIDE tasks/main.yml (not at
+    # the play level) so the `tags: [export, never]` on the drift-export
+    # block stays effective. A play-level role tag composes DOWN onto every
+    # imported/included task and overrides `never`, which would have made
+    # `--tags=synology_certificate` drag the export in.
+    - synology_certificate
     - synology_app_portal              # AppPortal config + reverse-proxy + access-control (service-specific cert bindings live here)

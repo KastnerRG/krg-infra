@@ -30,10 +30,14 @@
 # loop_var because Ansible's per-item failure semantics are kinder than
 # wrapping the whole list in a single script call.)
 
+# Tags are applied PER TASK so the export's [export, never] gate stays
+# effective. A play-level role tag would propagate down here and override
+# `never` — see playbook.yml comment.
 - name: Load the certificate spec
   ansible.builtin.include_vars:
     file: "{{ synology_certificate_spec }}"
     name: cert_spec
+  tags: [synology_certificate, tls]
 
 - name: Issue / re-issue Let's Encrypt certs (per-domain, idempotent)
   ansible.builtin.script: >-
@@ -50,6 +54,7 @@
   changed_when: "'CHANGED' in le_apply.stdout or 'WOULD-CHANGE' in le_apply.stdout"
   failed_when: "le_apply.rc != 0 or 'FAIL' in le_apply.stdout"
   check_mode: false
+  tags: [synology_certificate, tls]
 
 # Default-cert binding runs AFTER issuance. set-default refuses on a
 # missing cert (clean FAIL), so an item with `default: true` whose
@@ -67,15 +72,12 @@
   changed_when: "'CHANGED' in default_apply.stdout or 'WOULD-CHANGE' in default_apply.stdout"
   failed_when: "default_apply.rc != 0 or 'FAIL' in default_apply.stdout"
   check_mode: false
+  tags: [synology_certificate, tls]
 
 # --- Drift export (read-only) — only with `--tags export` -----------------------
-# include_tasks (NOT import_tasks): dynamic include keeps the inner tasks
-# OUT of the role-level tag set. import_tasks copies the inner tasks into
-# the parent at parse time + each picks up every ambient tag, which means
-# the role-level `synology_certificate` tag would propagate down and
-# `--tags=synology_certificate` would drag the export along. With dynamic
-# include, only the include directive itself carries [export, never], so
-# `--tags=synology_certificate` skips it cleanly.
+# import_tasks is fine here precisely BECAUSE the body tasks above are
+# tagged per-task (not via role-level), so `[export, never]` on the import
+# isn't competing with an ambient `synology_certificate` tag.
 - name: Export live cert state for drift detection
-  ansible.builtin.include_tasks: export.yml
+  ansible.builtin.import_tasks: export.yml
   tags: [export, never]
