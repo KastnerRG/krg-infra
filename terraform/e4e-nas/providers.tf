@@ -8,9 +8,10 @@ provider "synology" {
   user     = var.dsm_user
   password = var.dsm_password
 
-  # Leave blank unless the API account has TOTP 2FA (then set the shared
-  # secret, not a one-time code). Empty string = no 2FA.
-  otp_secret = var.dsm_otp_secret
+  # Set ONLY when the API account has TOTP 2FA. The value is the base32
+  # shared secret (NOT a 6-digit code, NOT the otpauth:// URI). The provider
+  # validates length 16-32 even on empty strings, so we pass null when unset.
+  otp_secret = var.dsm_otp_secret != null && var.dsm_otp_secret != "" ? var.dsm_otp_secret : null
 
   # NOTE: DSM ships a self-signed cert. If `tofu plan` fails on cert
   # verification, either install a trusted cert on the NAS or check the

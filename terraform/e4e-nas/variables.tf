@@ -19,8 +19,9 @@ variable "dsm_password" {
 }
 
 variable "dsm_otp_secret" {
-  description = "TOTP shared secret for dsm_user if 2FA is enabled; empty disables."
+  description = "TOTP base32 shared secret for dsm_user if 2FA is enabled. NOT the 6-digit code, NOT the otpauth:// URI. Leave null (the default) when 2FA is off — the provider validates length 16-32 even on empty strings, so providers.tf passes null through, not empty string."
   type        = string
   sensitive   = true
-  default     = ""
+  default     = null
+  nullable    = true
 }

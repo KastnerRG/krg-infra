@@ -29,6 +29,32 @@
   failed_when: "net_apply.rc != 0 or 'FAIL' in net_apply.stdout"
   check_mode: false
 
+# Prerequisite for the synology Terraform provider's synology_core_package
+# resource — see spec/e4e-nas/dsm-system.yml `packages:` for the why.
+- name: Apply Package Center default install volume (SYNO.Core.Package.Setting set v1)
+  ansible.builtin.script: >-
+    apply_dsm_system.py package-defaults
+    --install-volume {{ sys_spec.packages.default_install_volume | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: pkg_def_apply
+  changed_when: "'CHANGED' in pkg_def_apply.stdout or 'WOULD-CHANGE' in pkg_def_apply.stdout"
+  failed_when: "pkg_def_apply.rc != 0 or 'FAIL' in pkg_def_apply.stdout"
+  check_mode: false
+  when: sys_spec.packages.default_install_volume is defined
+
+# Workaround for upstream provider bug — see spec/e4e-nas/dsm-system.yml
+# `packages.ensure_running:` for the why.
+- name: Ensure packages are started (synopkg start; workaround for tofu run=true drop)
+  ansible.builtin.script: >-
+    apply_dsm_system.py package-state
+    --packages {{ (sys_spec.packages.ensure_running | default([])) | to_json | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: pkg_state_apply
+  changed_when: "'CHANGED' in pkg_state_apply.stdout or 'WOULD-CHANGE' in pkg_state_apply.stdout"
+  failed_when: "pkg_state_apply.rc != 0 or 'FAIL' in pkg_state_apply.stdout"
+  check_mode: false
+  when: (sys_spec.packages.ensure_running | default([])) | length > 0
+
 # NTP and per-interface static IP — TODO once API surfaces confirmed.
 
 - name: Export live state for drift detection
