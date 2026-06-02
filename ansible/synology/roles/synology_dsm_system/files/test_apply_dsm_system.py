@@ -154,9 +154,17 @@ def _synopkg_factory(on_state, start_results=None):
     return fake
 
 
+def _fake_installed(installed_names):
+    """Helper for tests that need a known set of "installed" packages.
+    Apply with `monkeypatch.setattr(m, "_pkg_is_installed", _fake_installed(...))`."""
+    s = set(installed_names)
+    return lambda name: name in s
+
+
 def test_package_state_no_change_when_all_running(monkeypatch, capsys):
-    """All listed packages already on → OK no-change, NO synopkg start calls."""
+    """All listed packages installed + already on → OK no-change, NO synopkg start calls."""
     on = {"ContainerManager": True}
+    monkeypatch.setattr(m, "_pkg_is_installed", _fake_installed(["ContainerManager"]))
     monkeypatch.setattr(m.subprocess, "run", _synopkg_factory(on))
     rc = m.main(["package-state", "--packages", _json.dumps(["ContainerManager"])])
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
@@ -173,6 +181,8 @@ def test_package_state_starts_only_stopped_packages(monkeypatch, capsys):
         calls.append(list(cmd))
         return base_fake(cmd, *args, **kwargs)
 
+    monkeypatch.setattr(m, "_pkg_is_installed",
+                        _fake_installed(["ContainerManager", "OtherPkg"]))
     monkeypatch.setattr(m.subprocess, "run", tracking_fake)
     rc = m.main(["package-state", "--packages",
                  _json.dumps(["ContainerManager", "OtherPkg"])])
@@ -193,6 +203,7 @@ def test_package_state_check_does_not_start(monkeypatch, capsys):
         calls.append(list(cmd))
         return base_fake(cmd, *a, **k)
 
+    monkeypatch.setattr(m, "_pkg_is_installed", _fake_installed(["ContainerManager"]))
     monkeypatch.setattr(m.subprocess, "run", tracking_fake)
     rc = m.main(["package-state", "--packages",
                  _json.dumps(["ContainerManager"]), "--check"])
@@ -204,10 +215,61 @@ def test_package_state_check_does_not_start(monkeypatch, capsys):
 def test_package_state_start_failure_returns_fail(monkeypatch, capsys):
     """synopkg start failure surfaces as FAIL, not silent pretend-success."""
     on = {"ContainerManager": False}
+    monkeypatch.setattr(m, "_pkg_is_installed", _fake_installed(["ContainerManager"]))
     monkeypatch.setattr(m.subprocess, "run",
                         _synopkg_factory(on, start_results={"ContainerManager": False}))
     rc = m.main(["package-state", "--packages", _json.dumps(["ContainerManager"])])
     assert rc == 1 and capsys.readouterr().out.startswith("FAIL")
+
+
+def test_package_state_skips_missing_packages_with_warning(monkeypatch, capsys):
+    """Bootstrap case: a desired package isn't installed yet (terraform hasn't
+    run). The role must warn on stderr + skip — NOT fail, NOT call `synopkg
+    start` (which would emit a real error on a non-existent package)."""
+    on = {}  # nothing on (also nothing installed)
+    calls = []
+    base_fake = _synopkg_factory(on)
+
+    def tracking_fake(cmd, *a, **k):
+        calls.append(list(cmd))
+        return base_fake(cmd, *a, **k)
+
+    # Nothing installed → every desired package missing.
+    monkeypatch.setattr(m, "_pkg_is_installed", _fake_installed([]))
+    monkeypatch.setattr(m.subprocess, "run", tracking_fake)
+    rc = m.main(["package-state", "--packages",
+                 _json.dumps(["ContainerManager", "OtherPkg"])])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "OK no-change" in captured.out
+    # Both missing packages produced a stderr warning, ANCHORED in install hint.
+    assert "ContainerManager" in captured.err and "OtherPkg" in captured.err
+    assert "terraform" in captured.err.lower() or "/var/packages" in captured.err
+    # Crucially, no `synopkg start` calls (we never try to start a non-existent pkg).
+    assert not any(len(c) >= 2 and c[1] == "start" for c in calls), \
+        "must NOT call synopkg start on a missing package"
+
+
+def test_package_state_mixed_missing_and_drifting(monkeypatch, capsys):
+    """Realistic case: one package present-but-off (drift → starts), one missing
+    (warn → skip). Both signals must surface; only the present one is started."""
+    on = {"ContainerManager": False}
+    calls = []
+    base_fake = _synopkg_factory(on)
+
+    def tracking_fake(cmd, *a, **k):
+        calls.append(list(cmd))
+        return base_fake(cmd, *a, **k)
+
+    monkeypatch.setattr(m, "_pkg_is_installed", _fake_installed(["ContainerManager"]))
+    monkeypatch.setattr(m.subprocess, "run", tracking_fake)
+    rc = m.main(["package-state", "--packages",
+                 _json.dumps(["ContainerManager", "VirtualMachineManager"])])
+    captured = capsys.readouterr()
+    assert rc == 0 and captured.out.startswith("CHANGED")
+    assert "VirtualMachineManager" in captured.err  # warned about the missing one
+    starts = [c for c in calls if len(c) >= 2 and c[1] == "start"]
+    assert len(starts) == 1 and starts[0][2] == "ContainerManager"
 
 
 def test_package_state_rejects_bad_json():

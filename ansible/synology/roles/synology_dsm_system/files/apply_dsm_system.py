@@ -30,6 +30,7 @@ Subcommands:
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 
@@ -100,11 +101,19 @@ def apply_full(api, version, desired, check):
     return _result(drift, check, apply)
 
 
+def _pkg_is_installed(name):
+    """Return True iff the package is installed (DSM creates `/var/packages/<name>`
+    when a package's spk is installed; absent if uninstalled or never installed).
+    Used to skip-with-warning instead of fail when a desired package isn't
+    installed — terraform `synology_core_package` owns presence."""
+    return os.path.isdir(os.path.join("/var/packages", name))
+
+
 def _pkg_is_on(name):
     """Return True iff `synopkg is_onoff <name>` reports the package as on.
-    Exit code semantics: 0 = on, non-zero = off / missing. We don't try to
-    distinguish missing-vs-stopped here — the Terraform `synology_core_package`
-    resource owns presence, this subcommand owns running state."""
+    Exit code semantics: 0 = on, non-zero = off / missing. Callers that need
+    to disambiguate missing-vs-stopped should compose this with
+    `_pkg_is_installed`."""
     out = subprocess.run([SYNOPKG, "is_onoff", name],
                          capture_output=True, text=True)
     return out.returncode == 0
@@ -120,11 +129,26 @@ def do_package_state(a):
 
     Idempotent: probes `synopkg is_onoff <pkg>`, only `start`s the ones that
     aren't on. No-op if every listed package is already running.
-    """
+
+    Bootstrap-tolerant: if a desired package isn't installed at all (i.e.
+    terraform hasn't created it yet), warn on stderr + skip rather than fail
+    — the role is meant to run AFTER the terraform install, but a fresh box
+    where ansible runs first shouldn't be a hard error. The operator sees the
+    warning and knows to run `tofu apply` (or the missing package's spec
+    entry is a typo)."""
     desired = json.loads(a.packages)
     if not isinstance(desired, list) or not all(isinstance(p, str) for p in desired):
         raise SystemExit("--packages must be a JSON array of package names")
-    drift = [p for p in desired if not _pkg_is_on(p)]
+
+    # Three-way split: missing (warn+skip), installed-but-off (drift), on (no-op).
+    missing = [p for p in desired if not _pkg_is_installed(p)]
+    drift = [p for p in desired if p not in missing and not _pkg_is_on(p)]
+    for p in missing:
+        sys.stderr.write(
+            "WARN: package %r is not installed (no /var/packages/%s) — "
+            "skipping. Install via terraform `synology_core_package` first.\n"
+            % (p, p))
+
     if not drift:
         print("OK no-change")
         return 0
