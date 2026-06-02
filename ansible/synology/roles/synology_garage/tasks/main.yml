@@ -30,10 +30,15 @@
 # tracked. If you change which volume hosts a share, update both the
 # share spec AND these path fields in spec/e4e-nas/garage.yml.
 
+# `tags: [always]` so the spec is loaded regardless of which tag filter the
+# operator invokes the role with. Without this, `--tags=garage_ui` (or any
+# other sub-tag we might add later) would skip this include_vars and the
+# downstream tasks would crash on undefined `garage_spec`.
 - name: Load the Garage spec
   ansible.builtin.include_vars:
     file: "{{ synology_garage_spec }}"
     name: garage_spec
+  tags: [always]
 
 # --- Anti-error guard: secrets must be supplied as extra_vars ------------------
 # render-config carries no_log:true (it's the task that actually injects the
@@ -42,6 +47,11 @@
 # be inside a no_log task, hiding the cause). deploy + layout don't see the
 # secrets and aren't no_log. Fail loudly here, before anything secret-bearing
 # runs.
+#
+# Tagged with `garage_ui` too because the UI's render-ui-config also depends
+# on `garage_admin_token` via its `environment:` block — so `--tags=garage_ui`
+# should hit the same guard, not skip past it into the no_log-shrouded
+# render-ui-config and fail there with a hidden AnsibleUndefinedVariable.
 - name: Refuse to deploy Garage without secrets in extra_vars
   ansible.builtin.assert:
     that:
@@ -55,6 +65,7 @@
       outside the repo). Generate with `openssl rand -hex 32`. #110
       (OpenBao migration) eventually replaces this with a vault-backed
       lookup.
+  tags: [garage_ui]
 
 # --- 1. garage.toml ------------------------------------------------------------
 # Secrets pass via ENVIRONMENT (not cmdline argv) — argv is visible to other
