@@ -43,6 +43,47 @@ settings that survive DSM updates (unlike SSH-level edits, which updates revert)
 - Migrate state to a remote backend later (add a `backend` block to
   `versions.tf`, then `tofu init -migrate-state`). See [state encryption](../README.md#secrets--state-shared-rules).
 
+## Workloads
+
+### Garage (S3 object store)
+
+Single-node Garage on Container Manager, data on `/volume2/s3-data`, image
+pinned (per ADR 0002 + 0003). Defined by:
+
+- [`containers.tf`](containers.tf) `synology_container_project.garage`
+- [`compose/garage.yml.tftpl`](compose/garage.yml.tftpl) (templated — secrets injected from `var.garage_*`)
+- [`variables.tf`](variables.tf) — three `sensitive` token vars
+- [`terraform.tfvars.example`](terraform.tfvars.example) — how to generate + export
+
+**Operator post-apply step (one-shot, until #101 sub-PR 5 codifies via
+the `garage_config` Ansible role):**
+
+First `tofu apply` creates the project + starts the container, but the
+Garage *cluster* is empty — no node has assigned capacity, no buckets exist.
+Run once after first apply:
+
+```bash
+# 1. Get the node's short ID
+NODE_ID=$(ssh e4e-admin@e4e-nas.ucsd.edu \
+  'sudo docker exec garage garage status' \
+  | awk '/HEALTHY/{print substr($1,1,16); exit}')
+
+# 2. Assign capacity (single zone, full s3-data volume capacity)
+ssh e4e-admin@e4e-nas.ucsd.edu \
+  "sudo docker exec garage garage layout assign -z dc1 -c 5T $NODE_ID"
+
+# 3. Commit the layout (bumps the layout version; required to take effect)
+ssh e4e-admin@e4e-nas.ucsd.edu \
+  'sudo docker exec garage garage layout apply --version 1'
+```
+
+After this the cluster is operational. Bucket + access-key management is
+handled in sub-PR 5 (the `garage_config` Ansible role reads
+[`spec/e4e-nas/garage.yml`](../../spec/e4e-nas/garage.yml)).
+
+Sub-PR 4 (separate) adds DSM AppPortal reverse-proxy + Let's Encrypt for
+`*.s3.garage.e4e-nas.ucsd.edu` + the admin/web endpoints.
+
 ## Shared source of truth
 
 Like nix/ansible, this target can read the shared JSON files instead of
