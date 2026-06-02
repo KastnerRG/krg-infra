@@ -18,8 +18,10 @@ letsencrypt:
   # reverse-proxy entries all use unless explicitly bound to another.
   - domain: e4e-nas.ucsd.edu
     # LE renewal notifications + key-recovery contact. Routed to the team's
-    # ops alias (not a personal address) so notifications survive turnover.
-    email: e4e-ops@eng.ucsd.edu       # FIXME: confirm the right ops alias
+    # alias (not a personal address) so notifications survive turnover.
+    # Confirmed 2026-06-02 — `e4e@ucsd.edu` is the right one;
+    # `e4e-ops@eng.ucsd.edu` (the original placeholder) does not exist.
+    email: e4e@ucsd.edu
     default: true                     # bind as DSM's default cert
     sans: []                          # additional SANs; empty = single-domain cert
 
