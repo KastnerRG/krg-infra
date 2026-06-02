@@ -301,7 +301,10 @@ _LAYOUT_VER_RE = re.compile(r"Current cluster layout version:\s*(\d+)")
 
 
 def _garage(container, *cmd):
-    return _run("docker", "exec", container, "garage", *cmd)
+    # dxflrs/garage is a FROM-scratch image with the binary at `/garage` and
+    # no PATH set, so `docker exec <ct> garage …` fails with "executable file
+    # not found in $PATH". Absolute path is the robust call.
+    return _run("docker", "exec", container, "/garage", *cmd)
 
 
 def do_layout(a):
@@ -330,7 +333,7 @@ def do_layout(a):
     #    truncate defensively in case a future release prints the full 64.
     #    `garage layout assign` accepts either form, so feeding the 16-char
     #    short id is fine either way.)
-    status = _run("docker", "exec", a.container_name, "garage", "status").stdout
+    status = _garage(a.container_name, "status").stdout
     node_id = None
     for line in status.splitlines():
         line = line.strip()
