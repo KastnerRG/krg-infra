@@ -11,6 +11,15 @@ Subcommands:
   set-default         Set a cert (identified by its common-name domain)
                       as DSM's default. Idempotent: if the matching cert
                       already has is_default=true, no-op.
+                      NB: `is_default` only flags which cert NEW services
+                      get — it does NOT migrate existing service bindings.
+                      For that, use bind-services below.
+  bind-services       Bind a cert to specific DSM services (DSM web, FTPS,
+                      KMIP, etc.) — required to actually MIGRATE services
+                      off the factory self-signed cert after first LE
+                      issuance. Idempotent: skips bindings already on the
+                      target cert; warns + skips bindings for services
+                      DSM doesn't have installed.
   list                Read-only — dump certs in JSON form. Debug aid + the
                       drift-export hook reads it.
 
@@ -250,6 +259,128 @@ def do_set_default(a):
 
 
 # ---------------------------------------------------------------------------
+# bind-services — bind cert to specific DSM services (DSM web, FTPS, ...)
+# ---------------------------------------------------------------------------
+SERVICE_API = "SYNO.Core.Certificate.Service"
+
+
+def do_bind_services(a):
+    """Bind the cert identified by --domain to the (service, subscriber)
+    tuples in --bindings-json. Idempotent: only POST entries where the
+    current cert_id differs from the target cert.
+
+    API shape captured from DSM 7.3 wizard's "Settings" dialog on e4e-nas
+    2026-06-02 — SYNO.Core.Certificate.Service.set takes a `settings`
+    JSON array of:
+        {
+          "service": {                  # nested OBJECT, not flat string
+            "display_name": "...",
+            "isPkg":      bool,
+            "owner":      "...",
+            "service":    "...",        # inner service id
+            "subscriber": "..."
+          },
+          "old_id": "<current cert id>",
+          "id":     "<desired cert id>"
+        }
+    The inner `service` object comes verbatim from each cert's
+    `services:` array as returned by CRT.list — we read it back, find
+    the current binding, and submit the diff."""
+    bindings = json.loads(a.bindings_json)
+    if not isinstance(bindings, list):
+        return _fail({"reason": "--bindings-json must be a JSON array",
+                      "got": a.bindings_json})
+
+    certs = _list_certs()
+    if certs is None:
+        return _fail({"reason": "%s.list failed (auth/api error)" % CRT_API})
+
+    try:
+        target = _find_by_domain(certs, a.domain)
+    except RuntimeError as e:
+        return _fail({"reason": str(e), "domain": a.domain})
+    if target is None:
+        # bind-services can only act on a cert that exists. Same check-mode
+        # vs apply-mode split as set-default.
+        if a.check:
+            return _emit("would-change", {
+                "domain": a.domain,
+                "reason": "letsencrypt-create would issue the cert; bind-services would then bind it",
+            }, True)
+        return _fail({"reason": "no cert for domain — run letsencrypt-create first",
+                      "domain": a.domain})
+
+    target_id = target["id"]
+
+    # Index every (service, subscriber) tuple across ALL certs to
+    # find the CURRENT cert + the full service descriptor object DSM
+    # expects on the wire.
+    current = {}  # (svc, sub) -> {"cert_id": ..., "service_obj": {...}}
+    for cert in certs:
+        for svc in cert.get("services") or []:
+            key = (svc.get("service"), svc.get("subscriber"))
+            current[key] = {"cert_id": cert.get("id"), "service_obj": svc}
+
+    settings_to_set = []
+    skipped_missing = []
+    for b in bindings:
+        if not isinstance(b, dict) or "service" not in b or "subscriber" not in b:
+            return _fail({"reason": "each binding must have `service` and `subscriber`",
+                          "binding": b})
+        key = (b["service"], b["subscriber"])
+        cur = current.get(key)
+        if cur is None:
+            # Service isn't registered on any cert — DSM may not have it
+            # installed / enabled. Warn + skip rather than fail.
+            skipped_missing.append(b)
+            sys.stderr.write(
+                "WARN: service=%r subscriber=%r not present on any cert "
+                "(DSM service not installed?) — skipping.\n"
+                % (b["service"], b["subscriber"]))
+            continue
+        if cur["cert_id"] == target_id:
+            continue  # already bound to target — no-op
+        svc_obj = cur["service_obj"]
+        # Trim to the keys the wizard sends, in the order it sends them.
+        # (Extra keys like display_name_i18n / multiple_cert / user_setable
+        # are derived; not required on the wire.)
+        settings_to_set.append({
+            "service": {
+                "display_name": svc_obj.get("display_name", ""),
+                "isPkg":        bool(svc_obj.get("isPkg", False)),
+                "owner":        svc_obj.get("owner", ""),
+                "service":      svc_obj["service"],
+                "subscriber":   svc_obj["subscriber"],
+            },
+            "old_id": cur["cert_id"],
+            "id":     target_id,
+        })
+
+    if not settings_to_set:
+        # Everything's either already bound or missing-and-skipped. Either
+        # is "no live change required."
+        return _emit("no-change", {"skipped_missing": skipped_missing}, a.check)
+
+    payload = {
+        "domain":          a.domain,
+        "target_cert_id":  target_id,
+        "bindings_to_set": len(settings_to_set),
+        "services":        [s["service"]["service"] for s in settings_to_set],
+        "skipped_missing": skipped_missing,
+    }
+    if a.check:
+        return _emit("would-change", payload, True)
+
+    r = _exec(SERVICE_API, "version=1", "method=set",
+              "settings=" + json.dumps(settings_to_set))
+    if not r.get("success"):
+        return _fail({"reason": "%s.set failed" % SERVICE_API,
+                      "response": r, "payload": payload})
+    payload["restart_httpd"] = r.get("data", {}).get("restart_httpd", False)
+    return _emit("changed", payload, False)
+
+
+# ---------------------------------------------------------------------------
 # list — read-only debug + drift-export hook
 # ---------------------------------------------------------------------------
 def do_list(a):
@@ -296,6 +427,13 @@ def main(argv):
     sd.add_argument("--domain", required=True)
     sd.add_argument("--check", action="store_true")
     sd.set_defaults(fn=do_set_default)
+
+    bs = sub.add_parser("bind-services")
+    bs.add_argument("--domain", required=True)
+    bs.add_argument("--bindings-json", required=True,
+                    help="JSON array of {service, subscriber} dicts")
+    bs.add_argument("--check", action="store_true")
+    bs.set_defaults(fn=do_bind_services)
 
     ls = sub.add_parser("list")
     ls.set_defaults(fn=do_list)

@@ -281,6 +281,153 @@ def test_set_default_check_mode_doesnt_bind(monkeypatch, capsys):
     assert calls == []
 
 
+# --- bind-services ------------------------------------------------------------
+def _bs_args(**overrides):
+    base = {
+        "domain":         "e4e-nas.ucsd.edu",
+        "bindings_json":  '[{"service":"default","subscriber":"system"}]',
+        "check":          False,
+    }
+    base.update(overrides)
+    return type("A", (), base)()
+
+
+def _cert_with_services(domain, *, cid, services):
+    c = _cert(domain, cid=cid)
+    c["services"] = services
+    return c
+
+
+def test_bind_services_no_change_when_already_bound(monkeypatch, capsys):
+    """Target cert already has the desired (service, subscriber) → no-op."""
+    le_cert = _cert_with_services("e4e-nas.ucsd.edu", cid="LE001", services=[
+        {"display_name": "DSM Desktop Service", "service": "default",
+         "subscriber": "system", "isPkg": False, "owner": "root"},
+    ])
+    monkeypatch.setattr(m, "_list_certs", _stub_list([le_cert]))
+    rc = m.do_bind_services(_bs_args())
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
+
+
+def test_bind_services_migrates_from_other_cert(monkeypatch, capsys):
+    """Service is currently bound to a DIFFERENT cert → emit Service.set
+    with old_id + id. Verifies the wizard-captured shape: nested `service`
+    object + old_id + id."""
+    factory = _cert_with_services("synology", cid="OLD9", services=[
+        {"display_name": "DSM Desktop Service", "service": "default",
+         "subscriber": "system", "isPkg": False, "owner": "root"},
+    ])
+    le_cert = _cert_with_services("e4e-nas.ucsd.edu", cid="LE001", services=[])
+    monkeypatch.setattr(m, "_list_certs", _stub_list([factory, le_cert]))
+    calls = []
+    monkeypatch.setattr(m, "_exec",
+                        lambda *args: calls.append(args) or {"success": True,
+                                                             "data": {"restart_httpd": False}})
+    rc = m.do_bind_services(_bs_args())
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["bindings_to_set"] == 1
+    assert payload["target_cert_id"] == "LE001"
+    # Verify the POST shape:
+    assert len(calls) == 1
+    api, *params = calls[0]
+    assert api == m.SERVICE_API
+    assert "method=set" in params
+    settings_param = [p for p in params if p.startswith("settings=")][0]
+    settings = json.loads(settings_param[len("settings="):])
+    assert settings == [{
+        "service": {
+            "display_name": "DSM Desktop Service",
+            "isPkg":        False,
+            "owner":        "root",
+            "service":      "default",
+            "subscriber":   "system",
+        },
+        "old_id": "OLD9",
+        "id":     "LE001",
+    }]
+
+
+def test_bind_services_skips_missing_service_with_warning(monkeypatch, capsys):
+    """A binding for a service DSM doesn't expose → warn + skip, no FAIL.
+    DSM service catalogue varies by enabled packages; an unenabled FTPS
+    shouldn't break cert binding for the rest."""
+    le_cert = _cert_with_services("e4e-nas.ucsd.edu", cid="LE001", services=[])
+    monkeypatch.setattr(m, "_list_certs", _stub_list([le_cert]))
+    rc = m.do_bind_services(_bs_args(
+        bindings_json='[{"service":"phantom","subscriber":"nobody"}]'))
+    captured = capsys.readouterr()
+    assert rc == 0 and "OK no-change" in captured.out
+    assert "phantom" in captured.err and "skipping" in captured.err
+
+
+def test_bind_services_check_mode_doesnt_post(monkeypatch, capsys):
+    factory = _cert_with_services("synology", cid="OLD9", services=[
+        {"display_name": "DSM Desktop Service", "service": "default",
+         "subscriber": "system", "isPkg": False, "owner": "root"},
+    ])
+    le_cert = _cert_with_services("e4e-nas.ucsd.edu", cid="LE001", services=[])
+    monkeypatch.setattr(m, "_list_certs", _stub_list([factory, le_cert]))
+    calls = []
+    monkeypatch.setattr(m, "_exec",
+                        lambda *args: calls.append(args) or {"success": True})
+    rc = m.do_bind_services(_bs_args(check=True))
+    assert rc == 0 and capsys.readouterr().out.startswith("WOULD-CHANGE ")
+    assert calls == [], "--check must NOT call Certificate.Service.set"
+
+
+def test_bind_services_check_mode_plans_when_cert_missing(monkeypatch, capsys):
+    """Same dry-run safety pattern as set-default: in check mode, a
+    missing target cert is reported as WOULD-CHANGE (letsencrypt-create
+    would issue it on apply), not FAIL."""
+    monkeypatch.setattr(m, "_list_certs", _stub_list([_cert("unrelated.example")]))
+    rc = m.do_bind_services(_bs_args(check=True))
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("WOULD-CHANGE ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert "letsencrypt-create" in payload["reason"]
+
+
+def test_bind_services_fails_when_cert_missing_on_apply(monkeypatch, capsys):
+    """Apply mode: ordering bug (bind-services before letsencrypt-create)
+    → clean FAIL."""
+    monkeypatch.setattr(m, "_list_certs", _stub_list([_cert("unrelated.example")]))
+    rc = m.do_bind_services(_bs_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and "no cert for domain" in out
+
+
+def test_bind_services_propagates_api_failure(monkeypatch, capsys):
+    factory = _cert_with_services("synology", cid="OLD9", services=[
+        {"display_name": "X", "service": "default", "subscriber": "system",
+         "isPkg": False, "owner": "root"},
+    ])
+    le_cert = _cert_with_services("e4e-nas.ucsd.edu", cid="LE001", services=[])
+    monkeypatch.setattr(m, "_list_certs", _stub_list([factory, le_cert]))
+    monkeypatch.setattr(m, "_exec",
+                        lambda *args: {"success": False, "error": {"code": 5503}})
+    rc = m.do_bind_services(_bs_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+
+
+def test_bind_services_rejects_bad_json(monkeypatch, capsys):
+    monkeypatch.setattr(m, "_list_certs", _stub_list([]))
+    rc = m.do_bind_services(_bs_args(bindings_json='"not a list"'))
+    assert rc == 1 and capsys.readouterr().out.startswith("FAIL ")
+
+
+def test_bind_services_rejects_malformed_binding(monkeypatch, capsys):
+    monkeypatch.setattr(m, "_list_certs",
+                        _stub_list([_cert_with_services("e4e-nas.ucsd.edu",
+                                                        cid="LE001", services=[])]))
+    rc = m.do_bind_services(_bs_args(
+        bindings_json='[{"service":"default"}]'))  # missing `subscriber`
+    out = capsys.readouterr().out
+    assert rc == 1 and "subscriber" in out
+
+
 # --- list (read-only debug + drift export) ------------------------------------
 def test_list_trims_to_stable_fields(monkeypatch, capsys):
     monkeypatch.setattr(m, "_list_certs",

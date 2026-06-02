@@ -34,6 +34,43 @@ radius) is being rebuilt clean as a new Samba AD forest on krg-ldap.
 - **fabricant-prod**: production services — Traefik, Authentik (SSO), Grafana/Prometheus/Loki, Blackbox, PostgreSQL, Outline, MLflow, Label Studio, node/IPMI exporters, firewall, unattended upgrades. (These are the lab-wide tools now on **krg-prod**; E4E project-specific services go on **e4e-prod**.)
 - **waiter**: research/compute at 137.110.161.67 — NVIDIA CUDA + Container Toolkit, FPGA tooling (Vivado, Vitis, Verilator; opt-in), XRDP+XFCE desktop (opt-in, gated on FPGA), Fail2ban, native node/IPMI exporters + DCGM exporter (Docker) — blackbox now lives on krg-prod — and **ZFS-on-root** with ZFS auto-snapshots (replacing the old btrfs/snapper). The legacy Ubuntu setup used btrfs + Docker-based node/blackbox; the rebuild moved those to the patterns above.
 
+## Operating principle: IaC-strict
+
+**Every live change against managed infrastructure (NAS, NixOS hosts,
+Proxmox, etc.) flows through IaC.** When something needs to change on a
+managed machine, the fix is:
+
+1. Extend the spec (`spec/e4e-nas/*.yml`, `nix/...`, `terraform/...`).
+2. Extend the role / module / resource that consumes it (apply_*.py
+   subcommand, NixOS module, terraform resource).
+3. Commit + push.
+4. Apply via the appropriate orchestrator (`ansible-playbook`,
+   `nixos-rebuild`, `tofu apply`).
+
+**Do not** propose live mutations as the fix itself:
+
+- ❌ "Click here in DSM web → Apply"
+- ❌ "Run `synowebapi --exec ... method=set ...` on the NAS to fix it"
+- ❌ "Edit `/etc/...` directly via SSH"
+- ❌ "Manually create the bucket / share / cert / firewall rule"
+
+Even when the goal is to "just unblock today," the right framing is
+"extend the role NOW, it's the same 5 minutes either way." UI-driven or
+shell-driven fixes are invisible to the spec → they're drift the moment
+they land ([ADR 0001](docs/adr/0001-iac-source-of-truth.md): git is
+truth, UI = drift).
+
+**Discovery is the only exception.** Read-only probes, Chrome DevTools
+network captures of a wizard click to learn the API shape, `synowebapi
+--exec ... method=get`, log greps, etc. are fine — flag them as
+discovery, then port the findings into the role / spec / module before
+applying. Capturing a wizard's POST shape is research; clicking the
+wizard's "Save" as the fix delivery is not.
+
+This applies broadly to nix/, ansible/, terraform/ work — not just the
+NAS. The Synology surface had the most run-ins with it because DSM has
+the richest "click here to fix it" affordance, but the rule is global.
+
 ## Common Commands
 
 The flake lives in `nix/`. Run from the repo root with the `./nix` ref shown

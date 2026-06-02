@@ -72,6 +72,26 @@
   changed_when: "'CHANGED' in default_apply.stdout or 'WOULD-CHANGE' in default_apply.stdout"
   failed_when: "default_apply.rc != 0 or 'FAIL' in default_apply.stdout"
   check_mode: false
+
+# Service bindings — `default: true` above only flags WHICH cert new
+# services get; it does NOT migrate existing service bindings. DSM web,
+# FTPS, KMIP, etc. stay on whatever cert they were bound to (typically
+# the factory self-signed `synology` cert). bind-services explicitly
+# migrates the (service, subscriber) tuples named in `bindings:` to the
+# spec's cert. Idempotent: skips entries already on the target cert.
+- name: Bind certificates to DSM services (DSM web, FTPS, KMIP, ...)
+  ansible.builtin.script: >-
+    apply_certificate.py bind-services
+    --domain {{ item.domain | quote }}
+    --bindings-json {{ item.bindings | to_json | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  loop: "{{ cert_spec.letsencrypt | default([]) | selectattr('bindings', 'defined') | rejectattr('bindings', 'equalto', []) | list }}"
+  loop_control:
+    label: "{{ item.domain }}"
+  register: bind_apply
+  changed_when: "'CHANGED' in bind_apply.stdout or 'WOULD-CHANGE' in bind_apply.stdout"
+  failed_when: "bind_apply.rc != 0 or 'FAIL' in bind_apply.stdout"
+  check_mode: false
   tags: [synology_certificate, tls]
 
 # --- Drift export (read-only) — only with `--tags export` -----------------------
