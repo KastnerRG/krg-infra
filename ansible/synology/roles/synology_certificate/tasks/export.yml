@@ -1,25 +1,35 @@
 ---
 # Read-only drift snapshot: dump the live cert state into the per-host
-# export dir (same shape as the other synology_* roles). Re-run with
-# `--tags export` to refresh.
-- name: Export dir
+# export dir on the OPERATOR'S machine (NOT the NAS). DSM ships python
+# 3.8 which is below ansible's module floor — `ansible.builtin.{file,copy}`
+# can't run on the target, so `delegate_to: localhost` is mandatory.
+# `raw:` (no python on either end) is the only way to invoke synowebapi
+# on the remote.
+#
+# Same shape as synology_services/export.yml — copy/paste-friendly.
+- name: Ensure the export dir exists on the control node
   ansible.builtin.file:
     path: "{{ synology_export_dir | default('/var/lib/krg-deploy/synology-export') }}"
     state: directory
-    mode: "0755"
-  check_mode: false
-  changed_when: false
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
 
-- name: Snapshot live cert state
-  ansible.builtin.script: apply_certificate.py list
-  register: cert_export
+- name: Read live cert list (synowebapi over raw — DSM py3.8 is below ansible's module floor)
+  ansible.builtin.raw: >-
+    PATH={{ syno_path }}:$PATH synowebapi --exec
+    api=SYNO.Core.Certificate.CRT version=1 method=list
+  register: certs_get
   changed_when: false
   check_mode: false
 
-- name: Persist snapshot to <host>-certificates.json
+- name: Write the live-state snapshot to <host>-certificates.yml
   ansible.builtin.copy:
-    content: "{{ cert_export.stdout }}"
-    dest: "{{ synology_export_dir | default('/var/lib/krg-deploy/synology-export') }}/{{ inventory_hostname }}-certificates.json"
-    mode: "0644"
-  check_mode: false
-  changed_when: false
+    dest: "{{ synology_export_dir | default('/var/lib/krg-deploy/synology-export') }}/{{ inventory_hostname }}-certificates.yml"
+    mode: "0600"
+    content: |
+      # Live DSM cert state on {{ inventory_hostname }} — synology_certificate exporter.
+      # Captured: {{ ansible_date_time.iso8601 | default('unknown') }}
+      # The raw synowebapi response — use this for spec-vs-live diff.
+      certs_raw: {{ certs_get.stdout_lines | to_json }}
+  delegate_to: localhost

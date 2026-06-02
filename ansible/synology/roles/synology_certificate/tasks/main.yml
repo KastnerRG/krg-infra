@@ -69,6 +69,13 @@
   check_mode: false
 
 # --- Drift export (read-only) — only with `--tags export` -----------------------
+# include_tasks (NOT import_tasks): dynamic include keeps the inner tasks
+# OUT of the role-level tag set. import_tasks copies the inner tasks into
+# the parent at parse time + each picks up every ambient tag, which means
+# the role-level `synology_certificate` tag would propagate down and
+# `--tags=synology_certificate` would drag the export along. With dynamic
+# include, only the include directive itself carries [export, never], so
+# `--tags=synology_certificate` skips it cleanly.
 - name: Export live cert state for drift detection
-  ansible.builtin.import_tasks: export.yml
+  ansible.builtin.include_tasks: export.yml
   tags: [export, never]
