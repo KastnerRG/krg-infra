@@ -229,12 +229,22 @@ def do_set_default(a):
     if a.check:
         return _emit("would-change", payload, True)
 
+    # Method+param shape captured from DSM 7.3 wizard's set-as-default
+    # POST on e4e-nas 2026-06-02:
+    #   api=SYNO.Core.Certificate.CRT method=set version=1
+    #     as_default=true desc="<domain>" id="<cert_id>"
+    # NOT `method=set_default` (returns 103) — DSM overloads `set` with
+    # `as_default=true` for this operation. `desc` is the certificate's
+    # display description (conventionally the domain); the wizard always
+    # passes it alongside the id.
     r = _exec(
-        CRT_API, "version=1", "method=set_default",
+        CRT_API, "version=1", "method=set",
+        "as_default=true",
+        "desc=" + json.dumps(a.domain),
         "id=" + json.dumps(existing.get("id")),
     )
     if not r.get("success"):
-        return _fail({"reason": "%s.set_default failed" % CRT_API,
+        return _fail({"reason": "%s.set (as_default=true) failed" % CRT_API,
                       "response": r, "payload": payload})
     return _emit("changed", payload, False)
 

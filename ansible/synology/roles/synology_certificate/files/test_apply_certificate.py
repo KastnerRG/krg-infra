@@ -220,6 +220,10 @@ def test_set_default_no_change_when_already_default(monkeypatch, capsys):
 
 
 def test_set_default_binds_when_not_default(monkeypatch, capsys):
+    """The SET call shape is wizard-captured (DSM 7.3 e4e-nas 2026-06-02):
+    SYNO.Core.Certificate.CRT method=set as_default=true desc=<domain> id=<cert_id>
+    — NOT method=set_default (which DSM rejects with code 103). Regression
+    guard against re-introducing the wrong method/param shape."""
     monkeypatch.setattr(m, "_list_certs",
                         _stub_list([_cert("e4e-nas.ucsd.edu", cid="zzz123",
                                           default=False)]))
@@ -232,8 +236,13 @@ def test_set_default_binds_when_not_default(monkeypatch, capsys):
     assert len(calls) == 1
     api, *params = calls[0]
     assert api == m.CRT_API
-    assert "method=set_default" in params
+    assert "method=set" in params
+    assert "as_default=true" in params
+    assert 'desc="e4e-nas.ucsd.edu"' in params
     assert 'id="zzz123"' in params
+    # Regression guard: the WRONG shape (`method=set_default`) must NOT
+    # appear; DSM returns code 103 for it.
+    assert not any(p == "method=set_default" for p in params)
 
 
 def test_set_default_fails_when_cert_missing_on_apply(monkeypatch, capsys):
@@ -258,7 +267,7 @@ def test_set_default_reports_planned_when_cert_missing_in_check(monkeypatch, cap
     payload = json.loads(out.split(" ", 1)[1])
     assert payload["domain"] == "e4e-nas.ucsd.edu"
     assert "letsencrypt-create" in payload["reason"]
-    assert calls == [], "--check must NOT call SYNO.Core.Certificate.CRT.set_default"
+    assert calls == [], "--check must NOT call SYNO.Core.Certificate.CRT.set"
 
 
 def test_set_default_check_mode_doesnt_bind(monkeypatch, capsys):
