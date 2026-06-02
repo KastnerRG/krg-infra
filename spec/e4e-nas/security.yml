@@ -100,6 +100,53 @@ firewall:
               source_ip_group: all
               source_ip: all
 
+            # Let's Encrypt HTTP-01 challenge — port 80, worldwide.
+            #
+            # Why this rule exists: LE's "Multi-Perspective Issuance
+            # Corroboration" (MPIC) — enforced since 2024-06-15
+            # (https://letsencrypt.org/2024/06/14/multi-perspective-validation/) —
+            # validates new cert orders by fetching the HTTP-01 challenge
+            # from MULTIPLE geographically distributed vantage points,
+            # at least one of which is deliberately OUTSIDE the United
+            # States. The intent is to defeat BGP-hijack attacks (an
+            # attacker who can hijack one region's BGP route still
+            # can't satisfy non-hijacked validators). LE intentionally
+            # rotates the validator IPs and does not publish the list.
+            #
+            # Without this rule, LE's non-US secondary validators hit
+            # the `eth0.policy: drop` default and time out → cert
+            # issuance fails ("During secondary validation: ...
+            # Timeout during connect"). Validated empirically on
+            # e4e-nas 2026-06-02 + via letsdebug.net.
+            #
+            # Risk surface: port 80 only serves (a) DSM's HTTP→HTTPS
+            # redirect helper (a minimal nginx with no auth surface,
+            # responds with a tiny redirect-to-:6021 page) and (b) the
+            # transient syno-letsencrypt challenge responder during
+            # issuance (active for seconds at a time). No DSM service
+            # actually delivers anything over plain HTTP. So the
+            # "worldwide" allow doesn't materially expand attack
+            # surface.
+            #
+            # Alternative considered: DNS-01 challenge (doesn't need
+            # any inbound port). Rejected for now because UCSD owns
+            # the `ucsd.edu` DNS zone and we don't have programmatic
+            # update access. If we ever delegate
+            # `_acme-challenge.e4e-nas.ucsd.edu` to a DNS zone we
+            # control (Cloudflare, etc.), we can remove this rule and
+            # close port 80 entirely. Tracked under [the cert PR's
+            # roadmap section].
+            - name: lets-encrypt-http-01
+              enable: true
+              log: false
+              policy: allow
+              port_direction: destination
+              port_group: custom
+              ports: "80"
+              protocol: tcp
+              source_ip_group: all
+              source_ip: all
+
             # Country gate. Allows researchers/admins from anywhere in
             # the US for NON-SSH (DSM web file browser, etc.). SSH is
             # already drop'd above for non-trusted/non-ucsd/non-ops

@@ -18,6 +18,7 @@
 # until that API is wired up too.
 
 - name: Load the security spec
+  tags: [synology_security]
   ansible.builtin.include_vars:
     file: "{{ synology_security_spec }}"
     name: security_spec
@@ -27,6 +28,7 @@
 # nix `krg.firewall.trustedNets` pattern here so any change to trusted.json
 # flows to every layer.
 - name: Compute autoblock allow-list from nix/networks/trusted.json (sealab + machines + monitoring, deduped)
+  tags: [synology_security]
   ansible.builtin.set_fact:
     autoblock_allow_ips: >-
       {{
@@ -44,6 +46,7 @@
   # rotation or a misconfigured probe.
 
 - name: Surface the intended autoblock allow-list (drift-detector / operator visibility)
+  tags: [synology_security]
   ansible.builtin.debug:
     msg: |
       autoblock_allow_ips (from nix/networks/trusted.json) =
@@ -65,6 +68,7 @@
 # against the MERGED target (more precise than the old probe-profile that
 # checked only current state).
 - name: Build trusted-source allow rules (one per sealab + machines + monitoring IP)
+  tags: [synology_security]
   ansible.builtin.set_fact:
     firewall_trusted_rules: "{{ firewall_trusted_rules | default([]) + [_rule] }}"
   vars:
@@ -101,6 +105,7 @@
 #       earlier trusted-net all-ports allows. Without that rule, geoip-US
 #       would silently re-open SSH to the entire US.
 - name: Build ops SSH allow rules (one per ops admin IP, port 22 TCP only)
+  tags: [synology_security]
   ansible.builtin.set_fact:
     firewall_ops_ssh_rules: "{{ firewall_ops_ssh_rules | default([]) + [_rule] }}"
   vars:
@@ -120,6 +125,7 @@
     loop_var: ip
 
 - name: Build ucsd SSH allow rules (one per ucsd CIDR, port 22 TCP only)
+  tags: [synology_security]
   ansible.builtin.set_fact:
     firewall_ucsd_ssh_rules: "{{ firewall_ucsd_ssh_rules | default([]) + [_rule] }}"
   vars:
@@ -139,6 +145,7 @@
     loop_var: ip
 
 - name: Drift-check geoip rule(s) against geoip.allow_countries (spec internal consistency)
+  tags: [synology_security]
   ansible.builtin.assert:
     that:
       - "(_geoip_rule_sources | unique | sort) == [security_spec.firewall.geoip.allow_countries | join(',')]"
@@ -163,6 +170,7 @@
     - _geoip_rule_sources | length > 0
 
 - name: Compose firewall_managed_adapters dict (per-adapter; trusted+ops+ucsd-SSH prepended to `global`)
+  tags: [synology_security]
   ansible.builtin.set_fact:
     firewall_managed_adapters: >-
       {{
@@ -179,10 +187,12 @@
   loop: "{{ security_spec.firewall.profiles.default.adapters | dict2items }}"
 
 - name: Encode firewall_managed_adapters as JSON (for --desired arg)
+  tags: [synology_security]
   ansible.builtin.set_fact:
     firewall_managed_adapters_json: "{{ firewall_managed_adapters | to_json }}"
 
 - name: Surface managed adapter rules (operator visibility + drift detector)
+  tags: [synology_security]
   ansible.builtin.debug:
     msg: |
       Managed firewall adapters (will be pushed to DSM profile '{{ security_spec.firewall.active_profile | default('default') }}'):
@@ -190,6 +200,7 @@
   changed_when: false
 
 - name: Push per-adapter firewall rules (Profile.set + Profile.Apply via HTTP webapi)
+  tags: [synology_security]
   ansible.builtin.script: >-
     apply_security.py firewall-profile
     --account {{ synology_admin_user | default('e4e-admin') | quote }}
@@ -208,6 +219,7 @@
     - security_spec.firewall.profiles.default is defined
 
 - name: Warn when no NAS admin password supplied (rule push skipped)
+  tags: [synology_security]
   ansible.builtin.debug:
     msg: >-
       nas_admin_password not supplied — per-adapter rule push SKIPPED.
@@ -223,6 +235,7 @@
 
 # --- Globals (full-object SETs) -----------------------------------------------
 - name: Apply firewall (Firewall set — enable + active profile)
+  tags: [synology_security]
   ansible.builtin.script: >-
     apply_security.py firewall
     --enable {{ security_spec.firewall.enable | default(true) }}
@@ -234,6 +247,7 @@
   check_mode: false
 
 - name: Apply firewall conf (Firewall.Conf set — port_check)
+  tags: [synology_security]
   ansible.builtin.script: >-
     apply_security.py fw-conf
     --port-check {{ security_spec.firewall.port_check | default(true) }}
@@ -244,6 +258,7 @@
   check_mode: false
 
 - name: Apply auto-block (AutoBlock set — thresholds)
+  tags: [synology_security]
   ansible.builtin.script: >-
     apply_security.py autoblock
     --enable {{ security_spec.auto_block.enable | default(true) }}
