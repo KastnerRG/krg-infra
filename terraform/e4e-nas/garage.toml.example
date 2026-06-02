@@ -1,0 +1,65 @@
+# Garage S3 object store — single-node config for e4e-nas.
+#
+# OPERATOR WORKFLOW (transient until #101 sub-PR 5 / garage_config Ansible
+# role takes over with no_log + ansible-vault):
+#
+#   1. Copy this file to your laptop:
+#        cp garage.toml.example /tmp/garage.toml
+#   2. Fill in the 3 REDACTED_ secrets — generate strong values:
+#        for f in rpc_secret admin_token metrics_token; do
+#          echo "  $f = \"$(openssl rand -hex 32)\""
+#        done
+#      Paste each into the corresponding line below.
+#   3. scp to the NAS, owned root, mode 0400:
+#        scp /tmp/garage.toml e4e-admin@e4e-nas.ucsd.edu:/tmp/garage.toml
+#        ssh e4e-admin@e4e-nas.ucsd.edu '
+#          sudo mkdir -p /volume1/docker/garage &&
+#          sudo install -o root -g root -m 0400 /tmp/garage.toml /volume1/docker/garage/garage.toml &&
+#          shred -u /tmp/garage.toml'
+#   4. Shred the laptop copy too: `shred -u /tmp/garage.toml`
+#   5. Save the secrets to ~/.config/krg/secrets-garage.env (mode 0600) so you
+#      can recover them when sub-PR 5 lands and consumes them via ansible:
+#        cat >> ~/.config/krg/secrets-garage.env <<EOF
+#        # garage secrets — synced from /volume1/docker/garage/garage.toml on e4e-nas YYYY-MM-DD
+#        GARAGE_RPC_SECRET=<value>
+#        GARAGE_ADMIN_TOKEN=<value>
+#        GARAGE_METRICS_TOKEN=<value>
+#        EOF
+#   6. Now run `tofu apply` in terraform/e4e-nas/.
+#
+# Do NOT commit a filled-in copy of this file to git. The `.tfvars` /
+# `*.env` gitignore patterns don't cover `.toml`; the `.example` suffix +
+# the REDACTED_ markers below are the safety net here.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+
+# Single-node cluster — no replication possible. Adding a second node later
+# requires changing this + a `garage layout assign` rebalance.
+replication_factor = 1
+
+compression_level = 2
+
+rpc_bind_addr = "[::]:3901"
+# network_mode: host → other nodes (if/when added) would reach us on the
+# NAS's primary IP. For single-node, loopback is fine.
+rpc_public_addr = "127.0.0.1:3901"
+rpc_secret = "REDACTED_RPC_SECRET"
+
+[s3_api]
+api_bind_addr = "[::]:3900"
+s3_region = "garage"
+# Bucket hostnames: <bucket>.s3.garage.e4e-nas.ucsd.edu
+# Sub-PR 4 wires DSM reverse proxy + Let's Encrypt for these.
+root_domain = ".s3.garage.e4e-nas.ucsd.edu"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.garage.e4e-nas.ucsd.edu"
+index = "index.html"
+
+[admin]
+api_bind_addr = "[::]:3903"
+admin_token = "REDACTED_ADMIN_TOKEN"
+metrics_token = "REDACTED_METRICS_TOKEN"

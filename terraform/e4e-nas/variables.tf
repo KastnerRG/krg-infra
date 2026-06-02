@@ -29,29 +29,20 @@ variable "dsm_otp_secret" {
 # --- Garage (S3 object store) — per ADR 0002 + 0003 ---------------------------
 # Garage runs as a single-node Container Manager workload on e4e-nas, data on
 # the s3-data share (Btrfs with snapshots — /volume2/s3-data). Image pinned per
-# ADR 0002. Secrets supplied via TF_VAR_garage_* env vars (see
-# terraform.tfvars.example) — never written to a .tfvars file on disk.
+# ADR 0002.
+#
+# SECRETS ARE NOT TERRAFORM-MANAGED. The synology-community/synology provider
+# treats `synology_container_project.content` (and the nested `secrets.content`
+# and `configs.content`) as plain non-sensitive strings — they leak verbatim in
+# plan/error/state output. So Garage's `garage.toml` (which contains rpc_secret,
+# admin_token, metrics_token) is an OPERATOR-MANAGED file at
+# /volume1/docker/garage/garage.toml that terraform only bind-mounts. See the
+# Garage section in README.md for the operator workflow. Sub-PR 5 of #101
+# (garage_config Ansible role) supersedes this with no_log + ansible-vault
+# secret handling, after which the operator-managed step goes away.
 
 variable "garage_image_tag" {
   description = "Garage container image tag. PINNED per ADR 0002. Bump deliberately + verify changelog (especially around storage migrations)."
   type        = string
   default     = "v1.1.0"
-}
-
-variable "garage_rpc_secret" {
-  description = "Garage RPC shared secret — hex string used to authenticate inter-node RPC. Even on a single-node cluster Garage requires it. Generate with `openssl rand -hex 32` and export as TF_VAR_garage_rpc_secret. Lands in state — keep state encrypted."
-  type        = string
-  sensitive   = true
-}
-
-variable "garage_admin_token" {
-  description = "Garage admin API token — bearer for the admin API on :3903 (bucket/key/layout management). Generate with `openssl rand -hex 32` and export as TF_VAR_garage_admin_token. Lands in state."
-  type        = string
-  sensitive   = true
-}
-
-variable "garage_metrics_token" {
-  description = "Garage metrics API token — bearer for Prometheus scrape on :3903/metrics. Generate with `openssl rand -hex 32` and export as TF_VAR_garage_metrics_token. Lands in state."
-  type        = string
-  sensitive   = true
 }

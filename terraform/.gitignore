@@ -10,6 +10,12 @@
 !*.tfvars.example
 # Per-target deploy secrets sourced by deploy/deploy-tofu.sh (VAULT_TOKEN, TF_VAR_*).
 .deploy-env
+# Operator-managed config files that may contain secrets (e.g. garage.toml has
+# rpc_secret / admin_token / metrics_token — see terraform/e4e-nas/README.md
+# and garage.toml.example). Filled-in copies are operator-local + shredded
+# after scp to the NAS; the *.example template stays in the repo.
+*.toml
+!*.toml.example
 # DSM config exports / SQL dumps — secret + PII-bearing, never commit (review locally only)
 *.dss
 *.sql
