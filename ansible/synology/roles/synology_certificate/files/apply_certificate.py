@@ -169,12 +169,18 @@ def do_letsencrypt_create(a):
         return _fail({"reason": "--sans-json must be a JSON array of strings",
                       "got": a.sans_json})
 
+    # Param shape: domain + email + SAN_list. `server` is intentionally
+    # omitted (DSM defaults to LE prod). Field names from community LE
+    # scripts (zaxbux/syno-acme, JessThrysoee/synology-letsencrypt) +
+    # synology_api Python lib's `certificate_letsencrypt_create` which
+    # passes kwargs through. Empirically validated 2026-06-02: 5503 from
+    # this call indicates a param-shape problem; will iterate based on
+    # actual DSM wizard's network capture if this still 5503s.
     r = _exec(
         LE_API, "version=1", "method=create",
         "domain=" + json.dumps(a.domain),
         "email=" + json.dumps(a.email),
         "SAN_list=" + json.dumps(sans),
-        "server=" + json.dumps("prod"),
     )
     if not r.get("success"):
         return _fail({"reason": "%s.create failed" % LE_API,
