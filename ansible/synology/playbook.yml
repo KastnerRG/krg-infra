@@ -35,5 +35,7 @@
     - synology_hyper_backup            # off-box DR jobs (runbook §5)
 
     # --- APP / WEB LAYER ---
-    - synology_certificate             # DSM LE certs (issue + default-binding); DSM auto-renews between runs
+    # synology_certificate tagged so an operator can target it alone:
+    #   ansible-playbook playbook.yml --tags=synology_certificate
+    - { role: synology_certificate, tags: ['synology_certificate', 'tls', 'app_web'] }
     - synology_app_portal              # AppPortal config + reverse-proxy + access-control (service-specific cert bindings live here)
