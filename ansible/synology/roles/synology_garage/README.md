@@ -34,64 +34,98 @@ plan is to swap to the official `Deuxfleurs/garage-webadmin` once it leaves
 
 ## Secrets
 
-Four secrets are required at apply-time, supplied as ansible extra_vars
-(NOT in spec, NOT in git). All carried via the task's `environment:`
-directive — never argv, never `ps`-visible:
+Four secrets reach the role as ansible extra_vars (NOT in spec, NOT in git),
+all carried via the task's `environment:` directive — never argv, never
+`ps`-visible. **OpenBao (`krg-vault`) is the source of truth**; the operator
+file is only a local fallback for interactive runs.
 
-- `garage_rpc_secret`            — internal Garage RPC HMAC key (single-node still needs it set)
-- `garage_admin_token`           — bearer token for the admin API on `:3903` (UI reuses this)
-- `garage_metrics_token`         — bearer token for the Prometheus metrics endpoint
-- `garage_ui_oidc_client_secret` — Authentik OIDC client secret for garage-ui (≥ 16 chars). Required only when spec has a `ui:` block.
+| extra_var | OpenBao path (field) | who writes it | min len |
+|---|---|---|---|
+| `garage_rpc_secret`            | `secret/e4e-nas/garage` (`rpc_secret`)            | operator-seeded (pre-existing value)              | 32 |
+| `garage_admin_token`           | `secret/e4e-nas/garage` (`admin_token`)           | operator-seeded (pre-existing value)              | 32 |
+| `garage_metrics_token`         | `secret/e4e-nas/garage` (`metrics_token`)         | operator-seeded (pre-existing value)              | 32 |
+| `garage_ui_oidc_client_secret` | `secret/e4e-nas/garage-ui-oidc` (`client_secret`) | **OpenTofu** (`terraform/authentik`, Authentik mints it) | 16 |
 
-The first three must be ≥ 32 chars; generate with `openssl rand -hex 32`. The
-fourth comes from Authentik when you create the OAuth2 provider (see
-*First-time UI setup* below). The role fails fast with a clear message if
-any is missing. Render tasks carry `no_log: true` and the script's stdout
-payload deliberately omits secret values (only `desired_sha256`).
+Why generate one but seed three: the OIDC client secret is **brand new**, so
+OpenTofu creates it as part of registering the Authentik provider
+([`terraform/authentik/applications_e4e.tf`](../../../../terraform/authentik/applications_e4e.tf)
++ [`vault_secrets.tf`](../../../../terraform/authentik/vault_secrets.tf)) —
+writing it is pure creation, not a rotation. The three cluster tokens
+**already exist** on the live NAS (baked into `garage.toml`); regenerating them
+in tofu would force-rotate live secrets across multiple consumers (see
+*Rotating secrets*), so they are **seeded into OpenBao once at their current
+values** instead. The role fails fast if any is missing; render tasks are
+`no_log: true` and the script payload omits secret values (only
+`desired_sha256`).
 
-Interim source: operator's `~/.config/krg/secrets-garage.yml` (mode 0600),
-loaded via `-e @~/.config/krg/secrets-garage.yml`. The keys:
+### Getting the secrets to the role
 
-```yaml
-garage_rpc_secret: "<hex>"
-garage_admin_token: "<hex>"
-garage_metrics_token: "<hex>"
-garage_ui_oidc_client_secret: "<from Authentik provider create>"
+- **On krg-deploy (unattended apply — the prod path):** krg-deploy's AppRole
+  reads `secret/data/e4e-nas/*`
+  ([`terraform/openbao/main.tf`](../../../../terraform/openbao/main.tf)); a
+  wrapper materializes the extra_vars from OpenBao before the playbook runs,
+  wired by [#85](https://github.com/KastnerRG/krg-infra/issues/85) (the
+  synology-apply timer). Mirrors how krg-prod's vault-agent renders `.secrets/`
+  — consumers keep reading their normal inputs; OpenBao populates them.
+- **Local / interactive:** keep `~/.config/krg/secrets-garage.yml` (mode 0600,
+  `-e @…`) as the fallback. Pull the tofu-generated OIDC secret into it with:
+  ```bash
+  bao kv get -field=client_secret secret/e4e-nas/garage-ui-oidc
+  ```
+  ```yaml
+  # ~/.config/krg/secrets-garage.yml
+  garage_rpc_secret: "<hex>"
+  garage_admin_token: "<hex>"
+  garage_metrics_token: "<hex>"
+  garage_ui_oidc_client_secret: "<bao kv get … garage-ui-oidc>"
+  ```
+
+### One-time seed of the existing cluster tokens
+
+The rpc/admin/metrics tokens predate OpenBao. Seed their **current** values
+(from `secrets-garage.yml` / the live `garage.toml`) so krg-deploy can read
+them — do NOT invent new values here (that forces a rotation; see *Rotating
+secrets*):
+
+```bash
+bao kv put secret/e4e-nas/garage \
+  rpc_secret="<current>" admin_token="<current>" metrics_token="<current>"
 ```
 
-Replaced by [#110 (OpenBao migration)](https://github.com/KastnerRG/krg-infra/issues/110) once that lands.
+[#110](https://github.com/KastnerRG/krg-infra/issues/110) /
+[#75](https://github.com/KastnerRG/krg-infra/issues/75) generalize this seeding
+to the rest of the NAS secrets.
 
-## First-time UI setup (one-shot, operator-driven)
+## First-time UI setup (one-shot)
 
-The UI's OIDC flow + DSM AppPortal entry have no IaC home in this PR. Manual
-steps before the first `--tags=garage_ui` apply succeeds:
+The Authentik OIDC registration is **now IaC** (`terraform/authentik`). Only
+the DSM AppPortal reverse-proxy + cert stay manual (DSM exposes no
+provider/API for them — tracked alongside [#118](https://github.com/KastnerRG/krg-infra/issues/118)).
 
 > **DNS note:** the dedicated `garage.e4e-nas.ucsd.edu` subdomain isn't
 > registered (tracked in [#118](https://github.com/KastnerRG/krg-infra/issues/118)).
 > Until then the UI is served under the NAS's own hostname on a dedicated
 > port: **`https://e4e-nas.ucsd.edu:8443`**. When the subdomain lands, update
-> `spec.ui.public_hostname` / `public_port` / `public_url` and reissue the
-> cert (the issue body has the full migration plan).
+> `spec.ui.public_hostname` / `public_port` / `public_url` (and the redirect
+> URI in `terraform/authentik/applications_e4e.tf`) and reissue the cert.
 
-1. **Create the Authentik OAuth2 provider + application.** In Authentik's
-   admin UI:
-   - Providers → Create → OAuth2/OpenID Provider:
-     - Name: `garage-ui`
-     - Authorization flow: default `Authorize Application` (or your hardened equivalent)
-     - Client type: Confidential; Client ID: `garage-ui` (matches `spec.ui.oidc.client_id`); copy the generated Client Secret to step 3 below
-     - Redirect URIs: **`https://e4e-nas.ucsd.edu:8443/auth/oidc/callback`** (the UI auto-builds `{server.root_url}/auth/oidc/callback`)
-     - Signing key + scopes: openid, email, profile, groups
-   - Applications → Create:
-     - Name: `Garage UI`; Slug: `garage-ui` (matches the issuer URL pattern `…/application/o/garage-ui/`)
-     - Provider: the one you just created
-     - Policy bindings: bind the `Garage Admins` group (or whichever Authentik group(s) `spec.ui.oidc.admin_roles` lists)
-2. **Authentik issues the `groups` claim by default for OAuth2 providers.** If
-   your install scopes it differently, set the matching path in
-   `spec.ui.oidc.role_attribute_path`.
-3. **Stash the client secret.** Append to `~/.config/krg/secrets-garage.yml`:
-   `garage_ui_oidc_client_secret: "<the secret from step 1>"`.
-4. **DSM reverse-proxy + Let's Encrypt cert.** Control Panel → Login Portal
-   → Reverse Proxy → Create:
+1. **Apply the Authentik OpenTofu.** From [`terraform/authentik/`](../../../../terraform/authentik/)
+   (per that module's README — needs the Authentik admin token + a vault
+   token):
+   ```bash
+   tofu apply   # or: tofu apply -target=authentik_provider_oauth2.garage_ui -target=authentik_application.garage_ui
+   ```
+   Creates the `garage-ui` OAuth2 provider + application + the `Garage Admins`
+   group, and writes the generated client secret to
+   `secret/e4e-nas/garage-ui-oidc`. **No hand-entry, no copy-paste:** the
+   redirect URI (`…:8443/auth/oidc/callback`), slug (`garage-ui` → issuer
+   `…/application/o/garage-ui/`), and `groups` scope are all fixed in the .tf
+   to match `spec.ui.oidc`. Admins = members of the `Garage Admins` Authentik
+   group (`spec.ui.oidc.admin_roles`).
+2. **Seed the cluster tokens** into OpenBao if not already done (see *Secrets →
+   One-time seed*).
+3. **DSM reverse-proxy + Let's Encrypt cert (manual — no IaC).** Control Panel
+   → Login Portal → Reverse Proxy → Create:
    - Description: `Garage UI`
    - Source: HTTPS, hostname `e4e-nas.ucsd.edu`, port `8443`; check "Enable HSTS", "HTTP/2"
    - Destination: HTTP, `127.0.0.1`, `8080`
@@ -101,7 +135,13 @@ steps before the first `--tags=garage_ui` apply succeeds:
      entry. No separate cert per port — same `e4e-nas.ucsd.edu` cert covers
      `:6021`, `:8443`, and any other AppPortal entry on this host.
    - DSM firewall: allow `:8443` from the same sources that reach DSM web.
-5. **Run `--tags=garage_ui` to deploy.**
+4. **Run the role.** Materialize the secrets (krg-deploy: automatic, #85;
+   local: pull the OIDC secret into `secrets-garage.yml` per *Secrets*), then
+   apply. **Use the full `--tags=synology_garage`, not `--tags=garage_ui`
+   alone, on first UI bring-up** — only the full run drags the garage
+   `v1→v2.3.0` bump that garage-ui's `/v2/` admin API requires (the bump lives
+   in the untagged `deploy` task; `garage_ui` alone would deploy the UI against
+   a v1 API).
 
 ## Cluster bootstrap idempotency
 
@@ -143,6 +183,24 @@ ansible-playbook playbook.yml --tags=synology_garage --check --diff \
   -e @~/.config/krg/secrets-garage.yml
 ```
 
+## Rotating secrets
+
+There is no "tofu apply rotates it for you" — the value lives in OpenBao, but
+each secret **fans out to consumers that an apply must re-render**, and two of
+them reach *other* hosts. Rotate deliberately, in order:
+
+| secret | consumers | rotation steps |
+|---|---|---|
+| `rpc_secret` | `garage.toml` only | `bao kv put secret/e4e-nas/garage rpc_secret=<new>` → re-run role (re-renders `garage.toml`, restarts garage). Single-node, so no peer coordination. |
+| `admin_token` | `garage.toml` **+ garage-ui `config.yaml` + any S3/admin client/tooling** | `bao kv put … admin_token=<new>` → re-run **full** role (re-renders *both* `garage.toml` and the UI config, restarts both) → update any external admin client. |
+| `metrics_token` | `garage.toml` **+ krg-prod Prometheus scrape config** | `bao kv put … metrics_token=<new>` → re-run role → **update the garage scrape job's bearer token on krg-prod and reload Prometheus** (cross-host — easy to forget; metrics silently 401 until you do). |
+| `garage_ui_oidc_client_secret` | garage-ui `config.yaml` + the Authentik provider | rotate in Authentik: `tofu apply -replace=authentik_provider_oauth2.garage_ui` (regenerates the secret + rewrites `secret/e4e-nas/garage-ui-oidc`) → re-run the role (re-renders the UI config, restarts the UI). Single consumer. |
+
+The JWT signing key (`/volume1/docker/garage-ui/jwt-key.pem`) is **not** one of
+these — it's generated once on-box and persisted so UI sessions survive
+restarts; deleting it (then re-running `render-ui-config`) regenerates it and
+invalidates all live sessions (a logout-everyone, not a secret rotation).
+
 ## Out of scope
 
 - **Buckets / access keys / policies / quotas** — TODO under
@@ -151,14 +209,16 @@ ansible-playbook playbook.yml --tags=synology_garage --check --diff \
   `keys` subcommands (`garage bucket create`, `garage key new`,
   `garage bucket allow`).
 - **DSM AppPortal reverse-proxy IaC + cert assignment** for the UI's public
-  port — manual one-shot for now (steps in *First-time UI setup*).
+  port — manual one-shot for now (steps in *First-time UI setup*); DSM exposes
+  no provider/API for it.
 - **Wildcard `*.s3.e4e.ucsd.edu` virtual-host-style bucket URLs** — the
   path-style `s3.e4e.ucsd.edu` endpoint is served now; per-bucket virtual
   hosts need a wildcard cert, tracked in [#118](https://github.com/KastnerRG/krg-infra/issues/118).
-- **Authentik provider/application IaC** — `terraform/authentik/` is owned
-  by a parallel effort (per repo memory); manual setup until that lands.
+- **Unattended secret materialization on krg-deploy** — krg-deploy's AppRole
+  can already read `secret/e4e-nas/*`; the wrapper that pulls them into
+  extra_vars before the apply is [#85](https://github.com/KastnerRG/krg-infra/issues/85)
+  (synology-apply timer). Estate-wide consumption migration: #110 / #75.
 - **Migration to official `Deuxfleurs/garage-webadmin`** — #117.
-- **OpenBao-backed secrets** — #110.
 
 ## Validation
 
