@@ -85,7 +85,7 @@
 # `apply_recursive` per-share flag (default false; spec defaults can flip it to
 # true) declares INTENT; the `acls-recursive` tag controls SCHEDULE so the walk
 # doesn't fire on every synology_base re-apply. Operator runs:
-#     ansible-playbook playbooks/synology.yml --tags acls-recursive
+#     ansible-playbook playbook.yml --tags acls-recursive
 # post-AD-join, after the share-level grants have been re-pointed at KRG.LOCAL
 # principals.
 - name: Recursive filesystem ACL stamp (runbook §4 — opt-in, expensive)

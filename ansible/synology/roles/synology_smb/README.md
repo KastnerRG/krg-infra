@@ -34,9 +34,9 @@ this one.
 ## Run
 
 ```bash
-ansible-playbook playbooks/synology.yml                 # apply
-ansible-playbook playbooks/synology.yml --check --diff  # report drift, change nothing
-ansible-playbook playbooks/synology.yml --tags export   # drift snapshot → <host>-smb.yml
+ansible-playbook playbook.yml                 # apply
+ansible-playbook playbook.yml --check --diff  # report drift, change nothing
+ansible-playbook playbook.yml --tags export   # drift snapshot → <host>-smb.yml
 ```
 
 `apply_smb.py` prints `OK no-change` / `WOULD-CHANGE <drift>` (--check) / `CHANGED <drift>`

@@ -42,11 +42,11 @@ fires on a converged box.
 
 ```bash
 # apply (all synology roles)
-ansible-playbook playbooks/synology.yml
+ansible-playbook playbook.yml
 # dry run
-ansible-playbook playbooks/synology.yml --check --diff
+ansible-playbook playbook.yml --check --diff
 # drift snapshot (read-only) → {{ synology_export_dir }}/<host>-shares.yml
-ansible-playbook playbooks/synology.yml --tags export
+ansible-playbook playbook.yml --tags export
 ```
 
 ## Prereqs on the box

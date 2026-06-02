@@ -1,7 +1,7 @@
 ---
 # Exporter (read-only): snapshot the live DSM SMB global settings so the drift_exporter
 # can diff them against spec/e4e-nas/smb-globals.yml. Paired half of the role (ADR 0001
-# — UI = drift). Run: ansible-playbook playbooks/synology.yml --tags export
+# — UI = drift). Run: ansible-playbook playbook.yml --tags export
 
 - name: Ensure the export dir exists on the control node
   ansible.builtin.file:

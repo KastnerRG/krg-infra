@@ -1,7 +1,7 @@
 ---
 # Exporter (read-only): snapshot global NFS settings + per-share export rules so the
 # drift_exporter can diff them against spec/e4e-nas/nfs-exports.yml. Paired half of the
-# role (ADR 0001 — UI = drift). Run: ansible-playbook playbooks/synology.yml --tags export
+# role (ADR 0001 — UI = drift). Run: ansible-playbook playbook.yml --tags export
 #
 # The SharePrivilege `load` output IS the spec's rule shape (DSM-native), so the captured
 # rules can be pasted straight into nfs-exports.yml — this is how the *live box's* exact

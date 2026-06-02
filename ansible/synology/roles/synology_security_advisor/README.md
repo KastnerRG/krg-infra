@@ -13,27 +13,26 @@ model). See `docs/adr/0006-no-oec-on-dsm.md`.
 
 | subcommand | API | model |
 |---|---|---|
-| `main` | `SYNO.SDS.SecurityScan.Main` v1 (set) | full-object (partial=err 2001) |
+| `main` | `SYNO.Core.SecurityScan.Conf` v1 (set) | full-object (partial=err 2001), wrapped in DSM 7.3's `Input` envelope |
 
 The captured scheduled task on the 2026-05-28 NAS triggered
-`SYNO.Core.SecurityScan.Operation start`. The schedule itself appears to be
-owned by `SecurityScan.Main` (best-known); if a first-apply shows the schedule
-keys aren't honored there, fall back to a `SYNO.Core.EventScheduler` entry that
-calls `Operation start` — TODO documented in
-[`files/apply_security_advisor.py`](files/apply_security_advisor.py).
+`SYNO.Core.SecurityScan.Operation start`. The schedule is owned by
+`SecurityScan.Conf` (validated empirically — the initial `.Main` guess was
+wrong on DSM 7.3, corrected in
+[`files/apply_security_advisor.py`](files/apply_security_advisor.py)).
 
-## Field mapping (best-known; verify on first rig apply)
+## Field mapping (validated on DSM 7.3 e4e-nas 2026-06-01)
 
-| Spec field | DSM field |
+| Spec field | DSM field (Conf) |
 |---|---|
-| `enabled` | `enable` |
-| `schedule.day` | `schedule_day` (Sun..Sat) |
-| `schedule.hour` | `schedule_hour` |
-| `schedule.minute` | `schedule_min` |
-| `scan_categories` | `categories` (JSON list) |
-| `notify_email_on_finding` | `notify_email` |
+| `enabled` | `enableSchedule` |
+| `schedule.day` | `weekday` (0=Sun..6=Sat) |
+| `schedule.hour` | `hour` |
+| `schedule.minute` | `minute` |
+| `scan_categories` | per-category `group_set` (`SYNO.Core.SecurityScan.Conf.group_set`) |
+| `notify_email_on_finding` | covered by the notifications role, not Conf |
 
-If a field name differs on the live box, flip `OUT_KEYS` in the helper.
+If a field name differs on a different DSM build, flip `OUT_KEYS` in the helper.
 
 ## Validation
 

@@ -32,9 +32,9 @@ Probe + extend the role once the surface is known. The spec marks them off in th
 ## Run
 
 ```bash
-ansible-playbook playbooks/synology.yml                 # apply
-ansible-playbook playbooks/synology.yml --check --diff
-ansible-playbook playbooks/synology.yml --tags export   # snapshot → <host>-services.yml
+ansible-playbook playbook.yml                 # apply
+ansible-playbook playbook.yml --check --diff
+ansible-playbook playbook.yml --tags export   # snapshot → <host>-services.yml
 ```
 
 ## Validation

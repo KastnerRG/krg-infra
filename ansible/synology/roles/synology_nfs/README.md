@@ -36,9 +36,9 @@ source, not this seed.
 ## Run
 
 ```bash
-ansible-playbook playbooks/synology.yml                 # apply (global, then per-share rules)
-ansible-playbook playbooks/synology.yml --check --diff  # report drift, change nothing
-ansible-playbook playbooks/synology.yml --tags export   # snapshot → <host>-nfs.yml
+ansible-playbook playbook.yml                 # apply (global, then per-share rules)
+ansible-playbook playbook.yml --check --diff  # report drift, change nothing
+ansible-playbook playbook.yml --tags export   # snapshot → <host>-nfs.yml
 ```
 
 ## Validation status

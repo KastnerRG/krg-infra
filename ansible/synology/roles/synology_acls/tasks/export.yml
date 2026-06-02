@@ -3,7 +3,7 @@
 # the filesystem ACLs (`synoacltool -get`) for every share in shares.yml. This is the
 # pre-reset ACL capture the runbook needs (the DSM config export's ACL blobs reference
 # dead old-domain SIDs and are NOT usable), so run this BEFORE the Mode-2 reset:
-#   ansible-playbook playbooks/synology.yml --tags export
+#   ansible-playbook playbook.yml --tags export
 # The `--list_acl` lists drop into acls.yml's grant shape (groups are @name -> group:).
 
 - name: Ensure the export dir exists on the control node

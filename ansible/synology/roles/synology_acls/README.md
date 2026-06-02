@@ -40,9 +40,9 @@ the live box before the Mode-2 reset** (the config export's ACL blobs reference 
 ## Run
 
 ```bash
-ansible-playbook playbooks/synology.yml                 # apply share grants
-ansible-playbook playbooks/synology.yml --check --diff  # report drift
-ansible-playbook playbooks/synology.yml --tags export   # PRE-RESET CAPTURE → <host>-acls.yml
+ansible-playbook playbook.yml                 # apply share grants
+ansible-playbook playbook.yml --check --diff  # report drift
+ansible-playbook playbook.yml --tags export   # PRE-RESET CAPTURE → <host>-acls.yml
 ```
 
 The exporter captures, for **every share in `shares.yml`**, both `synoshare --list_acl`

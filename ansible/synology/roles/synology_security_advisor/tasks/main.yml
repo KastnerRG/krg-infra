@@ -1,8 +1,9 @@
 ---
 # synology_security_advisor — manage DSM Security Advisor (scheduled vuln/config
 # scan) from spec/e4e-nas/security-advisor.yml via synowebapi (full-object set on
-# SYNO.SDS.SecurityScan.Main; logic in files/apply_security_advisor.py via the
-# `script` module, DSM py3.8).
+# SYNO.Core.SecurityScan.Conf; logic in files/apply_security_advisor.py via the
+# `script` module, DSM py3.8). The initial `.Main` guess was wrong on DSM 7.3 —
+# see the helper's docstring for the empirical correction.
 #
 # CROSS-REFERENCE: this is the DSM-native replacement for `oec_qualys_trellix` on
 # Linux hosts — see docs/adr/0006-no-oec-on-dsm.md (pending). The intent is the

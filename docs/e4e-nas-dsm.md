@@ -8,7 +8,7 @@ cifs-utils); krg-prod's prometheus blackbox-probes it; it's a trusted host in
 **Source of truth has moved to IaC.** Per ADR 0001 the DSM configuration lives
 in [`../spec/e4e-nas/*.yml`](../spec/e4e-nas) and is applied by the
 [`synology_*` Ansible roles](../ansible/roles) composed in
-[`../ansible/playbooks/synology.yml`](../ansible/playbooks/synology.yml). This
+[`../ansible/synology/playbook.yml`](../ansible/synology/playbook.yml). This
 runbook is now **only** the break-glass + one-time migration sheet — things
 that don't fit a programmatic surface (the DSM install wizard, hardware swap,
 recovery without automation).
@@ -33,23 +33,23 @@ recovery without automation).
 
 ```bash
 cd ansible
-ansible-playbook playbooks/synology.yml --check --diff       # dry run
-ansible-playbook playbooks/synology.yml                       # apply
-ansible-playbook playbooks/synology.yml --tags export         # drift snapshot only
+ansible-playbook ansible/synology/playbook.yml --check --diff       # dry run
+ansible-playbook ansible/synology/playbook.yml                       # apply
+ansible-playbook ansible/synology/playbook.yml --tags export         # drift snapshot only
 ```
 
 One-shot operations carry their own flags / tags:
 
 ```bash
 # Initial AD join (Domain Admin password, never stored)
-ansible-playbook playbooks/synology.yml -e ad_join_password='<pass>'
+ansible-playbook ansible/synology/playbook.yml -e ad_join_password='<pass>'
 
 # Post-AD-join one-shot: stamp share-root ACLs down the tree
 # (runbook §4 "the bulk of the manual work" — runbook → IaC)
-ansible-playbook playbooks/synology.yml --tags acls-recursive
+ansible-playbook ansible/synology/playbook.yml --tags acls-recursive
 
 # Hyper Backup with destination secrets (per-job password/key)
-ansible-playbook playbooks/synology.yml -e @secrets-hb.yml
+ansible-playbook ansible/synology/playbook.yml -e @secrets-hb.yml
 ```
 
 ---
@@ -135,7 +135,7 @@ chassis:
 1. Insert the disks in the same slot order.
 2. Power on; DSM offers to migrate. Accept.
 3. Re-run the install wizard's "migrate" path.
-4. Re-apply the IaC (`ansible-playbook playbooks/synology.yml`).
+4. Re-apply the IaC (`ansible-playbook ansible/synology/playbook.yml`).
 
 Bare-metal recovery without disks (rare) uses the most recent `.dss`
 configuration backup from the off-box destination (driven by
@@ -153,7 +153,7 @@ After a DSM major upgrade, re-run the playbook (idempotent — no-drift re-run
 is cheap, reverted drop-ins are re-asserted in one shot):
 
 ```bash
-ansible-playbook playbooks/synology.yml
+ansible-playbook ansible/synology/playbook.yml
 ```
 
 ## The ACL-SID-mismatch migration (one-time, post-AD-rebuild)
@@ -163,9 +163,9 @@ Preserved-volume files carry the old `KRG.UCSD.EDU` SIDs. After the new
 
 1. Update [`spec/e4e-nas/acls.yml`](../spec/e4e-nas/acls.yml) — translate the
    captured live ACLs to KRG.LOCAL principals.
-2. `ansible-playbook playbooks/synology.yml` — applies share-level grants.
+2. `ansible-playbook ansible/synology/playbook.yml` — applies share-level grants.
 3. Flip `defaults.apply_recursive: true` in the acls spec (or per-share flag).
-4. `ansible-playbook playbooks/synology.yml --tags acls-recursive` — runs the
+4. `ansible-playbook ansible/synology/playbook.yml --tags acls-recursive` — runs the
    recursive `synoacltool -reset -R` pass.
 
 The recursive stamp is gated behind `--tags acls-recursive` so it doesn't

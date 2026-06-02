@@ -1,7 +1,7 @@
 ---
 # Exporter (read-only): snapshot the live DSM web + TLS profile config so the
 # drift_detector can diff them against spec/e4e-nas/dsm-web.yml. Paired half of the role
-# (ADR 0001 — UI = drift). Run: ansible-playbook playbooks/synology.yml --tags export
+# (ADR 0001 — UI = drift). Run: ansible-playbook playbook.yml --tags export
 
 - name: Ensure the export dir exists on the control node
   ansible.builtin.file:

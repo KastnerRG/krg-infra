@@ -7,13 +7,12 @@
 # Synology surface that matches the appliance's threat model (vs Qualys's
 # Debian/RHEL CVE feed which mismatches DSM's curated packages).
 #
-# DSM API surface (per /usr/syno/synoman/webapi/SYNO.{Core,SDS}.SecurityScan*.lib
-# — empirical confirmation pending; best-known from the 2026-05-28 scheduler
-# capture which showed a task running `SYNO.Core.SecurityScan.Operation` start):
-#   * SYNO.SDS.SecurityScan.Main         get/set    (config: enable + schedule + categories + notify)
+# DSM API surface (validated 2026-06-01 on DSM 7.3 e4e-nas; the earlier
+# `SYNO.SDS.SecurityScan.Main` guess was wrong — DSM 7.3 uses the .Core.Conf
+# namespace and Conf.set requires the `Input` envelope):
+#   * SYNO.Core.SecurityScan.Conf        get/set    (config: enableSchedule + weekday/hour/minute + per-category group_set)
 #   * SYNO.Core.SecurityScan.Operation   start/get  (trigger + status of a run)
-# If `Main` doesn't own the schedule, the role falls back to a SYNO.Core.EventScheduler
-# entry that calls Operation.start — see TODO in apply_security_advisor.py.
+# See apply_security_advisor.py for the validated field mapping + envelope shape.
 
 security_advisor:
   enabled: true

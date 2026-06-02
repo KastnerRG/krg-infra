@@ -15,7 +15,7 @@ synology_* roles (apply)          spec/e4e-nas/*.yml  ── desired state
   (<host>-{shares,smb,nfs,acls}.yml)                      (textfile collector → alerts)
 ```
 
-The `synology_*` role **exporters** (`ansible-playbook playbooks/synology.yml --tags
+The `synology_*` role **exporters** (`ansible-playbook ansible/synology/playbook.yml --tags
 export`) write per-host live-state snapshots to a directory. `drift_detector.py` reads
 those snapshots + the spec and diffs them — **it touches no NAS itself**, so it runs
 anywhere (the intended home is **krg-deploy**, on a systemd timer that runs the export then

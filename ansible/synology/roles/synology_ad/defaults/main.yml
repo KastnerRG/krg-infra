@@ -3,7 +3,7 @@ synology_ad_spec: "{{ nas_spec_dir }}/ad.yml"
 synology_export_dir: "/var/lib/krg-deploy/synology-export"
 
 # One-time AD join credentials — pass at runtime, NEVER stored:
-#   ansible-playbook playbooks/synology.yml -e ad_join_user=Administrator -e ad_join_password='...'
+#   ansible-playbook playbook.yml -e ad_join_user=Administrator -e ad_join_password='...'
 # Mirrors the ad_client role's bootstrap-secret pattern.
 ad_join_user: Administrator
 ad_join_password: ""

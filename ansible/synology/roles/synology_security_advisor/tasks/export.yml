@@ -7,9 +7,12 @@
   delegate_to: localhost
   run_once: true
 
-- name: Get Security Advisor config (SecurityScan.Main)
-  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.SDS.SecurityScan.Main method=get version=1"
-  register: sa_main_get
+- name: Get Security Advisor config (SecurityScan.Conf)
+  # `apply_security_advisor.py` is built around SYNO.Core.SecurityScan.Conf
+  # (the initial `.Main` guess was wrong on DSM 7.3 — see the helper's
+  # docstring); export the same surface the role manages.
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.SecurityScan.Conf method=get version=1"
+  register: sa_conf_get
   changed_when: false
   check_mode: false
 
@@ -25,6 +28,6 @@
     dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-security-advisor.yml"
     mode: "0600"
     content: |
-      main_raw: {{ sa_main_get.stdout_lines | to_json }}
+      conf_raw: {{ sa_conf_get.stdout_lines | to_json }}
       operation_raw: {{ sa_op_get.stdout_lines | default([]) | to_json }}
   delegate_to: localhost

@@ -22,11 +22,11 @@ for drift detection.
 
 ```bash
 # apply
-ansible-playbook playbooks/synology.yml
+ansible-playbook playbook.yml
 # dry run
-ansible-playbook playbooks/synology.yml --check --diff
+ansible-playbook playbook.yml --check --diff
 # drift snapshot (read-only) → {{ synology_export_dir }}/<host>-identity.yml
-ansible-playbook playbooks/synology.yml --tags export
+ansible-playbook playbook.yml --tags export
 ```
 
 Passwords for local users come from a **secret-store-backed** `synology_user_passwords`

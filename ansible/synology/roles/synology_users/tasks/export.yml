@@ -1,7 +1,7 @@
 ---
 # Exporter (read-only): capture live DSM users/groups so the drift_exporter can diff
 # them against spec/e4e-nas/. The paired half of every synology_* role (ADR 0001 —
-# UI changes are drift). Run: ansible-playbook playbooks/synology.yml --tags export
+# UI changes are drift). Run: ansible-playbook playbook.yml --tags export
 #
 # ⚠️ The enum output FORMAT is undocumented/version-specific; for now we capture the
 # raw lines and the structured parse into the spec shape is finished once validated

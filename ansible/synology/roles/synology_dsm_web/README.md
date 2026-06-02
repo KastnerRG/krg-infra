@@ -37,9 +37,9 @@ py3.8) drives two synowebapi APIs:
 ## Run
 
 ```bash
-ansible-playbook playbooks/synology.yml                 # apply
-ansible-playbook playbooks/synology.yml --check --diff  # report drift, change nothing
-ansible-playbook playbooks/synology.yml --tags export   # snapshot → <host>-dsm-web.yml
+ansible-playbook playbook.yml                 # apply
+ansible-playbook playbook.yml --check --diff  # report drift, change nothing
+ansible-playbook playbook.yml --tags export   # snapshot → <host>-dsm-web.yml
 ```
 
 ## Validation status

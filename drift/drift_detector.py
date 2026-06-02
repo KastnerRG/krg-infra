@@ -2,7 +2,7 @@
 """krg drift detector — diff the LIVE Synology (e4e-nas) state against spec/e4e-nas/.
 
 Git is the source of truth; any UI change is drift (ADR 0001). The synology_* role
-exporters (`ansible-playbook playbooks/synology.yml --tags export`) write per-host
+exporters (`ansible-playbook ansible/synology/playbook.yml --tags export`) write per-host
 live-state snapshots to a directory; this tool diffs those snapshots against the spec
 and (a) prints a report and (b) emits Prometheus textfile-collector metrics for alerting.
 It reads only files — no NAS access of its own — so it runs anywhere (e.g. krg-deploy on

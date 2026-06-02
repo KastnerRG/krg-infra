@@ -3,12 +3,12 @@
 # in spec/e4e-nas/*.yml; git is truth, UI changes are drift (ADR 0001). Prereqs are
 # in inventory/group_vars/synology.yml.
 #
-#   ansible-playbook playbooks/synology.yml                                       # apply
-#   ansible-playbook playbooks/synology.yml --check --diff                        # dry run
-#   ansible-playbook playbooks/synology.yml --tags export                         # drift snapshot (read-only)
-#   ansible-playbook playbooks/synology.yml --tags acls-recursive                 # post-AD-join one-shot
-#   ansible-playbook playbooks/synology.yml -e ad_join_password='<pass>'          # AD domain join
-#   ansible-playbook playbooks/synology.yml -e @secrets-hb.yml                    # Hyper Backup secrets
+#   ansible-playbook playbook.yml                                       # apply
+#   ansible-playbook playbook.yml --check --diff                        # dry run
+#   ansible-playbook playbook.yml --tags export                         # drift snapshot (read-only)
+#   ansible-playbook playbook.yml --tags acls-recursive                 # post-AD-join one-shot
+#   ansible-playbook playbook.yml -e ad_join_password='<pass>'          # AD domain join
+#   ansible-playbook playbook.yml -e @secrets-hb.yml                    # Hyper Backup secrets
 #
 # Deliberately a SEPARATE play from site.yml's Debian/PVE baseline — DSM shares none
 # of that (no apt, no systemd baseline, no OEC). Validate on the test rig first.
