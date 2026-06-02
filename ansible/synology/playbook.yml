@@ -50,4 +50,7 @@
     # garage_metrics_token (operator-supplied via
     # `-e @~/.config/krg/secrets-garage.yml`; #110 OpenBao migration
     # replaces this).
-    - synology_garage
+    #
+    # Tagged so an operator can target this role alone:
+    #   ansible-playbook playbook.yml --tags=synology_garage -e garage_…=…
+    - { role: synology_garage, tags: ['synology_garage', 'workload'] }
