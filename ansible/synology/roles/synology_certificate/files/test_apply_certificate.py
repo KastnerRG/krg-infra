@@ -229,12 +229,29 @@ def test_set_default_binds_when_not_default(monkeypatch, capsys):
     assert 'id="zzz123"' in params
 
 
-def test_set_default_fails_when_cert_missing(monkeypatch, capsys):
-    """Ordering bug: set-default before letsencrypt-create. FAIL clean."""
+def test_set_default_fails_when_cert_missing_on_apply(monkeypatch, capsys):
+    """Apply mode: ordering bug (set-default before letsencrypt-create) → FAIL."""
     monkeypatch.setattr(m, "_list_certs", _stub_list([_cert("unrelated.example")]))
     rc = m.do_set_default(_sd_args())
     out = capsys.readouterr().out
     assert rc == 1 and "no cert for domain" in out
+
+
+def test_set_default_reports_planned_when_cert_missing_in_check(monkeypatch, capsys):
+    """--check mode on a fresh box: `letsencrypt-create --check` deliberately
+    doesn't issue, so set-default's prereq is missing. That's expected dry-run
+    shape, not a bug — report WOULD-CHANGE (the binding-after-issuance plan)."""
+    monkeypatch.setattr(m, "_list_certs", _stub_list([_cert("unrelated.example")]))
+    calls = []
+    monkeypatch.setattr(m, "_exec",
+                        lambda *args: calls.append(args) or {"success": True})
+    rc = m.do_set_default(_sd_args(check=True))
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("WOULD-CHANGE ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["domain"] == "e4e-nas.ucsd.edu"
+    assert "letsencrypt-create" in payload["reason"]
+    assert calls == [], "--check must NOT call SYNO.Core.Certificate.CRT.set_default"
 
 
 def test_set_default_check_mode_doesnt_bind(monkeypatch, capsys):

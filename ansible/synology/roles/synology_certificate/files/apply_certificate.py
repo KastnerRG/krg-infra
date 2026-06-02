@@ -196,9 +196,19 @@ def do_set_default(a):
         return _fail({"reason": str(e), "domain": a.domain})
 
     if existing is None:
-        # set-default can only act on certs that exist. Caller's bring-up
-        # order is letsencrypt-create THEN set-default, so a missing cert
-        # here is a real ordering bug — FAIL clean.
+        # set-default can only act on certs that exist. Two cases:
+        # - apply mode: the bring-up order is letsencrypt-create THEN
+        #   set-default, so a missing cert is a real ordering bug → FAIL.
+        # - check mode: `letsencrypt-create --check` deliberately DOES NOT
+        #   issue, so on a fresh box the cert won't exist yet for the
+        #   subsequent `set-default --check`. That's not a bug, it's the
+        #   expected dry-run shape — report WOULD-CHANGE (the planned
+        #   binding after the planned issuance).
+        if a.check:
+            return _emit("would-change", {
+                "domain": a.domain,
+                "reason": "letsencrypt-create would issue the cert; set-default would then bind it",
+            }, True)
         return _fail({"reason": "no cert for domain — run letsencrypt-create first",
                       "domain": a.domain})
 
