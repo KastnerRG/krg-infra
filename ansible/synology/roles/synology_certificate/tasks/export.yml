@@ -9,7 +9,7 @@
 # Same shape as synology_services/export.yml — copy/paste-friendly.
 - name: Ensure the export dir exists on the control node
   ansible.builtin.file:
-    path: "{{ synology_export_dir | default('/var/lib/krg-deploy/synology-export') }}"
+    path: "{{ synology_export_dir }}"
     state: directory
     mode: "0700"
   delegate_to: localhost
@@ -25,7 +25,7 @@
 
 - name: Write the live-state snapshot to <host>-certificates.yml
   ansible.builtin.copy:
-    dest: "{{ synology_export_dir | default('/var/lib/krg-deploy/synology-export') }}/{{ inventory_hostname }}-certificates.yml"
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-certificates.yml"
     mode: "0600"
     content: |
       # Live DSM cert state on {{ inventory_hostname }} — synology_certificate exporter.

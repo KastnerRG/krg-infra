@@ -24,11 +24,17 @@
 # Order is load-bearing per cert:
 #   1. letsencrypt-create  — ensure cert exists (issue if missing or expiring)
 #   2. set-default         — ensure DSM's default binding matches the spec
+#   3. bind-services       — migrate existing service bindings onto the cert
 #
-# Within `letsencrypt:` items the role processes each cert independently;
-# failures on one don't stop the others. (Driven via include_tasks +
-# loop_var because Ansible's per-item failure semantics are kinder than
-# wrapping the whole list in a single script call.)
+# Each cert in `letsencrypt:` is iterated with a `loop:` over a single
+# `ansible.builtin.script:` task — NOT a per-item include_tasks. Ansible's
+# default loop semantics fail-fast: a failed loop item halts the loop and
+# the subsequent tasks for that play. That's intentional here — if LE
+# issuance for cert A fails, you don't want set-default / bind-services
+# silently running for cert B on a half-known state. If we ever grow a
+# real "fail-soft" need (e.g. apply best-effort across N certs), the
+# right escape hatch is `ignore_errors: true` (or a register+fail-after
+# pattern), NOT switching to include_tasks.
 
 # Tags are applied PER TASK so the export's [export, never] gate stays
 # effective. A play-level role tag would propagate down here and override
@@ -56,6 +62,23 @@
   check_mode: false
   tags: [synology_certificate, tls]
 
+# Spec sanity: AT MOST ONE cert may be marked `default: true`. DSM has
+# exactly one default-cert slot; if the spec marks N>1 the role would
+# silently call set-default N times and the final winner becomes
+# ordering-dependent on the spec list (silent drift, hard to reason
+# about). Fail fast on the spec itself — this is a spec bug, not a
+# runtime failure.
+- name: "Spec sanity: at most one letsencrypt entry has default: true"
+  ansible.builtin.assert:
+    that:
+      - (cert_spec.letsencrypt | default([]) | selectattr('default', 'defined') | selectattr('default') | list | length) <= 1
+    fail_msg: >-
+      certificates.yml has multiple entries with `default: true`
+      ({{ (cert_spec.letsencrypt | default([]) | selectattr('default', 'defined') | selectattr('default') | map(attribute='domain') | list) }}).
+      DSM has exactly one default-cert slot — pick one.
+    success_msg: "OK: at most one letsencrypt entry marked default."
+  tags: [synology_certificate, tls]
+
 # Default-cert binding runs AFTER issuance. set-default refuses on a
 # missing cert (clean FAIL), so an item with `default: true` whose
 # letsencrypt-create failed surfaces as a chained failure rather than a
@@ -72,6 +95,7 @@
   changed_when: "'CHANGED' in default_apply.stdout or 'WOULD-CHANGE' in default_apply.stdout"
   failed_when: "default_apply.rc != 0 or 'FAIL' in default_apply.stdout"
   check_mode: false
+  tags: [synology_certificate, tls]
 
 # Service bindings — `default: true` above only flags WHICH cert new
 # services get; it does NOT migrate existing service bindings. DSM web,
