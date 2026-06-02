@@ -400,6 +400,22 @@ def test_layout_check_reports_planned_when_container_down(monkeypatch, capsys):
     assert payload["zone"] == "dc1" and payload["capacity"] == "5T"
 
 
+# --- _run binary-missing handling --------------------------------------------
+def test_run_returns_structured_failure_when_binary_missing(monkeypatch):
+    """If `docker` (or any subprocess target) isn't on PATH, `_run` must
+    return a CompletedProcess with non-zero returncode + stderr explaining
+    the miss — not raise FileNotFoundError. Without this guard, callers
+    that don't catch the exception (do_deploy / do_layout) would surface
+    as a Python traceback, bypassing the OK/.../FAIL contract."""
+    def boom(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "docker")
+    monkeypatch.setattr(m.subprocess, "run", boom)
+    r = m._run("docker", "ps")
+    assert r.returncode == 127
+    assert "binary not found on PATH" in r.stderr
+    assert "docker" in r.stderr
+
+
 # --- argparse plumbing --------------------------------------------------------
 def test_main_dispatches_to_subcommand(monkeypatch, capsys):
     monkeypatch.setattr(m, "do_render_config", lambda a: (print("OK no-change") or 0))

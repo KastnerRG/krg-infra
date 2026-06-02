@@ -116,7 +116,18 @@ services:
 # helpers
 # ---------------------------------------------------------------------------
 def _run(*cmd, **kw):
-    return subprocess.run(list(cmd), capture_output=True, text=True, **kw)
+    """subprocess.run wrapper that turns FileNotFoundError (binary not on PATH)
+    into a structured non-zero CompletedProcess. Without this, calling
+    `_run("docker", …)` on a box without docker installed raises a Python
+    traceback that bypasses the OK/WOULD-CHANGE/CHANGED/FAIL contract."""
+    try:
+        return subprocess.run(list(cmd), capture_output=True, text=True, **kw)
+    except FileNotFoundError as e:
+        return subprocess.CompletedProcess(
+            args=list(cmd), returncode=127, stdout="",
+            stderr="binary not found on PATH: " + (cmd[0] if cmd else "<empty>") +
+                   " (" + str(e) + ")",
+        )
 
 
 def _sha256(content):
@@ -199,9 +210,9 @@ def do_render_config(a):
         "admin_token":         os.environ["GARAGE_ADMIN_TOKEN"],
         "metrics_token":       os.environ["GARAGE_METRICS_TOKEN"],
     }
-    # Reject ", " in any string field — would close the TOML literal early
-    # and inject content. Cheap defense; the template uses double-quoted
-    # strings only, no triple-quoted blocks.
+    # Reject any literal double-quote character (`"`) in a string field —
+    # would close the TOML literal early and inject content. Cheap defense;
+    # the template uses double-quoted strings only, no triple-quoted blocks.
     for k, v in fields.items():
         if isinstance(v, str) and '"' in v:
             return _fail({"reason": "field contains unescaped double-quote", "field": k})
