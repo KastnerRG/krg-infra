@@ -9,7 +9,11 @@
 # (UseSchemaForUnknownContent) silently rebuilds the YAML from the structured
 # attributes — if you set `content =` alone, the provider plans `services: {}`
 # (everything wiped) and errors with "planned value does not match config".
-# Learned the hard way 2026-06-02; see the in-tree memory.
+# Learned the hard way 2026-06-02 — one of the three provider bugs that drove
+# the Garage retreat. See docs/adr/0007-dsm-config-ansible-not-terraform.md
+# (the "Garage retreat" section captures all three bugs and why we moved
+# Garage itself to Ansible; this file only keeps the FileStation-folder
+# resources, which are a general DSM constraint, not a Garage-specific one).
 
 # --- FileStation-registered directories the container needs --------------
 # The synology_container_project resource's create-time validation calls
