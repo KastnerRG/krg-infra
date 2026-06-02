@@ -65,12 +65,14 @@ edit `cluster.capacity` in the spec, then run the assign + apply manually
 on the NAS:
 
 ```bash
+# NB: the dxflrs/garage image has no `garage` on $PATH — the binary is at /garage.
+# This is the same reason apply_garage.py's `layout` subcommand uses `/garage`.
 ssh e4e-admin@e4e-nas.ucsd.edu \
-  'sudo docker exec garage garage layout assign -z dc1 -c 10T <NODE_ID> && \
-   sudo docker exec garage garage layout apply --version <N+1>'
+  'sudo docker exec garage /garage layout assign -z dc1 -c 10T <NODE_ID> && \
+   sudo docker exec garage /garage layout apply --version <N+1>'
 ```
 
-(Where `<NODE_ID>` is the 16-hex-char short id from `garage status` and
+(Where `<NODE_ID>` is the 16-hex-char short id from `/garage status` and
 `<N+1>` is the next layout version.)
 
 ## Run

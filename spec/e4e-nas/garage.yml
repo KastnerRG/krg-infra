@@ -7,10 +7,11 @@
 # docs/adr/0007-dsm-config-ansible-not-terraform.md "Garage retreat".
 #
 # Secrets are NOT in this file. rpc_secret / admin_token / metrics_token are
-# supplied at apply-time as extra_vars (`-e @secrets-garage.yml`, gitignored,
-# mode 0600). The render-config task carries `no_log: true` so they never
-# touch ansible logs. #110 (OpenBao migration) supersedes the operator-
-# managed secrets file. Generate each with `openssl rand -hex 32`.
+# supplied at apply-time as extra_vars (`-e @~/.config/krg/secrets-garage.yml`,
+# operator-local, mode 0600, outside the repo). The render-config task carries
+# `no_log: true` so they never touch ansible logs. #110 (OpenBao migration)
+# supersedes the operator-managed secrets file. Generate each with
+# `openssl rand -hex 32`.
 
 deployment:
   image: dxflrs/garage

@@ -36,9 +36,12 @@
     name: garage_spec
 
 # --- Anti-error guard: secrets must be supplied as extra_vars ------------------
-# render-config + deploy carry no_log:true, so a missing var would surface
-# as "AnsibleUndefinedVariable" with no value (good — but the error site
-# would be inside a no_log task, hiding the cause). Fail loudly here instead.
+# render-config carries no_log:true (it's the task that actually injects the
+# secrets via GARAGE_* environment), so a missing var would surface as
+# "AnsibleUndefinedVariable" with no value (good — but the error site would
+# be inside a no_log task, hiding the cause). deploy + layout don't see the
+# secrets and aren't no_log. Fail loudly here, before anything secret-bearing
+# runs.
 - name: Refuse to deploy Garage without secrets in extra_vars
   ansible.builtin.assert:
     that:
@@ -48,9 +51,10 @@
     fail_msg: >-
       Garage requires extra_vars: garage_rpc_secret, garage_admin_token,
       garage_metrics_token (each at least 32 chars). Supply via
-      `-e @secrets-garage.yml` (operator-local, mode 0600, gitignored).
-      Generate with `openssl rand -hex 32`. #110 (OpenBao migration)
-      eventually replaces this with a vault-backed lookup.
+      `-e @~/.config/krg/secrets-garage.yml` (operator-local, mode 0600,
+      outside the repo). Generate with `openssl rand -hex 32`. #110
+      (OpenBao migration) eventually replaces this with a vault-backed
+      lookup.
 
 # --- 1. garage.toml ------------------------------------------------------------
 # Secrets pass via ENVIRONMENT (not cmdline argv) — argv is visible to other
