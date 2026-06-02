@@ -41,5 +41,15 @@ resource "vault_kv_secret_v2" "mlflow_oidc" {
   })
 }
 
+resource "vault_kv_secret_v2" "roster_oidc" {
+  mount = "secret"
+  name  = "krg-prod/roster-oidc"
+  data_json = jsonencode({
+    client_id     = authentik_provider_oauth2.e4e_roster.client_id
+    client_secret = authentik_provider_oauth2.e4e_roster.client_secret
+    issuer_url    = "${var.authentik_url}/application/o/e4e-roster/"
+  })
+}
+
 # outpost token: retrieved manually from Admin → Outposts → View token after apply.
 # Store with: bao kv put secret/krg-prod/authentik-outpost-token token=<value>

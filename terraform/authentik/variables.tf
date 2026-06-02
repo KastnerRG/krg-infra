@@ -21,12 +21,3 @@ variable "ldap_bind_password" {
   type        = string
   sensitive   = true
 }
-
-# Gate apps whose production URLs aren't finalized yet. Off by default so
-# a `tofu apply` doesn't register placeholder callbacks (e.g. localhost) in
-# production Authentik.
-variable "enable_e4e_roster" {
-  description = "Register the E4E Roster OAuth2 app. Leave false until a real callback URL is known."
-  type        = bool
-  default     = false
-}

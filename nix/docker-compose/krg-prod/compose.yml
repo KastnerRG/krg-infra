@@ -55,7 +55,7 @@ services:
           # - orchestrator.fishsense.e4e.ucsd.edu
           # - data.smartfin.e4e.ucsd.edu
           # - wiki.fabricant.ucsd.edu
-          # - roster.e4e.ucsd.edu
+          - roster.e4e.ucsd.edu
           # - github-sync.e4e.ucsd.edu
           # - mlflow.krg.ucsd.edu
 

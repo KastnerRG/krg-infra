@@ -128,29 +128,25 @@ resource "authentik_application" "qualcomm_docs" {
   group             = "Qualcomm"
 }
 
-# ── E4E Roster ────────────────────────────────────────────────────────────────
-# Gated on var.enable_e4e_roster (default false) so the placeholder localhost
-# callback isn't registered in production Authentik until the real URL is known.
-# Flip the variable when roster gets a production host (and update the URLs).
+# ── KRG Roster ────────────────────────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "e4e_roster" {
-  count              = var.enable_e4e_roster ? 1 : 0
   name               = "KRG Roster"
   client_id          = "e4e-roster"
   authorization_flow = data.authentik_flow.default_authorization.id
   invalidation_flow  = data.authentik_flow.default_invalidation.id
-  # Temporary dev callback — update to the production URL when roster is deployed.
-  allowed_redirect_uris = [{ matching_mode = "strict", url = "http://localhost:3000/auth/callback" }]
-  property_mappings  = local.std_scopes
-  sub_mode           = "hashed_user_id"
+  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://roster.e4e.ucsd.edu/auth/callback" }]
+  property_mappings      = local.std_scopes
+  sub_mode               = "hashed_user_id"
   access_token_validity  = "hours=1"
   refresh_token_validity = "days=30"
 }
 
 resource "authentik_application" "e4e_roster" {
-  count             = var.enable_e4e_roster ? 1 : 0
   name              = "KRG Roster"
   slug              = "e4e-roster"
-  protocol_provider = authentik_provider_oauth2.e4e_roster[0].id
-  meta_launch_url   = "http://localhost:3000"
+  protocol_provider = authentik_provider_oauth2.e4e_roster.id
+  meta_launch_url   = "https://roster.e4e.ucsd.edu"
+  meta_description  = "KRG lab roster and account management"
+  group             = "KRG"
 }
