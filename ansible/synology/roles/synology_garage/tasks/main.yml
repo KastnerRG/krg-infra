@@ -83,7 +83,7 @@
 - name: Deploy Garage container (docker compose up -d on drift)
   ansible.builtin.script: >-
     apply_garage.py deploy
-    --share-path {{ garage_spec.deployment.share_path | quote }}
+    --compose-path {{ garage_spec.deployment.compose_path | quote }}
     --container-name {{ garage_spec.deployment.container_name | quote }}
     --image {{ garage_spec.deployment.image | quote }}
     --image-tag {{ garage_spec.deployment.image_tag | quote }}

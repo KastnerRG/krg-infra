@@ -227,15 +227,6 @@ def _container_image(name):
     return r.stdout.strip()
 
 
-def _compose_path(share_path):
-    """Convert spec share_path (/docker/garage) to disk path
-    (/volume1/docker/garage/docker-compose.yml). Single share lives on
-    /volume1 — keep it explicit; multi-share would generalize this."""
-    if not share_path.startswith("/"):
-        raise ValueError("share_path must be absolute: " + share_path)
-    return "/volume1" + share_path + "/docker-compose.yml"
-
-
 def do_deploy(a):
     fields = {
         "container_name":  a.container_name,
@@ -249,13 +240,22 @@ def do_deploy(a):
         "config_path":     a.config_path,
     }
     desired_compose = COMPOSE_TEMPLATE % fields
-    compose_path = _compose_path(a.share_path)
-    current_compose = _read(compose_path)
+    current_compose = _read(a.compose_path)
 
-    # garage.toml must exist before we ask docker to start the container.
-    if not os.path.exists(a.config_path):
-        return _fail({"reason": "garage.toml missing — run render-config first",
-                      "config_path": a.config_path})
+    # garage.toml MUST exist before docker can mount it. In --check mode the
+    # operator may legitimately be previewing on a fresh box (render-config
+    # hasn't run yet) — treat as a planned change (WOULD-CHANGE) rather than
+    # failing the dry run. In real apply mode it's a hard ordering bug.
+    config_missing = not os.path.exists(a.config_path)
+    if config_missing:
+        if not a.check:
+            return _fail({"reason": "garage.toml missing — run render-config first",
+                          "config_path": a.config_path})
+        return _emit("would-change", {
+            "compose_path":   a.compose_path,
+            "config_missing": True,
+            "reason":         "render-config must run before deploy on apply",
+        }, True)
 
     desired_image = "%s:%s" % (a.image, a.image_tag)
     compose_drift = (current_compose != desired_compose)
@@ -265,7 +265,7 @@ def do_deploy(a):
 
     drift = compose_drift or image_drift or not_running
     payload = {
-        "compose_path":  compose_path,
+        "compose_path":  a.compose_path,
         "compose_drift": compose_drift,
         "image_drift":   image_drift,
         "image_current": current_image,
@@ -279,13 +279,13 @@ def do_deploy(a):
 
     # Ensure the compose dir exists (the FileStation-tracked terraform
     # resource creates it, but be defensive on a fresh box).
-    os.makedirs(os.path.dirname(compose_path), exist_ok=True)
+    os.makedirs(os.path.dirname(a.compose_path), exist_ok=True)
     if compose_drift:
-        _atomic_write(compose_path, desired_compose, 0o644)
+        _atomic_write(a.compose_path, desired_compose, 0o644)
 
     # docker compose up -d will pull the new image if the tag differs and
     # recreate the container on config / image / mount changes.
-    r = _run("docker", "compose", "-f", compose_path, "up", "-d")
+    r = _run("docker", "compose", "-f", a.compose_path, "up", "-d")
     if r.returncode != 0:
         return _fail({"reason":  "docker compose up failed",
                       "stdout":  r.stdout, "stderr": r.stderr,
@@ -308,9 +308,17 @@ def _garage(container, *cmd):
 
 
 def do_layout(a):
-    # 1. Daemon up + RPC responsive?
+    # 1. Daemon up + RPC responsive? On --check mode the container may not
+    #    exist yet (preview on a fresh box); report a planned change rather
+    #    than failing the dry run.
     r = _garage(a.container_name, "status")
     if r.returncode != 0:
+        if a.check:
+            return _emit("would-change", {
+                "reason":   "container not yet running — would assign layout once it's up",
+                "zone":     a.zone,
+                "capacity": a.capacity,
+            }, True)
         return _fail({"reason":  "`garage status` failed — container not ready",
                       "stdout":  r.stdout, "stderr": r.stderr})
 
@@ -400,7 +408,10 @@ def main(argv):
     rc.set_defaults(fn=do_render_config)
 
     dp = sub.add_parser("deploy")
-    dp.add_argument("--share-path", required=True)
+    dp.add_argument("--compose-path", required=True,
+                    help="Absolute on-disk path for docker-compose.yml "
+                         "(e.g. /volume2/docker/garage/docker-compose.yml). "
+                         "Driven from the spec — no implicit volume mapping.")
     dp.add_argument("--container-name", required=True)
     dp.add_argument("--image", required=True)
     dp.add_argument("--image-tag", required=True)

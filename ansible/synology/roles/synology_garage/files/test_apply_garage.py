@@ -45,7 +45,7 @@ def _render_args(**overrides):
 
 def _deploy_args(**overrides):
     base = {
-        "share_path":      "/docker/garage",
+        "compose_path":    "/volume1/docker/garage/docker-compose.yml",
         "container_name":  "garage",
         "image":           "dxflrs/garage",
         "image_tag":       "v1.1.0",
@@ -233,10 +233,11 @@ def test_deploy_image_drift_triggers_compose_up(monkeypatch, capsys):
     assert any("compose" in c and "up" in c for c in runs)
 
 
-def test_deploy_missing_garage_toml_fails(monkeypatch, capsys):
+def test_deploy_missing_garage_toml_fails_on_apply(monkeypatch, capsys):
+    """Apply mode (no --check): missing config_path is a hard ordering bug."""
     a = _deploy_args()
     monkeypatch.setattr(m, "_read", lambda p: None)
-    monkeypatch.setattr(m.os.path, "exists", lambda p: False)  # /etc/garage.toml missing
+    monkeypatch.setattr(m.os.path, "exists", lambda p: False)  # garage.toml missing
 
     rc = m.do_deploy(a)
     out = capsys.readouterr().out
@@ -245,13 +246,22 @@ def test_deploy_missing_garage_toml_fails(monkeypatch, capsys):
     assert "render-config" in payload["reason"]
 
 
-def test_deploy_compose_path_mapping():
-    # Share-path → disk-path: /volume1 is the only volume that holds shares
-    # whose root has compose dirs in this design.
-    assert m._compose_path("/docker/garage") == \
-        "/volume1/docker/garage/docker-compose.yml"
-    with pytest.raises(ValueError):
-        m._compose_path("relative/path")
+def test_deploy_missing_garage_toml_reports_planned_change_in_check(monkeypatch, capsys):
+    """--check on a fresh box (no garage.toml yet) must NOT fail — it should
+    report WOULD-CHANGE so `--check --diff` is a usable dry-run."""
+    a = _deploy_args(check=True)
+    monkeypatch.setattr(m, "_read", lambda p: None)
+    monkeypatch.setattr(m.os.path, "exists", lambda p: False)
+    runs = []
+    monkeypatch.setattr(m, "_run", lambda *cmd, **kw: runs.append(cmd) or _RunResult(0))
+
+    rc = m.do_deploy(a)
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("WOULD-CHANGE ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["config_missing"] is True
+    # MUST NOT invoke docker in check mode
+    assert runs == []
 
 
 # --- layout -------------------------------------------------------------------
@@ -350,6 +360,20 @@ def test_layout_fails_clean_when_garage_not_responsive(monkeypatch, capsys):
     assert rc == 1 and out.startswith("FAIL ")
     payload = json.loads(out.split(" ", 1)[1])
     assert "container not ready" in payload["reason"]
+
+
+def test_layout_check_reports_planned_when_container_down(monkeypatch, capsys):
+    """In --check the container may not be up yet (preview on a fresh box).
+    Must report WOULD-CHANGE rather than FAIL so dry-run is usable."""
+    a = _layout_args(check=True)
+    monkeypatch.setattr(m, "_run",
+                        lambda *cmd, **kw: _RunResult(1, stderr="container not found"))
+
+    rc = m.do_layout(a)
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("WOULD-CHANGE ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["zone"] == "dc1" and payload["capacity"] == "5T"
 
 
 # --- argparse plumbing --------------------------------------------------------

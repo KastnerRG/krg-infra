@@ -17,7 +17,14 @@ deployment:
   image_tag: v1.1.0                       # pinned per ADR 0002 — bump deliberately
   container_name: garage
   network_mode: host                      # single-node — host is simplest; revisit if a 2nd node lands
-  share_path: /docker/garage              # working dir on NAS, /volume1/docker/garage on disk (FileStation-tracked by terraform/e4e-nas/containers.tf)
+  # On-disk paths are explicit (no volume guessing). The terraform-tracked
+  # FileStation folder `/docker/garage` maps to whichever volume hosts the
+  # `docker` share; record the absolute path here so the role doesn't have
+  # to guess. NOTE: shares.yml currently declares the `docker` share at
+  # /volume2/docker; the live NAS has /volume1/docker/garage/ in active use
+  # (operator-created, pre-spec). Keeping /volume1 here to match the running
+  # container until the docker-share volume is reconciled (separate cleanup).
+  compose_path: /volume1/docker/garage/docker-compose.yml
   config_path: /volume1/docker/garage/garage.toml
   data_dir: /volume2/s3-data/data
   meta_dir: /volume2/s3-data/meta
@@ -30,7 +37,10 @@ config:
   replication_factor: 1                   # single-node; bumping requires layout rebalance
   compression_level: 2
   rpc_bind_addr: "[::]:3901"
-  rpc_public_addr: 127.0.0.1:3901         # other nodes (if/when added) reach us via NAS primary IP
+  # Single-node only — loopback is fine because no peer ever dials this
+  # field. Adding a 2nd node would require setting this to the NAS primary
+  # IP first (e.g. `132.239.17.124:3901`), restarting, then joining.
+  rpc_public_addr: 127.0.0.1:3901
   s3_api:
     api_bind_addr: "[::]:3900"
     region: garage

@@ -99,8 +99,9 @@ ansible-playbook playbook.yml -e @~/.config/krg/secrets-garage.yml --check --dif
 Pytest suite under `files/test_apply_garage.py` covers:
 
 - TOML rendering (field substitution, secret injection, sha256 idempotency)
-- compose YAML rendering + share_path → disk-path mapping
+- compose YAML rendering with explicit `compose_path` (no implicit /volume mapping)
 - deploy drift detection (image / compose-file / not-running)
+- check-mode safety: missing `garage.toml` and absent container are reported as WOULD-CHANGE, not FAIL, so `--check --diff` works on a fresh box
 - layout idempotency (version ≥ 1 → no-change without touching `garage layout assign`)
 - secret double-quote rejection (TOML injection defense)
 
