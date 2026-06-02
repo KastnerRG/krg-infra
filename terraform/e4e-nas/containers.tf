@@ -11,6 +11,44 @@
 # (everything wiped) and errors with "planned value does not match config".
 # Learned the hard way 2026-06-02; see the in-tree memory.
 
+# --- FileStation-registered directories the container needs --------------
+# The synology_container_project resource's create-time validation calls
+# FileStation List on the project's share parent and bind-mount sources;
+# DSM's FileStation API only sees directories that were CREATED through it
+# (`sudo mkdir` on the shell creates the dir on disk but doesn't register
+# it in the FileStation index). We hit this twice on 2026-06-02:
+#
+#   1. share_path "/docker/garage" → provider's Get errored
+#      "Failed to create project share: result is empty" because List of
+#      "/docker" returned files:[] even though the dir existed.
+#   2. bind source "/volume2/s3-data/meta" → Docker errored "bind source
+#      path does not exist" because the subdir was never created at all.
+#
+# synology_filestation_folder calls FileStation.CreateFolder, which both
+# creates the dir on disk AND registers it in the index. Idempotent — a
+# subsequent apply re-Gets and no-ops. Captures the "FileStation must know
+# about dirs the provider touches" requirement in IaC so future operators
+# don't get bit by the same gotcha.
+
+# Compose project working dir. The operator-managed garage.toml lives in
+# here (see README "Workloads → Garage"); terraform-registering this folder
+# also satisfies the operator install step's FileStation.CreateFolder
+# requirement, so a stray `sudo mkdir` workflow can't bypass the index.
+resource "synology_filestation_folder" "docker_garage" {
+  path = "/docker/garage"
+}
+
+# Garage's two state directories under the s3-data share. The share itself
+# is spec'd in spec/e4e-nas/shares.yml (Btrfs, snapshots, browseable=false);
+# the subdirectories Garage bind-mounts don't exist on a fresh NAS.
+resource "synology_filestation_folder" "s3_data_meta" {
+  path = "/s3-data/meta"
+}
+
+resource "synology_filestation_folder" "s3_data_data" {
+  path = "/s3-data/data"
+}
+
 # --- Garage S3 object store (ADR 0002 + 0003) --------------------------------
 # Single-node Garage cluster, data on /volume2/s3-data, image pinned.
 #
@@ -78,5 +116,13 @@ resource "synology_container_project" "garage" {
   run = true
 
   # Container Manager package must be installed first (commit ccf3066 / #102).
-  depends_on = [synology_core_package.container_manager]
+  # The bind-mount target directories must exist (FileStation-registered, not
+  # just present on disk) before container creation — see the filestation_folder
+  # resources above.
+  depends_on = [
+    synology_core_package.container_manager,
+    synology_filestation_folder.docker_garage,
+    synology_filestation_folder.s3_data_meta,
+    synology_filestation_folder.s3_data_data,
+  ]
 }

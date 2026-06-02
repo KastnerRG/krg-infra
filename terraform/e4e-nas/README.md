@@ -73,16 +73,31 @@ cp terraform/e4e-nas/garage.toml.example /tmp/garage.toml
 # three values to ~/.config/krg/secrets-garage.env (mode 0600) for recovery
 # and for sub-PR 5 to consume.
 
-# 2. scp to the NAS; root-owned, mode 0400; shred the laptop copy
-scp /tmp/garage.toml e4e-admin@e4e-nas.ucsd.edu:/tmp/garage.toml
-ssh e4e-admin@e4e-nas.ucsd.edu '
-  sudo mkdir -p /volume1/docker/garage &&
-  sudo install -o root -g root -m 0400 /tmp/garage.toml /volume1/docker/garage/garage.toml &&
-  shred -u /tmp/garage.toml'
+# 2. First terraform pass — creates the FileStation-tracked directories
+#    (/docker/garage, /s3-data/{meta,data}) but doesn't yet have the toml
+#    to start the container. We split the apply because the operator-
+#    managed toml has to land in the dir terraform creates BEFORE the
+#    container resource runs.
+cd terraform/e4e-nas
+tofu apply -target=synology_filestation_folder.docker_garage \
+           -target=synology_filestation_folder.s3_data_meta \
+           -target=synology_filestation_folder.s3_data_data
+
+# 3. Pipe the filled-in toml over the existing SSH channel (scp would
+#    need `-O` since DSM's SFTP subsystem is disabled per the SSH
+#    hardening spec). The dir already exists + is FileStation-tracked
+#    from step 2, so this is a straight `sudo tee`.
+cat /tmp/garage.toml | ssh e4e-admin@e4e-nas.ucsd.edu '
+  set -e
+  sudo tee /volume1/docker/garage/garage.toml >/dev/null
+  sudo chown root:root /volume1/docker/garage/garage.toml
+  sudo chmod 0400      /volume1/docker/garage/garage.toml
+  sudo ls -la          /volume1/docker/garage/garage.toml'
 shred -u /tmp/garage.toml
 
-# 3. Now apply
-cd terraform/e4e-nas && tofu plan && tofu apply
+# 4. Final apply — creates the container, which can now bind-mount the
+#    operator-managed garage.toml.
+tofu apply
 ```
 
 **Operator workflow — cluster bootstrap** (one-shot AFTER first apply,
