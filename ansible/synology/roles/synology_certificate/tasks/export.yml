@@ -1,0 +1,25 @@
+---
+# Read-only drift snapshot: dump the live cert state into the per-host
+# export dir (same shape as the other synology_* roles). Re-run with
+# `--tags export` to refresh.
+- name: Export dir
+  ansible.builtin.file:
+    path: "{{ synology_export_dir | default('/var/lib/krg-deploy/synology-export') }}"
+    state: directory
+    mode: "0755"
+  check_mode: false
+  changed_when: false
+
+- name: Snapshot live cert state
+  ansible.builtin.script: apply_certificate.py list
+  register: cert_export
+  changed_when: false
+  check_mode: false
+
+- name: Persist snapshot to <host>-certificates.json
+  ansible.builtin.copy:
+    content: "{{ cert_export.stdout }}"
+    dest: "{{ synology_export_dir | default('/var/lib/krg-deploy/synology-export') }}/{{ inventory_hostname }}-certificates.json"
+    mode: "0644"
+  check_mode: false
+  changed_when: false

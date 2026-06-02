@@ -1,0 +1,74 @@
+---
+# synology_certificate — manage DSM Let's Encrypt certs from
+# spec/e4e-nas/certificates.yml. The role's job is "ensure the certs the
+# spec says should exist DO exist, and the default cert is the spec's
+# default candidate." DSM's own cron-driven LE renewal keeps the cert
+# fresh between role runs; the role re-issues if it sees expiry within
+# `renewal_buffer_days` (safety net for silently-broken renewal).
+#
+# Anti-drift posture (ADR 0001): cert presence + default-binding are
+# part of the box's declarative state, same as shares/users/firewall.
+# A cert manually swapped in via DSM UI shows up as drift on the next
+# `--check --diff` run.
+#
+# Service-specific bindings (e.g. AppPortal reverse-proxy entries for
+# garage-ui on :8443, MLflow on a future port) live in
+# synology_app_portal — this role owns "which certs EXIST + which is
+# DEFAULT" only.
+#
+# CROSS-REFERENCE: this role replaces the "DSM Wizard → Get LE cert"
+# manual step previously in docs/e4e-nas-dsm.md. The runbook entry
+# stays as a break-glass path (if DSM webapi is broken, click-through
+# still works), but git becomes the source of truth.
+#
+# Order is load-bearing per cert:
+#   1. letsencrypt-create  — ensure cert exists (issue if missing or expiring)
+#   2. set-default         — ensure DSM's default binding matches the spec
+#
+# Within `letsencrypt:` items the role processes each cert independently;
+# failures on one don't stop the others. (Driven via include_tasks +
+# loop_var because Ansible's per-item failure semantics are kinder than
+# wrapping the whole list in a single script call.)
+
+- name: Load the certificate spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_certificate_spec }}"
+    name: cert_spec
+
+- name: Issue / re-issue Let's Encrypt certs (per-domain, idempotent)
+  ansible.builtin.script: >-
+    apply_certificate.py letsencrypt-create
+    --domain {{ item.domain | quote }}
+    --email {{ item.email | quote }}
+    --sans-json {{ (item.sans | default([])) | to_json | quote }}
+    --renewal-buffer-days {{ item.renewal_buffer_days | default(30) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  loop: "{{ cert_spec.letsencrypt | default([]) }}"
+  loop_control:
+    label: "{{ item.domain }}"
+  register: le_apply
+  changed_when: "'CHANGED' in le_apply.stdout or 'WOULD-CHANGE' in le_apply.stdout"
+  failed_when: "le_apply.rc != 0 or 'FAIL' in le_apply.stdout"
+  check_mode: false
+
+# Default-cert binding runs AFTER issuance. set-default refuses on a
+# missing cert (clean FAIL), so an item with `default: true` whose
+# letsencrypt-create failed surfaces as a chained failure rather than a
+# silent no-op.
+- name: "Set DSM default cert (only items with default: true)"
+  ansible.builtin.script: >-
+    apply_certificate.py set-default
+    --domain {{ item.domain | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  loop: "{{ cert_spec.letsencrypt | default([]) | selectattr('default', 'defined') | selectattr('default') | list }}"
+  loop_control:
+    label: "{{ item.domain }}"
+  register: default_apply
+  changed_when: "'CHANGED' in default_apply.stdout or 'WOULD-CHANGE' in default_apply.stdout"
+  failed_when: "default_apply.rc != 0 or 'FAIL' in default_apply.stdout"
+  check_mode: false
+
+# --- Drift export (read-only) — only with `--tags export` -----------------------
+- name: Export live cert state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

@@ -22,14 +22,16 @@ ansible/synology/
   group_vars/
     all.yml                  # shared lookups (keys/passwords/trusted nets) for THIS subtree
     synology.yml             # connection + DSM-specific vars (ansible_user, syno_path, ...)
-  roles/                     # all 20 synology_* roles
+  roles/                     # 21 synology_* roles (baseline + storage + app/web)
     synology_base/           # composer
     synology_users/  synology_ssh/  synology_security/  synology_external_access/
     synology_dsm_system/  synology_dsm_web/  synology_dsm_updates/
     synology_security_advisor/  synology_services/  synology_notifications/
     synology_ad/  synology_shares/  synology_acls/  synology_quotas/
     synology_smb/  synology_nfs/  synology_snapshot_replication/
-    synology_hyper_backup/  synology_app_portal/
+    synology_hyper_backup/
+    synology_certificate/    # DSM LE certs (issue + default-binding)
+    synology_app_portal/     # AppPortal + service-specific cert binding
 ```
 
 ## What's NOT here (and why)

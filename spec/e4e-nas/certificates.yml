@@ -1,0 +1,31 @@
+# DSM Certificate management — declarative source of truth for the
+# `synology_certificate` Ansible role (apply_certificate.py wraps
+# SYNO.Core.Certificate.LetsEncrypt + SYNO.Core.Certificate.CRT). Git is
+# truth; UI changes / DSM-default certs are drift (ADR 0001).
+#
+# The role handles initial issuance + default-cert binding. DSM has its own
+# cron-driven LE renewal job (the role does NOT manage renewal cadence —
+# it only issues + ensures-default). If DSM's renewal silently fails the
+# cert will expire eventually; the role's idempotent re-issue covers that
+# case on the next apply (`--check --diff` previews the drift).
+#
+# Service-specific cert bindings (e.g. AppPortal reverse-proxy entries for
+# garage-ui on :8443) live in `synology_app_portal` — this role owns "which
+# certs EXIST on the box and which is DEFAULT" only.
+
+letsencrypt:
+  # The NAS's own hostname — the cert that DSM web / SSH / AppPortal
+  # reverse-proxy entries all use unless explicitly bound to another.
+  - domain: e4e-nas.ucsd.edu
+    # LE renewal notifications + key-recovery contact. Routed to the team's
+    # ops alias (not a personal address) so notifications survive turnover.
+    email: e4e-ops@eng.ucsd.edu       # FIXME: confirm the right ops alias
+    default: true                     # bind as DSM's default cert
+    sans: []                          # additional SANs; empty = single-domain cert
+
+    # Re-issuance window: if a cert exists but expires within this many days
+    # the role triggers a new LE issuance regardless of DSM auto-renew
+    # state. Safety net for "DSM renewal silently broken" — separate from
+    # the "cert exists at all" idempotency check. 30d matches LE's typical
+    # renewal-suggested window.
+    renewal_buffer_days: 30

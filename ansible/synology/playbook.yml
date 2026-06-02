@@ -35,4 +35,5 @@
     - synology_hyper_backup            # off-box DR jobs (runbook §5)
 
     # --- APP / WEB LAYER ---
-    - synology_app_portal              # AppPortal config + reverse-proxy + access-control
+    - synology_certificate             # DSM LE certs (issue + default-binding); DSM auto-renews between runs
+    - synology_app_portal              # AppPortal config + reverse-proxy + access-control (service-specific cert bindings live here)
