@@ -22,7 +22,7 @@ ansible/synology/
   group_vars/
     all.yml                  # shared lookups (keys/passwords/trusted nets) for THIS subtree
     synology.yml             # connection + DSM-specific vars (ansible_user, syno_path, ...)
-  roles/                     # 21 synology_* roles (baseline + storage + app/web)
+  roles/                     # 22 synology_* roles (baseline + storage + app/web + workload)
     synology_base/           # composer
     synology_users/  synology_ssh/  synology_security/  synology_external_access/
     synology_dsm_system/  synology_dsm_web/  synology_dsm_updates/
@@ -32,6 +32,7 @@ ansible/synology/
     synology_hyper_backup/
     synology_certificate/    # DSM LE certs (issue + default-binding)
     synology_app_portal/     # AppPortal + service-specific cert binding
+    synology_garage/         # workload: Garage S3 (replaces terraform — ADR 0007)
 ```
 
 ## What's NOT here (and why)
@@ -58,6 +59,7 @@ ansible-playbook playbook.yml --tags export                         # drift snap
 ansible-playbook playbook.yml --tags acls-recursive                 # post-AD-join one-shot
 ansible-playbook playbook.yml -e ad_join_password='<pass>'          # AD domain join
 ansible-playbook playbook.yml -e @secrets-hb.yml                    # Hyper Backup secrets
+ansible-playbook playbook.yml -e @~/.config/krg/secrets-garage.yml  # Garage (rpc/admin/metrics tokens)
 ```
 
 `ansible.cfg` here overrides the main one when invoked from this directory —

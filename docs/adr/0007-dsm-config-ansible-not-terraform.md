@@ -79,6 +79,51 @@ Ansible's home turf, not Terraform's.
 - Keeping the no-API surface in Ansible preserves the zero-prereq
   `script:`+`raw` choice (see related), which is intentionally tuned for DSM's
   py3.8 — a Terraform `local-exec` rewrite would discard that portability.
+- **The gate works in both directions.** A surface the provider *appears* to
+  model can still flunk it — see "Garage retreat" below — and the resource
+  goes to Ansible the same way an unmodeled surface would.
+
+## Empirical addendum — Garage retreat (2026-06-02)
+
+`synology_container_project` *is* modeled by the provider on paper. We
+nonetheless moved Garage's deployment, `garage.toml` rendering, and cluster
+bootstrap to the `synology_garage` Ansible role after a single bring-up
+session surfaced three independent upstream bugs:
+
+- **#110 — `secrets.content` not sensitive.** Nested string attrs are plain
+  in the schema, so any secret rendered through `content` / `secrets` /
+  `configs` leaks verbatim in `tofu plan` and error output (we rotated three
+  Garage tokens this session because of it).
+- **#113 — FileStation index instability.** The provider's pre-create
+  validation calls FileStation `List`/`Get` against `share_path` and bind
+  sources. DSM's FileStation API only sees dirs created *through* it; a
+  `sudo mkdir` on disk is invisible. We hit "result is empty" on a
+  `share_path` that existed and "bind source path does not exist" on a
+  freshly-`mkdir`'d subdir.
+- **#114 — JSON parser bombs on streamed output.** DSM's project
+  create/update API returns docker-compose's interleaved text
+  (`Container garage Creating\n …`) plus status JSON. The provider tries to
+  decode the entire stream as JSON and errors on the first `C`. The
+  container is created correctly — only state persistence fails — so
+  `tofu apply` looks broken while DSM is fine.
+
+That's three distinct provider defects on one resource on one workload in
+one session. The cost of a deeper Ansible role was bounded; the cost of
+papering over each bug with `lifecycle.ignore_changes`, operator-managed
+secret files, and post-apply manual `state rm`/`import` dances was not.
+
+Per the gate above: provider models the surface, but the surface failed the
+maturity test, so it moved to Ansible. The three `synology_filestation_folder`
+resources stayed on the OpenTofu side — they work, and the
+FileStation-must-know-about-the-dir gotcha is a general DSM constraint that
+serves any future workload (a container project, a Hyper Backup task), not
+just Garage.
+
+Workload state at the time of the move: container `RUNNING` + `HEALTHY` on
+the NAS; the migration was `tofu state rm` + revert + role-takeover without
+touching the live container. Bugs #110/#113/#114 stay open as upstream
+issues we no longer depend on — useful signal for the next time a
+`synology_*` resource looks production-ready.
 
 Related: ADR 0005 (repo integration / OpenTofu / the original split),
 ADR 0001 (git as DSM source of truth), `docs/e4e-nas-dsm.md`,

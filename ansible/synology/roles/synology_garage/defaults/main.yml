@@ -1,0 +1,2 @@
+---
+synology_garage_spec: "{{ nas_spec_dir }}/garage.yml"

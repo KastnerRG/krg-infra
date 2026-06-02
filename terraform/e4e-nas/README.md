@@ -22,12 +22,19 @@ provider (`synology-community/synology`) only exposes a *subset* of DSM:
 
 | Managed here (Terraform) | NOT in the provider — see the runbook |
 |---|---|
-| Container Manager projects (`synology_container_project`) | AD/LDAP domain join |
+| Container Manager projects (`synology_container_project`) † | AD/LDAP domain join |
 | Packages (`synology_core_package`) | Shared folders + ACLs |
 | Scheduled tasks (`synology_core_event`) | SMB/NFS service settings |
 | File/folder provisioning (`synology_filestation_*`) | Users / groups, firewall, SSH |
 | VMs (`synology_virtualization_*`) | DSM update + snapshot/backup schedules |
 | Generic `synology_api` escape hatch (any DSM Web API) | |
+
+† `synology_container_project` is modeled by the provider on paper, but the
+implementation flunked the maturity test for Garage (3 distinct bugs in one
+session: #110/#113/#114). Container workloads live in the
+`synology_garage`-style Ansible roles until the resource matures — see
+[ADR 0007](../../docs/adr/0007-dsm-config-ansible-not-terraform.md) "Garage
+retreat" and the *Workloads → Garage* section below.
 
 Everything in the right column — including the **identity** and **hardening**
 work that matters most — lives in the runbook:
@@ -47,85 +54,23 @@ settings that survive DSM updates (unlike SSH-level edits, which updates revert)
 
 ### Garage (S3 object store)
 
-Single-node Garage on Container Manager, data on `/volume2/s3-data`, image
-pinned (per ADR 0002 + 0003). Defined by:
+Garage is **not managed from this terraform target**. The `synology-community/synology`
+provider's `synology_container_project` resource hit three distinct upstream
+bugs in one sitting on 2026-06-02 (#110 secrets-content-not-sensitive, #113
+FileStation index instability, #114 JSON parser bombs on the docker-compose
+streamed output) — which is the empirical signal [ADR 0007](../../docs/adr/0007-dsm-config-ansible-not-terraform.md)
+anticipated for moving a surface to Ansible.
 
-- [`containers.tf`](containers.tf) `synology_container_project.garage` — uses the structured `services` attribute (NOT `content` — the provider's plan modifier silently rebuilds content from structured attrs, learned 2026-06-02)
-- [`variables.tf`](variables.tf) — only `garage_image_tag` (pinned default)
-- [`garage.toml.example`](garage.toml.example) — operator template for the config file (see below)
+Deployment, `garage.toml` rendering, and cluster bootstrap (`layout assign` +
+`apply`) all live in the `synology_garage` Ansible role under
+[`../../ansible/synology/`](../../ansible/synology/); spec in
+[`../../spec/e4e-nas/garage.yml`](../../spec/e4e-nas/garage.yml).
 
-**Why no terraform-managed secrets**: the synology-community provider's nested
-string attributes (`secrets.content`, `configs.content`) are not marked
-sensitive in its schema — values leak verbatim in `tofu plan` / error output.
-So Garage's secrets live in an operator-managed `garage.toml` file that this
-resource only bind-mounts read-only into the container. Sub-PR 5 of #101
-(garage_config Ansible role) supersedes the operator-managed step with
-`no_log` + ansible-vault flow.
-
-**Operator workflow — first deploy** (run this BEFORE `tofu apply` or the
-container crash-loops on missing `/etc/garage.toml`):
-
-```bash
-# 1. On your laptop — fill in the 3 secrets in a local copy
-cp terraform/e4e-nas/garage.toml.example /tmp/garage.toml
-# Edit /tmp/garage.toml; replace REDACTED_RPC_SECRET / REDACTED_ADMIN_TOKEN /
-# REDACTED_METRICS_TOKEN with `openssl rand -hex 32` outputs each. Save the
-# three values to ~/.config/krg/secrets-garage.env (mode 0600) for recovery
-# and for sub-PR 5 to consume.
-
-# 2. First terraform pass — creates the FileStation-tracked directories
-#    (/docker/garage, /s3-data/{meta,data}) but doesn't yet have the toml
-#    to start the container. We split the apply because the operator-
-#    managed toml has to land in the dir terraform creates BEFORE the
-#    container resource runs.
-cd terraform/e4e-nas
-tofu apply -target=synology_filestation_folder.docker_garage \
-           -target=synology_filestation_folder.s3_data_meta \
-           -target=synology_filestation_folder.s3_data_data
-
-# 3. Pipe the filled-in toml over the existing SSH channel (scp would
-#    need `-O` since DSM's SFTP subsystem is disabled per the SSH
-#    hardening spec). The dir already exists + is FileStation-tracked
-#    from step 2, so this is a straight `sudo tee`.
-cat /tmp/garage.toml | ssh e4e-admin@e4e-nas.ucsd.edu '
-  set -e
-  sudo tee /volume1/docker/garage/garage.toml >/dev/null
-  sudo chown root:root /volume1/docker/garage/garage.toml
-  sudo chmod 0400      /volume1/docker/garage/garage.toml
-  sudo ls -la          /volume1/docker/garage/garage.toml'
-shred -u /tmp/garage.toml
-
-# 4. Final apply — creates the container, which can now bind-mount the
-#    operator-managed garage.toml.
-tofu apply
-```
-
-**Operator workflow — cluster bootstrap** (one-shot AFTER first apply,
-until #101 sub-PR 5 codifies):
-
-`tofu apply` creates the project + starts the container, but the Garage
-*cluster* is empty — no node has assigned capacity, no buckets exist. Run:
-
-```bash
-# 1. Get the node's short ID
-NODE_ID=$(ssh e4e-admin@e4e-nas.ucsd.edu \
-  'sudo docker exec garage garage status' \
-  | awk '/HEALTHY/{print substr($1,1,16); exit}')
-
-# 2. Assign capacity (single zone, sized to s3-data's free space)
-ssh e4e-admin@e4e-nas.ucsd.edu \
-  "sudo docker exec garage garage layout assign -z dc1 -c 5T $NODE_ID"
-
-# 3. Commit the layout (bumps the layout version; required to take effect)
-ssh e4e-admin@e4e-nas.ucsd.edu \
-  'sudo docker exec garage garage layout apply --version 1'
-```
-
-After this the cluster is operational. Bucket + access-key management lives
-in sub-PR 5 (the `garage_config` Ansible role reads
-[`spec/e4e-nas/garage.yml`](../../spec/e4e-nas/garage.yml)). Sub-PR 4
-(separate) adds DSM AppPortal reverse-proxy + Let's Encrypt for
-`*.s3.garage.e4e-nas.ucsd.edu` + the admin/web endpoints.
+What *does* live here (containers.tf): three `synology_filestation_folder`
+resources for `/docker/garage`, `/s3-data/meta`, `/s3-data/data`. DSM's
+FileStation API only sees directories created through itself, so any
+container workload bind-mounting these paths needs them index-registered.
+The role can rely on the dirs existing without `sudo mkdir` workarounds.
 
 ## Shared source of truth
 

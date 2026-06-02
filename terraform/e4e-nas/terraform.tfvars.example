@@ -19,10 +19,6 @@ dsm_user = "e4e-automation" # dedicated administrators-group API account, NOT th
 #   export TF_VAR_dsm_otp_secret="JBSWY3DPEHPK3PXP..."   # length 16-32
 
 # --- Garage (S3) — per ADR 0002 + 0003 ----------------------------------------
-# Garage secrets are NOT terraform-managed (the provider leaks string content
-# in plan/error output). Operator manages /volume1/docker/garage/garage.toml
-# directly on the NAS — see "Workloads → Garage" in README.md for the
-# bootstrap workflow. No TF_VAR_garage_* env vars needed.
-#
-# Image pin is the one tunable on the terraform side:
-# garage_image_tag = "v1.2.0"   # override to bump from the default in variables.tf
+# Garage is NOT terraform-managed (provider too immature — see ADR 0007 +
+# containers.tf header). Deployment, config, and cluster bootstrap live in
+# the `synology_garage` Ansible role; spec in spec/e4e-nas/garage.yml.
