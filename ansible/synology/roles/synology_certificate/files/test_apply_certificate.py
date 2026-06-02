@@ -121,14 +121,21 @@ def test_letsencrypt_create_reissues_when_within_buffer(monkeypatch, capsys):
     assert rc == 0 and out.startswith("CHANGED ")
     payload = json.loads(out.split(" ", 1)[1])
     assert "expiring" in payload["reason"]
-    # The CHANGED path called LE.create with the domain + email + empty SANs
+    # The CHANGED path called LE.create with the wizard-confirmed param
+    # shape: desc + domain_name + email (NOT `domain`). Empty SAN list
+    # short-circuits — no SAN_list param sent. See do_letsencrypt_create
+    # docstring for the wizard-capture reference.
     assert len(calls) == 1
     api, *params = calls[0]
     assert api == m.LE_API
     assert "method=create" in params
-    assert 'domain="e4e-nas.ucsd.edu"' in params
+    assert 'desc="e4e-nas.ucsd.edu"' in params
+    assert 'domain_name="e4e-nas.ucsd.edu"' in params
     assert 'email="ops@example.com"' in params
-    assert "SAN_list=[]" in params
+    assert not any(p.startswith("SAN_list=") for p in params), \
+        "empty SAN list must NOT send a SAN_list param"
+    assert not any(p.startswith("domain=") for p in params), \
+        "wizard uses `domain_name=`, not `domain=` — regression guard"
 
 
 def test_letsencrypt_create_issues_when_missing(monkeypatch, capsys):

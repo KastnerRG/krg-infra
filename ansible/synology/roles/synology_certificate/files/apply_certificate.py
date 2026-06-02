@@ -169,19 +169,23 @@ def do_letsencrypt_create(a):
         return _fail({"reason": "--sans-json must be a JSON array of strings",
                       "got": a.sans_json})
 
-    # Param shape: domain + email + SAN_list. `server` is intentionally
-    # omitted (DSM defaults to LE prod). Field names from community LE
-    # scripts (zaxbux/syno-acme, JessThrysoee/synology-letsencrypt) +
-    # synology_api Python lib's `certificate_letsencrypt_create` which
-    # passes kwargs through. Empirically validated 2026-06-02: 5503 from
-    # this call indicates a param-shape problem; will iterate based on
-    # actual DSM wizard's network capture if this still 5503s.
-    r = _exec(
-        LE_API, "version=1", "method=create",
-        "domain=" + json.dumps(a.domain),
+    # Param shape captured from DSM 7.3 wizard's POST on e4e-nas
+    # 2026-06-02 — three fields: `desc` (display description, conventional
+    # to use the domain), `domain_name` (NOT just `domain`), `email`. The
+    # wizard does NOT send `SAN_list` or `server` for a single-domain LE
+    # request. If SANs are needed, the param name is unverified — empty
+    # list short-circuits here and we'd need a wizard capture with SANs
+    # to confirm the name + JSON shape.
+    le_params = [
+        "version=1", "method=create",
+        "desc=" + json.dumps(a.domain),
+        "domain_name=" + json.dumps(a.domain),
         "email=" + json.dumps(a.email),
-        "SAN_list=" + json.dumps(sans),
-    )
+    ]
+    if sans:
+        # Best-guess; flag for verification on first successful apply with SANs.
+        le_params.append("SAN_list=" + json.dumps(sans))
+    r = _exec(LE_API, *le_params)
     if not r.get("success"):
         return _fail({"reason": "%s.create failed" % LE_API,
                       "response": r, "payload": payload})
