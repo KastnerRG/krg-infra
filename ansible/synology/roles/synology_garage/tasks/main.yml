@@ -129,3 +129,69 @@
   changed_when: "'CHANGED' in layout_apply.stdout or 'WOULD-CHANGE' in layout_apply.stdout"
   failed_when: "layout_apply.rc != 0 or 'FAIL' in layout_apply.stdout"
   check_mode: false
+
+# --- 4. admin UI (Noooste/garage-ui) -------------------------------------------
+# Skipped entirely when the spec has no `ui:` block (opt-in surface). Requires
+# one MORE extra_var beyond the cluster secrets: garage_ui_oidc_client_secret.
+# Same security model as the cluster secrets: env vars only, no_log:true.
+#
+# Run UI-only with `--tags=garage_ui` (e.g. image bumps that don't touch
+# the cluster). The compose / config dirs are FileStation-tracked by terraform
+# (see terraform/e4e-nas/containers.tf `synology_filestation_folder.docker_garage_ui`).
+- name: Refuse to deploy garage-ui without OIDC client secret
+  ansible.builtin.assert:
+    that:
+      - garage_ui_oidc_client_secret | default('') | length >= 16
+    fail_msg: >-
+      Garage UI requires extra_var: garage_ui_oidc_client_secret
+      (Authentik OIDC client secret, ≥ 16 chars). Supply via
+      `-e @~/.config/krg/secrets-garage.yml`. The first-time setup
+      (create Authentik provider+application, copy the secret) is
+      documented in roles/synology_garage/README.md "First-time UI setup".
+  when: garage_spec.ui is defined
+  tags: [garage_ui]
+
+- name: Render garage-ui config.yaml (atomic write, root:root 0400)
+  ansible.builtin.script: >-
+    apply_garage.py render-ui-config
+    --config-path {{ garage_spec.ui.config_path | quote }}
+    --bind-host {{ garage_spec.ui.bind_host | quote }}
+    --port {{ garage_spec.ui.port }}
+    --public-hostname {{ garage_spec.ui.public_hostname | quote }}
+    --public-url {{ garage_spec.ui.public_url | quote }}
+    --garage-s3-port {{ garage_spec.config.s3_api.api_bind_addr.split(':')[-1] }}
+    --garage-admin-port {{ garage_spec.config.admin.api_bind_addr.split(':')[-1] }}
+    --garage-region {{ garage_spec.config.s3_api.region | quote }}
+    --oidc-provider-name {{ garage_spec.ui.oidc.provider_name | quote }}
+    --oidc-client-id {{ garage_spec.ui.oidc.client_id | quote }}
+    --oidc-issuer-url {{ garage_spec.ui.oidc.issuer_url | quote }}
+    --oidc-role-attribute-path {{ garage_spec.ui.oidc.role_attribute_path | quote }}
+    --oidc-scopes-json {{ garage_spec.ui.oidc.scopes | to_json | quote }}
+    --oidc-admin-roles-json {{ garage_spec.ui.oidc.admin_roles | to_json | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  environment:
+    GARAGE_ADMIN_TOKEN: "{{ garage_admin_token }}"
+    GARAGE_UI_OIDC_CLIENT_SECRET: "{{ garage_ui_oidc_client_secret }}"
+  register: ui_cfg_apply
+  changed_when: "'CHANGED' in ui_cfg_apply.stdout or 'WOULD-CHANGE' in ui_cfg_apply.stdout"
+  failed_when: "ui_cfg_apply.rc != 0 or 'FAIL' in ui_cfg_apply.stdout"
+  check_mode: false
+  no_log: true
+  when: garage_spec.ui is defined
+  tags: [garage_ui]
+
+- name: Deploy garage-ui container (docker compose up -d on drift)
+  ansible.builtin.script: >-
+    apply_garage.py deploy-ui
+    --compose-path {{ garage_spec.ui.compose_path | quote }}
+    --container-name {{ garage_spec.ui.container_name | quote }}
+    --image {{ garage_spec.ui.image | quote }}
+    --image-tag {{ garage_spec.ui.image_tag | quote }}
+    --config-path {{ garage_spec.ui.config_path | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: ui_deploy_apply
+  changed_when: "'CHANGED' in ui_deploy_apply.stdout or 'WOULD-CHANGE' in ui_deploy_apply.stdout"
+  failed_when: "ui_deploy_apply.rc != 0 or 'FAIL' in ui_deploy_apply.stdout"
+  check_mode: false
+  when: garage_spec.ui is defined
+  tags: [garage_ui]

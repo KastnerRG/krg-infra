@@ -15,7 +15,14 @@
 
 deployment:
   image: dxflrs/garage
-  image_tag: v1.1.0                       # pinned per ADR 0002 — bump deliberately
+  # v2.x is required for the garage-ui admin UI (uses the /v2/ admin API).
+  # Upstream v1→v2 migration is "restart all nodes at once with the new
+  # binary, on-disk data + layout are compatible, only `replication_mode`
+  # config-key is dropped" — our spec already uses `replication_factor` so
+  # no config changes needed. Our cluster is fresh (no buckets/keys/data),
+  # so worst case is re-running `layout assign + apply` (the role does it
+  # idempotently). Pinned per ADR 0002 — bump deliberately + verify changelog.
+  image_tag: v2.3.0
   container_name: garage
   network_mode: host                      # single-node — host is simplest; revisit if a 2nd node lands
   # On-disk paths are explicit (no volume guessing). The terraform-tracked
@@ -61,6 +68,60 @@ cluster:
   # NOTE: the role refuses to mutate an already-defined layout (anti-rebalance
   # guard). To change capacity, run `garage layout assign` + `apply` on the
   # NAS manually after thinking about the rebalance impact.
+
+# --- Admin UI (Noooste/garage-ui) ---------------------------------------------
+# Browser-based bucket / access-key / cluster admin + S3 object browse +
+# drag-and-drop upload, gated by Authentik SSO via native OIDC. Talks to
+# Garage on loopback (`localhost:3900` S3, `localhost:3903` admin). Public
+# access via DSM AppPortal reverse-proxy on a dedicated port under the
+# existing `e4e-nas.ucsd.edu` cert (no separate `garage.*` DNS record — that
+# subdomain isn't registered, so we serve under the host's own hostname with
+# a path-distinct port instead — tracked in #118). Operator-managed one-shot
+# for the AppPortal entry + cert assignment — see role README "First-time
+# UI setup"; IaC pending #118.
+#
+# TOOL CHOICE NOTE: Noooste/garage-ui is the only Garage admin UI today that
+# speaks OIDC natively. Long-term plan is to swap to the official
+# Deuxfleurs/garage-webadmin once it leaves "do not use yet" (NLnet-funded;
+# tracking issue #117). Bucket/key spec is declarative, so the swap is
+# "redeploy + re-apply" — cheap.
+ui:
+  image: noooste/garage-ui
+  image_tag: "0.6.1"                      # latest stable (2026-05-31); v2.x admin API required
+  container_name: garage-ui
+  compose_path: /volume1/docker/garage-ui/docker-compose.yml
+  config_path: /volume1/docker/garage-ui/config.yaml
+  bind_host: 127.0.0.1                    # loopback only; DSM AppPortal terminates TLS publicly
+  port: 8080                              # internal UI port; the AppPortal entry proxies the public port here
+
+  # Public access. The `garage.e4e-nas.ucsd.edu` DNS name doesn't exist —
+  # only the NAS's own hostname `e4e-nas.ucsd.edu` resolves. Serve the UI on
+  # a distinct public port under that hostname, reusing the existing host
+  # cert. Authentik's OIDC redirect URI MUST match `<public_url>/auth/oidc/callback`
+  # exactly when you create the provider/application.
+  public_hostname: e4e-nas.ucsd.edu
+  public_port: 8443                       # DSM AppPortal HTTPS port for this entry; 6021 is DSM web itself
+  public_url: https://e4e-nas.ucsd.edu:8443
+
+  # OIDC — points at krg-prod's Authentik. client_secret is an extra_var
+  # (`garage_ui_oidc_client_secret`) carried via `environment:` (no_log;
+  # never on argv). #110 (OpenBao) eventually replaces the operator-managed
+  # secret with a vault-backed lookup.
+  oidc:
+    provider_name: Authentik
+    client_id: garage-ui
+    # FIXME: krg-prod's Authentik public URL is in flux (CLAUDE.md "DNS/URL
+    # migration for krg-prod" pending). Update when that lands. The Authentik
+    # OIDC issuer URL pattern is:
+    #   https://<authentik-host>/application/o/<app-slug>/
+    issuer_url: https://auth.fabricant.ucsd.edu/application/o/garage-ui/
+    scopes: [openid, email, profile, groups]
+    # Authentik puts the user's groups under the `groups` top-level claim.
+    role_attribute_path: groups
+    # Admin = grants every UI capability (buckets, keys, browse, upload).
+    # Members of these AD-backed Authentik groups get admin.
+    admin_roles:
+      - Garage Admins                     # Authentik group (AD-synced)
 
 # --- Sub-PR 5 of #101: bucket / key management (NOT YET IMPLEMENTED) ---------
 buckets: []   # TODO
