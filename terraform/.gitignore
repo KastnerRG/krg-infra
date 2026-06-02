@@ -1,9 +1,9 @@
 # OpenTofu / Terraform working files — never commit state (holds DSM secrets)
 # or real tfvars.
 .terraform/
-# .terraform.lock.hcl is ignored until you decide to commit it (recommended once the
-# provider set is stable); remove the line below to start tracking it.
-.terraform.lock.hcl
+# .terraform.lock.hcl is COMMITTED per workspace (the convention sibling
+# workspaces — authentik/, grafana/, openbao/ — already follow). A committed
+# lockfile pins provider versions across operators and CI. No global ignore.
 *.tfstate
 *.tfstate.*
 *.tfvars
