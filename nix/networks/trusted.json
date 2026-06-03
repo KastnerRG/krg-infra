@@ -28,6 +28,7 @@
       { "cidr": "107.132.34.148", "comment": "admin remote (sean)"}
     ],
     "machines": [
+      { "cidr": "137.110.161.67",  "comment": "waiter.ucsd.edu (compute; domain member)" },
       { "cidr": "137.110.161.106", "comment": "krg-prod.ucsd.edu" },
       { "cidr": "137.110.161.109", "comment": "krg-ldap.ucsd.edu" },
       { "cidr": "137.110.161.122", "comment": "krg-deploy.ucsd.edu" },
