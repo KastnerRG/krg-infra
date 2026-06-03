@@ -81,5 +81,29 @@ in {
     # Just toggle it on; per-host overrides go straight to
     # services.crowdsec-firewall-bouncer.* in the host config.
     services.crowdsec-firewall-bouncer.enable = true;
+
+    # Fix the first-deploy bootstrap race. Upstream marks the bouncer
+    # `requires = crowdsec-firewall-bouncer-register.service` but orders it
+    # only `after crowdsec.service`, NOT after the register oneshot. So on a
+    # host's FIRST activation the bouncer and register start in parallel, and
+    # the bouncer's `LoadCredential = API_KEY_FILE:.../api-key.cred` — the
+    # systemd CREDENTIALS setup step, which runs *before* ExecStartPre — can
+    # fire before register has minted that file, failing the unit with
+    #   "Failed to set up credentials: Protocol error" / 243/CREDENTIALS
+    # (observed on waiter and krg-ldap first deploys; a later manual restart
+    # always succeeds because by then register has finished). Add the missing
+    # ordering so the bouncer waits for the register oneshot to complete, and
+    # keep a bounded retry as a safety net for any residual race (e.g. the
+    # LAPI socket not yet accepting). Both are inert/harmless when
+    # registerBouncer is disabled.
+    systemd.services.crowdsec-firewall-bouncer = {
+      after = lib.optional
+        config.services.crowdsec-firewall-bouncer.registerBouncer.enable
+        "crowdsec-firewall-bouncer-register.service";
+      serviceConfig = {
+        Restart    = "on-failure";
+        RestartSec = "5s";
+      };
+    };
   };
 }
