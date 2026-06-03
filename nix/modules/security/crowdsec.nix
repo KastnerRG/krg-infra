@@ -258,69 +258,38 @@ in {
     #   "failed to load Local API: loading online client credentials:
     #    open .../online_api_credentials.yaml: no such file or directory"
     # That fails crowdsec.service, and the firewall-bouncer-register
-    # service (which only `wants` crowdsec.service) then runs anyway and
-    # fails with a 243/CREDENTIALS error — the failure that rolled back
-    # PR #96.
+    # service then fails downstream with 243/CREDENTIALS — the failure
+    # that rolled back PR #96.
     #
     # cscli treats a MISSING file as fatal but an EMPTY file as a soft
     # "missing login field" warning, so pre-creating it breaks the
     # bootstrap deadlock: machine-add warns+succeeds, then the setup's
     # own `cscli capi register` fills in the real CAPI credentials.
     #
-    # This MUST be a separate Before= unit, NOT a crowdsec.service
-    # ExecStartPre. nixpkgs' crowdsec unit hardcodes
-    #   ExecStartPre = [ " " "${setupScript}" ];
-    # where the leading " " is a *reset* that clears the package's own
-    # ExecStartPre defs. A `mkBefore` seed merges AHEAD of that reset
-    # (`[ seed, " ", setup ]`), so the reset wipes the seed and it never
-    # runs — observed on waiter 2026-06-03: file never created, cscli
-    # machine add failing on every restart, crowdsec.service crash-
-    # looping and taking both bouncer units down with it. List-order
-    # merging can't place the seed *between* the reset and setupScript,
-    # so we run it as an ordered-before oneshot instead.
-    #
-    # OWNERSHIP under DynamicUser: the file must be owned by the crowdsec
-    # DYNAMIC user, because nixpkgs runs BOTH crowdsec.service and the
-    # crowdsec-firewall-bouncer-register service as
-    #   User = config.services.crowdsec.user;  # "crowdsec", DynamicUser=true
-    # (same name → same dynamic uid) and crowdsec writes 0600 files
-    # (UMask=0077), so a root-owned seed is unreadable by them — observed
-    # on waiter 2026-06-03 (first attempt seeded as root): the error moved
-    # from "no such file" to "permission denied" on the same path, the
-    # register/bouncer units still failed (243/CREDENTIALS), and there is
-    # no StateDirectory on crowdsec.service (it uses ReadWritePaths), so
-    # systemd never re-chowns an externally-created file.
-    #
-    # So run the seed AS the crowdsec identity, using the exact pattern the
-    # register service already uses successfully (DynamicUser + User=crowdsec
-    # → shared uid). StateDirectory creates/owns the state dir for us
-    # (deterministic, no early-boot tmpfiles/nss race), and the file lands
-    # crowdsec-owned 0600 — readable+writable by crowdsec.service's cscli
-    # (machine add reads it, capi register later fills it) and readable by
-    # the bouncer-register's cscli. The `[ -e ] ||` guard never truncates,
-    # so a populated creds file survives restarts.
-    systemd.services.crowdsec-seed-capi-credfile = {
-      description = "Seed empty CrowdSec CAPI credentials file (breaks cscli eager-load deadlock)";
-      before      = [ "crowdsec.service" ];
-      requiredBy  = [ "crowdsec.service" ];
-      serviceConfig = {
-        Type            = "oneshot";
-        RemainAfterExit = true;
-        # Match crowdsec.service's identity so the file is owned by the same
-        # dynamic uid both it and the bouncer-register run as.
-        User            = config.services.crowdsec.user;
-        Group           = config.services.crowdsec.group;
-        DynamicUser     = true;
-        UMask           = "0077";
-        # /var/lib/crowdsec/state — systemd creates+owns it as the crowdsec
-        # dynamic user before the script runs (credentialsFile lives here).
-        StateDirectory  = "crowdsec/state";
-      };
-      script = ''
-        set -eu
-        f=${lib.escapeShellArg config.services.crowdsec.settings.capi.credentialsFile}
-        [ -e "$f" ] || : > "$f"
-      '';
+    # Create it the SAME way nixpkgs creates the state dir itself — a
+    # tmpfiles rule owned by `cfg.user`/`cfg.group` (see the upstream
+    # `10-crowdsec` `d` rules for stateDir/hubDir/...). That gets us all
+    # three properties at once, which two earlier attempts each missed:
+    #   * runs before any unit (tmpfiles is sysinit/activation), so the
+    #     file exists before crowdsec.service's cscli machine-add — a
+    #     crowdsec.service ExecStartPre can't, because nixpkgs hardcodes
+    #     `ExecStartPre = [ " " setupScript ]` and that leading " " reset
+    #     wipes any seed merged ahead of it (PR #123);
+    #   * owned by the crowdsec DYNAMIC user (same name → same uid that
+    #     BOTH crowdsec.service and crowdsec-firewall-bouncer-register run
+    #     as, per `User = config.services.crowdsec.user`), so a root-owned
+    #     seed's "permission denied" can't happen (PR #124);
+    #   * no StateDirectory= relocation — that turns /var/lib/crowdsec into
+    #     a DynamicUser /var/lib/private symlink and cscli then dies with
+    #     "mkdir /var/lib/crowdsec/state: file exists" (the #124 regression
+    #     this replaces). tmpfiles writes the real dir in place, exactly
+    #     like upstream's own stateDir rule.
+    # `f` creates the file only if absent (never truncates), so a populated
+    # creds file (post `capi register`) survives.
+    systemd.tmpfiles.settings."10-crowdsec-seed-capi".${config.services.crowdsec.settings.capi.credentialsFile}.f = {
+      user  = config.services.crowdsec.user;
+      group = config.services.crowdsec.group;
+      mode  = "0600";
     };
   };
 }
