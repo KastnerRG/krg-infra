@@ -279,14 +279,26 @@ in {
     # merging can't place the seed *between* the reset and setupScript,
     # so we run it as an ordered-before oneshot instead.
     #
-    # OWNERSHIP under DynamicUser: the oneshot runs as root and creates
-    # the file root-owned. crowdsec.service uses DynamicUser=true +
-    # StateDirectory, so systemd recursively re-chowns the StateDirectory
-    # tree (incl. this file) to the allocated dynamic uid as part of
-    # service setup — which happens BEFORE crowdsec's own ExecStartPre —
-    # so setupScript's cscli reads a correctly-owned file. `touch` never
-    # truncates, so a populated creds file (post `capi register`) is
-    # preserved across restarts.
+    # OWNERSHIP under DynamicUser: the file must be owned by the crowdsec
+    # DYNAMIC user, because nixpkgs runs BOTH crowdsec.service and the
+    # crowdsec-firewall-bouncer-register service as
+    #   User = config.services.crowdsec.user;  # "crowdsec", DynamicUser=true
+    # (same name → same dynamic uid) and crowdsec writes 0600 files
+    # (UMask=0077), so a root-owned seed is unreadable by them — observed
+    # on waiter 2026-06-03 (first attempt seeded as root): the error moved
+    # from "no such file" to "permission denied" on the same path, the
+    # register/bouncer units still failed (243/CREDENTIALS), and there is
+    # no StateDirectory on crowdsec.service (it uses ReadWritePaths), so
+    # systemd never re-chowns an externally-created file.
+    #
+    # So run the seed AS the crowdsec identity, using the exact pattern the
+    # register service already uses successfully (DynamicUser + User=crowdsec
+    # → shared uid). StateDirectory creates/owns the state dir for us
+    # (deterministic, no early-boot tmpfiles/nss race), and the file lands
+    # crowdsec-owned 0600 — readable+writable by crowdsec.service's cscli
+    # (machine add reads it, capi register later fills it) and readable by
+    # the bouncer-register's cscli. The `[ -e ] ||` guard never truncates,
+    # so a populated creds file survives restarts.
     systemd.services.crowdsec-seed-capi-credfile = {
       description = "Seed empty CrowdSec CAPI credentials file (breaks cscli eager-load deadlock)";
       before      = [ "crowdsec.service" ];
@@ -294,15 +306,20 @@ in {
       serviceConfig = {
         Type            = "oneshot";
         RemainAfterExit = true;
+        # Match crowdsec.service's identity so the file is owned by the same
+        # dynamic uid both it and the bouncer-register run as.
+        User            = config.services.crowdsec.user;
+        Group           = config.services.crowdsec.group;
+        DynamicUser     = true;
+        UMask           = "0077";
+        # /var/lib/crowdsec/state — systemd creates+owns it as the crowdsec
+        # dynamic user before the script runs (credentialsFile lives here).
+        StateDirectory  = "crowdsec/state";
       };
       script = ''
         set -eu
         f=${lib.escapeShellArg config.services.crowdsec.settings.capi.credentialsFile}
-        ${pkgs.coreutils}/bin/install -d -m 0700 "$(${pkgs.coreutils}/bin/dirname "$f")"
-        if [ ! -e "$f" ]; then
-          ${pkgs.coreutils}/bin/touch "$f"
-          ${pkgs.coreutils}/bin/chmod 600 "$f"
-        fi
+        [ -e "$f" ] || : > "$f"
       '';
     };
   };
