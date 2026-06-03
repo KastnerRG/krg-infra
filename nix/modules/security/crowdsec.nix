@@ -257,25 +257,53 @@ in {
     # loads the LAPI, so on a fresh host machine-add dies with
     #   "failed to load Local API: loading online client credentials:
     #    open .../online_api_credentials.yaml: no such file or directory"
-    # That aborts the setup script (set -euo pipefail), fails
-    # crowdsec.service, and the firewall-bouncer-register service (which
-    # only `wants` crowdsec.service) then runs anyway and fails with a
-    # 243/CREDENTIALS error — the failure that rolled back PR #96.
+    # That fails crowdsec.service, and the firewall-bouncer-register
+    # service (which only `wants` crowdsec.service) then runs anyway and
+    # fails with a 243/CREDENTIALS error — the failure that rolled back
+    # PR #96.
     #
     # cscli treats a MISSING file as fatal but an EMPTY file as a soft
     # "missing login field" warning, so pre-creating it breaks the
     # bootstrap deadlock: machine-add warns+succeeds, then the setup's
     # own `cscli capi register` fills in the real CAPI credentials.
-    # mkBefore runs this as the first ExecStartPre so it executes under
-    # the same (DynamicUser) service identity as the setup script —
-    # ownership is therefore correct without any static crowdsec user.
-    systemd.services.crowdsec.serviceConfig.ExecStartPre = lib.mkBefore [
-      (pkgs.writeShellScript "crowdsec-seed-capi-credfile" ''
+    #
+    # This MUST be a separate Before= unit, NOT a crowdsec.service
+    # ExecStartPre. nixpkgs' crowdsec unit hardcodes
+    #   ExecStartPre = [ " " "${setupScript}" ];
+    # where the leading " " is a *reset* that clears the package's own
+    # ExecStartPre defs. A `mkBefore` seed merges AHEAD of that reset
+    # (`[ seed, " ", setup ]`), so the reset wipes the seed and it never
+    # runs — observed on waiter 2026-06-03: file never created, cscli
+    # machine add failing on every restart, crowdsec.service crash-
+    # looping and taking both bouncer units down with it. List-order
+    # merging can't place the seed *between* the reset and setupScript,
+    # so we run it as an ordered-before oneshot instead.
+    #
+    # OWNERSHIP under DynamicUser: the oneshot runs as root and creates
+    # the file root-owned. crowdsec.service uses DynamicUser=true +
+    # StateDirectory, so systemd recursively re-chowns the StateDirectory
+    # tree (incl. this file) to the allocated dynamic uid as part of
+    # service setup — which happens BEFORE crowdsec's own ExecStartPre —
+    # so setupScript's cscli reads a correctly-owned file. `touch` never
+    # truncates, so a populated creds file (post `capi register`) is
+    # preserved across restarts.
+    systemd.services.crowdsec-seed-capi-credfile = {
+      description = "Seed empty CrowdSec CAPI credentials file (breaks cscli eager-load deadlock)";
+      before      = [ "crowdsec.service" ];
+      requiredBy  = [ "crowdsec.service" ];
+      serviceConfig = {
+        Type            = "oneshot";
+        RemainAfterExit = true;
+      };
+      script = ''
         set -eu
         f=${lib.escapeShellArg config.services.crowdsec.settings.capi.credentialsFile}
-        ${pkgs.coreutils}/bin/mkdir -p "$(${pkgs.coreutils}/bin/dirname "$f")"
-        [ -e "$f" ] || : > "$f"
-      '')
-    ];
+        ${pkgs.coreutils}/bin/install -d -m 0700 "$(${pkgs.coreutils}/bin/dirname "$f")"
+        if [ ! -e "$f" ]; then
+          ${pkgs.coreutils}/bin/touch "$f"
+          ${pkgs.coreutils}/bin/chmod 600 "$f"
+        fi
+      '';
+    };
   };
 }
