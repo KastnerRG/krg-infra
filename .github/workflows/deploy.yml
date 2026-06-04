@@ -75,10 +75,14 @@ jobs:
               { owner, repo, head_sha: sha, per_page: 100 });
             let ok = true;
             for (const name of required) {
+              // Only consider the push-on-main run of each required workflow for
+              // this SHA — not a pull_request or workflow_dispatch run of the same
+              // commit, which could otherwise satisfy/block the "green CI on
+              // push-to-main" guarantee. (Matches the job-level event==push guard.)
               const latest = runs
-                .filter(r => r.name === name && r.event !== 'workflow_run')
+                .filter(r => r.name === name && r.event === 'push' && r.head_branch === 'main')
                 .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-              const conclusion = latest ? latest.conclusion : 'no run';
+              const conclusion = latest ? latest.conclusion : 'no push run';
               core.info(`${name}: ${conclusion}`);
               if (!latest || latest.conclusion !== 'success') ok = false;
             }
