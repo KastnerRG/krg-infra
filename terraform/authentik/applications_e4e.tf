@@ -135,7 +135,7 @@ resource "authentik_provider_oauth2" "e4e_roster" {
   client_id          = "e4e-roster"
   authorization_flow = data.authentik_flow.default_authorization.id
   invalidation_flow  = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://roster.e4e.ucsd.edu/auth/callback" }]
+  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://roster.krg.ucsd.edu/auth/callback" }]
   property_mappings      = local.std_scopes
   sub_mode               = "hashed_user_id"
   access_token_validity  = "hours=1"
