@@ -19,14 +19,14 @@ ADMIN="${DEPLOY_ADMIN:-krg-admin}"
 # Deploy order: dependencies first (vault/AD before the services that use them).
 ORDER=(krg-vault krg-ldap krg-prod e4e-prod waiter)
 
-# host -> ssh address. krg-ldap has no DNS `domain` set (addressed by IP); waiter
-# is addressed by IP per the runbooks (no host DNS). The rest resolve by FQDN.
+# host -> ssh address. Fully-qualified DNS names only — never IPs (DNS is the stable
+# handle; IPs may change). krg-ldap is mid-rename — finalize the name via #128.
 declare -A ADDR=(
   [krg-vault]=krg-vault.ucsd.edu
-  [krg-ldap]=137.110.161.109
+  [krg-ldap]=krg-ldap.ucsd.edu
   [krg-prod]=krg-prod.ucsd.edu
   [e4e-prod]=e4e-prod.ucsd.edu
-  [waiter]=137.110.161.67
+  [waiter]=waiter.ucsd.edu
 )
 
 DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-/var/lib/krg-admin/.ssh/id_ed25519}"
@@ -40,21 +40,21 @@ sshopts="-o StrictHostKeyChecking=${hostkey} -o BatchMode=yes -o ConnectTimeout=
 [[ -f "$DEPLOY_SSH_KEY" ]] && sshopts="-i ${DEPLOY_SSH_KEY} ${sshopts}"
 export NIX_SSHOPTS="${NIX_SSHOPTS:-$sshopts}"
 
-rc=0
+# Fail-fast: stop on the first failed host. Order is dependency-first (vault/AD
+# before the services that use them), so a failure early means the dependents
+# would be deploying against a broken base — don't.
 for host in "${ORDER[@]}"; do
   target="${ADMIN}@${ADDR[$host]}"
   echo "::group::nixos-rebuild switch ${host} (${target})"
-  if nixos-rebuild switch \
+  if ! nixos-rebuild switch \
         --flake "${FLAKE}#${host}" \
         --target-host "${target}" \
         --build-host  "${target}" \
         --sudo; then
-    echo "OK: ${host}"
-  else
-    echo "FAILED: ${host}"
-    rc=1
+    echo "FAILED: ${host} — stopping; remaining hosts not deployed"
+    echo "::endgroup::"
+    exit 1
   fi
+  echo "OK: ${host}"
   echo "::endgroup::"
 done
-
-exit "$rc"
