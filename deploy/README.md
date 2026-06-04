@@ -52,12 +52,16 @@ at a time (`concurrency: deploy-fleet`).
   registration token for now; move to a lab-owned bot-account PAT in OpenBao — see #121.
 - `/var/lib/krg-admin/.ssh/id_ed25519` — krg-admin's key to the fleet (already needed
   by `ansible-apply`).
+- `/var/lib/krg-admin/.ssh/known_hosts` — the fleet's host keys. Host-key checking is
+  **strict** by default (NixOS via `StrictHostKeyChecking=yes`, Ansible via
+  `ansible.cfg host_key_checking=True`), so this must be provisioned out-of-band. For
+  first-time bring-up only, set `DEPLOY_SSH_ACCEPT_NEW=true` to trust-on-first-use.
 - `terraform/<target>/.deploy-env` — sourced per target to export `VAULT_TOKEN`,
   `TF_VAR_*`, etc. Targets without it are **skipped** (safe to land before creds exist).
 - `TOFU_STATE_PASSPHRASE` — repo Actions secret; encrypts OpenTofu state.
 
 ## Tunables (env)
 
-`DEPLOY_ADMIN` (`krg-admin`) · `DEPLOY_SSH_KEY` · `DEPLOY_SYNOLOGY` (`false`) ·
-`TOFU_TARGETS` (`openbao authentik grafana e4e-nas`) · `TOFU_STATE_ROOT`
-(`/var/lib/krg-admin/tofu-state`).
+`DEPLOY_ADMIN` (`krg-admin`) · `DEPLOY_SSH_KEY` · `DEPLOY_SSH_ACCEPT_NEW` (`false`) ·
+`DEPLOY_SYNOLOGY` (`false`) · `TOFU_TARGETS` (`openbao authentik grafana e4e-nas`) ·
+`TOFU_STATE_ROOT` (`/var/lib/krg-admin/tofu-state`).

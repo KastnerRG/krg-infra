@@ -14,8 +14,10 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export ANSIBLE_HOST_KEY_CHECKING="${ANSIBLE_HOST_KEY_CHECKING:-False}"
 
+# Host-key checking is intentionally NOT overridden here — ansible/ansible.cfg sets
+# host_key_checking = True, and we keep that (krg-deploy's known_hosts must include
+# the fleet host keys, provisioned out-of-band). Don't weaken it to unblock a run.
 DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-/var/lib/krg-admin/.ssh/id_ed25519}"
 [[ -f "$DEPLOY_SSH_KEY" ]] && export ANSIBLE_PRIVATE_KEY_FILE="${ANSIBLE_PRIVATE_KEY_FILE:-$DEPLOY_SSH_KEY}"
 

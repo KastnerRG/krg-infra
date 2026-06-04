@@ -30,9 +30,11 @@ jobs:
   deploy:
     name: Apply to fleet
     runs-on: [self-hosted, krg-deploy]
-    # Fast pre-filter: only consider main, and only when the triggering run itself
-    # was green (the cross-workflow check happens in the gate step).
+    # Fast pre-filter: only a push to main (not workflow_dispatch / manual re-runs),
+    # and only when the triggering run itself was green. The cross-workflow check
+    # AND the "still the current main head" (no-downgrade) check happen in the gate.
     if: >-
+      github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.conclusion == 'success'
     steps:
@@ -49,12 +51,24 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const { owner, repo } = context.repo;
             const sha = context.payload.workflow_run.head_sha;
+
+            // No-downgrade guard: a re-run of an OLD build/tests run fires
+            // workflow_run with that old head_sha. Only deploy if it's still the
+            // current main head, so a re-run can never roll the fleet backwards.
+            const branch = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
+            const head = branch.data.commit.sha;
+            if (sha !== head) {
+              core.notice(`${sha} is not current main head (${head}) — skipping (no downgrade).`);
+              core.setOutput('ok', 'false');
+              return;
+            }
+
             const required = ["Build NixOS configurations", "Python unit tests"];
             const runs = await github.paginate(
               github.rest.actions.listWorkflowRunsForRepo,
-              { owner: context.repo.owner, repo: context.repo.repo,
-                head_sha: sha, per_page: 100 });
+              { owner, repo, head_sha: sha, per_page: 100 });
             let ok = true;
             for (const name of required) {
               const latest = runs

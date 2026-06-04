@@ -14,6 +14,10 @@
 # everything). State is encrypted when TOFU_STATE_PASSPHRASE is set (terraform/README).
 set -euo pipefail
 
+# OpenTofu state + provider cache (and any tooling temp files) hold secrets — make
+# everything this script creates owner-only by default.
+umask 077
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TF_DIR="${REPO_ROOT}/terraform"
 STATE_ROOT="${TOFU_STATE_ROOT:-/var/lib/krg-admin/tofu-state}"
@@ -23,9 +27,18 @@ STATE_ROOT="${TOFU_STATE_ROOT:-/var/lib/krg-admin/tofu-state}"
 read -r -a TARGETS <<< "${TOFU_TARGETS:-openbao authentik grafana e4e-nas}"
 
 # State encryption (the `encryption` block can't read variables — supply via env).
+# HCL-escape the passphrase before interpolating so a `\` or `"` can't corrupt the
+# encryption config; a newline can't be represented in this inline HCL string, so
+# reject it rather than emit invalid HCL.
 if [[ -n "${TOFU_STATE_PASSPHRASE:-}" ]]; then
+  if [[ "$TOFU_STATE_PASSPHRASE" == *$'\n'* ]]; then
+    echo "ERROR: TOFU_STATE_PASSPHRASE must not contain a newline" >&2
+    exit 2
+  fi
+  esc=${TOFU_STATE_PASSPHRASE//\\/\\\\}   # \ -> \\
+  esc=${esc//\"/\\\"}                     # " -> \"
   export TF_ENCRYPTION='
-  key_provider "pbkdf2" "k" { passphrase = "'"$TOFU_STATE_PASSPHRASE"'" }
+  key_provider "pbkdf2" "k" { passphrase = "'"$esc"'" }
   method "aes_gcm" "m"      { keys = key_provider.pbkdf2.k }
   state { method = method.aes_gcm.m }
   plan  { method = method.aes_gcm.m }'
@@ -46,6 +59,7 @@ for t in "${TARGETS[@]}"; do
 
   state_dir="${STATE_ROOT}/${t}"
   mkdir -p "$state_dir"
+  chmod 700 "$state_dir"   # enforce owner-only even if it pre-existed with looser perms
 
   echo "::group::tofu apply ${t}"
   (

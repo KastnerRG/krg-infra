@@ -30,7 +30,13 @@ declare -A ADDR=(
 )
 
 DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-/var/lib/krg-admin/.ssh/id_ed25519}"
-sshopts="-o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15"
+# Strict host-key checking by default (matches ansible.cfg host_key_checking=True):
+# krg-deploy's known_hosts must be provisioned out-of-band with the fleet's host
+# keys. For FIRST-TIME bring-up only, DEPLOY_SSH_ACCEPT_NEW=true falls back to
+# trust-on-first-use (accept-new). Never lower this just to unblock a routine run.
+hostkey="yes"
+[[ "${DEPLOY_SSH_ACCEPT_NEW:-false}" == "true" ]] && hostkey="accept-new"
+sshopts="-o StrictHostKeyChecking=${hostkey} -o BatchMode=yes -o ConnectTimeout=15"
 [[ -f "$DEPLOY_SSH_KEY" ]] && sshopts="-i ${DEPLOY_SSH_KEY} ${sshopts}"
 export NIX_SSHOPTS="${NIX_SSHOPTS:-$sshopts}"
 
