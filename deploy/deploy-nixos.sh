@@ -22,7 +22,7 @@ ADMIN="${DEPLOY_ADMIN:-krg-admin}"
 ORDER=(krg-vault krg-ldap krg-prod waiter)
 
 # host -> ssh address. Fully-qualified DNS names only — never IPs (DNS is the stable
-# handle; IPs may change). krg-ldap is mid-rename — finalize the name via #128.
+# handle; IPs may change). Names are final per the machine-rename plan (#128).
 declare -A ADDR=(
   [krg-vault]=krg-vault.ucsd.edu
   [krg-ldap]=krg-ldap.ucsd.edu

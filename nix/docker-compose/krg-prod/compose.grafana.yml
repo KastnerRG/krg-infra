@@ -17,10 +17,8 @@ services:
       - default
     labels:
       - "traefik.enable=true"
-      # TODO(dns): stale host — this is krg-prod's lab-wide Grafana, not waiter's.
-      # Update to the chosen krg-prod scheme (e.g. grafana.krg.ucsd.edu) once the
-      # DNS migration is decided (CLAUDE.md pending: DNS/URL migration for krg-prod).
-      - "traefik.http.routers.grafana.rule=Host(`dashboard.waiter.ucsd.edu`)"
+      # Lab-wide Grafana — the canonical monitoring entrypoint for the fleet.
+      - "traefik.http.routers.grafana.rule=Host(`monitoring.krg.ucsd.edu`)"
       - "traefik.http.routers.grafana.entrypoints=websecure"
       - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"

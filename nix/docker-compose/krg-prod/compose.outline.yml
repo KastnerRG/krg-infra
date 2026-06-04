@@ -13,7 +13,7 @@ services:
       - outline_redis
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.outline.rule=Host(`wiki.fabricant.ucsd.edu`)"
+      - "traefik.http.routers.outline.rule=Host(`docs.krg.ucsd.edu`)"
       - "traefik.http.routers.outline.entrypoints=websecure"
       - "traefik.http.routers.outline.tls.certresolver=letsencrypt"
     user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
