@@ -70,13 +70,14 @@ jobs:
             }
 
             const required = ["Build NixOS configurations", "Python unit tests"];
-            // Explicit map fn extracts the nested workflow_runs array per page —
-            // unambiguous regardless of paginate's auto-normalization, so `runs` is
-            // always the flat array the filters below expect.
+            // octokit's paginate AUTO-normalizes this endpoint and returns the
+            // flattened workflow_runs array directly. Do NOT add a map fn like
+            // (r) => r.data.workflow_runs: after normalization r.data is ALREADY the
+            // array, so that yields undefined per page and the r.name filter below
+            // throws "Cannot read properties of undefined". (This bit us once.)
             const runs = await github.paginate(
               github.rest.actions.listWorkflowRunsForRepo,
-              { owner, repo, head_sha: sha, per_page: 100 },
-              (response) => response.data.workflow_runs);
+              { owner, repo, head_sha: sha, per_page: 100 });
 
             // The push-on-main run of each required workflow for this SHA — not a
             // pull_request / workflow_dispatch run of the same commit, which could
