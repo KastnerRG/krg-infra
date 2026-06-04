@@ -1,0 +1,37 @@
+# DSM Application Portal config for e4e-nas — per-app portals, reverse-proxy entries,
+# access control. From the 2026-05-28 live capture.
+#
+# IaC home: `synology_app_portal` Ansible role — `apply_app_portal.py` on
+# SYNO.Core.AppPortal.{set, Config.set, AccessControl.{create,update,delete},
+# ReverseProxy.{create,update,delete}}.
+#
+# DSM 7's "Login Portal" page is split between SYNO.Core.Web.DSM (ports/HTTPS/HSTS —
+# in `dsm-web.yml`) and SYNO.Core.AppPortal.* (per-app portals, reverse proxies,
+# per-portal access rules). This file owns the AppPortal half.
+
+config:
+  show_titlebar: true               # AppPortal.Config — the only field DSM exposes here
+
+# Per-app portal entries (DSM Control Panel → Login Portal → Applications).
+# Live capture: 3 entries — File Station, Synology Drive, Synology Photos. The latter
+# uses alias `photo` and exposes a redirect entry. Spec carries the same; reduce/extend
+# per the rebuild design.
+portal_apps:
+  - id: SYNO.SDS.App.FileStation3.Instance
+    display_name: File Station
+    enable_redirect: false
+  - id: SYNO.SDS.SheetStation.Application
+    display_name: Synology Drive
+    enable_redirect: false
+  - id: SYNO.Foto.AppInstance
+    display_name: Synology Photos
+    alias: photo
+    enable_redirect: false
+    hsts: false                     # per-portal HSTS — DSM-wide HSTS in dsm-web.yml
+    fqdn: null
+
+# Reverse-proxy entries (DSM Login Portal → Reverse Proxy). Live: empty.
+reverse_proxy: []
+
+# Per-portal access control (DSM Login Portal → Advanced → IP allow/deny). Live: empty.
+access_control: []

@@ -1,13 +1,16 @@
 {
   "krg-admin": [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJFSqRcoT/TTEcQ/y2yaSzEracnbu5U08TF22qTsAdJ0 krg-admin@krg-deploy",
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF2Z7LbaDPTNkdnuvFivXTUx8X9gU0ZyWrrYBH7KSmG3 chris@chris-laptop",
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG+bBt46zXmHIbLwGC7WfoGHZQ9xIlSix5NKamgTUhhM dzuberi@Danials-MacBook-Pro.local",
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF8HSEwws1dhjpdIB/HgvBpHJYVotGwb0CzMqbIHhCMi dzube@DESKTOP-BIFLG0S",
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAf2s+NpcBKYMymbQOZkmPhdNcTSzNBrKT/ZHZNdcPW5 shperry@Silo-Hephaestus"
   ],
   "e4e-admin": [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJFSqRcoT/TTEcQ/y2yaSzEracnbu5U08TF22qTsAdJ0 krg-admin@krg-deploy",
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF2Z7LbaDPTNkdnuvFivXTUx8X9gU0ZyWrrYBH7KSmG3 chris@chris-laptop",
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAf2s+NpcBKYMymbQOZkmPhdNcTSzNBrKT/ZHZNdcPW5 shperry@Silo-Hephaestus",
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXgqrmbaafQ4GAqSVMXFoPsOYeVGUtXDGGY9AfkgCoQ treez.zhang@gmail.com"
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXgqrmbaafQ4GAqSVMXFoPsOYeVGUtXDGGY9AfkgCoQ treez.zhang@gmail.com",
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO06aFfaw6b3yAYd2IJeOJeQxp2U9XENGlPg3+k7reAE omqazi@ucsd.edu"
   ]
 }

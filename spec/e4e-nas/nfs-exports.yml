@@ -1,0 +1,36 @@
+# NFS on e4e-nas — declarative source of truth.
+# Consumed by the `synology_nfs` Ansible role (synowebapi); the exporter reads the live
+# state back into this shape. Git is truth; UI = drift (ADR 0001).
+#
+# Two parts: global service settings (`nfs:`) + per-share export rules (`exports:`). Rule
+# objects are DSM-NATIVE — i.e. the exact shape `SYNO.Core.FileServ.NFS.SharePrivilege`
+# load/save uses — so the exporter round-trips them verbatim. Validated on the DSM 7.3 rig.
+#
+# ⚠️ uid MISMATCH CAVEAT (runbook §2): DSM/winbind RID-maps AD identities; the rest of the
+# fleet (SSSD) uses algorithmic mapping → the same AD user gets a different uid/gid on the
+# NAS vs Linux clients. SMB is SID-based (fine); NFS is uid-based and will NOT line up.
+# Verify uids on the fabricant side before trusting this export.
+#
+# Rule fields (validated): client; privilege rw|ro; root_squash (DSM short enum — "root"
+# renders as no_root_squash, i.e. root NOT squashed); async; insecure (allow non-priv
+# source ports); crossmnt; security_flavor {sys,kerberos,kerberos_integrity,kerberos_privacy}.
+# Values below are CONFIRMED from the 2026-05-28 live pre-reset capture (archived locally,
+# off-repo) — the SharePrivilege load/save round-trips this shape.
+
+nfs:
+  enable: true
+  nfsv4: true
+  v4_domain: ""        # set only if using NFSv4 idmap
+
+exports:
+  # fabricant-prod-share = /volume2/fabricant-prod-share (created by synology_shares).
+  # Part of the cross-backup plan (fabricant <-> e4e-nas), so root is not squashed.
+  - share: fabricant-prod-share
+    rules:
+      - client: fabricant.ucsd.edu
+        privilege: rw
+        root_squash: root          # "root" => no_root_squash on the wire (root NOT squashed)
+        async: true                # CAPTURED: live rule uses async (was assumed false in the seed)
+        insecure: false
+        crossmnt: true
+        security_flavor: { sys: true, kerberos: false, kerberos_integrity: false, kerberos_privacy: false }

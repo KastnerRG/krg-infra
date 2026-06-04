@@ -1,0 +1,37 @@
+---
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get live FTP settings
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.FileServ.FTP method=get version=1"
+  register: ftp_get
+  changed_when: false
+  check_mode: false
+
+- name: Get live AFP settings
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.FileServ.AFP method=get version=1"
+  register: afp_get
+  changed_when: false
+  check_mode: false
+
+- name: Get live SNMP settings
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.SNMP method=get version=1"
+  register: snmp_get
+  changed_when: false
+  check_mode: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-services.yml"
+    mode: "0600"
+    content: |
+      # Live DSM services state on {{ inventory_hostname }} — synology_services exporter.
+      ftp_raw: {{ ftp_get.stdout_lines | to_json }}
+      afp_raw: {{ afp_get.stdout_lines | to_json }}
+      snmp_raw: {{ snmp_get.stdout_lines | to_json }}
+  delegate_to: localhost

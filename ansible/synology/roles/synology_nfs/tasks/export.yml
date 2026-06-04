@@ -1,0 +1,47 @@
+---
+# Exporter (read-only): snapshot global NFS settings + per-share export rules so the
+# drift_exporter can diff them against spec/e4e-nas/nfs-exports.yml. Paired half of the
+# role (ADR 0001 — UI = drift). Run: ansible-playbook playbook.yml --tags export
+#
+# The SharePrivilege `load` output IS the spec's rule shape (DSM-native), so the captured
+# rules can be pasted straight into nfs-exports.yml — this is how the *live box's* exact
+# squash/security/async values get into git before the reset.
+
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get global NFS settings
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.FileServ.NFS method=get version=1"
+  register: nfs_global_get
+  changed_when: false
+  check_mode: false
+
+- name: Load per-share NFS rules
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.FileServ.NFS.SharePrivilege method=load version=1 share_name={{ item.share | quote }}"
+  loop: "{{ nfs_spec.exports | default([]) }}"
+  loop_control:
+    label: "{{ item.share }}"
+  register: nfs_rule_load
+  changed_when: false
+  check_mode: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-nfs.yml"
+    mode: "0600"
+    content: |
+      # Live DSM NFS state on {{ inventory_hostname }} — synology_nfs exporter.
+      # raw synowebapi output (strip the "[Line N] Exec WebAPI:" preamble to the first '{').
+      # The per-share "rule" arrays are already in nfs-exports.yml's `rules:` shape.
+      nfs_global_raw: {{ nfs_global_get.stdout_lines | to_json }}
+      nfs_rules_raw:
+      {% for r in nfs_rule_load.results %}
+        - share: {{ r.item.share }}
+          load: {{ r.stdout_lines | to_json }}
+      {% endfor %}
+  delegate_to: localhost

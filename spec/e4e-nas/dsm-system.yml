@@ -1,0 +1,79 @@
+# DSM system-level config for e4e-nas — hostname, network (static), DNS, NTP.
+# Source of truth for the post-rebuild state. Values CONFIRMED / DRIFT-MARKED from the
+# 2026-05-28 live pre-reset capture (archived locally, off-repo).
+#
+# IaC home: `synology_dsm_system` Ansible role — `apply_dsm_system.py` does
+# GET→merge→SET on SYNO.Core.Network (set v2; partial = err 2001 like SMB/NFS).
+# DSM 7.3 hardware (DS3617xs / Xeon D-1527 / 16 GB) is fixed by physical reality.
+
+system:
+  # Live: "e4e_nas" (underscore — NOT a valid DNS label per RFC 952/1123).
+  # Spec: hyphenated form, matches the FQDN already used everywhere else (cert SAN, DNS).
+  hostname: e4e-nas
+
+  ntp:
+    enabled: true
+    # `time.ucsd.edu` doesn't exist; using the public pool (Synology's own
+    # default) — globally distributed, no campus dependency, fine for a
+    # storage appliance that doesn't need sub-millisecond accuracy.
+    server: pool.ntp.org
+
+  timezone: America/Los_Angeles   # confirmed (2026-05-28)
+
+# Package Center settings — read by the `synology` Terraform provider's
+# `synology_core_package` resource (synology-community/go-synology
+# `PackageInstallCompound` calls `SYNO.Core.Package.Setting.get` and bails
+# with "default volume empty" if `default_vol` is unset). On a fresh DSM
+# this field stays empty until an operator opens Package Center for the
+# first time, which blocks every tofu-driven package install. Managing it
+# here means a fresh NAS can hand off to terraform/e4e-nas/ without a manual
+# UI step. `/volume1` matches where existing packages already live
+# (/usr/local/packages/@appstore is on volume 1; SMBService et al. all
+# resolve there via /var/packages/<pkg>/target symlinks).
+packages:
+  default_install_volume: /volume1
+
+  # WORKAROUND for upstream provider bug: `synology_core_package.run=true` is
+  # silently dropped by synology-community/go-synology's PackageInstallCompound
+  # (it hardcodes InstallRunPackage=false instead of reading req.Run), so
+  # `tofu apply` leaves the package installed-but-stopped. The Ansible role
+  # converges any package listed here to "started" via `synopkg start`. Per
+  # ADR 0007, this lives in Ansible because the provider doesn't model
+  # "started" as a resource attribute that round-trips. Drop entries from
+  # this list once the upstream Run field is honored.
+  ensure_running:
+    - ContainerManager
+
+network:
+  # Live: eth0 = 132.239.17.124/16 (no DHCP), gw 132.239.17.1, dns 132.239.95.109 + 1.1.1.1.
+  # eth1/eth2/eth3 are link-down (10.33.x / 169.254.x leftover) and should be left alone
+  # or zeroed out; don't manage them here unless re-purposed.
+  primary_interface: eth0
+  static:
+    interface: eth0
+    address: 132.239.17.124
+    netmask: 255.255.0.0   # /16 (matches gateway 132.239.17.1)
+    mtu: 1500
+  gateway: 132.239.17.1
+  dns:
+    # krg-ldap (the KRG.LOCAL AD DC) MUST be the primary DNS for the NAS as
+    # an AD member — DSM's winbind/Kerberos resolver consults resolv.conf
+    # directly and DOESN'T honor /etc/hosts pins for AD names, so without
+    # this the NAS can't resolve `krg-ldap.krg.local` and the AD join +
+    # subsequent winbind sessions fail (validated 2026-06-01:
+    # `test_dc` returns `test_join_success: false` and `nslookup
+    # krg-ldap.krg.local` returns NXDOMAIN from UCSD recursive).
+    # Mirrors the nix `krg.adClient` pattern (nix/modules/sssd-ad-client.nix:296
+    # uses `networking.nameservers = mkBefore [ DC_IP ]` for the same reason).
+    # krg-ldap runs SAMBA_INTERNAL DNS that forwards non-AD queries upstream,
+    # so public name resolution still works through it.
+    primary:   137.110.161.109   # krg-ldap (KRG.LOCAL DC; required for AD join)
+    secondary: 132.239.95.109    # UCSD recursive (fallback for non-krg-local queries)
+    manual: true                 # don't take DHCP DNS
+  proxy:
+    enabled: false
+  # IPv6, MAC clone, PPPoE, traffic control — all stay default-off; capture confirmed.
+
+# --- Hardening notes (drift the role will fix on apply) ---
+# - hostname underscore → hyphen (DNS-correct)
+# - NTP server points at a dead old-domain DC → swap to pool.ntp.org

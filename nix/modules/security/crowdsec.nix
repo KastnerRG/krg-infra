@@ -67,7 +67,7 @@
 #   * krg.crowdsecBouncer.enable = true (applies decisions to nftables).
 #   * trusted.json (read directly here for the local whitelist — no
 #     option duplication; same source as krg.firewall.sshSources).
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 with lib;
 let
   cfg = config.krg.crowdsec;
@@ -235,12 +235,61 @@ in {
         # they ever try us. The local ssh-bf scenario catches the gap
         # for first-of-kind attackers within ~5-10 failed auths.
         # FIRST-RUN REQUIREMENT: outbound TCP/443 to api.crowdsec.net
-        # at activation. If unreachable on first deploy, the registration
-        # fails and the file stays empty — the setup script retries on
-        # every rebuild (the grep-for-password gate makes it idempotent),
-        # so the next successful rebuild fills it in.
+        # at activation. The file must already EXIST (even empty) before
+        # any cscli command runs — see the crowdsec-seed-capi-credfile
+        # ExecStartPre below for why. Once it exists, registration is
+        # idempotent: the upstream setup's grep-for-password gate skips
+        # `cscli capi register` after the first success, and an empty
+        # file just downgrades to a "missing login field" warning (the
+        # daemon still starts, CAPI pull is simply inactive) so a host
+        # that can't reach api.crowdsec.net on first deploy fills the
+        # file in on the next reachable rebuild instead of wedging.
         capi.credentialsFile = "/var/lib/crowdsec/state/online_api_credentials.yaml";
       };
+    };
+
+    # Seed an EMPTY online_api_credentials.yaml before the upstream
+    # crowdsec setup runs. WHY: setting capi.credentialsFile above puts
+    # `api.server.online_client.credentials_path` into config.yaml, and
+    # cscli EAGERLY loads that file on every command that loads the
+    # Local API. The file is only created by `cscli capi register` —
+    # but the upstream setup runs `cscli machine add` FIRST, which also
+    # loads the LAPI, so on a fresh host machine-add dies with
+    #   "failed to load Local API: loading online client credentials:
+    #    open .../online_api_credentials.yaml: no such file or directory"
+    # That fails crowdsec.service, and the firewall-bouncer-register
+    # service then fails downstream with 243/CREDENTIALS — the failure
+    # that rolled back PR #96.
+    #
+    # cscli treats a MISSING file as fatal but an EMPTY file as a soft
+    # "missing login field" warning, so pre-creating it breaks the
+    # bootstrap deadlock: machine-add warns+succeeds, then the setup's
+    # own `cscli capi register` fills in the real CAPI credentials.
+    #
+    # Create it the SAME way nixpkgs creates the state dir itself — a
+    # tmpfiles rule owned by `cfg.user`/`cfg.group` (see the upstream
+    # `10-crowdsec` `d` rules for stateDir/hubDir/...). That gets us all
+    # three properties at once, which two earlier attempts each missed:
+    #   * runs before any unit (tmpfiles is sysinit/activation), so the
+    #     file exists before crowdsec.service's cscli machine-add — a
+    #     crowdsec.service ExecStartPre can't, because nixpkgs hardcodes
+    #     `ExecStartPre = [ " " setupScript ]` and that leading " " reset
+    #     wipes any seed merged ahead of it (PR #123);
+    #   * owned by the crowdsec DYNAMIC user (same name → same uid that
+    #     BOTH crowdsec.service and crowdsec-firewall-bouncer-register run
+    #     as, per `User = config.services.crowdsec.user`), so a root-owned
+    #     seed's "permission denied" can't happen (PR #124);
+    #   * no StateDirectory= relocation — that turns /var/lib/crowdsec into
+    #     a DynamicUser /var/lib/private symlink and cscli then dies with
+    #     "mkdir /var/lib/crowdsec/state: file exists" (the #124 regression
+    #     this replaces). tmpfiles writes the real dir in place, exactly
+    #     like upstream's own stateDir rule.
+    # `f` creates the file only if absent (never truncates), so a populated
+    # creds file (post `capi register`) survives.
+    systemd.tmpfiles.settings."10-crowdsec-seed-capi".${config.services.crowdsec.settings.capi.credentialsFile}.f = {
+      user  = config.services.crowdsec.user;
+      group = config.services.crowdsec.group;
+      mode  = "0600";
     };
   };
 }

@@ -1,0 +1,62 @@
+# DSM Certificate management — declarative source of truth for the
+# `synology_certificate` Ansible role (apply_certificate.py wraps
+# SYNO.Core.Certificate.LetsEncrypt + SYNO.Core.Certificate.CRT). Git is
+# truth; UI changes / DSM-default certs are drift (ADR 0001).
+#
+# The role handles initial issuance + default-cert binding. DSM has its own
+# cron-driven LE renewal job (the role does NOT manage renewal cadence —
+# it only issues + ensures-default). If DSM's renewal silently fails the
+# cert will expire eventually; the role's idempotent re-issue covers that
+# case on the next apply (`--check --diff` previews the drift).
+#
+# Service-specific cert bindings (e.g. AppPortal reverse-proxy entries for
+# garage-ui on :8443) live in `synology_app_portal` — this role owns "which
+# certs EXIST on the box and which is DEFAULT" only.
+
+letsencrypt:
+  # The NAS's own hostname — the cert that DSM web / SSH / AppPortal
+  # reverse-proxy entries all use unless explicitly bound to another.
+  - domain: e4e-nas.ucsd.edu
+    # LE renewal notifications + key-recovery contact. Routed to the team's
+    # alias (not a personal address) so notifications survive turnover.
+    # Confirmed 2026-06-02 — `e4e@ucsd.edu` is the right one;
+    # `e4e-ops@eng.ucsd.edu` (the original placeholder) does not exist.
+    email: e4e@ucsd.edu
+    default: true                     # bind as DSM's default cert
+    sans: []                          # additional SANs; empty = single-domain cert
+
+    # Re-issuance window: if a cert exists but expires within this many days
+    # the role triggers a new LE issuance regardless of DSM auto-renew
+    # state. Safety net for "DSM renewal silently broken" — separate from
+    # the "cert exists at all" idempotency check. 30d matches LE's typical
+    # renewal-suggested window.
+    renewal_buffer_days: 30
+
+    # Service bindings — which DSM services use THIS cert.
+    #
+    # CRITICAL: `default: true` above (CRT.set as_default=true) only marks
+    # which cert NEW services get. It does NOT migrate EXISTING service
+    # bindings — those stay on whatever cert they were originally bound to
+    # (typically the factory self-signed `synology` cert on a fresh DSM).
+    # Without this list, DSM web (`:6021`), FTPS, etc. keep serving the
+    # factory cert even after we issue + default-flag the LE cert.
+    #
+    # The role calls SYNO.Core.Certificate.Service.set per binding,
+    # idempotently — no-ops if the desired (service, subscriber) tuple is
+    # already on this cert. Captured the API shape from the DSM 7.3 wizard
+    # on e4e-nas 2026-06-02; see apply_certificate.py `do_bind_services`.
+    #
+    # Service IDs come from `synowebapi --exec api=SYNO.Core.Certificate.CRT
+    # method=list version=1` — look at any cert's `services:` array. Each
+    # entry has `service` + `subscriber` keys; both required to identify
+    # the binding. Common ones on a typical DSM 7.3 install:
+    #   { service: default,                 subscriber: system     } # DSM web
+    #   { service: ftpd,                    subscriber: smbftpd    } # FTPS
+    #   { service: kmip,                    subscriber: kmip       } # KMIP
+    #   { service: SynologyDrive,           subscriber: SynologyDrive }
+    #   { service: pkg-scsi-plugin-server,  subscriber: ScsiTarget } # iSCSI
+    bindings:
+      - { service: default, subscriber: system }    # DSM web :6021 (the one most operators care about)
+      # Add FTPS/KMIP/etc. here as needed. Leaving them on the factory cert
+      # is fine if they're not externally exposed — but if external clients
+      # hit them, they'd get cert warnings.

@@ -1,0 +1,36 @@
+---
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get live firewall state
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Security.Firewall method=get version=1"
+  register: fw_get
+  changed_when: false
+  check_mode: false
+
+- name: Get live firewall conf
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Security.Firewall.Conf method=get version=1"
+  register: fwc_get
+  changed_when: false
+  check_mode: false
+
+- name: Get live auto-block state
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Security.AutoBlock method=get version=1"
+  register: ab_get
+  changed_when: false
+  check_mode: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-security.yml"
+    mode: "0600"
+    content: |
+      firewall_raw: {{ fw_get.stdout_lines | to_json }}
+      firewall_conf_raw: {{ fwc_get.stdout_lines | to_json }}
+      autoblock_raw: {{ ab_get.stdout_lines | to_json }}
+  delegate_to: localhost

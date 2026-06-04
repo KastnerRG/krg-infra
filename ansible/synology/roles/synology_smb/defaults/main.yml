@@ -1,0 +1,7 @@
+---
+# Declarative spec consumed by this role (nas_spec_dir is in group_vars/synology.yml).
+synology_smb_spec: "{{ nas_spec_dir }}/smb-globals.yml"
+
+# Where the exporter writes the live-state snapshot (read by the drift_exporter).
+# On the control node (krg-deploy); keep out of git. Shared with the other synology_* roles.
+synology_export_dir: "/var/lib/krg-deploy/synology-export"

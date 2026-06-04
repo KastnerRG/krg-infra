@@ -1,0 +1,277 @@
+---
+# synology_users — manage LOCAL DSM users + (optionally) LOCAL groups from
+# spec/e4e-nas/{users,groups}.yml by wrapping the DSM CLI (synouser/synogroup).
+# DSM is not Debian, so ansible.builtin.user/group don't apply. Idempotent +
+# --check aware. Human identities come from the AD domain (winbind), NOT this
+# role; this role is for the service/break-glass LOCAL accounts (and local
+# groups, if the spec opts into type: local).
+#
+# CROSS-REFERENCE: keep the break-glass admin aligned with nix/users/admin.nix
+# and ansible/roles/krg_admin. All three layers read SSH keys from
+# nix/keys/admins.json (single source of truth). On this NAS the slot is
+# `e4e-admin` (E4E hardware); group_vars/synology.yml overrides
+# admin_ssh_keys to that slot.
+#
+# WHY raw + PATH prefix (validated on the rig 2026-05-27):
+#   * DSM ships Python 3.8; modern ansible-core needs >=3.9 on the target for its
+#     modules — so we use `raw` (runs over SSH, no python on the target).
+#   * synouser/synogroup live in /usr/syno/sbin, which is NOT in root's PATH, so
+#     each raw command prepends `{{ syno_path }}` (group_vars/synology.yml).
+# Surfaces that need Python on the target (file-write, webapi GET/diff/SET) are
+# shipped as standalone scripts via the `script:` module — DSM py3.8 runs them
+# fine, just not ansible's MODULE wrapper.
+
+- name: Load the declarative spec
+  ansible.builtin.include_vars:
+    file: "{{ item.file }}"
+    name: "{{ item.name }}"
+  loop:
+    - { file: "{{ synology_groups_spec }}", name: groups_spec }
+    - { file: "{{ synology_users_spec }}", name: users_spec }
+  loop_control:
+    label: "{{ item.name }}"
+
+# --- Local groups (only when the spec declares type: local) ---------------------
+- name: AD-managed groups are not created here (informational)
+  ansible.builtin.debug:
+    msg: >-
+      groups.yml type={{ groups_spec.type | default('ad') }} — group objects come from
+      KRG.LOCAL (winbind), not synogroup. Skipping local group creation.
+  when: (groups_spec.type | default('ad')) != 'local'
+
+- name: Manage local DSM groups
+  when: (groups_spec.type | default('ad')) == 'local'
+  block:
+    - name: Probe each local group (rc != 0 == missing)
+      # DSM CLIs return EXIT 255 for "not found" instead of 1, which collides
+      # with SSH's own 255 "connection failed" — ansible's raw: misclassifies
+      # that as UNREACHABLE and ignores failed_when: false. Translate 255 → 1
+      # before exiting so ansible can distinguish remote-not-found from SSH-died.
+      ansible.builtin.raw: |
+        PATH={{ syno_path }}:$PATH synogroup --get {{ item.name | quote }} >/dev/null 2>&1
+        rc=$?
+        [ "$rc" = 255 ] && exit 1 || exit $rc
+      register: synogroup_probe
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      loop: "{{ groups_spec.groups | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Create missing local groups
+      ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synogroup --add {{ item.item.name | quote }}"
+      when: (item.rc | default(1)) != 0
+      changed_when: true
+      loop: "{{ synogroup_probe.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+# --- Local users (service / break-glass accounts; humans come from AD) ----------
+- name: Probe each local user (rc != 0 == missing)
+  # See group probe above re: DSM 255-vs-missing — same translation here.
+  ansible.builtin.raw: |
+    PATH={{ syno_path }}:$PATH synouser --get {{ item.name | quote }} >/dev/null 2>&1
+    rc=$?
+    [ "$rc" = 255 ] && exit 1 || exit $rc
+  register: synouser_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  loop: "{{ users_spec.users | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Create missing local users
+  # synouser --add <name> <password> "<desc>" <expire 0/1> "<email>" <cannot_chg_pw 0/1>
+  ansible.builtin.raw: >-
+    PATH={{ syno_path }}:$PATH synouser --add {{ item.item.name | quote }}
+    {{ (synology_user_passwords[item.item.name] | default('')) | quote }}
+    {{ (item.item.description | default('')) | quote }}
+    0 {{ (item.item.email | default('')) | quote }} 0
+  when: (item.rc | default(1)) != 0
+  no_log: true # password is on the command line
+  changed_when: true
+  loop: "{{ synouser_probe.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+# --- Group membership (M1: honor spec `groups:` field) --------------------------
+# `synouser --add` doesn't accept a group list, so users land in `users` only.
+# `synogroup --memberadd <group> <user> [...users]` (DSM 7.x) adds members
+# idempotently — adding an already-member is a no-op (rc=0, "already in").
+# We iterate per-(user, group) so each pair is one raw call and the loop
+# label is human-readable.
+#
+# WHY this matters: e4e-automation is the Terraform `dsm_user`; without
+# `administrators` group membership it cannot drive the synology-community
+# provider. e4e-admin without `administrators` is a non-admin break-glass
+# (useless). The reviewer flagged the silent-ignore in 4577021512 (M1).
+- name: Build flat (user, group) pairs for membership add
+  ansible.builtin.set_fact:
+    _user_group_pairs: >-
+      {{
+        users_spec.users | default([])
+        | subelements('groups', skip_missing=True)
+        | map('list') | list
+      }}
+  no_log: true
+
+- name: Apply group membership (synogroup --memberadd; idempotent at DSM level)
+  # Same 255 translation as the probes — a real memberadd failure (group or
+  # user doesn't exist) returns 255 on DSM, which would be misclassified as
+  # UNREACHABLE. Translate so failed_when fires normally and the operator
+  # sees the real error instead of a spurious connection error.
+  ansible.builtin.raw: |
+    PATH={{ syno_path }}:$PATH synogroup --memberadd {{ item[1] | quote }} {{ item[0].name | quote }}
+    rc=$?
+    [ "$rc" = 255 ] && exit 1 || exit $rc
+  loop: "{{ _user_group_pairs }}"
+  loop_control:
+    label: "{{ item[0].name }} -> @{{ item[1] }}"
+  register: group_memberadd
+  # DSM 7.3 `synogroup --memberadd` empirical behaviour (2026-05-29):
+  #   rc=0 + minimal output                          — newly added
+  #   rc=1 + full membership listing in stdout       — user IS now a member
+  #                                                    (the listing IS the
+  #                                                    success confirmation;
+  #                                                    NOT a failure)
+  # The original assumption ("rc=0 with 'already in' / 'is a member' text")
+  # is wrong on this DSM build — DSM returns rc=1 for re-adds + lists the
+  # post-state. We accept rc=1 IFF the target user appears in stdout
+  # (the membership listing). True failures (missing group/user) still
+  # surface as rc=1 with EMPTY stdout, which trips failed_when normally.
+  # DSM 7.3 `synogroup --memberadd` empirical behaviour (re-verified 2026-05-31):
+  #   re-add (already a member): rc=0 + stdout contains "Group Members:" header
+  #                               followed by the current member listing
+  #                               (NO "already" or "is a member" literal text —
+  #                                that was the broken assumption that made
+  #                                this task report CHANGED on every run).
+  #   true add (newly added):    rc=0 + minimal/empty stdout (no listing header).
+  # So: "Group Members:" header presence => re-add no-op => NOT changed.
+  changed_when:
+    - group_memberadd.rc == 0
+    - "'Group Members:' not in (group_memberadd.stdout | default(''))"
+  failed_when:
+    - group_memberadd.rc != 0
+    - item[0].name not in (group_memberadd.stdout | default(''))
+
+# --- Disable built-in attack-surface accounts (admin, guest) — runbook §1 -------
+# EMPIRICAL on DSM 7.3 (e4e-nas, 2026-05-29): `synouser --disable` and
+# `--enum disabled` BOTH return rc=255 ("unrecognized option"). On this build,
+# accounts are "disabled" by setting the Expired flag via `synouser --modify`.
+# Probe each --get output for `Expired: [true|false]`; only --modify when
+# currently `[false]`. The --modify form has signature:
+#   synouser --modify <name> "<fullname>" <expired{0|1}> "<email>"
+# so we MUST parse Fullname + User Mail from the probe output to round-trip
+# unmanaged fields. Stock DSM ships admin + guest already Expired:[true],
+# so this is a no-op on a fresh install.
+
+- name: Probe each built-in account before disabling
+  # Capture full --get stdout (not just rc) so we can parse Expired / Fullname
+  # / User Mail. Same 255 → 1 translation as elsewhere — built-in `guest` is
+  # missing on some DSM installs and must report "not present" (rc=1) not
+  # "host unreachable" (rc=255).
+  ansible.builtin.raw: |
+    PATH={{ syno_path }}:$PATH synouser --get {{ item | quote }} 2>&1
+    rc=$?
+    [ "$rc" = 255 ] && exit 1 || exit $rc
+  register: builtin_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  loop: "{{ users_spec.disable_builtin | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Parse Expired flag from each built-in probe (per-item; more debuggable than selectattr+search)
+  ansible.builtin.set_fact:
+    expired_builtins: "{{ expired_builtins | default([]) + [item.item] }}"
+  loop: "{{ builtin_probe.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - (item.rc | default(1)) == 0
+    - item.stdout is search('Expired\s*:\s*\[true\]')
+  # Why per-item set_fact instead of the prior `selectattr('stdout','search',regex)`
+  # chain: that chain *should* have worked but didn't (the disable task ran on
+  # every play even when admin/guest were already Expired:[true]) — likely a
+  # Jinja escape-pass interaction where the regex's `\s` and `\[` lost their
+  # backslashes between YAML, the Jinja `>-` folded scalar, and selectattr's
+  # filter-argument evaluation. Direct `is search(...)` per item is unambiguous
+  # and the loop label makes it obvious in `-v` which items matched.
+
+- name: Disable built-in accounts (admin/guest) via synouser --modify expired=1
+  # synouser --modify <name> "<fullname>" <expired{0|1}> "<email>" — the only
+  # mechanism on DSM 7.3 (--disable doesn't exist). Fullname + email are
+  # parsed from the probe so unmanaged fields round-trip cleanly.
+  ansible.builtin.raw: |
+    PATH={{ syno_path }}:$PATH synouser --modify {{ item.item | quote }} {{ _full_name | quote }} 1 {{ _email | quote }}
+    rc=$?
+    [ "$rc" = 255 ] && exit 1 || exit $rc
+  vars:
+    _full_name: "{{ (item.stdout | regex_search('Fullname\\s*:\\s*\\[([^\\]]*)\\]', '\\1') | first) | default('') }}"
+    _email:     "{{ (item.stdout | regex_search('User Mail\\s*:\\s*\\[([^\\]]*)\\]', '\\1') | first) | default('') }}"
+  when:
+    - (item.rc | default(1)) == 0          # account exists on this DSM
+    - item.item not in expired_builtins    # not already Expired:[true]
+  changed_when: true
+  loop: "{{ builtin_probe.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+# --- DSM Home Service (required for SSH + AD homes) — runbook §1 step 5 + §2 ----
+- name: Apply DSM Home Service (User.Home set — full-object; partial = err 2001)
+  ansible.builtin.script: >-
+    apply_users.py home
+    --enable {{ users_spec.home_service.enable | default(true) }}
+    --include-domain-users {{ users_spec.home_service.include_domain_users | default(true) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: home_apply
+  changed_when: "'CHANGED' in home_apply.stdout or 'WOULD-CHANGE' in home_apply.stdout"
+  failed_when: "home_apply.rc != 0 or 'FAIL' in home_apply.stdout"
+  check_mode: false
+
+# --- Authorized SSH keys from nix/keys/admins.json ------------------------------
+# For each user with `ssh_keys_from: nix/keys/admins.json#<slot>`, write the keys
+# atomically into /var/services/homes/<user>/.ssh/authorized_keys (mode 0600,
+# parent dir 0700, owner = the user). Required for synology_ssh to lock down
+# password auth without locking us out. SKIPS api_only accounts.
+- name: Load shared admin keys map (single source of truth — nix/keys/admins.json)
+  ansible.builtin.set_fact:
+    _all_admin_keys: "{{ lookup('file', synology_admin_keys_file) | from_json }}"
+  run_once: true
+  no_log: true
+
+- name: Drop authorized_keys for each user with ssh_keys_from set
+  # `--keys-b64` (base64-of-JSON), NOT `--keys` (raw JSON). The keys contain
+  # SPACES (`<algo> <base64> <comment>`) AND double-quotes (from JSON), and
+  # those get mangled when args travel through `ansible script:` -> ssh ->
+  # remote sh's word-splitter. base64 has no shell-special chars, so it
+  # survives. See apply_users.py do_authorized_keys for the decode side.
+  # IMPORTANT: keep the --keys-b64 jinja expression on ONE line. YAML `>-`
+  # preserves the newline around a more-indented line (folded-scalar rule),
+  # which leaks a literal "\n--check" into the shell command and makes sh
+  # treat --check as a separate command (rc=127). Folding only flattens
+  # SAME-indent lines into spaces.
+  ansible.builtin.script: >-
+    apply_users.py authorized-keys
+    --username {{ item.name | quote }}
+    --keys-b64 {{ (_all_admin_keys[(item.ssh_keys_from | regex_replace('^.*#', ''))] | default([])) | to_json | b64encode | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: keys_apply
+  changed_when: "'CHANGED' in keys_apply.stdout or 'WOULD-CHANGE' in keys_apply.stdout"
+  failed_when: "keys_apply.rc != 0 or 'FAIL' in keys_apply.stdout"
+  check_mode: false
+  no_log: true   # username + keys (now base64) on the cmdline; defense in depth
+  when:
+    - item.ssh_keys_from is defined
+    - not (item.api_only | default(false))
+  loop: "{{ users_spec.users | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# --- Drift export (read-only) — only with `--tags export` -----------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

@@ -1,0 +1,127 @@
+---
+# synology_certificate — manage DSM Let's Encrypt certs from
+# spec/e4e-nas/certificates.yml. The role's job is "ensure the certs the
+# spec says should exist DO exist, and the default cert is the spec's
+# default candidate." DSM's own cron-driven LE renewal keeps the cert
+# fresh between role runs; the role re-issues if it sees expiry within
+# `renewal_buffer_days` (safety net for silently-broken renewal).
+#
+# Anti-drift posture (ADR 0001): cert presence + default-binding are
+# part of the box's declarative state, same as shares/users/firewall.
+# A cert manually swapped in via DSM UI shows up as drift on the next
+# `--check --diff` run.
+#
+# Service-specific bindings (e.g. AppPortal reverse-proxy entries for
+# garage-ui on :8443, MLflow on a future port) live in
+# synology_app_portal — this role owns "which certs EXIST + which is
+# DEFAULT" only.
+#
+# CROSS-REFERENCE: this role replaces the "DSM Wizard → Get LE cert"
+# manual step previously in docs/e4e-nas-dsm.md. The runbook entry
+# stays as a break-glass path (if DSM webapi is broken, click-through
+# still works), but git becomes the source of truth.
+#
+# Order is load-bearing per cert:
+#   1. letsencrypt-create  — ensure cert exists (issue if missing or expiring)
+#   2. set-default         — ensure DSM's default binding matches the spec
+#   3. bind-services       — migrate existing service bindings onto the cert
+#
+# Each cert in `letsencrypt:` is iterated with a `loop:` over a single
+# `ansible.builtin.script:` task — NOT a per-item include_tasks. Ansible's
+# default loop semantics fail-fast: a failed loop item halts the loop and
+# the subsequent tasks for that play. That's intentional here — if LE
+# issuance for cert A fails, you don't want set-default / bind-services
+# silently running for cert B on a half-known state. If we ever grow a
+# real "fail-soft" need (e.g. apply best-effort across N certs), the
+# right escape hatch is `ignore_errors: true` (or a register+fail-after
+# pattern), NOT switching to include_tasks.
+
+# Tags are applied PER TASK so the export's [export, never] gate stays
+# effective. A play-level role tag would propagate down here and override
+# `never` — see playbook.yml comment.
+- name: Load the certificate spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_certificate_spec }}"
+    name: cert_spec
+  tags: [synology_certificate, tls]
+
+- name: Issue / re-issue Let's Encrypt certs (per-domain, idempotent)
+  ansible.builtin.script: >-
+    apply_certificate.py letsencrypt-create
+    --domain {{ item.domain | quote }}
+    --email {{ item.email | quote }}
+    --sans-json {{ (item.sans | default([])) | to_json | quote }}
+    --renewal-buffer-days {{ item.renewal_buffer_days | default(30) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  loop: "{{ cert_spec.letsencrypt | default([]) }}"
+  loop_control:
+    label: "{{ item.domain }}"
+  register: le_apply
+  changed_when: "'CHANGED' in le_apply.stdout or 'WOULD-CHANGE' in le_apply.stdout"
+  failed_when: "le_apply.rc != 0 or 'FAIL' in le_apply.stdout"
+  check_mode: false
+  tags: [synology_certificate, tls]
+
+# Spec sanity: AT MOST ONE cert may be marked `default: true`. DSM has
+# exactly one default-cert slot; if the spec marks N>1 the role would
+# silently call set-default N times and the final winner becomes
+# ordering-dependent on the spec list (silent drift, hard to reason
+# about). Fail fast on the spec itself — this is a spec bug, not a
+# runtime failure.
+- name: "Spec sanity: at most one letsencrypt entry has default: true"
+  ansible.builtin.assert:
+    that:
+      - (cert_spec.letsencrypt | default([]) | selectattr('default', 'defined') | selectattr('default') | list | length) <= 1
+    fail_msg: >-
+      certificates.yml has multiple entries with `default: true`
+      ({{ (cert_spec.letsencrypt | default([]) | selectattr('default', 'defined') | selectattr('default') | map(attribute='domain') | list) }}).
+      DSM has exactly one default-cert slot — pick one.
+    success_msg: "OK: at most one letsencrypt entry marked default."
+  tags: [synology_certificate, tls]
+
+# Default-cert binding runs AFTER issuance. set-default refuses on a
+# missing cert (clean FAIL), so an item with `default: true` whose
+# letsencrypt-create failed surfaces as a chained failure rather than a
+# silent no-op.
+- name: "Set DSM default cert (only items with default: true)"
+  ansible.builtin.script: >-
+    apply_certificate.py set-default
+    --domain {{ item.domain | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  loop: "{{ cert_spec.letsencrypt | default([]) | selectattr('default', 'defined') | selectattr('default') | list }}"
+  loop_control:
+    label: "{{ item.domain }}"
+  register: default_apply
+  changed_when: "'CHANGED' in default_apply.stdout or 'WOULD-CHANGE' in default_apply.stdout"
+  failed_when: "default_apply.rc != 0 or 'FAIL' in default_apply.stdout"
+  check_mode: false
+  tags: [synology_certificate, tls]
+
+# Service bindings — `default: true` above only flags WHICH cert new
+# services get; it does NOT migrate existing service bindings. DSM web,
+# FTPS, KMIP, etc. stay on whatever cert they were bound to (typically
+# the factory self-signed `synology` cert). bind-services explicitly
+# migrates the (service, subscriber) tuples named in `bindings:` to the
+# spec's cert. Idempotent: skips entries already on the target cert.
+- name: Bind certificates to DSM services (DSM web, FTPS, KMIP, ...)
+  ansible.builtin.script: >-
+    apply_certificate.py bind-services
+    --domain {{ item.domain | quote }}
+    --bindings-json {{ item.bindings | to_json | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  loop: "{{ cert_spec.letsencrypt | default([]) | selectattr('bindings', 'defined') | rejectattr('bindings', 'equalto', []) | list }}"
+  loop_control:
+    label: "{{ item.domain }}"
+  register: bind_apply
+  changed_when: "'CHANGED' in bind_apply.stdout or 'WOULD-CHANGE' in bind_apply.stdout"
+  failed_when: "bind_apply.rc != 0 or 'FAIL' in bind_apply.stdout"
+  check_mode: false
+  tags: [synology_certificate, tls]
+
+# --- Drift export (read-only) — only with `--tags export` -----------------------
+# import_tasks is fine here precisely BECAUSE the body tasks above are
+# tagged per-task (not via role-level), so `[export, never]` on the import
+# isn't competing with an ambient `synology_certificate` tag.
+- name: Export live cert state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

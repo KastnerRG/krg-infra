@@ -1,0 +1,8 @@
+---
+synology_certificate_spec: "{{ nas_spec_dir }}/certificates.yml"
+
+# Per-host drift-snapshot dir on the OPERATOR's control node (NOT on the
+# NAS). Same default as every other synology_* role's exporter — kept in
+# defaults rather than inlined via `| default(...)` so an operator can
+# override it once at the group_vars/inventory level.
+synology_export_dir: "/var/lib/krg-deploy/synology-export"

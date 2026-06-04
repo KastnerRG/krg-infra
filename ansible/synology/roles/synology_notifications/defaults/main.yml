@@ -1,0 +1,10 @@
+---
+synology_notifications_spec: "{{ nas_spec_dir }}/notifications.yml"
+synology_export_dir: "/var/lib/krg-deploy/synology-export"
+
+# Bring-up operator flag: skip Mail.Conf SET when DSM can't reach the SMTP
+# relay (e.g. NAS still on a temporary network during initial bring-up).
+# DSM returns err 4600 if the SET tries to validate the SMTP path and fails.
+# Override via -e: `ansible-playbook ... -e synology_notifications_defer_mail=true`
+# Default false so production applies don't silently skip.
+synology_notifications_defer_mail: false

@@ -219,6 +219,14 @@ terraform.rc
 .secrets/
 *.env.local
 
+# Ansible extra-vars files. The synology playbook uses these for runtime
+# secrets that aren't in OpenBao yet (synology_user_passwords map,
+# hyper_backup_secrets, ad_join_password). The naming convention is
+# `secrets-<purpose>.yml` (e.g. secrets-hb.yml, secrets-syno.yml). Reviewer
+# 4577021512 (M2) flagged this gap. Also catches a stray `secrets.yml`.
+secrets-*.yml
+secrets.yml
+
 # NixOS build artifacts
 result
 result-*
@@ -231,3 +239,6 @@ result-*
 oec-qualystrellixinstallers-linux.tgz
 *.sql
 ref/*
+secrets-*.yml
+
+SESSION-STATE-*.md

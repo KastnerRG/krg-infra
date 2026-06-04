@@ -1,0 +1,3 @@
+---
+synology_dsm_updates_spec: "{{ nas_spec_dir }}/dsm-updates.yml"
+synology_export_dir: "/var/lib/krg-deploy/synology-export"

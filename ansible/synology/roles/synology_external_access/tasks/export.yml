@@ -1,0 +1,39 @@
+---
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get QuickConnect config
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.QuickConnect method=get version=1"
+  register: qc_get
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Get UPnP config
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Network.Router.UPnP method=get version=1"
+  register: upnp_get
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Get DDNS config
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.ExternalAccess.DDNS method=get version=1"
+  register: ddns_get
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-external-access.yml"
+    mode: "0600"
+    content: |
+      quickconnect_raw: {{ qc_get.stdout_lines | default([]) | to_json }}
+      upnp_raw: {{ upnp_get.stdout_lines | default([]) | to_json }}
+      ddns_raw: {{ ddns_get.stdout_lines | default([]) | to_json }}
+  delegate_to: localhost

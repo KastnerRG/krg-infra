@@ -1,0 +1,10 @@
+# Synology DSM hosts (e4e-nas only today). Kept here — NOT in the main
+# ansible/inventory/hosts.yml — so the whole NAS surface is one `rm -rf
+# ansible/synology/` away from gone. Connection + spec vars live in
+# group_vars/synology.yml.
+all:
+  children:
+    synology:
+      hosts:
+        e4e-nas:
+          ansible_host: 132.239.17.124

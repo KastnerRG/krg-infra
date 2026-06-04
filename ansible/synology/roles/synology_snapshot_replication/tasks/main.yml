@@ -1,0 +1,86 @@
+---
+# synology_snapshot_replication — manage per-share Btrfs snapshot schedules and
+# retention on e4e-nas from spec/e4e-nas/snapshots.yml.
+#
+# CROSS-REFERENCE: this is the DSM counterpart of nix `services.zfs.autoSnapshot`
+# (waiter — `nix/modules/zfs.nix`) and the ansible `nfs_server` zfs-auto-snapshot
+# timers (fabricant). Same cadence + retention shape (hourly/daily/weekly/monthly
+# keep counts), same per-share opt-out, mirrored fleet-wide.
+#
+# Logic in files/apply_snapshots.py (script: module, DSM py3.8). Idempotent: read
+# current schedule per share, diff against the desired (defaults + per-share
+# override), only re-apply where it drifts. shares not listed = defaults
+# applied.
+
+- name: Load the Snapshot Replication spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_snapshots_spec }}"
+    name: snap_spec
+
+- name: Load the shares spec (to know the full list of shares to schedule)
+  ansible.builtin.include_vars:
+    file: "{{ nas_spec_dir }}/shares.yml"
+    name: shares_spec
+
+# --- Probe: is the Snapshot Replication API present? ------------------------
+# Snapshot Replication is an OPTIONAL DSM package. On a fresh install (no
+# Package Center deploy) the `SYNO.Core.Share.Snapshot` namespace doesn't
+# exist (err 102/103). Without this probe the per-share apply loop fails 51×
+# with the same KeyError, masking which shares are real candidates. Empirically
+# confirmed 2026-05-29 on the live e4e-nas: no lib file for the API.
+- name: Probe Snapshot Replication API availability (one shot, gate the loop)
+  ansible.builtin.raw: |
+    PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Share.Snapshot version=1 method=get name=admin 2>&1 \
+      | grep -q '"success" *: *true' && exit 0 || exit 1
+  register: snap_api_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: WARN that Snapshot Replication isn't installed (per-share schedules deferred)
+  ansible.builtin.debug:
+    msg: |
+      Snapshot Replication API not available on this DSM — the package isn't
+      installed (or the API has moved). Per-share snapshot retention is
+      DEFERRED. Follow-up: install "Snapshot Replication" via Package Center
+      (or `synopkg install_from_server SnapshotReplication`) and re-run this
+      role.
+  when: (snap_api_probe.rc | default(1)) != 0
+
+- name: Apply Snapshot Replication schedule per share
+  when: (snap_api_probe.rc | default(1)) == 0
+  # Per-share lookup is hoisted into `vars:` so each script arg fits on ONE
+  # line. YAML `>-` (folded scalar) preserves the newline around a
+  # more-indented continuation line — which leaks a literal "\n" into the
+  # shell command and breaks downstream args (sh runs them as commands,
+  # rc=127). Same class of bug fixed in synology_users `--keys-b64`.
+  vars:
+    _override: "{{ snap_spec.shares | default([]) | selectattr('name', 'equalto', item.name) | list | first | default({}) }}"
+    _sched: "{{ _override.schedule | default({}) }}"
+    _defs: "{{ snap_spec.defaults }}"
+    _enabled: "{{ _override.enabled | default(_defs.enabled | default(true)) }}"
+    _hourly:  "{{ _sched.hourly  | default(_defs.schedule.hourly  | default(4))  }}"
+    _daily:   "{{ _sched.daily   | default(_defs.schedule.daily   | default(7))  }}"
+    _weekly:  "{{ _sched.weekly  | default(_defs.schedule.weekly  | default(4))  }}"
+    _monthly: "{{ _sched.monthly | default(_defs.schedule.monthly | default(12)) }}"
+  ansible.builtin.script: >-
+    apply_snapshots.py share
+    --share {{ item.name | quote }}
+    --enabled {{ _enabled }}
+    --hourly {{ _hourly }}
+    --daily {{ _daily }}
+    --weekly {{ _weekly }}
+    --monthly {{ _monthly }}
+    {{ '--check' if ansible_check_mode else '' }}
+  loop: "{{ shares_spec.shares | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: snap_apply
+  changed_when: "'CHANGED' in snap_apply.stdout or 'WOULD-CHANGE' in snap_apply.stdout"
+  failed_when: "snap_apply.rc != 0 or 'FAIL' in snap_apply.stdout"
+  check_mode: false
+
+# --- Drift export (read-only) — only with `--tags export` -------------------
+- name: Export live snapshot schedules for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

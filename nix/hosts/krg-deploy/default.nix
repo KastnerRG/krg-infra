@@ -51,6 +51,79 @@
   # Not yet domain-joined — disable AD client until keytab is provisioned.
   krg.adClient.enable = false;
 
+  # ── Fleet SSH host keys (deploy trust anchor) ───────────────────────────────
+  # Renders /etc/ssh/ssh_known_hosts so the push deploy (deploy/deploy-nixos.sh,
+  # StrictHostKeyChecking=yes) and the Ansible leg (host_key_checking=True) trust
+  # the fleet without trust-on-first-use. System-wide, so it applies regardless of
+  # which HOME the github-runner service uses.
+  #
+  # INTERIM: pinned per-host keys are rebuild-fragile — a host reinstalled from
+  # scratch regenerates its key and the pin must be updated here + krg-deploy
+  # redeployed. The rebuild-proof replacement (OpenBao SSH host CA → trust one CA,
+  # not N keys) is tracked in #130. Re-pull a key from the host's own
+  # /etc/ssh/ssh_host_ed25519_key.pub (trusted channel) if it ever changes.
+  programs.ssh.knownHosts = {
+    krg-vault = {
+      hostNames = [ "krg-vault.ucsd.edu" "137.110.161.123" ];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtSXiHTb0pe3ST5L2bMwbLEQxc/SXx3590fPHWR5feP";
+    };
+    krg-ldap = {
+      hostNames = [ "krg-ldap.ucsd.edu" "137.110.161.109" ];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMBjXnLvMjFvKJjRE2BhhD7Arx2PzXXbQbjFbSCZKizQ";
+    };
+    waiter = {
+      hostNames = [ "waiter.ucsd.edu" "137.110.161.67" ];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINf+Y0cKbiA1tyroR3QM2XK86ZPDC3JSsevNPYiTDYw/";
+    };
+    # krg-prod was REINSTALLED (fresh key, root@nixos) — the old fabricant-prod key
+    # did NOT match. Confirmed 2026-06-04 via an authenticated SSH session to the
+    # live host: `cat /etc/ssh/ssh_host_ed25519_key.pub`.
+    krg-prod = {
+      hostNames = [ "krg-prod.ucsd.edu" "137.110.161.106" ];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILeQ8gYCBKrTWwDGtvcGrBA9/efa7T0N6rndXYI5yVAV";
+    };
+    # Proxmox hypervisor — for the Ansible leg (deploy-ansible.sh → root@fabricant).
+    fabricant = {
+      hostNames = [ "fabricant.ucsd.edu" ];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN846n66tuIGzD33kP6HKCVf7s7nAS+HkNBtTObQ2OFW";
+    };
+    # e4e-prod omitted — host not provisioned yet (also absent from deploy ORDER).
+  };
+
+  # ── GitHub Actions self-hosted runner ──────────────────────────────────────
+  # Push-to-main continuous deploy (.github/workflows/deploy.yml). Runs as the
+  # break-glass admin so it reuses krg-admin's existing fleet identity — the same
+  # SSH keys + sudoNoPassword the nightly ansible-apply timer below already uses
+  # to reach every host. The workflow is GATED on green CI before it applies.
+  #
+  # Secrets — NOT in git (operator-provisioned, mirrors the .secrets/ pattern):
+  #   /var/lib/krg-admin/.secrets/github-runner-token
+  #       a runner registration token, or a fine-grained PAT with the repo's
+  #       "Administration" read/write scope, used to register the runner.
+  #       BRING-UP: a short-lived registration token for now; move to a
+  #       lab-owned bot-account PAT stored in OpenBao — tracked in #121.
+  #   /var/lib/krg-admin/.ssh/id_ed25519
+  #       krg-admin's private key to the fleet (already required by ansible-apply).
+  # The deploy sources per-layer secrets at run time (see deploy/*.sh):
+  #   tofu   — terraform/<target>/.deploy-env + the TOFU_STATE_PASSPHRASE secret.
+  services.github-runners.krg-deploy = {
+    enable      = true;
+    name        = "krg-deploy";
+    url         = "https://github.com/KastnerRG/krg-infra";
+    tokenFile   = "/var/lib/krg-admin/.secrets/github-runner-token";
+    user        = "krg-admin";   # reuse the control-node identity (SSH + sudo + tofu state)
+    replace     = true;          # re-register if a stale runner of this name exists
+    extraLabels = [ "krg-deploy" ];   # deploy.yml targets [self-hosted, krg-deploy]
+    # The deploy toolchain on the runner's PATH (system-wide pkgs aren't on the
+    # service PATH). nixos-rebuild evaluates the flake (needs nix + git); the rest
+    # drive the Ansible / OpenTofu / OpenBao layers.
+    extraPackages = with pkgs; [
+      nix nixos-rebuild git openssh
+      ansible opentofu openbao python3
+      jq sshpass gnused gawk coreutils
+    ];
+  };
+
   # Periodic Ansible apply — mirrors NixOS autoUpgrade on the Ansible layer.
   # Pulls main and runs site.yml nightly; drift gets corrected automatically.
   systemd.services.ansible-apply = {

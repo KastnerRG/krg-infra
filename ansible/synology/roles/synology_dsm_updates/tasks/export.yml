@@ -1,0 +1,36 @@
+---
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get DSM Upgrade.Setting
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Upgrade.Setting method=get version=1"
+  register: upd_setting_get
+  changed_when: false
+  check_mode: false
+
+- name: Get DSM Upgrade.Server
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Upgrade.Server method=get version=1"
+  register: upd_server_get
+  changed_when: false
+  check_mode: false
+
+- name: Get DSM Upgrade (current/available version, read-only)
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Upgrade method=get version=1"
+  register: upd_get
+  changed_when: false
+  check_mode: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-dsm-updates.yml"
+    mode: "0600"
+    content: |
+      setting_raw: {{ upd_setting_get.stdout_lines | to_json }}
+      server_raw: {{ upd_server_get.stdout_lines | to_json }}
+      upgrade_raw: {{ upd_get.stdout_lines | to_json }}
+  delegate_to: localhost

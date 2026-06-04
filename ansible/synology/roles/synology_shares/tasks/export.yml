@@ -1,0 +1,33 @@
+---
+# Exporter (read-only): capture live DSM shares so the drift_exporter can diff them
+# against spec/e4e-nas/shares.yml. Paired half of the role (ADR 0001 — UI = drift).
+# Run: ansible-playbook playbook.yml --tags export
+#
+# ⚠️ The `synoshare --enum`/`--get` output FORMAT is undocumented/version-specific; for
+# now we capture the raw lines and finish the structured parse into the shares spec
+# shape once validated on the rig. drift_exporter (milestone 6) consumes this snapshot.
+
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Enumerate all shares
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synoshare --enum ALL"
+  register: synoshare_enum
+  changed_when: false
+  check_mode: false
+
+- name: Write the live-state snapshot (spec-shaped once parsing is validated)
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-shares.yml"
+    mode: "0600"
+    content: |
+      # Live DSM shares on {{ inventory_hostname }} — synology_shares exporter.
+      # raw `synoshare --enum ALL` output; structured parse into the shares spec shape
+      # (one mapping per share with path/desc/browseable) pending rig-validated parsing.
+      shares_raw: {{ synoshare_enum.stdout_lines | to_json }}
+  delegate_to: localhost

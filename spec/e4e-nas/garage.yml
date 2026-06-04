@@ -1,0 +1,18 @@
+# Garage S3 buckets / keys / policies / quotas — declarative source of truth.
+# Consumed by the `garage_config` Ansible role (wraps `garage bucket create`,
+# `garage key new`, `garage bucket allow`); exporter reads `garage bucket list -o json`
+# etc. back. Garage runs on the NAS (ADR 0002, 0003), pinned image, behind DSM's
+# reverse proxy. Bucket data lives on the `s3-data` share (shares.yml).
+#
+# TODO (needs your input): the bucket/key/policy/quota list.
+#
+# Schema (proposed):
+# buckets:
+#   - { name: fishcamera, quota_gb: 500 }
+# keys:
+#   - name: fishcamera-rw
+#     allow:
+#       - { bucket: fishcamera, permissions: [read, write] }
+
+buckets: []   # TODO
+keys: []      # TODO

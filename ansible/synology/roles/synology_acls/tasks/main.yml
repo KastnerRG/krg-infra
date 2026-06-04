@@ -1,0 +1,110 @@
+---
+# synology_acls — manage the DSM share -> principal ACL grant matrix from
+# spec/e4e-nas/acls.yml by wrapping `synoshare --setuser` (groups are @-prefixed; a
+# bare group name silently no-ops). Logic lives in files/apply_acls.py, shipped via
+# the `script` module (DSM's Python 3.8). Idempotent: read `--list_acl` tiers,
+# diff, only re-set the tiers that drift with the `=` operator (sets each tier
+# EXACTLY — the grant list is authoritative; a principal omitted from the spec is
+# REMOVED). Git is truth; UI = drift (ADR 0001). Validated on the DSM rig.
+#
+# TWO modes:
+#   * setuser (default)         — share-level grant matrix. Runs on every play.
+#   * recursive-stamp (opt-in)  — runbook §4 "apply to this folder, sub-folders
+#     and files" post-AD-join pass. Walks the whole subtree (`synoacltool -reset -R`)
+#     to overwrite preserved-data ACLs carrying dead old-domain SIDs. Expensive on
+#     big shares — gated behind `--tags acls-recursive` so it does NOT run on every
+#     synology_base re-apply. Operator triggers explicitly post-AD-join.
+#
+# CROSS-REFERENCE: there's no Linux counterpart; ACLs are DSM-specific. The
+# share-level grant model mirrors what nix/profiles/server.nix would express
+# with `users.users.*.groups` on a non-DSM host, but at the filesystem layer.
+
+- name: Load the ACL + shares + AD specs
+  ansible.builtin.include_vars:
+    file: "{{ item.file }}"
+    name: "{{ item.name }}"
+  loop:
+    - { file: "{{ synology_acls_spec }}",   name: acls_spec }
+    - { file: "{{ synology_shares_spec }}", name: shares_spec }
+    - { file: "{{ synology_ad_spec }}",     name: ad_spec }
+  loop_control:
+    label: "{{ item.name }}"
+
+# --- Mode 1: share-level grants (always runs) ---------------------------------
+- name: Apply share-level ACL grants (synoshare --setuser; groups @-prefixed)
+  ansible.builtin.script: >-
+    apply_acls.py setuser
+    --share {{ item.share | quote }}
+    --grants {{ item.grants | default([]) | to_json | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  loop: "{{ acls_spec.acls | default([]) }}"
+  loop_control:
+    label: "{{ item.share }}"
+  register: acl_apply
+  changed_when: "'CHANGED' in acl_apply.stdout or 'WOULD-CHANGE' in acl_apply.stdout"
+  failed_when: "acl_apply.rc != 0 or 'FAIL' in acl_apply.stdout"
+  check_mode: false # run in --check too; apply_acls.py --check self-gates (read-only)
+
+# --- Mode 1b: admin_groups → RW on every share in shares.yml (additive bridge) ---
+# The acls.yml `setuser` matrix above is authoritative per-share (omitting a
+# principal REMOVES it). That makes "Domain Admins RW on every share" tedious
+# to express — you'd have to add the same admin grants to every per-share
+# entry in acls.yml. This task is the cross-cutting bridge instead: it loops
+# the shares.yml share list and additively grants each ad.yml admin_groups
+# entry on the RW tier. Idempotent (`+` adds only what's missing).
+#
+# CRITICAL SAFETY: drives from spec.shares — NOT from `synoshare --enum`. The
+# DSM-auto-managed shares (homes, web, photo, NetBackup) are intentionally
+# NOT listed in shares.yml because their on-disk perms are sshd-critical
+# (a homes-share grant change cascades to /volume1/homes/<user>/.ssh/ and
+# can lock SSH out — we hit this 2026-06-01). NEVER widen this loop to use
+# --enum or to include those system shares.
+- name: Bridge AD admin_groups → RW on every spec'd share (additive; skips system shares by spec design)
+  vars:
+    _netbios: "{{ ad_spec.ad.realm.split('.')[0] }}"
+    _shares: "{{ shares_spec.shares | default([]) | map(attribute='name') | list }}"
+    _grants: >-
+      {{ (ad_spec.ad.admin_groups | default([]))
+         | map('regex_replace', '^', '@' ~ _netbios ~ '\\') | list }}
+  ansible.builtin.script: >-
+    apply_acls.py admin-grants
+    --shares {{ _shares | to_json | quote }}
+    --grants {{ _grants | to_json | quote }}
+    --tier RW
+    {{ '--check' if ansible_check_mode else '' }}
+  register: admin_grants_apply
+  changed_when: "'CHANGED' in admin_grants_apply.stdout or 'WOULD-CHANGE' in admin_grants_apply.stdout"
+  failed_when: "admin_grants_apply.rc != 0 or 'FAIL' in admin_grants_apply.stdout"
+  check_mode: false
+  when:
+    - (ad_spec.ad.admin_groups | default([])) | length > 0
+    - (shares_spec.shares | default([])) | length > 0
+
+# --- Mode 2: recursive filesystem stamp (opt-in, --tags acls-recursive) -------
+# Walks <path>/** and re-applies the share-root ACL to every entry. The
+# `apply_recursive` per-share flag (default false; spec defaults can flip it to
+# true) declares INTENT; the `acls-recursive` tag controls SCHEDULE so the walk
+# doesn't fire on every synology_base re-apply. Operator runs:
+#     ansible-playbook playbook.yml --tags acls-recursive
+# post-AD-join, after the share-level grants have been re-pointed at KRG.LOCAL
+# principals.
+- name: Recursive filesystem ACL stamp (runbook §4 — opt-in, expensive)
+  ansible.builtin.script: >-
+    apply_acls.py recursive-stamp
+    --share {{ item.share | quote }}
+    --path {{ (item.path | default('/volume1/' + item.share)) | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  loop: "{{ acls_spec.acls | default([]) }}"
+  loop_control:
+    label: "{{ item.share }}"
+  when: item.apply_recursive | default(acls_spec.defaults.apply_recursive | default(false))
+  register: recursive_apply
+  changed_when: "'CHANGED' in recursive_apply.stdout or 'WOULD-CHANGE' in recursive_apply.stdout"
+  failed_when: "recursive_apply.rc != 0 or 'FAIL' in recursive_apply.stdout"
+  check_mode: false
+  tags: [acls-recursive, never]   # `never` -> skip unless explicitly requested
+
+# --- Drift export / pre-reset live capture — only with `--tags export` --------
+- name: Export live ACL state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

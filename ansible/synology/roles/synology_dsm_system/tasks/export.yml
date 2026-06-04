@@ -1,0 +1,36 @@
+---
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get live Network state
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Network method=get version=2"
+  register: net_get
+  changed_when: false
+  check_mode: false
+
+- name: Get live Ethernet interfaces list
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Network.Interface method=list version=1"
+  register: eth_get
+  changed_when: false
+  check_mode: false
+
+- name: Get live System info
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.System method=info version=3"
+  register: sys_get
+  changed_when: false
+  check_mode: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-dsm-system.yml"
+    mode: "0600"
+    content: |
+      network_raw: {{ net_get.stdout_lines | to_json }}
+      ethernet_raw: {{ eth_get.stdout_lines | to_json }}
+      system_raw: {{ sys_get.stdout_lines | to_json }}
+  delegate_to: localhost

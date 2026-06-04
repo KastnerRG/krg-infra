@@ -1,0 +1,34 @@
+# Synology DSM hosts (e4e-nas). DSM is not Debian — the synology_* roles wrap
+# the DSM CLI (synouser/synogroup/synoshare/synowebapi) over SSH with `raw`
+# and `script:` (DSM's python 3.8 is too old for ansible's modules — validated
+# on the rig). Identities/shares are declared in spec/e4e-nas/*.yml (git is
+# truth; UI = drift — ADR 0001). See playbook.yml.
+#
+# Shared `admin_ssh_keys` / `admin_password_hash` (e4e-admin slot) +
+# `krg_trusted` come from group_vars/all.yml — single source of truth, same
+# files as the main ansible/ subtree.
+#
+# PREREQS on the box (validated on the rig 2026-05-27):
+#   * SSH enabled (Control Panel → Terminal & SNMP).
+#   * an administrators-group account (NOT built-in `admin`) with the automation
+#     SSH key AND **NOPASSWD sudo** — password-prompt `become` over DSM's old sshd
+#     is flaky (intermittent connection drops); key auth + NOPASSWD sudo is robust
+#     (and is the prod design anyway).
+#   * Enable the **User Home service** (else `-tt`/become sessions hit
+#     "Could not chdir to home" and can fail).
+#   * No python package needed — roles use `raw` (DSM's python 3.8 < ansible's floor).
+ansible_user: e4e-admin
+ansible_become: true
+# Short name (the canonical form for the connection variable). Don't use the
+# FQCN `ansible.builtin.sudo` — older ansible-core versions don't recognize it
+# at the connection-var level and silently break privilege escalation.
+ansible_become_method: sudo
+
+# DSM CLI tools live under /usr/syno/{sbin,bin}, which are NOT in root's PATH;
+# the synology_* roles prepend this in their raw commands.
+syno_path: "/usr/syno/sbin:/usr/syno/bin"
+
+# Declarative spec (repo root /spec/e4e-nas) consumed by the synology_* roles.
+# playbook_dir is the new location ansible/synology/, so ../../ still reaches
+# the repo root (same depth as the old playbooks/ location).
+nas_spec_dir: "{{ playbook_dir }}/../../spec/e4e-nas"

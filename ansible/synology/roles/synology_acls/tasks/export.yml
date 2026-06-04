@@ -1,0 +1,62 @@
+---
+# Exporter (read-only): capture the LIVE share-level grants (`synoshare --list_acl`) AND
+# the filesystem ACLs (`synoacltool -get`) for every share in shares.yml. This is the
+# pre-reset ACL capture the runbook needs (the DSM config export's ACL blobs reference
+# dead old-domain SIDs and are NOT usable), so run this BEFORE the Mode-2 reset:
+#   ansible-playbook playbook.yml --tags export
+# The `--list_acl` lists drop into acls.yml's grant shape (groups are @name -> group:).
+
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Load the shares spec (to iterate every share)
+  ansible.builtin.include_vars:
+    file: "{{ synology_shares_spec }}"
+    name: shares_spec
+
+- name: Capture share-level ACL grants per share
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synoshare --list_acl {{ item.name | quote }}"
+  loop: "{{ shares_spec.shares | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: acl_list
+  changed_when: false
+  failed_when: false # a missing share shouldn't abort the whole capture
+  check_mode: false
+
+- name: Capture filesystem ACLs per share (dead-SID detection / post-join re-apply input)
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synoacltool -get {{ item.path | quote }}"
+  loop: "{{ shares_spec.shares | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: acl_fs
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-acls.yml"
+    mode: "0600"
+    content: |
+      # Live DSM ACLs on {{ inventory_hostname }} — synology_acls exporter (pre-reset capture).
+      # share_acls = synoshare --list_acl (RW/RO/NA lists; @name = group). fs_acls =
+      # synoacltool -get (on-disk Windows ACLs; dead old-domain SIDs need recursive re-apply
+      # after the KRG.LOCAL join — runbook).
+      share_acls:
+      {% for r in acl_list.results %}
+        - share: {{ r.item.name }}
+          list_acl: {{ r.stdout_lines | default([]) | to_json }}
+      {% endfor %}
+      fs_acls:
+      {% for r in acl_fs.results %}
+        - share: {{ r.item.name }}
+          path: {{ r.item.path }}
+          synoacltool_get: {{ r.stdout_lines | default([]) | to_json }}
+      {% endfor %}
+  delegate_to: localhost

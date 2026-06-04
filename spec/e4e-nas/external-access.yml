@@ -1,0 +1,25 @@
+# DSM External Access for e4e-nas — declarative source of truth.
+# Consumed by the `synology_external_access` Ansible role.
+#
+# This is the "no relay around our perimeter" role. QuickConnect and UPnP both
+# punch holes through the in-DSM firewall (synology_security) and the upstream
+# Proxmox cluster.fw, so they MUST be off to make our perimeter meaningful.
+# Runbook §3: "they bypass this perimeter via Synology's relay" — exactly the
+# behaviour we're killing.
+#
+# DSM API surface (best-known from
+# /usr/syno/synoman/webapi/SYNO.Core.{QuickConnect,ExternalAccess.DDNS,Network.Router.UPnP}*.lib
+# — empirical confirmation pending; flip OUT_KEYS in apply_external_access.py
+# on first-apply drift):
+#   * SYNO.Core.QuickConnect             get/set     (QuickConnect relay)
+#   * SYNO.Core.ExternalAccess.DDNS      get/set     (Dynamic DNS)
+#   * SYNO.Core.Network.Router.UPnP      get/set     (UPnP / NAT port forwarding)
+
+quickconnect:
+  enable: false               # HARDEN: live=on, relay exposes dsm/ssh/file_sharing
+
+upnp:
+  enable: false               # HARDEN: live=on, punches NAT around the firewall
+
+ddns:
+  enable: false               # not in use today; flip on per-NAS if needed

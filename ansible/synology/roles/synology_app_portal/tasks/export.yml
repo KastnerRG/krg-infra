@@ -1,0 +1,43 @@
+---
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get AppPortal config
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.AppPortal.Config method=get version=1"
+  register: cfg_get
+  changed_when: false
+  check_mode: false
+
+- name: List AppPortal portals
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.AppPortal method=list version=1"
+  register: apps_get
+  changed_when: false
+  check_mode: false
+
+- name: List AppPortal reverse-proxy entries
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.AppPortal.ReverseProxy method=list version=1"
+  register: rp_get
+  changed_when: false
+  check_mode: false
+
+- name: List AppPortal access-control entries
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.AppPortal.AccessControl method=list version=1"
+  register: ac_get
+  changed_when: false
+  check_mode: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-app-portal.yml"
+    mode: "0600"
+    content: |
+      config_raw: {{ cfg_get.stdout_lines | to_json }}
+      apps_raw: {{ apps_get.stdout_lines | to_json }}
+      reverse_proxy_raw: {{ rp_get.stdout_lines | to_json }}
+      access_control_raw: {{ ac_get.stdout_lines | to_json }}
+  delegate_to: localhost

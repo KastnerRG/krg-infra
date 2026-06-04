@@ -1,0 +1,236 @@
+# DSM security perimeter for e4e-nas — firewall + auto-block.
+# Source of truth for the post-rebuild state. Defense-in-depth: this is the
+# in-DSM layer, complementary to the Proxmox/in-guest layers handled elsewhere.
+#
+# IaC home: `synology_security` Ansible role.
+#   - Globals (Firewall, Firewall.Conf, AutoBlock):    apply_security.py via synowebapi --exec
+#   - Per-adapter rules (Firewall.Profile.set/Apply):  apply_security.py firewall-profile
+#                                                      via files/dsm_http.py over HTTP webapi
+#     (the `synowebapi --exec Rules.save_start` CLI path SEGFAULTs on rule
+#     objects; the DSM web UI uses Firewall.Profile.set + Profile.Apply
+#     over HTTP, and so do we.)
+#
+# The Firewall API surface (per .lib):
+#   Firewall              get/set                  (enable + active profile_name)
+#   Firewall.Conf         get/set                  (port_check, etc.)
+#   Firewall.Adapter      list                     (adapter_names: eth0..eth3, vpn, …)
+#   Firewall.Profile      get/list/clone/create/delete/rename/set    ← rule push
+#   Firewall.Profile.Apply  start/status/stop      ← two-phase commit
+#   Firewall.Rules        load                     (read-only; the *.save_start
+#                                                  path segfaults — don't use)
+#   Firewall.Geoip        get/list                 (per-country IP-range lookup,
+#                                                  not a country-allowlist toggle)
+
+firewall:
+  enable: true
+  active_profile: default
+  port_check: true
+
+  profiles:
+    # The `synology_security` role pushes per-adapter rules via the
+    # `firewall-profile` subcommand in apply_security.py, which uses
+    # files/dsm_http.py over the HTTP webapi (Profile.set + Profile.Apply
+    # two-phase). The CLI `synowebapi --exec ... Rules.save_start` SEGFAULTs
+    # on rule objects; the UI uses Profile.set instead, and so do we.
+    #
+    # Adapters listed here are MANAGED; adapters NOT listed (eth1..eth3, vpn,
+    # pppoe, wlan0) keep their current DSM state untouched (so operators can
+    # add per-adapter emergency rules in the UI without us nuking them on the
+    # next run). DSM exposes: eth0..eth3 + global + vpn + pppoe + wlan0.
+    #
+    # Rule field shape (canonical, post-DSM-normalization — matches what
+    # Profile.get returns; using these exact field names + values avoids
+    # spurious drift):
+    #   enable           bool      rule on/off
+    #   log              bool      log hits to /var/log/synolog/synofirewall
+    #   name             str       display name (free text, "" allowed)
+    #   policy           enum      "allow" | "deny" | "drop"  (rule action)
+    #   port_direction   enum      "destination" | "source" | ""
+    #   port_group       str       "all" or specific service id
+    #   ports            str       "all" or csv ports
+    #   protocol         str       "all" | "tcp" | "udp" | "icmp"
+    #   source_ip_group  enum      "all" | "ip" (single IP or CIDR) | "iprange"
+    #                              | "ipset" (named group) | "geoip" (country)
+    #   source_ip        str       value matching source_ip_group
+    default:
+      # Per-adapter policy is the DEFAULT action when no rule matches.
+      # DSM accepts {"allow", "drop", "none"} — note the absence of
+      # "deny". For default-deny enforcement use "drop" (silent drop,
+      # no reject — doesn't reveal the box's presence to probes).
+      # "none" is the special "no default policy here" value; DSM uses
+      # it on `global` because global rules apply across ALL adapters
+      # (the catch-all default lives on each per-adapter block instead).
+      #
+      # Rule evaluation order is top-down within each block, first match
+      # wins; global rules evaluate before per-adapter rules.
+      adapters:
+        # `global` carries the rules that apply to EVERY adapter, in
+        # top-down evaluation order (first match wins):
+        # (1) trusted-net allows (sealab + machines + monitoring,
+        #     all ports) — prepended at apply time from trusted.json
+        # (2) ops admin SSH allows (chris + sean personal IPs,
+        #     port 22 TCP ONLY) — prepended from trusted.json `ops`
+        # (3) ucsd SSH allows (8 ucsd CIDRs, port 22 TCP ONLY) —
+        #     prepended from trusted.json `ucsd`. Mirrors the nix
+        #     service-host pattern `sshSources = ucsd ++ ops`
+        #     (nix/profiles/base.nix:124).
+        # (4) the static rules below (ssh-deny-fall-through, then
+        #     geoip-US-floor). Order in (4) matters: the SSH drop must
+        #     fire BEFORE geoip-US-floor, otherwise geoip-US would
+        #     silently re-open SSH to the entire US (the bug this
+        #     section closes).
+        global:
+          policy: none
+          rules:
+            # Drop SSH from anyone not explicitly allowed above (trusted-
+            # nets / ops / ucsd). Without this rule, the geoip-US-floor
+            # below would allow SSH from arbitrary US IPs — making the
+            # NAS less restricted than the nix service-host pattern.
+            # The NAS is a service host (storage appliance, not compute),
+            # so SSH source must match `sshSources` from nix base
+            # (ucsd + ops) — and ONLY those.
+            - name: ssh-deny-fall-through
+              enable: true
+              log: false
+              policy: drop
+              port_direction: destination
+              port_group: custom
+              ports: "22"
+              protocol: tcp
+              source_ip_group: all
+              source_ip: all
+
+            # Let's Encrypt HTTP-01 challenge — port 80, worldwide.
+            #
+            # Why this rule exists: LE's "Multi-Perspective Issuance
+            # Corroboration" (MPIC) — enforced since 2024-06-15
+            # (https://letsencrypt.org/2024/06/14/multi-perspective-validation/) —
+            # validates new cert orders by fetching the HTTP-01 challenge
+            # from MULTIPLE geographically distributed vantage points,
+            # at least one of which is deliberately OUTSIDE the United
+            # States. The intent is to defeat BGP-hijack attacks (an
+            # attacker who can hijack one region's BGP route still
+            # can't satisfy non-hijacked validators). LE intentionally
+            # rotates the validator IPs and does not publish the list.
+            #
+            # Without this rule, LE's non-US secondary validators hit
+            # the `eth0.policy: drop` default and time out → cert
+            # issuance fails ("During secondary validation: ...
+            # Timeout during connect"). Validated empirically on
+            # e4e-nas 2026-06-02 + via letsdebug.net.
+            #
+            # Risk surface: port 80 only serves (a) DSM's HTTP→HTTPS
+            # redirect helper (a minimal nginx with no auth surface,
+            # responds with a tiny redirect-to-:6021 page) and (b) the
+            # transient syno-letsencrypt challenge responder during
+            # issuance (active for seconds at a time). No DSM service
+            # actually delivers anything over plain HTTP. So the
+            # "worldwide" allow doesn't materially expand attack
+            # surface.
+            #
+            # Alternative considered: DNS-01 challenge (doesn't need
+            # any inbound port). Rejected for now because UCSD owns
+            # the `ucsd.edu` DNS zone and we don't have programmatic
+            # update access. If we ever delegate
+            # `_acme-challenge.e4e-nas.ucsd.edu` to a DNS zone we
+            # control (Cloudflare, etc.), we can remove this rule and
+            # close port 80 entirely. Tracked under [the cert PR's
+            # roadmap section].
+            - name: lets-encrypt-http-01
+              enable: true
+              log: false
+              policy: allow
+              port_direction: destination
+              port_group: custom
+              ports: "80"
+              protocol: tcp
+              source_ip_group: all
+              source_ip: all
+
+            # Country gate. Allows researchers/admins from anywhere in
+            # the US for NON-SSH (DSM web file browser, etc.). SSH is
+            # already drop'd above for non-trusted/non-ucsd/non-ops
+            # sources, so this rule's all-ports allow effectively
+            # covers everything EXCEPT SSH (which the earlier drop
+            # caught). See docs/e4e-nas-crowdsec-evaluation.md for why
+            # DSM-native geoip (vs CrowdSec) for the Synology.
+            - name: geoip-US-floor
+              enable: true
+              log: false
+              policy: allow
+              port_direction: destination
+              port_group: all
+              ports: all
+              protocol: all
+              source_ip_group: geoip
+              source_ip: US
+
+        # eth0 is the planned public interface (132.239.17.124; currently
+        # disconnected, gets cabled later). Default-DROP everything that
+        # didn't match a global allow rule — that's the actual "US is the
+        # floor" enforcement.
+        eth0:
+          policy: drop
+          rules: []
+
+        # eth1..eth3, vpn, pppoe, wlan0 are NOT listed here → they keep
+        # whatever DSM has live (the role's per-adapter merge preserves
+        # unmanaged adapters). eth1 is the lab interface (192.168.1.x)
+        # today during bring-up — leaving it default-allow until the
+        # cable swap means lab access keeps working through the
+        # transition; flip it to drop once eth0 is the live path.
+
+  # Geoip block — the country-allowlist INTENT (what countries are
+  # allowed). The actual ENFORCEMENT lives as the `geoip-US-floor` rule
+  # under `profiles.default.adapters.global.rules` above, because DSM 7.2.2
+  # has no standalone geoip setter (Firewall.Geoip has only {list, get}).
+  # Geoip is a per-RULE source-type, not a config flag — so the rule list
+  # is where it lives.
+  #
+  # At apply time, tasks/main.yml asserts the global geoip rule's
+  # `source_ip` matches `allow_countries | join(',')` — drift between
+  # this block and the rule above gets flagged.
+  geoip:
+    enable: true
+    # ISO 3166-1 alpha-2. US-only matches the fleet intent. Ops travelers
+    # reach the NAS via the trusted-net allow rules prepended ahead of
+    # the geoip rule (same per-admin escape hatch pattern as nix
+    # krg.firewall.sshSources).
+    allow_countries: [US]
+
+auto_block:
+  # Live: 3 attempts in 1440 min (24h), no expiry (0). Aggressive — matches the
+  # breach-driven hardening posture.
+  enable: true
+  attempts: 3
+  within_mins: 1440
+  # CONFIRMED 2026-05-28: keep 0 (never expire). The NAS is internet-exposed
+  # so attackers SHOULD stay blocked permanently — the trade-off (operator
+  # has to manually unblock a misfire) is right here.
+  #
+  # ⚠️ HONESTY UPDATE (2026-05-29 code review): the allow-list (sealab +
+  # machines + monitoring) is currently INFORMATIONAL ONLY — `synology_security`
+  # debug-prints it but does NOT push it to DSM, because the
+  # SYNO.Core.Security.AutoBlock.Rules param shape errored 5100 in the live
+  # captures and is deferred. So until that API is implemented, a misfire
+  # (bad credential rotation, an unannounced new scraper IP) results in a
+  # PERMANENT manual-unblock chore. Two ways to live with this:
+  #   (a) accept the operational cost (current posture) — IP-based ops are
+  #       low-volume, the sealab/machines hosts have known stable IPs;
+  #   (b) soften to expire_day: 7 until allow-list push lands, then revisit.
+  # Leaving at 0 — explicit choice — and tracking the API gap in plan.md.
+  expire_day: 0
+
+  # Allow-list (never block) + deny-list (always block). The allow-list is
+  # COMPUTED in the role from nix/networks/trusted.json (`krg_trusted` —
+  # loaded by group_vars/all.yml), so a change to the single source of truth
+  # flows here automatically. Same DRY pattern as the Debian fail2ban
+  # `ignoreip` and nix `krg.firewall.trustedNets`. See synology_security
+  # tasks/main.yml — the role debug-surfaces the resolved IP list.
+  # Push to DSM is DEFERRED: SYNO.Core.Security.AutoBlock.Rules errored 5100
+  # in 2026-05-28 captures (wrong method/param shape); add a subcommand once
+  # the rig is back up and we can probe the right form.
+  deny_list: []                                # TODO: confirm via follow-up capture
+
+# --- Hardening notes (drift the role will fix on apply) ---
+# (none in the global flags — already tight; the rule LIST is what needs review next)

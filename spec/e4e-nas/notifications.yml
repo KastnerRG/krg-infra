@@ -1,0 +1,51 @@
+# DSM notification config for e4e-nas — mail (OAuth Gmail), SMS, push, CMS.
+# Source of truth for the post-rebuild state. Values from the 2026-05-28 live capture.
+#
+# IaC home: `synology_notifications` Ansible role — `apply_notifications.py`
+# GET→merge→SET on SYNO.Core.Notification.{Mail.Conf v2, Mail.Auth, Push.Conf, SMS.Conf,
+# Advance.Variables, Advance.FilterSettings, CMS.Conf}.
+#
+# OAuth tokens are NOT in this spec — they're issued by Google interactively and stored
+# by DSM. Post-rebuild a one-time bootstrap will re-link the Gmail account (the only
+# unavoidable manual step for OAuth-based mail; the DSM `Notification.Mail.Oauth gmail`
+# method initiates the flow but completion requires a browser).
+
+mail:
+  enable: true                              # Notification.Mail.Conf.enable_mail
+  enable_oauth: true                        # OAuth, NOT SMTP password
+  sender_mail: e4e@ucsd.edu
+  sender_name: ""
+  subject_prefix: "[e4e-nas]"
+  send_welcome_mail: true
+
+  smtp:
+    server: smtp.gmail.com
+    port: 465
+    ssl: true
+    verifyCert: false                       # consider true; Google's cert is valid
+    auth:
+      enable: true
+      user: e4e@ucsd.edu
+      # OAuth → no `password` in spec. Bootstrap: DSM UI → Notification → Email → Sign in.
+
+  # Live `in_use`: notifications routed via mail = ["otp_enforced", "forgot_passwd"].
+  # That's the categories actively wired to mail; rest go to no-op / DSM CMS.
+  routes_in_use: [otp_enforced, forgot_passwd]
+
+sms:
+  enable: false                             # SMS.Conf
+  providers: []                             # Notification.SMS.Provider — empty live
+
+push:
+  # Notification.Push.Conf: all legacy push transports off (MSN/Skype = ancient).
+  msn_enable: false
+  skype_enable: false
+  mobile_enable: false                      # Push.Mobile (paired devices)
+
+cms:
+  # Synology CMS (Central Management System) — multi-NAS dashboard; not used here.
+  enable: false                             # Notification.CMS.Conf get had defaults
+
+# Notification.Advance.Variables (per-notification text templates) and FilterSettings
+# (which notifications go to which channels) — captured (off-repo), no drift seen vs
+# DSM defaults. Encode only if we change defaults; otherwise leave to DSM.

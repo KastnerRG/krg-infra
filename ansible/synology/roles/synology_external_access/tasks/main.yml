@@ -1,0 +1,54 @@
+---
+# synology_external_access — disable Synology's relay/NAT-pierce surfaces from
+# spec/e4e-nas/external-access.yml. Without this, QuickConnect and UPnP punch
+# straight through the firewall perimeter we just spent effort building.
+#
+# Three independent webapi surfaces (each is full-object set; partial = err 2001).
+# Logic in files/apply_external_access.py via the `script` module (DSM py3.8).
+#
+# CROSS-REFERENCE: there's no Linux counterpart (Linux hosts don't have a
+# Synology relay) — this is DSM-specific perimeter hygiene. The intent matches
+# what the Proxmox/in-guest firewall layer accomplishes everywhere else.
+#
+# ORDER CONSTRAINT: synology_base composer runs this AFTER synology_security so
+# the perimeter is up first, then we make sure nothing punches around it.
+
+- name: Load the External Access spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_external_access_spec }}"
+    name: ea_spec
+
+- name: Disable QuickConnect (runbook §3 — relay around firewall)
+  ansible.builtin.script: >-
+    apply_external_access.py quickconnect
+    --enable {{ ea_spec.quickconnect.enable | default(false) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: qc_apply
+  changed_when: "'CHANGED' in qc_apply.stdout or 'WOULD-CHANGE' in qc_apply.stdout"
+  failed_when: "qc_apply.rc != 0 or 'FAIL' in qc_apply.stdout"
+  check_mode: false
+
+- name: Disable UPnP (runbook §3 — NAT-punch around firewall)
+  ansible.builtin.script: >-
+    apply_external_access.py upnp
+    --enable {{ ea_spec.upnp.enable | default(false) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: upnp_apply
+  changed_when: "'CHANGED' in upnp_apply.stdout or 'WOULD-CHANGE' in upnp_apply.stdout"
+  failed_when: "upnp_apply.rc != 0 or 'FAIL' in upnp_apply.stdout"
+  check_mode: false
+
+- name: Configure DDNS
+  ansible.builtin.script: >-
+    apply_external_access.py ddns
+    --enable {{ ea_spec.ddns.enable | default(false) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: ddns_apply
+  changed_when: "'CHANGED' in ddns_apply.stdout or 'WOULD-CHANGE' in ddns_apply.stdout"
+  failed_when: "ddns_apply.rc != 0 or 'FAIL' in ddns_apply.stdout"
+  check_mode: false
+
+# --- Drift export (read-only) — only with `--tags export` ---------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

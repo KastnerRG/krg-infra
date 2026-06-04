@@ -1,0 +1,75 @@
+# Shared folders on e4e-nas — declarative source of truth.
+# Consumed by the `synology_shares` Ansible role (wraps `synoshare`); the paired
+# exporter reads `synoshare --enum`/`--get` back into this shape for drift detection.
+# Seeded from the build sheet (docs/e4e-nas-dsm.md). Git is truth; UI = drift (ADR 0001).
+#
+# NOT listed here (auto-created by DSM/packages — do NOT hand-create): NetBackup,
+# photo, web, homes.
+#
+# Per-share ACLs live in acls.yml, not here. Per-share DSM flags (recycle bin,
+# visibility, etc.) default below; confirm exceptions against the live box.
+
+defaults:
+  btrfs: true            # required for snapshots (ADR/runbook)
+  recycle_bin: true
+  browseable: true       # most shares were visible (notHideShare=1); set false per-item to hide
+
+shares:
+  # --- /volume1 ---
+  - { name: "2019.11.wbm-China", path: /volume1/2019.11.wbm-China, description: "Wild Blue Media China Trip" }
+  - { name: "Floods of Lubra", path: "/volume1/Floods of Lubra", description: "Floods of Lubra" }
+  - { name: admin, path: /volume1/admin, description: "Administrative Files" }
+  - { name: aye-aye-sleep-monitoring, path: /volume1/aye-aye-sleep-monitoring, description: "Aye Aye Sleep Monitoring" }
+  - { name: baboons, path: /volume1/baboons, description: "Baboons" }
+  - { name: bom_aws, path: /volume1/bom_aws, description: "Baboons AWS" }
+  - { name: coral-ml, path: /volume1/coral-ml, description: "Coral ML" }
+  - { name: coral-tile, path: /volume1/coral-tile, description: "" }
+  - { name: data_staging, path: /volume1/data_staging, description: "" }
+  - { name: fishsense, path: /volume1/fishsense, description: "FishSense" }
+  - { name: flight_operations, path: /volume1/flight_operations, description: "Flight Operations" }
+  - { name: forest_fear_lab, path: /volume1/forest_fear_lab, description: "E4E FFL Collaborative Share" }
+  - { name: hardware_dev, path: /volume1/hardware_dev, description: "Hardware Support Team" }
+  - { name: harpy_find, path: /volume1/harpy_find, description: "" }
+  - { name: installers, path: /volume1/installers, description: "" }
+  - { name: junkyard-fishsense, path: /volume1/junkyard-fishsense, description: "" }
+  - { name: labeling_share, path: /volume1/labeling_share, description: "Labeling Party Share" }
+  - { name: maestro, path: /volume1/maestro, description: "maestro" }
+  - { name: mangrove, path: /volume1/mangrove, description: "Mangrove Monitoring Data Share" }
+  - { name: maya, path: /volume1/maya, description: "Maya Archaeology Data Share" }
+  - { name: media, path: /volume1/media, description: "E4E Media" }
+  - { name: nextcloud, path: /volume1/nextcloud, description: "data folder for nextcloud" }
+  - { name: operations, path: /volume1/operations, description: "" }
+  - { name: owl-behavior, path: /volume1/owl-behavior, description: "burrowing owl behavior project" }
+  - { name: programmatics, path: /volume1/programmatics, description: "" }
+  - { name: rct, path: /volume1/rct, description: "Radio Collar Tracking Data Share" }
+  - { name: robosub, path: /volume1/robosub, description: "robosub" }
+  - { name: sio_e4e_mangroves, path: /volume1/sio_e4e_mangroves, description: "SIO/E4E Mangrove Data" }
+  - { name: smartfin-mfg, path: /volume1/smartfin-mfg, description: "Smartfin Manufacturing" }
+  - { name: temp, path: /volume1/temp, description: "" }
+  - { name: web_packages, path: /volume1/web_packages, description: "" }
+  - { name: zotero, path: /volume1/zotero, description: "zotero" }
+
+  # --- /volume2 ---
+  - { name: 2024_kastner_ml_dump, path: /volume2/2024_kastner_ml_dump, description: "" }
+  - { name: 2025_kastner_ml_hdd_8tb_dump, path: /volume2/2025_kastner_ml_hdd_8tb_dump, description: "" }
+  - { name: aid_data, path: /volume2/aid_data, description: "" }
+  - { name: aid_elephants_interaction, path: /volume2/aid_elephants_interaction, description: "" }
+  - { name: aid_nat_geo_coral, path: /volume2/aid_nat_geo_coral, description: "" }
+  - { name: aid_nat_geo_the_music, path: /volume2/aid_nat_geo_the_music, description: "The Music After the Rain Drive" }
+  - { name: data_archive, path: /volume2/data_archive, description: "E4E Data Archive" }
+  - { name: data_archive_old, path: /volume2/data_archive_old, description: "" }
+  - { name: docker, path: /volume2/docker, description: "" }   # legacy Container Manager data; nothing runs on the NAS now except Garage
+  - { name: fabricant-prod-share, path: /volume2/fabricant-prod-share, description: "" }   # NFS-exported — see nfs-exports.yml
+  - { name: fishsense_data, path: /volume2/fishsense_data, description: "Fishsense Data" }
+  - { name: fishsense_process_work, path: /volume2/fishsense_process_work, description: "Fishsense Processing Working Directory" }
+  - { name: fsspec_test, path: /volume2/fsspec_test, description: "" }
+  - { name: git-lfs-store, path: /volume2/git-lfs-store, description: "Store for Git LFS Files" }
+  - { name: junkyard_backup, path: /volume2/junkyard_backup, description: "" }
+  - { name: label_studio, path: /volume2/label_studio, description: "" }
+  - { name: mangrove_meeting_archive, path: /volume2/mangrove_meeting_archive, description: "Mangrove Monitoring Meeting Recordings Archive" }
+  - { name: passive-acoustic-biodiversity, path: /volume2/passive-acoustic-biodiversity, description: "" }
+  - { name: rustfs, path: /volume2/rustfs, description: "" }
+
+  # --- NEW: Garage S3 backend (ADR 0003) ---
+  # TODO confirm volume + snapshot policy. Bind-mounted into the Garage container (terraform/e4e-nas).
+  - { name: s3-data, path: /volume2/s3-data, description: "Garage S3 object store data", recycle_bin: false, browseable: false }

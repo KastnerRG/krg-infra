@@ -1,0 +1,40 @@
+# Groups that govern share access on e4e-nas — declarative source of truth.
+# Seeded from the build sheet (docs/e4e-nas-dsm.md); see [[krg-e4e-tenancy]] reasoning.
+#
+# OPEN DECISION (see README): create these as **AD groups under OU=E4E** in
+# KRG.LOCAL (recommended — central, fleet-wide, one group governs the NAS *and*
+# compute), OR as **local DSM groups** (synogroup). Listed here as the source of
+# truth either way. If AD: a directory-provisioning step (samba-tool on the DC)
+# creates them; the NAS just consumes them via winbind. If local: the
+# `synology_users`/`synology_groups` role creates them with synogroup.
+#
+# Dropped per decision (2026-05-22): label-studio-admin, minio-admin.
+# `aburto_lab` is a THIRD lab (collaborator) — NOT under OU=E4E; place separately.
+#
+# `governs:` is an INFERRED share↔group correlation (from names) to seed acls.yml.
+# It is NOT authoritative — confirm the real grant matrix from the live NAS
+# (`synoacltool -get …`) and record it in acls.yml.
+
+type: ad                 # ad | local  (recommended: ad)
+ou: E4E                  # if type=ad: OU=E4E,DC=krg,DC=local
+
+groups:
+  - { name: maya,                description: "Maya Archaeology",            governs: [maya] }
+  - { name: mangrove,            description: "Mangrove Monitoring",         governs: [mangrove, mangrove_meeting_archive, sio_e4e_mangroves] }
+  - { name: rct,                 description: "Radio Collar Tracking",       governs: [rct] }
+  - { name: robosub,             description: "Robosub",                     governs: [robosub] }
+  - { name: acoustic-species-id, description: "Acoustic Species ID",         governs: [passive-acoustic-biodiversity] }
+  - { name: aye-aye-sleep,       description: "Aye Aye Sleep Monitoring",    governs: [aye-aye-sleep-monitoring] }
+  - { name: smartfin-mfg,        description: "Smartfin Manufacturing",      governs: [smartfin-mfg] }
+  - { name: baboons,             description: "Baboons on the Move",         governs: [baboons, bom_aws] }
+  - { name: fishsense,           description: "FishSense",                   governs: [fishsense, fishsense_data, fishsense_process_work, junkyard-fishsense] }
+  - { name: burrowing_owl,       description: "Burrowing Owl",               governs: [owl-behavior] }   # renamed from "Burrowing Owl" (no spaces in AD)
+  - { name: leads,               description: "Project Leads",               governs: [] }               # cross-cutting
+  - { name: hardware,            description: "Hardware Team",               governs: [hardware_dev] }
+  - { name: floods_of_lubra,     description: "Floods of Lubra",             governs: ["Floods of Lubra"] }
+  - { name: e4e,                 description: "E4E (broad)",                 governs: [] }               # broad access — confirm scope
+  - { name: research_support,    description: "Research Support Group",      governs: [] }
+
+# Separate (collaborator lab, not OU=E4E):
+collaborator_groups:
+  - { name: aburto_lab,          description: "Aburto Lab",                  governs: [] }               # TODO placement + access

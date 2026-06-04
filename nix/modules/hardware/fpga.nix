@@ -2,6 +2,11 @@
 with lib;
 let
   cfg = config.krg.fpga;
+  # 1. Create a tiny derivation specifically to provide the libtinfo.so.5 symlink
+  vivado-tinfo-shim = pkgs.runCommand "vivado-tinfo-shim" {} ''
+    mkdir -p $out/lib
+    ln -s ${pkgs.ncurses}/lib/libncursesw.so.6 $out/lib/libtinfo.so.5
+  '';
 in {
   options.krg.fpga = {
     enable = mkEnableOption "FPGA/EDA development tools (Verilator, GTKWave, Vivado, Questa)";
@@ -38,6 +43,7 @@ in {
       ++ optional cfg.enableGtkwave gtkwave
       ++ [
         # System libraries required by Vivado/Vitis/Questa GUI (from waiter vivado.yml + floonoc.yaml)
+        zlib
         stdenv.cc.cc.lib
         glib
         gtk3
@@ -52,6 +58,41 @@ in {
         freetype
         fontconfig
       ];
+
+    programs.nix-ld.enable = true;
+    programs.nix-ld.libraries = with pkgs; [
+      stdenv.cc.cc
+      zlib
+      libuuid
+      libxcrypt-legacy
+      ncurses
+      vivado-tinfo-shim  # <-- Injects our custom symlink into the library path
+
+      # X11 / GUI Graphic Libraries
+      xorg.libXext 
+      xorg.libX11 
+      xorg.libXrender 
+      xorg.libXtst
+      xorg.libXi 
+      xorg.libXft 
+      xorg.libxcb
+
+      # System fonts and styling
+      freetype 
+      fontconfig 
+      glib 
+      gtk2 
+      gtk3
+    ];
+    environment.interactiveShellInit = ''
+      # Intercept the 'vivado' command to inject zlib safely for ANY installed version
+      vivado() {
+        LD_LIBRARY_PATH="${pkgs.zlib}/lib:$LD_LIBRARY_PATH" command vivado "$@"
+      }
+      vitis() {
+        LD_LIBRARY_PATH="${pkgs.zlib}/lib:$LD_LIBRARY_PATH" command vitis "$@"
+      }
+    '';
 
     environment.variables = {
       XILINXD_LICENSE_FILE = cfg.licenseServer;

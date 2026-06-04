@@ -1,0 +1,40 @@
+# DSM update policy for e4e-nas — declarative source of truth.
+# Consumed by the `synology_dsm_updates` Ansible role.
+#
+# CROSS-REFERENCE: this is the DSM counterpart of nix system.autoUpgrade (set in
+# nix/profiles/base.nix) and the Debian unattended-upgrades baseline (set in
+# ansible/roles/base/files/{20auto-upgrades,50unattended-upgrades}). Same intent —
+# security/important updates apply themselves on a schedule. DSM's policy enum is
+# `hotfix-security` (security + critical bug-fix updates only, the conservative
+# choice; matches the runbook §6 setting).
+#
+# DSM API surface (per /usr/syno/synoman/webapi/SYNO.Core.Upgrade*.lib —
+# empirical confirmation pending; values are best-known and will be verified on
+# first apply against the rig):
+#   * SYNO.Core.Upgrade.Setting   get/set   (auto-update policy + schedule)
+#   * SYNO.Core.Upgrade.Server    get/set   (which update channel/server)
+#   * SYNO.Core.Upgrade           get       (current version + available)
+#
+# A DSM update can revert SSH-level hardening (synology_ssh's sshd_config drop-in,
+# per runbook §1) — re-apply synology_base after a DSM major update lands.
+
+dsm_updates:
+  # Update policy. `hotfix-security` = automatic security + critical fix install,
+  # no feature releases. Other DSM values (best-known, verify on rig):
+  #   nothing            — manual only (NOT what we want post-breach)
+  #   hotfix             — all hotfixes incl. non-security (riskier)
+  #   hotfix-security    — security + critical fixes only (the conservative pick)
+  #   smart              — Synology decides (opaque; avoid)
+  policy: hotfix-security
+  auto_install_enabled: true       # actually install (not just download)
+  notify_email_on_install: true    # tie into synology_notifications channel
+
+  # Weekly cadence — early Sunday so any user-impacting reboot lands off-hours.
+  # DSM ships a default schedule; this re-asserts it so a UI change is drift.
+  schedule:
+    day: Sun
+    hour: 3
+    minute: 0
+
+  # Update channel. `1` = stable (DSM default); `0` = beta. KEEP stable.
+  update_channel: stable

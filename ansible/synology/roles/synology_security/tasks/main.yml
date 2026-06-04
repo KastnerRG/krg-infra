@@ -1,0 +1,277 @@
+---
+# synology_security — manage DSM firewall + auto-block from spec/e4e-nas/security.yml.
+#
+# Globals (Firewall, Firewall.Conf, AutoBlock): apply_security.py via synowebapi --exec
+# Per-adapter rules (Firewall.Profile.set + Profile.Apply): apply_security.py
+#   firewall-profile via files/dsm_http.py over the HTTP webapi
+#   (the `synowebapi --exec Rules.save_start` CLI path SEGFAULTs on rule objects
+#   — see the comment in apply_security.py:do_firewall_profile).
+#
+# CROSS-REFERENCE: counterpart of nix `krg.firewall` (`nix/modules/security/firewall.nix`)
+# and ansible `roles/proxmox_firewall` + the in-guest fail2ban allow-list pattern.
+# All three layers read `nix/networks/trusted.json` (single source of truth) for
+# allow-listed source nets — edit there, not here.
+#
+# AutoBlock allow/deny lists (AutoBlock.Rules) are still deferred — the capture
+# errored 5100 on that param shape. The role debug-surfaces the intended allow
+# list (computed from trusted.json) so an operator can verify against the UI
+# until that API is wired up too.
+
+- name: Load the security spec
+  tags: [synology_security]
+  ansible.builtin.include_vars:
+    file: "{{ synology_security_spec }}"
+    name: security_spec
+
+# --- Shared trusted-nets data (group_vars/all.yml already loaded krg_trusted) ---
+# This is the SAME object the Debian fail2ban role uses for ignoreip. Mirror the
+# nix `krg.firewall.trustedNets` pattern here so any change to trusted.json
+# flows to every layer.
+- name: Compute autoblock allow-list from nix/networks/trusted.json (sealab + machines + monitoring, deduped)
+  tags: [synology_security]
+  ansible.builtin.set_fact:
+    autoblock_allow_ips: >-
+      {{
+        (
+          (krg_trusted.ipsets.sealab | map(attribute='cidr') | list)
+          + (krg_trusted.ipsets.machines | default([]) | map(attribute='cidr') | list)
+          + [krg_trusted.monitoring_host]
+        ) | unique
+      }}
+  # `machines` was added to trusted.json after PR #79/#80 stood up krg-deploy
+  # and krg-vault (137.110.161.122 / .123). Those IPs are NOT in sealab today,
+  # and they DO talk to the NAS (krg-deploy runs the ansible-apply timer that
+  # invokes this playbook; krg-vault may probe for SNMP later). Without
+  # `machines` they would trip the 3-strike autoblock on a bad credential
+  # rotation or a misconfigured probe.
+
+- name: Surface the intended autoblock allow-list (drift-detector / operator visibility)
+  tags: [synology_security]
+  ansible.builtin.debug:
+    msg: |
+      autoblock_allow_ips (from nix/networks/trusted.json) =
+      {{ autoblock_allow_ips }}
+      Note: pushing this list to DSM's AutoBlock allow-list is DEFERRED until
+      SYNO.Core.Security.AutoBlock.Rules param shape is empirically probed
+      (capture errored 5100). Until then, this is informational — set the
+      allow-list manually in the DSM UI to match.
+  changed_when: false
+
+# --- Per-adapter firewall rule push (Profile.set + Profile.Apply via HTTP) ---
+# Build the desired per-adapter state from the spec + trusted.json (single
+# source of truth). The spec lists STATIC rules (geoip-US-floor); we prepend
+# DYNAMIC trusted-source allow rules (one per sealab + machines + monitoring
+# IP) so a change to trusted.json flows automatically.
+#
+# The active profile must be NON-EMPTY when firewall.enable=true (default-deny
+# + no rules = locked out). apply_security.py:do_firewall_profile asserts this
+# against the MERGED target (more precise than the old probe-profile that
+# checked only current state).
+- name: Build trusted-source allow rules (one per sealab + machines + monitoring IP)
+  tags: [synology_security]
+  ansible.builtin.set_fact:
+    firewall_trusted_rules: "{{ firewall_trusted_rules | default([]) + [_rule] }}"
+  vars:
+    _rule:
+      name: "trusted-{{ ip | regex_replace('[./:]', '_') }}"
+      enable: true
+      log: false
+      policy: allow
+      port_direction: destination
+      port_group: all
+      ports: all
+      protocol: all
+      source_ip_group: ip
+      source_ip: "{{ ip }}"
+  loop: "{{ autoblock_allow_ips }}"
+  loop_control:
+    loop_var: ip
+
+# SSH source restriction — match the nix `krg.firewall.sshSources` pattern
+# for SERVICE hosts (`ucsd + ops`, see nix/profiles/base.nix). The NAS is a
+# service host (storage appliance, not compute), so SSH should NOT be open
+# to the wider "US is the floor" geoip allow — only ucsd + ops + the
+# trusted-net all-ports allows above. Implementation:
+#   (a) ops admin personal IPs (chris/sean — `ops` in trusted.json) get a
+#       per-IP TCP-22 allow. Lets admins break-glass from a hotel wifi
+#       without opening DSM web/SMB/etc. to whatever IP they're on.
+#   (b) ucsd CIDRs get a per-CIDR TCP-22 allow. UCSD-wide SSH access
+#       (campus office, UCSD VPN, etc.) — wider than `sealab` but narrower
+#       than the world. Mirrors `nix/profiles/base.nix` line 124's
+#       `sshSources = ucsd ++ ops`.
+#   (c) a single drop-ssh-fall-through static rule in the spec below
+#       (placed AFTER all allow rules but BEFORE the geoip-US all-ports
+#       allow) catches SSH from anything not matched by (a)/(b) or by the
+#       earlier trusted-net all-ports allows. Without that rule, geoip-US
+#       would silently re-open SSH to the entire US.
+- name: Build ops SSH allow rules (one per ops admin IP, port 22 TCP only)
+  tags: [synology_security]
+  ansible.builtin.set_fact:
+    firewall_ops_ssh_rules: "{{ firewall_ops_ssh_rules | default([]) + [_rule] }}"
+  vars:
+    _rule:
+      name: "ops-ssh-{{ ip | regex_replace('[./:]', '_') }}"
+      enable: true
+      log: false
+      policy: allow
+      port_direction: destination
+      port_group: custom
+      ports: "22"
+      protocol: tcp
+      source_ip_group: ip
+      source_ip: "{{ ip }}"
+  loop: "{{ krg_trusted.ipsets.ops | default([]) | map(attribute='cidr') | list }}"
+  loop_control:
+    loop_var: ip
+
+- name: Build ucsd SSH allow rules (one per ucsd CIDR, port 22 TCP only)
+  tags: [synology_security]
+  ansible.builtin.set_fact:
+    firewall_ucsd_ssh_rules: "{{ firewall_ucsd_ssh_rules | default([]) + [_rule] }}"
+  vars:
+    _rule:
+      name: "ucsd-ssh-{{ ip | regex_replace('[./:]', '_') }}"
+      enable: true
+      log: false
+      policy: allow
+      port_direction: destination
+      port_group: custom
+      ports: "22"
+      protocol: tcp
+      source_ip_group: ip
+      source_ip: "{{ ip }}"
+  loop: "{{ krg_trusted.ipsets.ucsd | default([]) | map(attribute='cidr') | list }}"
+  loop_control:
+    loop_var: ip
+
+- name: Drift-check geoip rule(s) against geoip.allow_countries (spec internal consistency)
+  tags: [synology_security]
+  ansible.builtin.assert:
+    that:
+      - "(_geoip_rule_sources | unique | sort) == [security_spec.firewall.geoip.allow_countries | join(',')]"
+    fail_msg: >-
+      spec drift: geoip rules under
+      firewall.profiles.default.adapters.*.rules have source_ip values
+      {{ _geoip_rule_sources | unique | sort }} but
+      firewall.geoip.allow_countries=
+      '{{ security_spec.firewall.geoip.allow_countries | join(",") }}'.
+      Edit the spec so they agree, then re-run.
+  vars:
+    _geoip_rule_sources: >-
+      {{
+        security_spec.firewall.profiles.default.adapters.values()
+        | map(attribute='rules') | list | sum(start=[])
+        | selectattr('source_ip_group', 'equalto', 'geoip')
+        | map(attribute='source_ip') | list
+      }}
+  when:
+    - security_spec.firewall.geoip is defined
+    - security_spec.firewall.geoip.enable | default(false)
+    - _geoip_rule_sources | length > 0
+
+- name: Compose firewall_managed_adapters dict (per-adapter; trusted+ops+ucsd-SSH prepended to `global`)
+  tags: [synology_security]
+  ansible.builtin.set_fact:
+    firewall_managed_adapters: >-
+      {{
+        firewall_managed_adapters | default({}) | combine({
+          item.key: {
+            'policy': item.value.policy,
+            'rules': (firewall_trusted_rules
+                      + (firewall_ops_ssh_rules | default([]))
+                      + (firewall_ucsd_ssh_rules | default([]))
+                      + item.value.rules) if item.key == 'global' else item.value.rules
+          }
+        })
+      }}
+  loop: "{{ security_spec.firewall.profiles.default.adapters | dict2items }}"
+
+- name: Encode firewall_managed_adapters as JSON (for --desired arg)
+  tags: [synology_security]
+  ansible.builtin.set_fact:
+    firewall_managed_adapters_json: "{{ firewall_managed_adapters | to_json }}"
+
+- name: Surface managed adapter rules (operator visibility + drift detector)
+  tags: [synology_security]
+  ansible.builtin.debug:
+    msg: |
+      Managed firewall adapters (will be pushed to DSM profile '{{ security_spec.firewall.active_profile | default('default') }}'):
+      {{ firewall_managed_adapters_json | from_json | to_nice_yaml(indent=2) }}
+  changed_when: false
+
+- name: Push per-adapter firewall rules (Profile.set + Profile.Apply via HTTP webapi)
+  tags: [synology_security]
+  ansible.builtin.script: >-
+    apply_security.py firewall-profile
+    --account {{ synology_admin_user | default('e4e-admin') | quote }}
+    --password {{ nas_admin_password | quote }}
+    --profile-name {{ security_spec.firewall.active_profile | default('default') | quote }}
+    --desired {{ firewall_managed_adapters_json | quote }}
+    --apply
+    {{ '--check' if ansible_check_mode else '' }}
+  register: fw_profile
+  no_log: true        # password on argv
+  changed_when: "'CHANGED' in fw_profile.stdout or 'WOULD-CHANGE' in fw_profile.stdout"
+  failed_when: "fw_profile.rc != 0 or 'FAIL' in fw_profile.stdout"
+  check_mode: false
+  when:
+    - nas_admin_password | default('') | length > 0
+    - security_spec.firewall.profiles.default is defined
+
+- name: Warn when no NAS admin password supplied (rule push skipped)
+  tags: [synology_security]
+  ansible.builtin.debug:
+    msg: >-
+      nas_admin_password not supplied — per-adapter rule push SKIPPED.
+      Re-run with `-e nas_admin_password='<e4e-admin password>'` (or via
+      -e @~/.config/krg/secrets-syno.yml which has `synology_user_passwords.e4e-admin`)
+      to populate the firewall profile. Skipping means
+      firewall.enable=true below would proceed against whatever DSM has
+      live today — UNSAFE if the profile is empty.
+  when:
+    - nas_admin_password | default('') | length == 0
+    - security_spec.firewall.enable | default(true)
+  changed_when: false
+
+# --- Globals (full-object SETs) -----------------------------------------------
+- name: Apply firewall (Firewall set — enable + active profile)
+  tags: [synology_security]
+  ansible.builtin.script: >-
+    apply_security.py firewall
+    --enable {{ security_spec.firewall.enable | default(true) }}
+    --profile {{ security_spec.firewall.active_profile | default('default') | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: fw_apply
+  changed_when: "'CHANGED' in fw_apply.stdout or 'WOULD-CHANGE' in fw_apply.stdout"
+  failed_when: "fw_apply.rc != 0 or 'FAIL' in fw_apply.stdout"
+  check_mode: false
+
+- name: Apply firewall conf (Firewall.Conf set — port_check)
+  tags: [synology_security]
+  ansible.builtin.script: >-
+    apply_security.py fw-conf
+    --port-check {{ security_spec.firewall.port_check | default(true) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: fwc_apply
+  changed_when: "'CHANGED' in fwc_apply.stdout or 'WOULD-CHANGE' in fwc_apply.stdout"
+  failed_when: "fwc_apply.rc != 0 or 'FAIL' in fwc_apply.stdout"
+  check_mode: false
+
+- name: Apply auto-block (AutoBlock set — thresholds)
+  tags: [synology_security]
+  ansible.builtin.script: >-
+    apply_security.py autoblock
+    --enable {{ security_spec.auto_block.enable | default(true) }}
+    --attempts {{ security_spec.auto_block.attempts | default(3) }}
+    --within-mins {{ security_spec.auto_block.within_mins | default(1440) }}
+    --expire-day {{ security_spec.auto_block.expire_day | default(0) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: ab_apply
+  changed_when: "'CHANGED' in ab_apply.stdout or 'WOULD-CHANGE' in ab_apply.stdout"
+  failed_when: "ab_apply.rc != 0 or 'FAIL' in ab_apply.stdout"
+  check_mode: false
+
+# --- Drift export (read-only) — only with `--tags export` -----------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

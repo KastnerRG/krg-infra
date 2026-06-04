@@ -1,0 +1,71 @@
+---
+# synology_dsm_system — DSM hostname + network (general) from spec/e4e-nas/dsm-system.yml
+# via synowebapi (full-object set; logic in files/apply_dsm_system.py).
+# Per-interface IP set lives on SYNO.Core.Network.Ethernet — not yet driven here (the
+# live static IP already matches the spec, so it's a no-op until we want to change it).
+# NTP set API is unconfirmed on this DSM; subcommand reserved, TODO probe.
+#
+# CROSS-REFERENCE: parallels nix `networking.hostName` / `networking.defaultGateway`
+# / `networking.nameservers` and the Debian counterparts (`/etc/hostname` +
+# `/etc/resolv.conf`). Same intent — make the box reachable with a stable name;
+# runs FIRST in synology_base for the same reason.
+
+- name: Load the DSM system spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_dsm_system_spec }}"
+    name: sys_spec
+
+- name: Apply Network (hostname/gateway/DNS via SYNO.Core.Network set v2)
+  ansible.builtin.script: >-
+    apply_dsm_system.py network
+    --hostname {{ sys_spec.system.hostname | default('e4e-nas') | quote }}
+    --gateway {{ (sys_spec.network.gateway | default('')) | quote }}
+    --dns-primary {{ (sys_spec.network.dns.primary | default('')) | quote }}
+    --dns-secondary {{ (sys_spec.network.dns.secondary | default('')) | quote }}
+    --dns-manual {{ sys_spec.network.dns.manual | default(true) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: net_apply
+  changed_when: "'CHANGED' in net_apply.stdout or 'WOULD-CHANGE' in net_apply.stdout"
+  failed_when: "net_apply.rc != 0 or 'FAIL' in net_apply.stdout"
+  check_mode: false
+
+# Prerequisite for the synology Terraform provider's synology_core_package
+# resource — see spec/e4e-nas/dsm-system.yml `packages:` for the why.
+- name: Apply Package Center default install volume (SYNO.Core.Package.Setting set v1)
+  ansible.builtin.script: >-
+    apply_dsm_system.py package-defaults
+    --install-volume {{ sys_spec.packages.default_install_volume | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: pkg_def_apply
+  changed_when: "'CHANGED' in pkg_def_apply.stdout or 'WOULD-CHANGE' in pkg_def_apply.stdout"
+  failed_when: "pkg_def_apply.rc != 0 or 'FAIL' in pkg_def_apply.stdout"
+  check_mode: false
+  # Guard `packages` parent too — Jinja resolves the nested attribute lookup
+  # before `is defined` evaluates, so a spec without a `packages:` key would
+  # raise AnsibleUndefinedVariable. Hierarchical check makes the role usable
+  # with older/minimal specs that pre-date the packages block.
+  when:
+    - sys_spec.packages is defined
+    - sys_spec.packages.default_install_volume is defined
+
+# Workaround for upstream provider bug — see spec/e4e-nas/dsm-system.yml
+# `packages.ensure_running:` for the why.
+- name: Ensure packages are started (synopkg start; workaround for tofu run=true drop)
+  ansible.builtin.script: >-
+    apply_dsm_system.py package-state
+    --packages {{ (sys_spec.packages.ensure_running | default([])) | to_json | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: pkg_state_apply
+  changed_when: "'CHANGED' in pkg_state_apply.stdout or 'WOULD-CHANGE' in pkg_state_apply.stdout"
+  failed_when: "pkg_state_apply.rc != 0 or 'FAIL' in pkg_state_apply.stdout"
+  check_mode: false
+  # Same hierarchical-guard pattern as package-defaults above.
+  when:
+    - sys_spec.packages is defined
+    - (sys_spec.packages.ensure_running | default([])) | length > 0
+
+# NTP and per-interface static IP — TODO once API surfaces confirmed.
+
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

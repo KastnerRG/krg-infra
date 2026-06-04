@@ -1,0 +1,8 @@
+---
+synology_hyper_backup_spec: "{{ nas_spec_dir }}/hyper-backup.yml"
+synology_export_dir: "/var/lib/krg-deploy/synology-export"
+
+# Bootstrap secrets: map of job name -> destination password/key. Supply via
+# `-e @secrets-hb.yml` at runtime; NEVER commit. Empty default = job creation
+# skipped for any job without a corresponding secret entry.
+hyper_backup_secrets: {}

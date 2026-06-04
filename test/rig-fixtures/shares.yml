@@ -1,0 +1,10 @@
+# THROWAWAY fixture (test rig only) to exercise the synoshare path against DSM 7.3.
+# The rig has only /volume1 (prod has /volume1 + /volume2). These paths don't exist
+# yet, so --add creates the btrfs subvolume + share (the fresh-create path). Point the
+# role at this dir with: -e nas_spec_dir=.../test/rig-fixtures
+defaults:
+  browseable: true
+
+shares:
+  - { name: rigtestshare, path: /volume1/rigtestshare, description: "rig validation share" }
+  - { name: righidden, path: /volume1/righidden, description: "rig hidden share", browseable: false }

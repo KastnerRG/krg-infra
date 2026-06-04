@@ -1,0 +1,29 @@
+---
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get DSM Terminal config
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Terminal method=get version=1"
+  register: term_get
+  changed_when: false
+  check_mode: false
+
+- name: Read the sshd drop-in (if any)
+  ansible.builtin.raw: "cat /etc/ssh/sshd_config.d/10-krg-hardening.conf 2>/dev/null || true"
+  register: sshd_drop_in
+  changed_when: false
+  check_mode: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-ssh.yml"
+    mode: "0600"
+    content: |
+      terminal_raw: {{ term_get.stdout_lines | to_json }}
+      sshd_drop_in: {{ sshd_drop_in.stdout_lines | default([]) | to_json }}
+  delegate_to: localhost

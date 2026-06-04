@@ -1,0 +1,42 @@
+---
+# synology_dsm_updates — manage DSM auto-update policy from spec/e4e-nas/dsm-updates.yml
+# via synowebapi (SYNO.Core.Upgrade.Setting / .Server, full-object set — logic in
+# files/apply_dsm_updates.py, shipped via the `script` module, DSM py3.8).
+#
+# CROSS-REFERENCE: counterpart of nix `system.autoUpgrade` (nix/profiles/base.nix)
+# and the Debian `unattended-upgrades` files (ansible/roles/base/files/*upgrades).
+# When you change the auto-update posture on any layer, mirror it here.
+#
+# WARNING (runbook §1): a DSM update can revert sshd_config drop-ins written by
+# synology_ssh. Re-apply synology_base after a major DSM upgrade lands.
+
+- name: Load the DSM updates spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_dsm_updates_spec }}"
+    name: upd_spec
+
+- name: Apply DSM update policy (Upgrade.Setting set v2 — full-object; partial = err 2001)
+  # EMPIRICAL note (2026-05-29): live `Upgrade.Setting v2 get` exposes
+  # `autoupdate_enable`, `autoupdate_type`, and a NESTED `schedule.{week_day,
+  # hour, minute}` — the helper merges nested. `--notify-email` and
+  # `--update-channel` are accepted but no-op (Notification.Event owns email;
+  # Upgrade.Server has no set method on this DSM). See apply_dsm_updates.py.
+  ansible.builtin.script: >-
+    apply_dsm_updates.py setting
+    --policy {{ upd_spec.dsm_updates.policy | default('hotfix-security') | quote }}
+    --auto-install {{ upd_spec.dsm_updates.auto_install_enabled | default(true) }}
+    --notify-email {{ upd_spec.dsm_updates.notify_email_on_install | default(true) }}
+    --update-channel {{ upd_spec.dsm_updates.update_channel | default('stable') | quote }}
+    --day {{ upd_spec.dsm_updates.schedule.day | default('Sun') | quote }}
+    --hour {{ upd_spec.dsm_updates.schedule.hour | default(3) }}
+    --minute {{ upd_spec.dsm_updates.schedule.minute | default(0) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: upd_apply
+  changed_when: "'CHANGED' in upd_apply.stdout or 'WOULD-CHANGE' in upd_apply.stdout"
+  failed_when: "upd_apply.rc != 0 or 'FAIL' in upd_apply.stdout"
+  check_mode: false  # script self-gates on --check
+
+# --- Drift export (read-only) — only with `--tags export` -----------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

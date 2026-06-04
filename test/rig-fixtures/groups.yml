@@ -1,0 +1,7 @@
+# THROWAWAY fixture to exercise synology_users against the TEST RIG only — never prod.
+# Point the role at this dir with: -e nas_spec_dir=.../test/rig-fixtures
+# type=local forces real synogroup creation (prod groups are AD → skipped), so this
+# validates the synogroup command path against DSM 7.3.
+type: local
+groups:
+  - { name: rigtest, description: "rig validation group" }

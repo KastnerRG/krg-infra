@@ -1,0 +1,43 @@
+---
+# synology_app_portal — DSM Application Portal (config + reverse-proxy + access-control)
+# from spec/e4e-nas/app-portal.yml via synowebapi. Config is full-object set; the
+# entry lists are diffed declaratively (create/update/delete by id).
+
+- name: Load the app portal spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_app_portal_spec }}"
+    name: portal_spec
+
+- name: Apply AppPortal.Config (show_titlebar)
+  ansible.builtin.script: >-
+    apply_app_portal.py config
+    --show-titlebar {{ portal_spec.config.show_titlebar | default(true) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: cfg_apply
+  changed_when: "'CHANGED' in cfg_apply.stdout or 'WOULD-CHANGE' in cfg_apply.stdout"
+  failed_when: "cfg_apply.rc != 0 or 'FAIL' in cfg_apply.stdout"
+  check_mode: false
+
+- name: Apply ReverseProxy entries (declarative list sync)
+  ansible.builtin.script: >-
+    apply_app_portal.py reverse-proxy
+    --entries {{ portal_spec.reverse_proxy | default([]) | to_json | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: rp_apply
+  changed_when: "'CHANGED' in rp_apply.stdout or 'WOULD-CHANGE' in rp_apply.stdout"
+  failed_when: "rp_apply.rc != 0 or 'FAIL' in rp_apply.stdout"
+  check_mode: false
+
+- name: Apply AccessControl entries (declarative list sync)
+  ansible.builtin.script: >-
+    apply_app_portal.py access-control
+    --entries {{ portal_spec.access_control | default([]) | to_json | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: ac_apply
+  changed_when: "'CHANGED' in ac_apply.stdout or 'WOULD-CHANGE' in ac_apply.stdout"
+  failed_when: "ac_apply.rc != 0 or 'FAIL' in ac_apply.stdout"
+  check_mode: false
+
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

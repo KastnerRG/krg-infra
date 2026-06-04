@@ -1,0 +1,32 @@
+# SSH / Telnet / SFTP hardening for e4e-nas — declarative source of truth.
+# Consumed by the `synology_ssh` Ansible role.
+#
+# CROSS-REFERENCE: this is the DSM counterpart of nix `services.openssh.settings`
+# (nix/profiles/base.nix) and `ansible/roles/ssh_hardening`. Same policy:
+# key-only, no root password, ed25519-only. The breach this repo exists to fix
+# was a dictionary attack on an exposed root SSH — apply the same hygiene here.
+#
+# DSM specifics (runbook §1 footnote):
+# - DSM's UI has no "disable password auth" toggle. The role drops in
+#   /etc/ssh/sshd_config.d/10-krg-hardening.conf (PasswordAuthentication no /
+#   PermitRootLogin no / ed25519-only). A DSM update CAN revert this — re-apply
+#   synology_base after major upgrades (synology_dsm_updates README).
+# - DSM exposes ssh + telnet + sftp toggles via SYNO.Core.Terminal (best-known
+#   from /usr/syno/synoman/webapi/SYNO.Core.Terminal*.lib; empirical confirmation
+#   pending).
+
+ssh:
+  enable: true
+  port: 22                      # keep 22; firewall scopes sources (synology_security)
+  allow_password: false         # HARDEN: live likely true; written by sshd drop-in
+  allow_root: false             # HARDEN: written by sshd drop-in
+  # Algorithm restriction — mirror nix base. Empty string = leave DSM defaults
+  # (sometimes necessary on appliances with old OpenSSH; flip on first apply if
+  # the drop-in breaks sshd config validation).
+  allowed_pubkey_algos: "ssh-ed25519"
+
+telnet:
+  enable: false                 # runbook §1: disable Telnet
+
+sftp:
+  enable: false                 # runbook §1: only on if a client needs it

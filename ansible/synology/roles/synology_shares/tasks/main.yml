@@ -1,0 +1,94 @@
+---
+# synology_shares — manage DSM shared folders from spec/e4e-nas/shares.yml by wrapping
+# the DSM `synoshare` CLI. DSM is not Debian; ansible has no shared-folder module. Copies
+# the synology_users proof-of-pattern: probe -> create-if-missing (idempotent,
+# --check-aware) + a paired read-only exporter for drift detection. Git is truth; UI
+# changes are drift (ADR 0001).
+#
+# WHY raw + PATH prefix (validated on the rig, same as synology_users):
+#   * DSM ships Python 3.8 < ansible-core's >=3.9 module floor -> use `raw` (runs over
+#     SSH, no python on the target). `raw` returns rc/stdout, so probe->create still works.
+#   * synoshare lives in /usr/syno/sbin (NOT on root's PATH) -> prepend {{ syno_path }}.
+#
+# `synoshare --add` behaviour (validated on the rig 2026-05-27, DSM 7.3.2-86009, btrfs):
+#   * leaf path does NOT exist           -> creates the btrfs subvolume + share   (rc=0)
+#   * leaf path is an existing SUBVOLUME -> re-links the share to it, DATA KEPT   (rc=0)
+#       ^ THIS is the "preserve volumes" rebuild path: DSM share roots ARE subvolumes,
+#         so re-running --add after a clean DSM reinstall re-attaches each share to its
+#         preserved data — the burn-down/stand-back-up goal (ADR 0001 / repo goal).
+#   * leaf path is an existing PLAIN dir -> FAILS "share create failed [0xE700]" (rc=255)
+#   * share name already exists          -> FAILS "Share is already exists."     (rc=255)
+#   We probe with `--get` (rc != 0 == missing) and only --add the missing ones, so the
+#   "already exists" error never fires on a converged box.
+#
+# Per-share USER ACLs (synoshare --setuser) live in the future synology_acls role, NOT
+# here (--add leaves the na/rw/ro lists empty). Recycle-bin / advanced flags have NO
+# synoshare arg -> tracked as a follow-up below.
+# Cross-ref: docs/krg-prod-iac.md, ADR 0005, spec/e4e-nas/shares.yml.
+
+- name: Load the declarative shares spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_shares_spec }}"
+    name: shares_spec
+
+- name: Probe each share (rc != 0 == missing)
+  # DSM CLIs return 255 for "not found", which collides with SSH's own 255
+  # "connection failed" — ansible's raw: would misclassify the missing-share
+  # case as UNREACHABLE and bypass failed_when: false. Translate 255 → 1 so
+  # ansible can distinguish remote-not-found from SSH-died.
+  ansible.builtin.raw: |
+    PATH={{ syno_path }}:$PATH synoshare --get {{ item.name | quote }} >/dev/null 2>&1
+    rc=$?
+    [ "$rc" = 255 ] && exit 1 || exit $rc
+  register: synoshare_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false # always probe so --check can report would-create
+  loop: "{{ shares_spec.shares | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# --- WOULD-CREATE report under --check -----------------------------------------
+# `raw:` doesn't honor ansible_check_mode (the module has no check-mode support;
+# under --check it silently skips). The probe above ran and we know exactly which
+# shares would be created — surface that as a CHANGED debug task so a dry-run
+# emits actionable output instead of nothing.
+- name: WOULD-CREATE the missing shares (--check only)
+  ansible.builtin.debug:
+    msg: "WOULD-CREATE share {{ item.item.name }} at {{ item.item.path }}"
+  when:
+    - ansible_check_mode
+    - (item.rc | default(255)) != 0
+  loop: "{{ synoshare_probe.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  changed_when: true   # reflect intent in --check --diff output
+
+- name: Create missing shares
+  # synoshare --add <name> <desc> <path> <na> <rw> <ro> <browsable 0|1> <adv_privilege 0~7>
+  # na/rw/ro left empty ('') -> per-share user ACLs are applied by synology_acls (--setuser).
+  ansible.builtin.raw: >-
+    PATH={{ syno_path }}:$PATH synoshare --add
+    {{ item.item.name | quote }}
+    {{ (item.item.description | default('')) | quote }}
+    {{ item.item.path | quote }}
+    '' '' ''
+    {{ (item.item.browseable | default(shares_spec.defaults.browseable | default(true))) | bool | ternary(1, 0) }}
+    0
+  when:
+    - not ansible_check_mode            # raw doesn't honor check_mode; gate explicitly
+    - (item.rc | default(255)) != 0
+  changed_when: true
+  loop: "{{ synoshare_probe.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  # NOTE — follow-ups (all need the exporter's current-state diff to stay idempotent):
+  #   * desc/browse drift correction: synoshare --setdesc <name> <desc> / --setbrowse <name> {0|1}
+  #   * recycle bin (spec `recycle_bin`): NO synoshare arg — separate file-service setting
+  #   * rename / move volume: synoshare --rename <old> <new> / --setvol <name> <vol_id>
+  # Create is the first validated cut, mirroring synology_users.
+
+# --- Drift export (read-only) — only with `--tags export` -----------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

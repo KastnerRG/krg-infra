@@ -1,0 +1,97 @@
+---
+# synology_ad — DSM domain join (KRG.LOCAL) + winbind idmap reconciliation from
+# spec/e4e-nas/ad.yml. Counterpart of nix `krg.adClient` and ansible
+# `roles/ad_client`. DSM uses winbind, not SSSD — the role's main complication is
+# making winbind's idmap line up with SSSD's algorithmic mapping so the
+# fabricant-prod NFS export sees the same uid/gid on both sides.
+#
+# Helper at files/apply_ad.py via `script` module (DSM py3.8). Three subcommands:
+#   * domain-config   SYNO.Core.Directory.Domain set (realm + DC + idmap) full-object.
+#   * test-join       SYNO.Core.Directory.Domain.Join test — returns rc=0 if joined.
+#   * join            SYNO.Core.Directory.Domain.Join start — one-shot, needs creds.
+#                     Skipped if test-join shows joined; SKIPPED with WARN if no creds.
+#
+# ORDER CONSTRAINT: synology_base composer runs this LAST so the local
+# break-glass e4e-admin (synology_users; E4E hardware) and the key-only SSH
+# lockdown (synology_ssh) are already in place — a misconfigured idmap or
+# allowed_groups filter can't lock us out because local accounts bypass winbind.
+
+- name: Load the AD spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_ad_spec }}"
+    name: ad_spec
+
+# --- Domain config (realm, DC pin, idmap) — full-object set -----------------
+- name: Apply DSM Domain config (Directory.Domain set — full-object; partial = err 2001)
+  ansible.builtin.script: >-
+    apply_ad.py domain-config
+    --realm {{ ad_spec.ad.realm | quote }}
+    --domain {{ ad_spec.ad.domain | quote }}
+    --dc-host {{ ad_spec.ad.dc_host | quote }}
+    --dc-ip {{ ad_spec.ad.dc_ip | quote }}
+    --ou {{ ad_spec.ad.ou | quote }}
+    --idmap-mode {{ ad_spec.ad.idmap_mode | default('rid') | quote }}
+    --idmap-uid-range {{ ad_spec.ad.idmap_uid_range | default('10000-2000000') | quote }}
+    --idmap-gid-range {{ ad_spec.ad.idmap_gid_range | default('10000-2000000') | quote }}
+    --allowed-groups {{ (ad_spec.ad.allowed_groups | default([])) | to_json | quote }}
+    --admin-groups {{ (ad_spec.ad.admin_groups | default([])) | to_json | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: ad_cfg
+  changed_when: "'CHANGED' in ad_cfg.stdout or 'WOULD-CHANGE' in ad_cfg.stdout"
+  failed_when: "ad_cfg.rc != 0 or 'FAIL' in ad_cfg.stdout"
+  check_mode: false
+
+# --- Test current join state -------------------------------------------------
+- name: Test current AD join state
+  ansible.builtin.script: apply_ad.py test-join
+  register: ad_test
+  changed_when: false
+  failed_when: false  # rc != 0 just means not-joined
+  check_mode: false
+
+- name: Warn when un-joined and no credentials were supplied
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} is NOT joined to {{ ad_spec.ad.realm }} and no
+      ad_join_password was supplied. Staging config and skipping join. Re-run with
+      -e ad_join_password='<Domain Admin password>' to enroll the NAS. Local
+      accounts (e4e-admin) continue to work.
+  when:
+    - "'JOINED' not in ad_test.stdout"
+    - ad_join_password | length == 0
+
+- name: Join the AD domain (one-shot — needs Domain Admin creds)
+  ansible.builtin.script: >-
+    apply_ad.py join
+    --realm {{ ad_spec.ad.realm | quote }}
+    --domain {{ ad_spec.ad.domain | quote }}
+    --dc-host {{ ad_spec.ad.dc_host | quote }}
+    --dc-ip {{ ad_spec.ad.dc_ip | quote }}
+    --ou {{ ad_spec.ad.ou | quote }}
+    --join-user {{ ad_join_user | quote }}
+    --join-password {{ ad_join_password | quote }}
+  register: ad_join_run
+  no_log: true       # password on argv
+  changed_when: "'CHANGED' in ad_join_run.stdout"
+  failed_when: "ad_join_run.rc != 0 or 'FAIL' in ad_join_run.stdout"
+  check_mode: false
+  when:
+    - "'JOINED' not in ad_test.stdout"
+    - ad_join_password | length > 0
+
+# admin_groups (spec/e4e-nas/ad.yml) is the AD-admin-tier intent. DSM 7.3 has
+# no global mechanism to apply it (we exhaustively probed all four candidates
+# 2026-06-01 — synoinfo Ad_Domain_Admin_Groups, Directory.Domain.Conf.set
+# domain_admin_groups, smb.conf admin users, synogroup --memberadd nesting —
+# none propagate at the share-resolver layer; DSM 7.3 UI no longer lets you
+# add AD groups to local DSM groups either). The supported pattern on DSM 7.3
+# is per-share grants, applied by synology_acls's `admin-grants` subcommand
+# which reads admin_groups from this spec and writes them to every share
+# enumerated in spec/e4e-nas/shares.yml. So this role intentionally does NOT
+# push admin_groups — it stays declared in ad.yml as the source of truth and
+# synology_acls consumes it.
+
+# --- Drift export (read-only) — only with `--tags export` -------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

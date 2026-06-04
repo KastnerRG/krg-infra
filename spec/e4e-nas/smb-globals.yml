@@ -1,0 +1,28 @@
+# SMB global service config on e4e-nas — declarative source of truth.
+# Consumed by the `synology_smb` Ansible role; exporter reads the live values back.
+# Seeded from the build sheet (docs/e4e-nas-dsm.md) with the hardening deltas applied.
+
+smb:
+  enable: true
+  min_protocol: SMB3       # HARDENED — was SMB2
+  max_protocol: SMB3       # HARDENED — was SMB2_10 (which silently capped at 2.1, disabling SMB3)
+  server_signing: true     # keep (was on)
+  ntlmv1_auth: false       # keep (was off)
+  smb1: false              # ensure disabled
+
+# --- Other service / system settings (from the build sheet) ---
+# These are NOT SMB and belong to other roles' vars (synology_base / synology_nfs /
+# synology_firewall) rather than this file — captured here as a pointer so nothing
+# is lost. Move into the proper role spec when those roles are built.
+#
+#   afp:        off        (keep off)
+#   ftp:        OFF        (HARDENED — was on / plaintext)
+#   sftp:       only if a client needs it
+#   snmp:       SNMPv3 read-only, restricted to the krg-prod monitoring host
+#   ntp:        fabricant-ldap.ucsd.edu   (KRG.LOCAL DC — was the dead KRG.UCSD.EDU DC)
+#   timezone:   Pacific    (keep)
+#   ssh:        on, key-only, firewall-restricted (port 22)
+#   dsm_update: hotfix-security (keep)
+#   quickconnect / upnp: OFF (HARDENED — were on, external relay exposure)
+#   home_service: on, include domain users (needed for user homes + SSH login)
+#   password_policy: min length 12 (keep)

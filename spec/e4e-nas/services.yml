@@ -1,0 +1,84 @@
+# Non-SMB / non-NFS file & system services for e4e-nas — FTP/FTPS, AFP, SFTP, WebDAV,
+# Rsync, SNMP. SMB lives in smb-globals.yml, NFS in nfs-exports.yml.
+#
+# IaC home: `synology_services` Ansible role — `apply_services.py` GET→merge→SET per
+# service on SYNO.Core.FileServ.{FTP,AFP,SFTP,WebDAVServer,Rsync} + SYNO.Core.SNMP.
+# Values from the 2026-05-28 live capture.
+
+# --- FTP/FTPS ---
+# Live: plain FTP OFF, FTPS ON, custom passive port range 55536:55899, UTF-8 on, FIPS off.
+# DECISION (2026-05-28): FTPS killed. Both surfaces stay OFF — SMB + NFS cover the
+# share-access use cases, and there's no current FTP client. Re-enable only if a
+# specific consumer needs it (then flip enable_ftps and revisit the passive range).
+ftp:
+  enable_ftp: false           # plain FTP — keep OFF
+  enable_ftps: false          # KILLED (was true on live) — re-enable only on demand
+  enable_fxp: false
+  enable_fips: false
+  enable_utf8: true
+  passive_port_range: "55536:55899"   # if FTPS re-enabled, keep the same range
+  max_conn_per_ip: 0          # 0 = unlimited
+  ext_ip: ""
+
+# --- AFP (Apple Filing Protocol) ---
+# Live: off. Keep off (obsolete, replaced by SMB even on macOS).
+afp:
+  enable: false
+  enable_disconnect_quick: false
+  enable_umask: false
+  time_machine_shares: []
+
+# --- SFTP (SSH file transfer) ---
+# DSM exposes SFTP as a toggle separate from SSH itself. Capture errored 102 for
+# SYNO.Core.FileServ.SFTP — likely a different API/version, or the toggle lives in
+# SSH service. Note in runbook: SFTP "only if a client needs it".
+sftp:
+  enable: false               # explicit off; flip true if a client needs it
+
+# --- WebDAV ---
+# Live: SYNO.Core.FileServ.WebDAVServer errored 102 on this DSM; the WebDAV stack here
+# may be provided by the WebDAV Server package (separate from the core API). Spec
+# target = disabled unless a client needs it. Confirm package install state separately.
+webdav:
+  enable_http: false
+  enable_https: false
+
+# --- Rsync (DSM's Rsync server, not just the rsync binary) ---
+# Capture errored 102 on FileServ.Rsync get; the .lib only exposes Rsync.Account
+# (create/delete/list/set). Treat the SERVICE toggle as a separate API/package; default off.
+rsync:
+  enable: false
+  ssh_only: true              # if enabled, require SSH transport, not the legacy daemon
+  accounts: []                # per-user rsync accounts (Rsync.Account)
+
+# --- SNMP ---
+# Live: ALL off (v1/v2/v3). The runbook explicitly wants SNMPv3 read-only, restricted
+# to the krg-prod monitoring host, for Prometheus → Grafana visibility into the NAS.
+# DRIFT to fix on apply: enable v3, sysName/contact/location, USM user, ACL by source.
+snmp:
+  enable_snmp: true                    # HARDEN: live=false; spec ON for monitoring
+  enable_snmp_v1v2: false              # v1/v2 stay OFF (cleartext)
+  enable_snmp_v3: true
+  contact: "e4e@ucsd.edu"              # E4E hardware — confirmed 2026-05-28
+  location: "Building/Room — UCSD"     # TODO confirm
+  name: e4e-nas                        # sysName
+  # USM (User-based Security Model) — v3 user + auth/priv PROTOCOL choices.
+  # The PASSWORDS go in secrets-syno.yml as `snmp_v3_auth_password` +
+  # `snmp_v3_priv_password` (operator-side; later → OpenBao). When the
+  # passwords are absent the helper SOFT-DEFERS enable_snmp_v3 (pins to
+  # current, WARN on stderr) so the rest of the apply still lands.
+  v3_user: krg-monitor                 # the username the krg-prod scraper uses
+  v3_auth_protocol: SHA                # USM auth — SHA|SHA224|SHA256|SHA384|SHA512|MD5
+  v3_priv_protocol: AES                # USM priv — AES|AES192|AES256|DES
+  # Allow-list of scrape sources — point at the shared single source of truth.
+  # `monitoring_host` is a SCALAR (the Prometheus IP) in trusted.json, NOT an
+  # IPSet — there's no `monitoring` IPSet today. The SNMP allow-list itself is
+  # enforced by the firewall (synology_security) when its rule-push lands, not
+  # by SNMP itself — this ref is operator-facing documentation pointing at
+  # what the rule should grant.
+  allow_source_ref: nix/networks/trusted.json#monitoring_host
+
+# --- Hardening notes (drift the role will fix on apply) ---
+# - FTPS: was on → spec off (decision: re-enable only if a client requires it)
+# - SNMPv3: was off → on (Prometheus visibility)
+# - WebDAV / Rsync service / SFTP: explicit off (were unknown; capture errored)

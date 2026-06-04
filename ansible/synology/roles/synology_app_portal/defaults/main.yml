@@ -1,0 +1,3 @@
+---
+synology_app_portal_spec: "{{ nas_spec_dir }}/app-portal.yml"
+synology_export_dir: "/var/lib/krg-deploy/synology-export"

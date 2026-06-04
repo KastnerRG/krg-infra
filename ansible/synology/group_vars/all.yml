@@ -1,0 +1,24 @@
+# Baseline vars for hosts managed by THIS (synology) ansible subtree.
+# Mirrors the shape of ansible/inventory/group_vars/all.yml in the main subtree —
+# same single source of truth for keys + trusted nets (nix/keys/admins.json,
+# nix/networks/trusted.json), just resolved from this inventory's location.
+#
+# Why duplicate the lookup code: this subtree is intentionally self-contained
+# so it can be removed wholesale (`rm -rf ansible/synology/`). Pulling vars
+# from the sibling inventory would create a cross-subtree dependency and
+# break that property.
+
+# Anchor on `inventory_dir` (resolves to <repo>/ansible/synology under this
+# subtree), climb two levels = repo root, then into the shared nix/ tree.
+krg_keys_file: "{{ (inventory_dir | dirname) | dirname }}/nix/keys/admins.json"
+krg_admin_passwords_file: "{{ (inventory_dir | dirname) | dirname }}/nix/keys/admin-passwords.json"
+krg_trusted_file: "{{ (inventory_dir | dirname) | dirname }}/nix/networks/trusted.json"
+
+# e4e-nas is E4E hardware → admin slot is `e4e-admin`. If you ever add a
+# krg-side NAS to this subtree, override these in that host's host_vars.
+admin_ssh_keys: "{{ (lookup('file', krg_keys_file) | from_json)['e4e-admin'] }}"
+admin_password_hash: "{{ (lookup('file', krg_admin_passwords_file) | from_json).get('e4e-admin', '') }}"
+
+# Trusted nets / IPSets (consumed by synology_security for the autoblock allow-list).
+krg_trusted: "{{ lookup('file', krg_trusted_file) | from_json }}"
+krg_monitoring_host: "{{ krg_trusted.monitoring_host }}"

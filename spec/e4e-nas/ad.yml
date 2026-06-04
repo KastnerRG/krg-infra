@@ -1,0 +1,73 @@
+# DSM Active Directory domain join + winbind config for e4e-nas — declarative source of truth.
+# Consumed by the `synology_ad` Ansible role.
+#
+# CROSS-REFERENCE: counterpart of nix `krg.adClient` (`nix/modules/sssd-ad-client.nix`)
+# and ansible `roles/ad_client`. Same realm/DC. Difference: DSM uses winbind, not
+# SSSD. The winbind <-> SSSD idmap reconciliation below is the bit that matters
+# (NFS export to fabricant depends on aligned uid/gid ranges).
+#
+# DSM API surface (best-known from /usr/syno/synoman/webapi/SYNO.Core.Directory*.lib —
+# empirical confirmation pending; flip field names in apply_ad.py on first-apply drift):
+#   * SYNO.Core.Directory.Domain       get/set     (realm + DC + idmap)
+#   * SYNO.Core.Directory.Domain.Join  start/test  (one-time join; needs creds)
+#   * SYNO.Core.Directory.WinBind      get/set     (winbind tunables — separate)
+
+ad:
+  realm: KRG.LOCAL                            # uppercase Kerberos realm
+  domain: krg.local                           # lowercase AD DNS domain
+  dc_host: krg-ldap.krg.local                 # NEW DC (mirrors nix ad_client.nix l.13)
+  dc_ip: 137.110.161.109                      # pinned, mirrors nix ad_client.nix l.14
+  # OU under which the NAS computer account lives. Matches the nix default
+  # convention; tweak per-host if you stand up multiple Synology boxes.
+  ou: "OU=NAS,OU=Hosts,DC=krg,DC=local"
+
+  # Login access. Mirrors `ad_client.ad_allowed_groups` from the Debian role —
+  # only members of these AD groups can log into DSM. Widen per-host as needed.
+  allowed_groups:
+    - Domain Admins
+
+  # AD groups that should be NAS admins. DSM 7.3 has NO global mechanism to
+  # express this — every candidate we probed 2026-06-01 either silently
+  # no-ops or doesn't propagate through DSM's share-permission resolver:
+  #   * synoinfo Ad_Domain_Admin_Groups — DSM 6 used this; DSM 7.3 ignores it
+  #   * Directory.Domain.Conf.set v2/v3 domain_admin_groups — returns success,
+  #     field isn't in the GET schema, changes never apply
+  #   * smb.conf `admin users=@KRG\Domain Admins` — Samba override AFTER
+  #     DSM's per-share ACL gate, doesn't bypass it
+  #   * synogroup --memberadd administrators KRG\<group> — entry persists in
+  #     synogroup but the DSM resolver doesn't walk it backwards; also
+  #     DSM 7.3's UI no longer offers to add AD groups to local groups at
+  #     all (Edit administrators → Members shows local users only)
+  # The pre-reset NAS that "just worked" accumulated per-share grants in the
+  # filesystem ACL (Advanced Permissions UI) over years — the orphan SIDs
+  # showing as "Unknown user/group: 2841642074" on live shares today are
+  # the remnants of `KRG-UCSD-EDU\Engineers for Exploration NAS Admins`
+  # that the new KRG.LOCAL domain can't resolve.
+  #
+  # So this list is consumed by `synology_acls`'s admin-grants subcommand,
+  # which additively grants `@KRG\<group>` RW on every share in
+  # spec/e4e-nas/shares.yml (the DSM 7.3-supported per-share model).
+  # apply_ad.py validates the field for the role contract but does NOT push
+  # it (no working API surface). See ansible/synology/roles/synology_ad/
+  # tasks/main.yml for the architectural note.
+  admin_groups:
+    - Domain Admins
+    - E4E Admin
+
+  ssh_keys_from_ad: false                     # OpenSSH-LPK on DSM is not native; probe later
+
+  # --- ID MAPPING (THE NFS-INTEROP BLOCKER — runbook §2) ---
+  # DSM/winbind defaults to RID mapping; the rest of the fleet (SSSD via
+  # nix/modules/sssd-ad-client.nix) uses algorithmic. Same AD user gets
+  # DIFFERENT uid/gid on the NAS vs Linux clients.
+  # - SMB is SID-based (fine; what most clients use).
+  # - NFS is uid-based — the `fabricant-prod-share` export depends on this
+  #   being reconciled. Two options on DSM:
+  #     idmap_mode: rid     — DSM default, simpler, but won't match SSSD.
+  #     idmap_mode: autorid — closer to SSSD's algorithmic mapping; verify on rig.
+  # Either way, the explicit range is required for predictable IDs.
+  idmap_mode: rid                             # rid | autorid (probe before changing)
+  # Match the SSSD range exactly (nix `krg.adClient` defaults). If the range
+  # below mismatches the SSSD side, NFS uid/gids won't line up.
+  idmap_uid_range: "10000-2000000"
+  idmap_gid_range: "10000-2000000"

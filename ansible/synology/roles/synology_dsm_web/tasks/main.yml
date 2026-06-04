@@ -1,0 +1,52 @@
+---
+# synology_dsm_web — manage DSM web settings (HSTS / HTTP/2 / mDNS / SSDP / HTTPS
+# redirect / DSM ports / TLS profile) from spec/e4e-nas/dsm-web.yml via synowebapi.
+# Two synowebapi surfaces, both idempotent (GET → diff → SET, only on drift); logic
+# in files/apply_dsm_web.py, shipped via the `script` module (DSM's py3.8 — same
+# constraint as synology_smb/_nfs/_acls). Git is truth; UI = drift (ADR 0001).
+#
+# CROSS-REFERENCE: this is DSM's built-in web UI hardening (no direct Linux
+# counterpart in this repo today — Traefik on krg-prod handles fleet-wide HTTP
+# hardening separately). Same HSTS / HTTP/2 / TLS-Modern intent, different vehicle.
+#
+#   * SYNO.Core.Web.DSM v2 set      — FULL-object pattern (partial = err 2001), like SMB.
+#   * SYNO.Core.Web.Security.TLSProfile v1 set — single integer (`default-level`);
+#     the helper maps spec name (modern|intermediate|old) → DSM's int. The mapping is
+#     community-best-known; verify on the first rebuild apply, flip TLS_LEVELS if wrong.
+
+- name: Load the DSM web spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_dsm_web_spec }}"
+    name: web_spec
+
+- name: Apply DSM web settings (Web.DSM set v2 — full-object; partial = DSM err 2001)
+  ansible.builtin.script: >-
+    apply_dsm_web.py web
+    --hsts {{ web_spec.web.enable_hsts | default(true) }}
+    --avahi {{ web_spec.web.enable_avahi | default(false) }}
+    --ssdp {{ web_spec.web.enable_ssdp | default(false) }}
+    --http2 {{ web_spec.web.enable_spdy | default(true) }}
+    --https-redirect {{ web_spec.web.enable_https_redirect | default(true) }}
+    --server-header {{ web_spec.web.enable_server_header | default(false) }}
+    --http-port {{ web_spec.web.http_port | default(6020) }}
+    --https-port {{ web_spec.web.https_port | default(6021) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: web_apply
+  changed_when: "'CHANGED' in web_apply.stdout or 'WOULD-CHANGE' in web_apply.stdout"
+  failed_when: "web_apply.rc != 0 or 'FAIL' in web_apply.stdout"
+  check_mode: false # run in --check too; apply_dsm_web.py --check self-gates (read-only GET)
+
+- name: Apply TLS compatibility profile (Web.Security.TLSProfile)
+  ansible.builtin.script: >-
+    apply_dsm_web.py tls-profile
+    --profile {{ web_spec.tls.profile | default('intermediate') }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: tls_apply
+  changed_when: "'CHANGED' in tls_apply.stdout or 'WOULD-CHANGE' in tls_apply.stdout"
+  failed_when: "tls_apply.rc != 0 or 'FAIL' in tls_apply.stdout"
+  check_mode: false
+
+# --- Drift export (read-only) — only with `--tags export` -----------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

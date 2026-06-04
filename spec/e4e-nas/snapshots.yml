@@ -1,0 +1,43 @@
+# DSM Snapshot Replication schedule policy for e4e-nas — declarative source of truth.
+# Consumed by the `synology_snapshot_replication` Ansible role.
+#
+# CROSS-REFERENCE: counterpart of `nix/modules/zfs.nix` `services.zfs.autoSnapshot`
+# (waiter ZFS auto-snapshot retention) and `ansible/roles/nfs_server`
+# (fabricant Btrfs auto-snapshot via zfs-auto-snapshot timers, mirroring the nix
+# cadence). Same intent across all three layers: per-dataset hourly/daily/weekly/
+# monthly retention windows with opt-out per dataset/share.
+#
+# DSM API surface — synowebapi has Snapshot Replication endpoints; the relevant
+# call shape per the .lib hints (empirical confirmation pending; CMDS flippable
+# in apply_snapshots.py on first-apply drift):
+#   SYNO.Core.Share.Snapshot       list/get/set    (per-share schedule + retention)
+#   SYNO.SnapshotReplication.Snapshot   list/start  (ad-hoc trigger, NOT what we want here)
+# The fallback if these APIs don't own the schedule cleanly: drive the schedule
+# via `snapshotcfg` CLI (validated as present on the live capture).
+
+defaults:
+  enabled: true
+  schedule:
+    # Mirrors nix/modules/zfs.nix `com.sun:auto-snapshot:*` retention defaults.
+    # Numbers are RETENTION counts (how many snapshots to keep), not cadence
+    # *itself* — DSM Snapshot Replication has both a "take" cadence and a
+    # "keep" count; this maps to the keep count for each cadence bucket.
+    hourly: 4
+    daily: 7
+    weekly: 4
+    monthly: 12
+
+# Per-share overrides. Most shares get `defaults`; opt out by listing here.
+# Shares not listed at all = defaults applied.
+shares:
+  # --- opt-OUT: regenerable / staging data we don't want pinned ---
+  - { name: temp, enabled: false }
+  - { name: data_staging, enabled: false }
+  - { name: s3-data, enabled: false }              # Garage owns its own retention
+  - { name: data_archive_old, enabled: false }     # superseded by data_archive
+  - { name: installers, enabled: false }           # rebuildable from source
+
+  # --- per-share overrides (when defaults aren't right) ---
+  # Examples:
+  # - { name: admin, enabled: true,
+  #     schedule: { hourly: 12, daily: 14, weekly: 8, monthly: 24 } }

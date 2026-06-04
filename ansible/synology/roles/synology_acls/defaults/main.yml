@@ -1,0 +1,9 @@
+---
+# Declarative specs consumed by this role (nas_spec_dir is in group_vars/synology.yml).
+synology_acls_spec: "{{ nas_spec_dir }}/acls.yml" # the share -> grant matrix (apply)
+synology_shares_spec: "{{ nas_spec_dir }}/shares.yml" # exporter iterates these to capture live ACLs
+synology_ad_spec: "{{ nas_spec_dir }}/ad.yml" # `admin_groups` source for admin-grants subcommand
+
+# Where the exporter writes the live-state snapshot (read by the drift_exporter).
+# On the control node (krg-deploy); keep out of git. Shared with the other synology_* roles.
+synology_export_dir: "/var/lib/krg-deploy/synology-export"

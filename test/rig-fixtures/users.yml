@@ -1,0 +1,4 @@
+# THROWAWAY fixture (test rig only) to exercise the synouser path against DSM 7.3.
+# Password supplied at runtime via -e synology_user_passwords (never in a spec file).
+users:
+  - { name: rigtest, description: "rig validation user", email: "" }
