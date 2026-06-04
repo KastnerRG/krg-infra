@@ -92,8 +92,9 @@ ansible-playbook playbook.yml -e @~/.config/krg/secrets-garage.yml --check --dif
   `keys:`. Tracked in #101 sub-PR 5; will extend this role with `buckets` /
   `keys` subcommands (`garage bucket create`, `garage key new`,
   `garage bucket allow`).
-- **DSM AppPortal reverse proxy + Let's Encrypt** for
-  `*.s3.garage.e4e-nas.ucsd.edu` — #101 sub-PR 4 (separate role).
+- **Wildcard DSM AppPortal reverse proxy + Let's Encrypt** for virtual-host-style
+  per-bucket hostnames `*.s3.e4e.ucsd.edu` — #101 sub-PR 4 (separate role; needs a
+  wildcard cert). The path-style endpoint `s3.e4e.ucsd.edu` is exposed in #116.
 - **OpenBao-backed secrets** — #110.
 
 ## Validation

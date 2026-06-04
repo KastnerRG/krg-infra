@@ -45,10 +45,12 @@ config:
   s3_api:
     api_bind_addr: "[::]:3900"
     region: garage
-    root_domain: .s3.garage.e4e-nas.ucsd.edu  # bucket hostnames: <bucket>.s3.garage.e4e-nas.ucsd.edu (DSM AppPortal + LE in sub-PR 4 of #101)
+    root_domain: .s3.e4e.ucsd.edu  # path-style endpoint https://s3.e4e.ucsd.edu; virtual-host buckets <bucket>.s3.e4e.ucsd.edu (public AppPortal + LE SAN in #116)
   s3_web:
     bind_addr: "[::]:3902"
-    root_domain: .web.garage.e4e-nas.ucsd.edu
+    # Static-site serving from buckets. Not publicly exposed yet (no DNS record);
+    # kept in the e4e zone for consistency with the s3 endpoint above.
+    root_domain: .web.e4e.ucsd.edu
     index: index.html
   admin:
     api_bind_addr: "[::]:3903"

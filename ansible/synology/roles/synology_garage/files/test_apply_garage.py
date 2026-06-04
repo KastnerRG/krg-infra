@@ -27,9 +27,9 @@ def _render_args(**overrides):
         "rpc_public_addr":     "127.0.0.1:3901",
         "s3_api_bind_addr":    "[::]:3900",
         "s3_region":           "garage",
-        "s3_root_domain":      ".s3.garage.e4e-nas.ucsd.edu",
+        "s3_root_domain":      ".s3.e4e.ucsd.edu",
         "s3_web_bind_addr":    "[::]:3902",
-        "s3_web_root_domain":  ".web.garage.e4e-nas.ucsd.edu",
+        "s3_web_root_domain":  ".web.e4e.ucsd.edu",
         "s3_web_index":        "index.html",
         "admin_api_bind_addr": "[::]:3903",
         "meta_dir":            "/volume2/s3-data/meta",
@@ -107,7 +107,7 @@ def test_render_config_writes_when_missing(monkeypatch, capsys):
     assert 'metrics_token = "' + "c" * 64 + '"' in content
     assert 'db_engine = "lmdb"' in content
     assert "replication_factor = 1" in content
-    assert 'root_domain = ".s3.garage.e4e-nas.ucsd.edu"' in content
+    assert 'root_domain = ".s3.e4e.ucsd.edu"' in content
 
 
 def test_render_config_fails_clean_when_secret_env_unset(monkeypatch, capsys):
