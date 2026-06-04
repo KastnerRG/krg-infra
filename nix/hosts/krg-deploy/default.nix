@@ -87,6 +87,12 @@
       hostNames = [ "fabricant.ucsd.edu" ];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN846n66tuIGzD33kP6HKCVf7s7nAS+HkNBtTObQ2OFW";
     };
+    # Synology NAS — for the Ansible synology leg (ansible/synology connects to
+    # e4e-admin@e4e-nas by IP via inventory.yml ansible_host, so pin both names).
+    e4e-nas = {
+      hostNames = [ "e4e-nas.ucsd.edu" "132.239.17.124" ];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILcS4fE6LEZa4QavcZr4Xi8Bv84ZReg75Wwky5a7rgoH";
+    };
     # e4e-prod omitted — host not provisioned yet (also absent from deploy ORDER).
   };
 
