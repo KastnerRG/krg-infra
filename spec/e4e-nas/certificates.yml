@@ -27,11 +27,12 @@ letsencrypt:
     # Additional SANs on the host cert. The Garage public endpoints have their
     # own DNS names but share this one LE cert (one cert, multi-domain) so the
     # AppPortal reverse-proxy entries (app-portal.yml) get valid TLS without a
-    # separate cert per name. Each name must resolve to the NAS + be HTTP-01
-    # reachable on :80 for LE issuance.
-    # NOTE: the LE API SAN param name (`SAN_list`) is a best-guess in
-    # apply_certificate.py — verify on the first successful apply with SANs
-    # (`--check` won't catch a wrong param name; watch the issued cert's SANs).
+    # separate cert per name — and since this is the DSM DEFAULT cert, it's
+    # served for those SNIs with no per-entry binding. Each name must resolve to
+    # the NAS + be HTTP-01 reachable on :80 for LE issuance.
+    # DSM encodes SANs as a ';'-joined `domain_name` (CN first); apply_certificate.py
+    # re-issues when the cert's SAN set differs from this list (verified against
+    # the DSM 7.3 wizard 2026-06-04).
     sans:
       - s3-admin.e4e.ucsd.edu          # Garage admin UI (garage-ui)
       - s3.e4e.ucsd.edu                # Garage S3 API

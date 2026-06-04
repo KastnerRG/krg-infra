@@ -90,10 +90,12 @@ in step 5:
 - **Firewall**: `:443` is already allowed by the `geoip-US-floor` / trusted-net
   rules in `spec/e4e-nas/security.yml` — no new rule.
 
-> First-apply caveats (no API to dry-run cleanly): the AppPortal field shape is
-> a discovery best-guess (run `apply_app_portal.py reverse-proxy --check` first),
-> and the LE `SAN_list` param name in `apply_certificate.py` is unverified —
-> confirm the issued cert's SANs after the first apply.
+> First-apply caveat (no API to dry-run cleanly): the AppPortal field shape is
+> a discovery best-guess — run `apply_app_portal.py reverse-proxy --check` first.
+> The LE SAN encoding is verified (DSM puts SANs in a ';'-joined `domain_name`,
+> CN first; the cert's SAN set is tracked via the `desc` marker so a spec SAN
+> change re-issues). The host LE cert is DSM's DEFAULT cert, so once re-issued
+> with the `s3-admin`/`s3` SANs it's served for those names with no binding.
 
 ## 5. Deploy the garage role — targeted, secrets materialized from OpenBao
 
