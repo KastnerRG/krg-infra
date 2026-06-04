@@ -104,8 +104,17 @@
   #       lab-owned bot-account PAT stored in OpenBao — tracked in #121.
   #   /var/lib/krg-admin/.ssh/id_ed25519
   #       krg-admin's private key to the fleet (already required by ansible-apply).
+  #   /var/lib/krg-admin/.secrets/openbao-role-id
+  #   /var/lib/krg-admin/.secrets/openbao-secret-id
+  #       krg-deploy's OpenBao AppRole creds (role_id is non-secret, secret_id is).
+  #       deploy-ansible.sh logs in with these to read secret/e4e-nas/* from
+  #       krg-vault and materialize them as ansible extra_vars for the synology
+  #       playbook. Provision: role_id from terraform/openbao output; secret_id
+  #       via `bao write -f auth/approle/role/krg-deploy/secret-id` (krg-deploy's
+  #       own policy can mint these). The read capability is in terraform/openbao.
   # The deploy sources per-layer secrets at run time (see deploy/*.sh):
   #   tofu   — terraform/<target>/.deploy-env + the TOFU_STATE_PASSPHRASE secret.
+  #   ansible (synology) — krg-deploy AppRole login → bao kv get → extra_vars.
   services.github-runners.krg-deploy = {
     enable      = true;
     name        = "krg-deploy";
