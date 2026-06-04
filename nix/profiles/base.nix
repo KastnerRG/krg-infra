@@ -237,7 +237,15 @@ in {
     system.autoUpgrade = mkIf cfg.autoUpgrade {
       enable      = true;
       allowReboot = false;
-      flake       = cfg.flakeUrl;
+      # Pin the flake ATTRIBUTE to this host's intended config name. Without the
+      # explicit #${hostName}, nixos-rebuild infers the attribute from the host's
+      # RUNTIME hostname — so a box that booted under the wrong/default name (a
+      # fresh install still called "nixos") silently builds a nonexistent
+      # nixosConfigurations."nixos" and the upgrade fails EVERY night with no
+      # signal. Pinning targets the intended config regardless of runtime hostname
+      # and self-heals the name on the next switch. (krg-vault was stuck ~2.5 weeks
+      # on a stale generation this way — no security patches, no key updates.)
+      flake       = "${cfg.flakeUrl}#${config.networking.hostName}";
       dates       = "04:00";
     };
 
