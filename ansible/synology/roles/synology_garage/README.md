@@ -104,17 +104,15 @@ git (a hand-made DSM config would be reaped by the declarative sync anyway):
 | surface | source of truth | role/layer |
 |---|---|---|
 | OIDC provider/app/`Garage Admins` group + client secret | `terraform/authentik` → `secret/e4e-nas/garage-ui-oidc` | OpenTofu |
-| `:8443 → 127.0.0.1:8080` reverse proxy | `spec/e4e-nas/app-portal.yml` `reverse_proxy:` | `synology_app_portal` |
-| TLS on `:8443` | default `e4e-nas.ucsd.edu` LE cert, `spec/e4e-nas/certificates.yml` | `synology_certificate` |
-| firewall `:8443` | already allowed by the `geoip-US-floor` / trusted-net all-ports rules (`spec/e4e-nas/security.yml`) — same as DSM web | `synology_security` (no new rule) |
+| `s3-admin.e4e.ucsd.edu:443 → 127.0.0.1:8080` reverse proxy | `spec/e4e-nas/app-portal.yml` `reverse_proxy:` | `synology_app_portal` |
+| TLS for `s3-admin.e4e.ucsd.edu` (SAN on the host LE cert) | `spec/e4e-nas/certificates.yml` `sans:` | `synology_certificate` |
+| firewall `:443` | already allowed by the `geoip-US-floor` / trusted-net all-ports rules (`spec/e4e-nas/security.yml`) — same as DSM web | `synology_security` (no new rule) |
 
-> **DNS note:** the dedicated `garage.e4e-nas.ucsd.edu` subdomain isn't
-> registered (tracked in [#118](https://github.com/KastnerRG/krg-infra/issues/118)).
-> Until then the UI is served under the NAS's own hostname on a dedicated
-> port: **`https://e4e-nas.ucsd.edu:8443`**. When the subdomain lands, update
-> `spec.ui.public_hostname` / `public_port` / `public_url`, the redirect URI in
-> `terraform/authentik/applications_e4e.tf`, and the `reverse_proxy` entry's
-> `frontend.fqdn` in `spec/e4e-nas/app-portal.yml`.
+> **DNS note:** the admin UI is served on its own DNS name
+> **`https://s3-admin.e4e.ucsd.edu`** (paired with the S3 API on
+> `s3.e4e.ucsd.edu`), on standard HTTPS (443). TLS uses a SAN on the host LE
+> cert. Wildcard virtual-host bucket URLs (`*.s3.e4e.ucsd.edu`) still need a
+> wildcard cert — tracked in [#118](https://github.com/KastnerRG/krg-infra/issues/118).
 
 1. **Apply the Authentik OpenTofu.** From [`terraform/authentik/`](../../../../terraform/authentik/)
    (needs the Authentik admin token + a vault token):
@@ -135,9 +133,9 @@ git (a hand-made DSM config would be reaped by the declarative sync anyway):
      --tags synology_certificate,synology_garage,synology_app_portal \
      -e @<materialized vars>
    ```
-   - `synology_certificate` — ensure the `e4e-nas.ucsd.edu` LE cert exists (the `:8443` proxy uses it as the default cert).
+   - `synology_certificate` — ensure the host LE cert exists with `s3-admin.e4e.ucsd.edu` + `s3.e4e.ucsd.edu` as SANs (the `:443` proxies present it).
    - `synology_garage` — bump Garage `v1→v2.3.0` (required by garage-ui's `/v2/` admin API) + deploy the cluster + UI container.
-   - `synology_app_portal` — create the `:8443` reverse proxy (declarative, idempotent — keyed by `frontend.fqdn:port`).
+   - `synology_app_portal` — create the `s3-admin.e4e.ucsd.edu:443` + `s3.e4e.ucsd.edu:443` reverse proxies (declarative, idempotent — keyed by `frontend.fqdn:port`).
 
    `--tags=garage_ui` alone is **not** enough: it skips the v2 bump (in the
    untagged `deploy` task) *and* the reverse proxy.

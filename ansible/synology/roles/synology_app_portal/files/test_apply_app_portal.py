@@ -93,7 +93,7 @@ def test_reverse_proxy_check_only(monkeypatch, capsys):
 # garage-ui reverse-proxy entry shape (spec/e4e-nas/app-portal.yml).
 _GARAGE_UI_RP = {
     "description": "Garage UI",
-    "frontend": {"fqdn": "e4e-nas.ucsd.edu", "port": 8443, "protocol": 1,
+    "frontend": {"fqdn": "s3-admin.e4e.ucsd.edu", "port": 443, "protocol": 1,
                  "https": {"hsts": True}},
     "backend": {"fqdn": "127.0.0.1", "port": 8080, "protocol": 0},
     "http2": True, "customize_headers": [],

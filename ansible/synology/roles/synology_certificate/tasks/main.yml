@@ -12,7 +12,7 @@
 # `--check --diff` run.
 #
 # Service-specific bindings (e.g. AppPortal reverse-proxy entries for
-# garage-ui on :8443, MLflow on a future port) live in
+# garage-ui on s3-admin.e4e.ucsd.edu, MLflow on a future port) live in
 # synology_app_portal — this role owns "which certs EXIST + which is
 # DEFAULT" only.
 #

@@ -73,12 +73,11 @@ cluster:
 # Browser-based bucket / access-key / cluster admin + S3 object browse +
 # drag-and-drop upload, gated by Authentik SSO via native OIDC. Talks to
 # Garage on loopback (`localhost:3900` S3, `localhost:3903` admin). Public
-# access via DSM AppPortal reverse-proxy on a dedicated port under the
-# existing `e4e-nas.ucsd.edu` cert (no separate `garage.*` DNS record — that
-# subdomain isn't registered, so we serve under the host's own hostname with
-# a path-distinct port instead — tracked in #118). Operator-managed one-shot
-# for the AppPortal entry + cert assignment — see role README "First-time
-# UI setup"; IaC pending #118.
+# access via a DSM AppPortal reverse-proxy on `s3-admin.e4e.ucsd.edu` (443),
+# its own DNS name with a SAN on the host LE cert. Fully declarative: the
+# reverse-proxy entry is in app-portal.yml, the cert SAN in certificates.yml,
+# and the Authentik OIDC provider in terraform/authentik — nothing hand-made
+# on the box for the declarative sync to reap.
 #
 # TOOL CHOICE NOTE: Noooste/garage-ui is the only Garage admin UI today that
 # speaks OIDC natively. Long-term plan is to swap to the official
@@ -94,14 +93,14 @@ ui:
   bind_host: 127.0.0.1                    # loopback only; DSM AppPortal terminates TLS publicly
   port: 8080                              # internal UI port; the AppPortal entry proxies the public port here
 
-  # Public access. The `garage.e4e-nas.ucsd.edu` DNS name doesn't exist —
-  # only the NAS's own hostname `e4e-nas.ucsd.edu` resolves. Serve the UI on
-  # a distinct public port under that hostname, reusing the existing host
-  # cert. Authentik's OIDC redirect URI MUST match `<public_url>/auth/oidc/callback`
-  # exactly when you create the provider/application.
-  public_hostname: e4e-nas.ucsd.edu
-  public_port: 8443                       # DSM AppPortal HTTPS port for this entry; 6021 is DSM web itself
-  public_url: https://e4e-nas.ucsd.edu:8443
+  # Public access. The admin UI has its own DNS name `s3-admin.e4e.ucsd.edu`
+  # (paired with the S3 API at `s3.e4e.ucsd.edu`), so it's served on standard
+  # HTTPS (443) via a DSM AppPortal reverse-proxy. TLS uses a SAN on the host
+  # LE cert (see certificates.yml). Authentik's OIDC redirect URI MUST match
+  # `<public_url>/auth/oidc/callback` exactly (set in terraform/authentik).
+  public_hostname: s3-admin.e4e.ucsd.edu
+  public_port: 443                        # standard HTTPS; DSM web is on 6021 so 443 is free on the NAS
+  public_url: https://s3-admin.e4e.ucsd.edu
 
   # OIDC — points at krg-prod's Authentik. client_secret is an extra_var
   # (`garage_ui_oidc_client_secret`) carried via `environment:` (no_log;
@@ -110,11 +109,9 @@ ui:
   oidc:
     provider_name: Authentik
     client_id: garage-ui
-    # FIXME: krg-prod's Authentik public URL is in flux (CLAUDE.md "DNS/URL
-    # migration for krg-prod" pending). Update when that lands. The Authentik
-    # OIDC issuer URL pattern is:
-    #   https://<authentik-host>/application/o/<app-slug>/
-    issuer_url: https://auth.fabricant.ucsd.edu/application/o/garage-ui/
+    # Authentik moved to auth.krg.ucsd.edu in the krg-prod CNAME migration.
+    # Issuer URL pattern: https://<authentik-host>/application/o/<app-slug>/
+    issuer_url: https://auth.krg.ucsd.edu/application/o/garage-ui/
     scopes: [openid, email, profile, groups]
     # Authentik puts the user's groups under the `groups` top-level claim.
     role_attribute_path: groups

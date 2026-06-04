@@ -733,7 +733,7 @@ def main(argv):
     ru.add_argument("--port", required=True)
     ru.add_argument("--public-hostname", required=True)
     ru.add_argument("--public-url", required=True,
-                    help="Public root URL (e.g. https://e4e-nas.ucsd.edu:8443); "
+                    help="Public root URL (e.g. https://s3-admin.e4e.ucsd.edu); "
                          "becomes server.root_url + OIDC callback root")
     ru.add_argument("--garage-s3-port", required=True)
     ru.add_argument("--garage-admin-port", required=True)

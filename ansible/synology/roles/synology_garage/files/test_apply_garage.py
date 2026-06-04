@@ -81,8 +81,8 @@ def _render_ui_args(**overrides):
         "config_path":              "/volume1/docker/garage-ui/config.yaml",
         "bind_host":                "127.0.0.1",
         "port":                     "8080",
-        "public_hostname":          "e4e-nas.ucsd.edu",
-        "public_url":               "https://e4e-nas.ucsd.edu:8443",
+        "public_hostname":          "s3-admin.e4e.ucsd.edu",
+        "public_url":               "https://s3-admin.e4e.ucsd.edu",
         "garage_s3_port":           "3900",
         "garage_admin_port":        "3903",
         "garage_region":            "garage",
@@ -513,7 +513,7 @@ def test_render_ui_config_writes_when_missing(monkeypatch, capsys):
     assert mode == 0o400
     assert 'client_secret: "' + "y" * 32 + '"' in content
     assert 'admin_token: "' + "x" * 64 + '"' in content
-    assert 'root_url: "https://e4e-nas.ucsd.edu:8443"' in content
+    assert 'root_url: "https://s3-admin.e4e.ucsd.edu"' in content
     assert '- "Garage Admins"' in content
     for s in ("openid", "email", "profile", "groups"):
         assert '- "%s"' % s in content
