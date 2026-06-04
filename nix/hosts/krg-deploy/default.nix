@@ -51,6 +51,40 @@
   # Not yet domain-joined — disable AD client until keytab is provisioned.
   krg.adClient.enable = false;
 
+  # ── GitHub Actions self-hosted runner ──────────────────────────────────────
+  # Push-to-main continuous deploy (.github/workflows/deploy.yml). Runs as the
+  # break-glass admin so it reuses krg-admin's existing fleet identity — the same
+  # SSH keys + sudoNoPassword the nightly ansible-apply timer below already uses
+  # to reach every host. The workflow is GATED on green CI before it applies.
+  #
+  # Secrets — NOT in git (operator-provisioned, mirrors the .secrets/ pattern):
+  #   /var/lib/krg-admin/.secrets/github-runner-token
+  #       a runner registration token, or a fine-grained PAT with the repo's
+  #       "Administration" read/write scope, used to register the runner.
+  #       BRING-UP: a short-lived registration token for now; move to a
+  #       lab-owned bot-account PAT stored in OpenBao — tracked in #121.
+  #   /var/lib/krg-admin/.ssh/id_ed25519
+  #       krg-admin's private key to the fleet (already required by ansible-apply).
+  # The deploy sources per-layer secrets at run time (see deploy/*.sh):
+  #   tofu   — terraform/<target>/.deploy-env + the TOFU_STATE_PASSPHRASE secret.
+  services.github-runners.krg-deploy = {
+    enable      = true;
+    name        = "krg-deploy";
+    url         = "https://github.com/KastnerRG/krg-infra";
+    tokenFile   = "/var/lib/krg-admin/.secrets/github-runner-token";
+    user        = "krg-admin";   # reuse the control-node identity (SSH + sudo + tofu state)
+    replace     = true;          # re-register if a stale runner of this name exists
+    extraLabels = [ "krg-deploy" ];   # deploy.yml targets [self-hosted, krg-deploy]
+    # The deploy toolchain on the runner's PATH (system-wide pkgs aren't on the
+    # service PATH). nixos-rebuild evaluates the flake (needs nix + git); the rest
+    # drive the Ansible / OpenTofu / OpenBao layers.
+    extraPackages = with pkgs; [
+      nix nixos-rebuild git openssh
+      ansible opentofu openbao python3
+      jq sshpass gnused gawk coreutils
+    ];
+  };
+
   # Periodic Ansible apply — mirrors NixOS autoUpgrade on the Ansible layer.
   # Pulls main and runs site.yml nightly; drift gets corrected automatically.
   systemd.services.ansible-apply = {

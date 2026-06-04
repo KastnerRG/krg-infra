@@ -1,0 +1,140 @@
+name: Deploy fleet
+
+# Push-to-main continuous deploy, run on the self-hosted runner on krg-deploy
+# (the control node — nix/hosts/krg-deploy/default.nix wires up the runner).
+# This turns the nightly pull-based apply (NixOS system.autoUpgrade + the
+# krg-deploy ansible-apply timer) into a push-triggered apply.
+#
+# GATED ON GREEN CI: this never runs on `push` directly. It runs after the
+# "Build NixOS configurations" (build.yml) and "Python unit tests" (tests.yml)
+# workflows COMPLETE on main, and the gate step below additionally confirms that
+# BOTH succeeded for the same commit before anything touches the fleet — a single
+# workflow_run event only tells us about one workflow, so we re-check both via the
+# API. A broken commit therefore never deploys.
+on:
+  workflow_run:
+    workflows: ["Build NixOS configurations", "Python unit tests"]
+    types: [completed]
+
+# One deploy at a time — a single control node means no concurrent applies
+# (ADR 0005). Don't cancel an in-flight deploy; let it finish.
+concurrency:
+  group: deploy-fleet
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  deploy:
+    name: Apply to fleet
+    runs-on: [self-hosted, krg-deploy]
+    # Fast pre-filter: only a push event (this excludes workflow_dispatch of the CI
+    # workflows) on main, and only when the triggering run was green. NOTE: re-runs
+    # keep event=push, so this does NOT filter them — that's deliberate. The gate's
+    # "head_sha must equal current main head" check is what blocks a re-run from
+    # deploying a STALE commit, while still allowing a re-run of the CURRENT commit
+    # (e.g. recovering from flaky CI) to deploy — which run_attempt==1 would wrongly
+    # forbid. So the no-downgrade guarantee lives in the gate, not here.
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Check out the commit that passed CI
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      # Confirm BOTH required CI workflows succeeded for THIS commit. If not (e.g.
+      # the other one is still running, or failed), skip the apply silently — when
+      # the other workflow finishes green it fires its own deploy run.
+      - name: Gate on green CI (both workflows)
+        id: gate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const sha = context.payload.workflow_run.head_sha;
+
+            // No-downgrade guard: a re-run of an OLD build/tests run fires
+            // workflow_run with that old head_sha. Only deploy if it's still the
+            // current main head, so a re-run can never roll the fleet backwards.
+            const branch = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
+            const head = branch.data.commit.sha;
+            if (sha !== head) {
+              core.notice(`${sha} is not current main head (${head}) — skipping (no downgrade).`);
+              core.setOutput('ok', 'false');
+              return;
+            }
+
+            const required = ["Build NixOS configurations", "Python unit tests"];
+            // Explicit map fn extracts the nested workflow_runs array per page —
+            // unambiguous regardless of paginate's auto-normalization, so `runs` is
+            // always the flat array the filters below expect.
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRunsForRepo,
+              { owner, repo, head_sha: sha, per_page: 100 },
+              (response) => response.data.workflow_runs);
+
+            // The push-on-main run of each required workflow for this SHA — not a
+            // pull_request / workflow_dispatch run of the same commit, which could
+            // otherwise satisfy/block the "green CI on push-to-main" guarantee.
+            // (Matches the job-level event==push guard.)
+            const pick = name => runs
+              .filter(r => r.name === name && r.event === 'push' && r.head_branch === 'main')
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+            const picked = required.map(pick);
+
+            let ok = true;
+            for (let i = 0; i < required.length; i++) {
+              const conclusion = picked[i] ? picked[i].conclusion : 'no push run';
+              core.info(`${required[i]}: ${conclusion}`);
+              if (!picked[i] || picked[i].conclusion !== 'success') ok = false;
+            }
+            if (!ok) {
+              core.setOutput('ok', 'false');
+              core.notice(`Not all required CI green for ${sha} yet — skipping deploy.`);
+              return;
+            }
+
+            // Exactly-once: deploy fires on the workflow_run of BOTH required
+            // workflows, so when both are already green the second event would
+            // re-apply the same SHA. Only the run that completed LAST proceeds; the
+            // earlier event's deploy sees a newer sibling and skips. (When the first
+            // CI finishes, the other isn't green yet, so the ok-check above already
+            // skips — no deploy is lost.)
+            const last = picked.slice().sort(
+              (a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
+            if (last && last.id !== context.payload.workflow_run.id) {
+              core.notice(`Sibling CI run ${last.id} completed later — it owns this deploy; skipping duplicate.`);
+              core.setOutput('ok', 'false');
+              return;
+            }
+
+            core.setOutput('ok', 'true');
+
+      # Stage gating: each deploy stage runs only if the gate passed AND every
+      # earlier stage succeeded. The explicit success() is load-bearing — a step
+      # with a custom if: does not reliably inherit the "previous steps succeeded"
+      # default, so without it a failed NixOS apply would NOT stop the Ansible (or
+      # OpenTofu) stage. Combined with each script's own internal fail-fast, one
+      # failed host/target halts the whole deploy.
+      - name: Deploy NixOS hosts
+        if: success() && steps.gate.outputs.ok == 'true'
+        run: ./deploy/deploy-nixos.sh
+
+      - name: Apply Ansible layer
+        if: success() && steps.gate.outputs.ok == 'true'
+        run: ./deploy/deploy-ansible.sh
+
+      # OpenTofu layer — DEFERRED to a second step (state backend, encryption
+      # passphrase, and per-target .deploy-env creds still to be wired). The
+      # deploy/deploy-tofu.sh script is in place and dormant; re-enable here once
+      # those are sorted.
+      # - name: Apply OpenTofu layer
+      #   if: success() && steps.gate.outputs.ok == 'true'
+      #   env:
+      #     TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
+      #   run: ./deploy/deploy-tofu.sh
