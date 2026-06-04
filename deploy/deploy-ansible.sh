@@ -24,7 +24,10 @@ DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-/var/lib/krg-admin/.ssh/id_ed25519}"
 echo "::group::ansible site.yml (Proxmox hosts)"
 (
   cd "${REPO_ROOT}/ansible"
-  ansible-galaxy collection install -r requirements.yml
+  # Collections (ansible/requirements.yml) are provisioned ON the control node, not
+  # installed per-run — this matches the nightly ansible-apply service and avoids an
+  # unpinned upstream pull on every deploy (non-reproducible). Pinning them and
+  # managing the install via Nix so both paths share one set is tracked in #129.
   ansible-playbook playbooks/site.yml
 )
 echo "::endgroup::"

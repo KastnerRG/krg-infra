@@ -73,21 +73,43 @@ jobs:
             const runs = await github.paginate(
               github.rest.actions.listWorkflowRunsForRepo,
               { owner, repo, head_sha: sha, per_page: 100 });
+
+            // The push-on-main run of each required workflow for this SHA — not a
+            // pull_request / workflow_dispatch run of the same commit, which could
+            // otherwise satisfy/block the "green CI on push-to-main" guarantee.
+            // (Matches the job-level event==push guard.)
+            const pick = name => runs
+              .filter(r => r.name === name && r.event === 'push' && r.head_branch === 'main')
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+            const picked = required.map(pick);
+
             let ok = true;
-            for (const name of required) {
-              // Only consider the push-on-main run of each required workflow for
-              // this SHA — not a pull_request or workflow_dispatch run of the same
-              // commit, which could otherwise satisfy/block the "green CI on
-              // push-to-main" guarantee. (Matches the job-level event==push guard.)
-              const latest = runs
-                .filter(r => r.name === name && r.event === 'push' && r.head_branch === 'main')
-                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-              const conclusion = latest ? latest.conclusion : 'no push run';
-              core.info(`${name}: ${conclusion}`);
-              if (!latest || latest.conclusion !== 'success') ok = false;
+            for (let i = 0; i < required.length; i++) {
+              const conclusion = picked[i] ? picked[i].conclusion : 'no push run';
+              core.info(`${required[i]}: ${conclusion}`);
+              if (!picked[i] || picked[i].conclusion !== 'success') ok = false;
             }
-            core.setOutput('ok', ok ? 'true' : 'false');
-            if (!ok) core.notice(`Not all required CI green for ${sha} yet — skipping deploy.`);
+            if (!ok) {
+              core.setOutput('ok', 'false');
+              core.notice(`Not all required CI green for ${sha} yet — skipping deploy.`);
+              return;
+            }
+
+            // Exactly-once: deploy fires on the workflow_run of BOTH required
+            // workflows, so when both are already green the second event would
+            // re-apply the same SHA. Only the run that completed LAST proceeds; the
+            // earlier event's deploy sees a newer sibling and skips. (When the first
+            // CI finishes, the other isn't green yet, so the ok-check above already
+            // skips — no deploy is lost.)
+            const last = picked.slice().sort(
+              (a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
+            if (last && last.id !== context.payload.workflow_run.id) {
+              core.notice(`Sibling CI run ${last.id} completed later — it owns this deploy; skipping duplicate.`);
+              core.setOutput('ok', 'false');
+              return;
+            }
+
+            core.setOutput('ok', 'true');
 
       # Stage gating: each deploy stage runs only if the gate passed AND every
       # earlier stage succeeded. The explicit success() is load-bearing — a step
