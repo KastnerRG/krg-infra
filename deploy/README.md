@@ -31,7 +31,7 @@ uses).
 
 | Script | Applies | Notes |
 |---|---|---|
-| `deploy-nixos.sh` | krg-vault, krg-ldap, krg-prod, e4e-prod, waiter | `--build-host = --target-host` so each host builds its own closure (krg-deploy only evaluates). **krg-deploy itself is excluded** — it runs the job; it stays current via nightly `autoUpgrade`. |
+| `deploy-nixos.sh` | krg-vault, krg-ldap, krg-prod, waiter | `--build-host = --target-host` so each host builds its own closure (krg-deploy only evaluates). **krg-deploy itself is excluded** — it runs the job; it stays current via nightly `autoUpgrade`. **e4e-prod is omitted** until the host is provisioned. |
 | `deploy-ansible.sh` | `ansible/playbooks/site.yml` (Proxmox) | Synology is **opt-in** (`DEPLOY_SYNOLOGY=true`, off by default) — its declarative sync deletes, and bring-up has gates (see [docs/e4e-nas-dsm.md](../docs/e4e-nas-dsm.md)). |
 | `deploy-tofu.sh` | each `terraform/<target>/` with a `.deploy-env` | **Deferred** — the step is commented out in `deploy.yml`. Script is in place and dormant. State persists under `TOFU_STATE_ROOT` (CI checkout is ephemeral); encrypted when `TOFU_STATE_PASSPHRASE` is set. |
 

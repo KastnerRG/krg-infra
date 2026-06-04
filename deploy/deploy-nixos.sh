@@ -17,7 +17,9 @@ FLAKE="${REPO_ROOT}/nix"
 ADMIN="${DEPLOY_ADMIN:-krg-admin}"
 
 # Deploy order: dependencies first (vault/AD before the services that use them).
-ORDER=(krg-vault krg-ldap krg-prod e4e-prod waiter)
+# e4e-prod is defined in the flake but NOT provisioned yet — omitted until the host
+# exists (deploying it would fail at SSH). Re-add it here + in ADDR when it's up.
+ORDER=(krg-vault krg-ldap krg-prod waiter)
 
 # host -> ssh address. Fully-qualified DNS names only — never IPs (DNS is the stable
 # handle; IPs may change). krg-ldap is mid-rename — finalize the name via #128.
@@ -25,8 +27,8 @@ declare -A ADDR=(
   [krg-vault]=krg-vault.ucsd.edu
   [krg-ldap]=krg-ldap.ucsd.edu
   [krg-prod]=krg-prod.ucsd.edu
-  [e4e-prod]=e4e-prod.ucsd.edu
   [waiter]=waiter.ucsd.edu
+  # [e4e-prod]=e4e-prod.ucsd.edu   # not provisioned yet — re-add to ORDER when it exists
 )
 
 DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-/var/lib/krg-admin/.ssh/id_ed25519}"
