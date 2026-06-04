@@ -43,6 +43,17 @@
     - synology_certificate
     - synology_app_portal              # AppPortal config + reverse-proxy + access-control (service-specific cert bindings live here)
 
+    # DSM web-login SSO — point DSM (:6021) at Authentik via OIDC and default to
+    # it (local password form stays reachable for break-glass; see role README).
+    # e4e-nas-specific (ties to the lab Authentik), so it's here rather than in
+    # the universal synology_base. Tagged so an operator can target it alone:
+    #   ansible-playbook playbook.yml --tags=synology_sso \
+    #     -e dsm_sso_oidc_client_secret="$(bao kv get -field=client_secret secret/e4e-nas/dsm-sso-oidc)"
+    # GATED on discovery: the DSM SSO-Client API shape is a best-guess pending a
+    # wizard capture (role README "Discovery") — verify with `--check` before the
+    # first real apply / before flipping it into the unattended converge.
+    - { role: synology_sso, tags: ['synology_sso', 'web'] }
+
     # --- WORKLOAD LAYER (containerised services on the NAS) ---
     # Garage S3 — replaces the prior terraform `synology_container_project` after
     # three provider bugs in one session (#110/#113/#114). See ADR 0007 "Garage

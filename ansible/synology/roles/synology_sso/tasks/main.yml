@@ -1,0 +1,65 @@
+---
+# synology_sso — point DSM's web login at Authentik via OIDC and make SSO the
+# default login, from spec/e4e-nas/sso.yml via synowebapi. Idempotent
+# (GET → diff → SET, only on drift); logic in files/apply_sso.py, shipped via the
+# `script` module (DSM's py3.8 — same constraint as synology_dsm_web/_smb/_nfs).
+# Git is truth; UI = drift (ADR 0001).
+#
+# CROSS-REFERENCE: the IdP half is OpenTofu (terraform/authentik
+# `authentik_provider_oauth2.e4e_nas` + `vault_secrets.tf` → secret/e4e-nas/
+# dsm-sso-oidc). This role is the DSM (client) half. Keep client_id / slug /
+# issuer / redirect in lock-step across the two.
+#
+# ANTI-LOCKOUT: making SSO default never removes the local password form (DSM
+# keeps the fallback link) and the break-glass e4e-admin is key-only SSH
+# (synology_ssh) — so a broken IdP can't lock the box out. See sso.yml.
+#
+# DISCOVERY GATE: the DSM SSO-Client API shape in apply_sso.py is a best-guess
+# pending a wizard capture — run `apply_sso.py oidc --check` against the NAS to
+# confirm the GET/field shape before the first real apply (CLAUDE.md "discovery
+# is the only exception").
+
+- name: Load the DSM SSO spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_sso_spec }}"
+    name: sso_spec
+
+# Fail-soft: if SSO is enabled in spec but no client_secret was materialized,
+# SKIP (warn) rather than fail the whole DSM converge — the box keeps its current
+# login. Mirrors synology_ad's "stage + warn" when the join password is absent.
+- name: Warn + skip when OIDC is enabled but no client secret was provided
+  ansible.builtin.debug:
+    msg: >-
+      synology_sso: spec enables OIDC SSO but dsm_sso_oidc_client_secret is empty
+      (not materialized from OpenBao / not passed via -e). Skipping — DSM login
+      left unchanged. Seed secret/e4e-nas/dsm-sso-oidc and re-run.
+  when:
+    - sso_spec.oidc.enable | default(false) | bool
+    - (dsm_sso_oidc_client_secret | default('')) | length == 0
+
+- name: Apply DSM OIDC SSO-Client config (GET → diff → SET; partial = DSM err 2001)
+  ansible.builtin.script: >-
+    apply_sso.py oidc
+    --enable {{ sso_spec.oidc.enable | default(true) }}
+    --provider-name {{ sso_spec.oidc.provider_name | default('Authentik') | quote }}
+    --client-id {{ sso_spec.oidc.client_id | quote }}
+    --issuer-url {{ sso_spec.oidc.issuer_url | quote }}
+    --redirect-uri {{ sso_spec.oidc.redirect_uri | quote }}
+    --account-attribute {{ sso_spec.oidc.account_attribute | default('preferred_username') | quote }}
+    --set-as-default {{ sso_spec.oidc.set_as_default | default(true) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  environment:
+    DSM_SSO_OIDC_CLIENT_SECRET: "{{ dsm_sso_oidc_client_secret }}"
+  register: sso_apply
+  no_log: true   # carries the client_secret via env — keep it out of ansible logs
+  changed_when: "'CHANGED' in sso_apply.stdout or 'WOULD-CHANGE' in sso_apply.stdout"
+  failed_when: "sso_apply.rc != 0 or 'FAIL' in sso_apply.stdout"
+  check_mode: false   # run in --check too; apply_sso.py --check self-gates (read-only GET)
+  when:
+    - sso_spec.oidc.enable | default(false) | bool
+    - (dsm_sso_oidc_client_secret | default('')) | length > 0
+
+# --- Drift export (read-only) — only with `--tags export` -----------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

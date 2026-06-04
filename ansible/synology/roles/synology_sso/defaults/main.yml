@@ -1,0 +1,14 @@
+---
+# Declarative spec consumed by this role (nas_spec_dir is in group_vars/synology.yml).
+synology_sso_spec: "{{ nas_spec_dir }}/sso.yml"
+
+# Where the exporter writes the live-state snapshot (read by the drift_detector).
+# On the control node (krg-deploy); keep out of git. Shared with the other synology_* roles.
+synology_export_dir: "/var/lib/krg-deploy/synology-export"
+
+# OIDC client_secret for the DSM SSO-Client. Supplied at apply-time (NOT in spec,
+# NOT in git): krg-deploy materializes it from OpenBao (secret/e4e-nas/dsm-sso-oidc,
+# field client_secret) into this extra_var; locally, set it via -e. Empty by
+# default so a run without it cleanly SKIPS the role (warn, never fail) instead of
+# pushing an empty secret — same fail-soft ergonomics as synology_ad's join password.
+dsm_sso_oidc_client_secret: ""

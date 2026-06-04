@@ -1,0 +1,33 @@
+---
+# Exporter (read-only): snapshot the live DSM SSO-Client config so the
+# drift_detector can diff it against spec/e4e-nas/sso.yml. Paired half of the role
+# (ADR 0001 — UI = drift). Run: ansible-playbook playbook.yml --tags export
+#
+# NOTE: api/version below mirror apply_sso.py's best-guess SSO_API — flip both
+# together once the DevTools discovery pins the real name.
+
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get live DSM SSO-Client settings
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.SSO.Client method=get version=1"
+  register: sso_get
+  changed_when: false
+  check_mode: false
+  failed_when: false   # API name is unverified — never fail the export sweep on it
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-sso.yml"
+    mode: "0600"
+    content: |
+      # Live DSM SSO-Client state on {{ inventory_hostname }} — synology_sso exporter.
+      # raw synowebapi output (preamble on stderr; stdout is the JSON pretty-print).
+      # NOTE: the client secret is write-only; DSM's GET does not return it.
+      sso_raw: {{ sso_get.stdout_lines | default([]) | to_json }}
+  delegate_to: localhost
