@@ -45,6 +45,11 @@ two CI workflows complete on `main`, and re-checks that **both** succeeded for t
 same commit before applying — so a broken commit never deploys. A single deploy runs
 at a time (`concurrency: deploy-fleet`).
 
+**Fail-fast, end to end.** Each script stops on the first failed host/target (it
+doesn't push on to the rest), and each workflow stage gates the next (`success() &&
+…`), so a failed NixOS apply skips the Ansible (and OpenTofu) stage rather than
+deploying on top of a half-broken fleet.
+
 ## Secrets (NOT in git — operator-provisioned)
 
 - `/var/lib/krg-admin/.secrets/github-runner-token` — runner registration token / PAT

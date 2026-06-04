@@ -85,12 +85,18 @@ jobs:
             core.setOutput('ok', ok ? 'true' : 'false');
             if (!ok) core.notice(`Not all required CI green for ${sha} yet — skipping deploy.`);
 
+      # Stage gating: each deploy stage runs only if the gate passed AND every
+      # earlier stage succeeded. The explicit success() is load-bearing — a step
+      # with a custom if: does not reliably inherit the "previous steps succeeded"
+      # default, so without it a failed NixOS apply would NOT stop the Ansible (or
+      # OpenTofu) stage. Combined with each script's own internal fail-fast, one
+      # failed host/target halts the whole deploy.
       - name: Deploy NixOS hosts
-        if: steps.gate.outputs.ok == 'true'
+        if: success() && steps.gate.outputs.ok == 'true'
         run: ./deploy/deploy-nixos.sh
 
       - name: Apply Ansible layer
-        if: steps.gate.outputs.ok == 'true'
+        if: success() && steps.gate.outputs.ok == 'true'
         run: ./deploy/deploy-ansible.sh
 
       # OpenTofu layer — DEFERRED to a second step (state backend, encryption
@@ -98,7 +104,7 @@ jobs:
       # deploy/deploy-tofu.sh script is in place and dormant; re-enable here once
       # those are sorted.
       # - name: Apply OpenTofu layer
-      #   if: steps.gate.outputs.ok == 'true'
+      #   if: success() && steps.gate.outputs.ok == 'true'
       #   env:
       #     TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
       #   run: ./deploy/deploy-tofu.sh
