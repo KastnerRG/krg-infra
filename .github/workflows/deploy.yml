@@ -30,9 +30,13 @@ jobs:
   deploy:
     name: Apply to fleet
     runs-on: [self-hosted, krg-deploy]
-    # Fast pre-filter: only a push to main (not workflow_dispatch / manual re-runs),
-    # and only when the triggering run itself was green. The cross-workflow check
-    # AND the "still the current main head" (no-downgrade) check happen in the gate.
+    # Fast pre-filter: only a push event (this excludes workflow_dispatch of the CI
+    # workflows) on main, and only when the triggering run was green. NOTE: re-runs
+    # keep event=push, so this does NOT filter them — that's deliberate. The gate's
+    # "head_sha must equal current main head" check is what blocks a re-run from
+    # deploying a STALE commit, while still allowing a re-run of the CURRENT commit
+    # (e.g. recovering from flaky CI) to deploy — which run_attempt==1 would wrongly
+    # forbid. So the no-downgrade guarantee lives in the gate, not here.
     if: >-
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&

@@ -44,7 +44,11 @@ if [[ -n "${TOFU_STATE_PASSPHRASE:-}" ]]; then
   plan  { method = method.aes_gcm.m }'
 fi
 
-rc=0
+# Fail-fast: stop on the first target that errors. Targets apply in dependency
+# order (openbao first — it provisions the AppRoles the others authenticate with),
+# so continuing past a failed dependency would only produce partial/confusing
+# follow-on failures. (A missing dir or .deploy-env is an intentional skip, not a
+# failure, and does not stop the run.)
 for t in "${TARGETS[@]}"; do
   dir="${TF_DIR}/${t}"
   envf="${dir}/.deploy-env"
@@ -62,7 +66,7 @@ for t in "${TARGETS[@]}"; do
   chmod 700 "$state_dir"   # enforce owner-only even if it pre-existed with looser perms
 
   echo "::group::tofu apply ${t}"
-  (
+  if ! (
     set -a            # export everything the env file sets
     # shellcheck disable=SC1090
     source "$envf"
@@ -72,8 +76,10 @@ for t in "${TARGETS[@]}"; do
     tofu -chdir="$dir" init -input=false
     tofu -chdir="$dir" apply -auto-approve -input=false \
          -state="${state_dir}/terraform.tfstate"
-  ) || { echo "FAILED: ${t}"; rc=1; }
+  ); then
+    echo "FAILED: ${t} — stopping; remaining targets not applied"
+    echo "::endgroup::"
+    exit 1
+  fi
   echo "::endgroup::"
 done
-
-exit "$rc"
