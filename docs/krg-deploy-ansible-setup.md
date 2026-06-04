@@ -132,31 +132,28 @@ unset tok
 
 If this prints OK, `deploy-ansible.sh`'s materialization will work.
 
-## 5. Enable the synology stage in CD
+## 5. Go-live — provisioning the AppRole IS the switch
 
-The synology stage is **off by default** (`DEPLOY_SYNOLOGY` unset). Two ways to
-turn it on:
+The synology stage is **already wired on** — `DEPLOY_SYNOLOGY=true` in both the
+push-CD (`.github/workflows/deploy.yml`) and the 4:30 nightly
+(`nix/hosts/krg-deploy/default.nix`). But it's **inert until you provision the
+OpenBao AppRole creds** (steps 1–4): with no `role-id`/`secret-id` files the
+synology stage **gracefully skips** (the rest of the fleet deploys normally). So
+**provisioning the AppRole is the real go-live switch.**
 
-- **Push CD** — add the env to the deploy step in
-  `.github/workflows/deploy.yml`:
-  ```yaml
-  - name: Apply Ansible layer
-    if: success() && steps.gate.outputs.ok == 'true'
-    env:
-      DEPLOY_SYNOLOGY: "true"
-    run: ./deploy/deploy-ansible.sh
-  ```
-- **Manual run** on krg-deploy: `DEPLOY_SYNOLOGY=true ./deploy/deploy-ansible.sh`.
-
-> ⛔ **Do not enable for unattended/push CD until the NAS bring-up reconciliation
-> is done.** With `DEPLOY_SYNOLOGY=true` and no `SYNOLOGY_TAGS`, `deploy-ansible.sh`
-> runs the **whole** playbook — its declarative sync **deletes** live config not
-> in spec. That's the goal (drift reduction), but only safe once the spec
-> captures intended live state (pre-flight captures + `.dss` backup +
-> `--check --diff` first — `docs/e4e-nas-dsm.md`). Secrets are no longer the
-> blocker: the materialization now covers all required groups (*Seeding* above)
-> and **fails closed** if one is missing. For an interim garage-only deploy
-> ahead of the full bring-up, run with `SYNOLOGY_TAGS=synology_certificate,synology_garage,synology_app_portal`.
+> ⛔ **Provision the AppRole creds ONLY after the NAS bring-up reconciliation.**
+> `DEPLOY_SYNOLOGY=true` with no `SYNOLOGY_TAGS` runs the **whole** playbook — its
+> declarative sync **deletes** live config not in spec. That's the goal (drift
+> reduction), but only safe once the spec captures intended live state
+> (pre-flight captures + `.dss` backup + `--check --diff` first —
+> `docs/e4e-nas-dsm.md`). The moment the AppRole creds + secrets exist, the next
+> deploy/nightly converges the full NAS — so do the bring-up *first*.
+>
+> Secrets are not the blocker: the materialization covers all required groups
+> (*Seeding* above) and **fails closed** if one is missing — never an empty
+> password. For an interim garage-only converge ahead of the full bring-up, set
+> `SYNOLOGY_TAGS=synology_certificate,synology_garage,synology_app_portal` (e.g.
+> a manual `SYNOLOGY_TAGS=… ./deploy/deploy-ansible.sh` run on krg-deploy).
 
 ## 6. Rotate / revoke the secret_id
 

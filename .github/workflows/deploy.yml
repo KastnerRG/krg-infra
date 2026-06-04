@@ -128,6 +128,14 @@ jobs:
 
       - name: Apply Ansible layer
         if: success() && steps.gate.outputs.ok == 'true'
+        env:
+          # Include e4e-nas in the converge. Inert until krg-deploy's OpenBao
+          # AppRole creds are provisioned (graceful skip otherwise — see
+          # deploy/deploy-ansible.sh), so provisioning them is the real go-live
+          # switch. SYNOLOGY_TAGS unset = the full NAS playbook; its declarative
+          # sync deletes not-in-spec config, so provision the AppRole ONLY after
+          # the bring-up reconciliation (docs/e4e-nas-dsm.md).
+          DEPLOY_SYNOLOGY: "true"
         run: ./deploy/deploy-ansible.sh
 
       # OpenTofu layer — DEFERRED to a second step (state backend, encryption
