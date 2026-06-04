@@ -180,15 +180,20 @@ GARAGE_UI_COMPOSE_TEMPLATE = """\
 # `depends_on:` (cross-project depends aren't supported). If garage isn't
 # up yet, `restart: unless-stopped` reconverges. Both use host networking,
 # so UI reaches garage at 127.0.0.1:3900 / 127.0.0.1:3903.
+#
+# The image has NO ENTRYPOINT and `CMD ["./garage-ui"]` (WORKDIR /app); it reads
+# config from the FIXED path /app/config.yaml automatically — there is no
+# `--config` flag. So we do NOT override `command:` (overriding it dropped the
+# binary → docker exec'd "--config" as argv[0]) and mount the config to
+# /app/config.yaml.
 services:
   %(container_name)s:
     image: %(image)s:%(image_tag)s
     container_name: %(container_name)s
     restart: unless-stopped
     network_mode: host
-    command: ["--config", "/etc/garage-ui/config.yaml"]
     volumes:
-      - %(config_path)s:/etc/garage-ui/config.yaml:ro
+      - %(config_path)s:/app/config.yaml:ro
 """
 
 
