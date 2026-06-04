@@ -38,11 +38,10 @@ portal_apps:
 # Declarative so these entries are part of the spec, NOT hand-made DSM config
 # the declarative sync would later reap.
 #
-# SCHEMA NOTE: field shape derived from DSM's own AppPortal UI code (read-only
-# discovery — protocol enum 1=HTTPS/0=HTTP, nested frontend/backend). Confirm
-# with `apply_app_portal.py reverse-proxy --check` against the NAS before the
-# first real apply (the repo's standard for flipping OUT_KEYS field-name
-# mismatches), per docs/garage-ui-bringup.md.
+# SCHEMA NOTE: field shape verified against the DSM 7.3 create POST (wizard-
+# captured on e4e-nas 2026-06-04). protocol enum 1=HTTPS/0=HTTP; `proxy_http_version: 1`
+# is DSM's HTTP/1.1-backend value (NOT an `http2` toggle). The role passes the
+# whole entry as a single `entry=<json>` param (flattening it got DSM err 4151).
 reverse_proxy:
   - description: Garage UI
     frontend:
@@ -55,7 +54,7 @@ reverse_proxy:
       fqdn: 127.0.0.1
       port: 8080
       protocol: 0                     # 0 = HTTP (garage-ui's loopback bind)
-    http2: true
+    proxy_http_version: 1             # DSM stores HTTP/1.1 backend as 1 (wizard-captured); NOT `http2`
     customize_headers: []
     proxy_connect_timeout: 60
     proxy_read_timeout: 60
@@ -73,7 +72,7 @@ reverse_proxy:
       fqdn: 127.0.0.1
       port: 3900                      # garage s3_api.api_bind_addr ([::]:3900)
       protocol: 0                     # 0 = HTTP (TLS terminated at the proxy)
-    http2: true
+    proxy_http_version: 1             # DSM stores HTTP/1.1 backend as 1 (wizard-captured); NOT `http2`
     customize_headers: []
     # S3 PUT/multipart uploads can be large + slow — give the API generous
     # timeouts vs the UI's 60s.
