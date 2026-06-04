@@ -1,0 +1,79 @@
+# CrowdSec role defaults — Debian/PVE counterpart of the NixOS modules
+# nix/modules/security/{crowdsec,crowdsec-bouncer}.nix.
+# Keep policy roughly aligned across both layers (issue #74).
+
+# Master switch. When false, the role skips installs/templating AND
+# (separately, in tasks/main.yml) stops + disables any previously-
+# enabled CrowdSec services so they can't race with whatever's
+# replacing them (typically fail2ban during a rollback). Packages stay
+# installed so flipping back to true is a fast re-enable. On a host
+# where you flip this off you should ALSO flip fail2ban_enabled back
+# to true (set in group_vars/all.yml here).
+crowdsec_enabled: true
+
+# CrowdSec hub collections + parsers installed on this host. Mirrors the
+# nix wrapper's defaults. Service-specific extras (e.g. crowdsecurity/
+# traefik on a web host) go in per-host vars.
+#
+# No parsers listed by default: country enrichment
+# (crowdsecurity/geoip-enrich) was intentionally dropped from scope —
+# no scenario in this PR branches on country, so the mmdb operational
+# footprint (MaxMind account, license-key file per host) buys nothing.
+# Add via per-host `crowdsec_hub_parsers:` + the matching geoipupdate
+# wiring if/when a country-aware scenario lands.
+crowdsec_hub_collections:
+  - crowdsecurity/linux
+  - crowdsecurity/sshd
+  - crowdsecurity/iptables
+crowdsec_hub_parsers: []
+
+# Trusted-net whitelist CIDRs — fed to a parser whitelist so events from
+# these networks never raise alerts (never produce decisions, never get
+# banned). Same union as the nix wrapper's whitelist (ucsd + sealab +
+# ops + machines from the SHARED nix/networks/trusted.json — loaded as
+# krg_trusted in group_vars/all.yml).
+crowdsec_whitelist_cidrs: >-
+  {{ (krg_trusted.ipsets.ucsd     | default([]) | map(attribute='cidr') | list)
+   + (krg_trusted.ipsets.sealab   | default([]) | map(attribute='cidr') | list)
+   + (krg_trusted.ipsets.ops      | default([]) | map(attribute='cidr') | list)
+   + (krg_trusted.ipsets.machines | default([]) | map(attribute='cidr') | list)
+  }}
+
+# --- Firewall bouncer ------------------------------------------------------
+# Bouncer mode — iptables NOT nftables. PVE's pve-firewall uses
+# iptables-legacy; using nftables for the bouncer would create two
+# disjoint kernel tables (iptables + nftables) that don't see each other,
+# so a deny in nftables would let pve-firewall's iptables rules still
+# accept the packet on a different table. Keep both on iptables.
+crowdsec_bouncer_mode: iptables
+crowdsec_bouncer_update_frequency: "10s"
+crowdsec_bouncer_log_level: info
+# Drop rule landing chain(s). The bouncer inserts at the TOP of each
+# named chain so the drop runs BEFORE pve-firewall's PVEFW-INPUT jump
+# (which is appended later by pve-firewall on its restart).
+# Operational caveat (needs on-box validation): if pve-firewall restarts
+# AFTER the bouncer's rules are placed, the order may flip. Bouncer's
+# update loop re-inserts every `update_frequency` so within 10s drops
+# are back at the top — small race window only.
+crowdsec_bouncer_iptables_chains:
+  - INPUT
+# Bouncer config path is fixed by the upstream Debian package.
+crowdsec_bouncer_config_path: /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
+crowdsec_bouncer_name: cs-firewall-bouncer
+
+# --- CAPI (CrowdSec central API) -------------------------------------------
+# Auto-register with CAPI on first activation. Without this the
+# community blocklist pull is silently no-op (pull.community is upstream
+# default true, but needs the credentials file populated). The setup
+# task only runs `cscli capi register` if the credentials file lacks a
+# password line, so it's idempotent across reruns.
+crowdsec_capi_register: true
+crowdsec_capi_credentials_path: /etc/crowdsec/online_api_credentials.yaml
+
+# --- CrowdSec apt repo -----------------------------------------------------
+# Official CrowdSec packagecloud repo (Debian's own apt has older CrowdSec).
+# Pin the suffix to the Debian codename detected at runtime.
+crowdsec_apt_repo_url: https://packagecloud.io/crowdsec/crowdsec
+crowdsec_apt_repo_signing_key_url: https://packagecloud.io/crowdsec/crowdsec/gpgkey
+crowdsec_apt_keyring_path: /etc/apt/keyrings/crowdsec.asc
+crowdsec_apt_sources_path: /etc/apt/sources.list.d/crowdsec.sources

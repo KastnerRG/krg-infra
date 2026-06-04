@@ -1,0 +1,27 @@
+{# Managed by Ansible (krg-infra crowdsec role).
+   The api_key below was minted by `cscli bouncers add` on first
+   activation and is unique per host. Mode is iptables (NOT nftables)
+   on purpose — PVE's pve-firewall is iptables-legacy; mixing kernel
+   table backends would let one layer accept what the other denies. #}
+mode: {{ crowdsec_bouncer_mode }}
+update_frequency: {{ crowdsec_bouncer_update_frequency }}
+log_mode: file
+log_dir: /var/log/
+log_level: {{ crowdsec_bouncer_log_level }}
+log_compression: true
+log_max_size: 100
+log_max_backups: 3
+log_max_age: 30
+api_url: http://127.0.0.1:8080/
+api_key: {{ crowdsec_bouncer_api_key }}
+disable_ipv6: false
+deny_action: DROP
+deny_log: false
+supported_decisions_types:
+  - ban
+blacklists_ipv4: crowdsec-blacklists
+blacklists_ipv6: crowdsec6-blacklists
+iptables_chains:
+{% for chain in crowdsec_bouncer_iptables_chains %}
+  - {{ chain }}
+{% endfor %}

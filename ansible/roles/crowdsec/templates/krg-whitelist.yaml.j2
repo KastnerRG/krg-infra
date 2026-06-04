@@ -1,0 +1,30 @@
+{# Managed by Ansible (krg-infra crowdsec role).
+   Entries sourced from the SHARED nix/networks/trusted.json
+   (krg_trusted in group_vars/all.yml) — same source of truth
+   feeding nix krg.firewall.sshSources, the nix CrowdSec wrapper's
+   s02-enrich whitelist, and the PVE perimeter IPSets. Edit
+   trusted.json, not here.
+
+   CrowdSec's whitelist parser distinguishes `ip:` (bare host
+   addresses) from `cidr:` (prefixed ranges). trusted.json mixes both
+   — e.g. ucsd has `137.110.0.0/16` (CIDR) alongside `137.110.161.106`
+   (bare). Splitting here so the parser doesn't choke on a bare IP
+   under `cidr:` or silently drop it. #}
+{% set bare_ips = crowdsec_whitelist_cidrs | reject('search', '/') | list %}
+{% set cidrs    = crowdsec_whitelist_cidrs | select('search', '/') | list %}
+name: krg/trusted-nets-whitelist
+description: Skip alerts from ucsd + sealab + ops + machines (trusted.json)
+whitelist:
+  reason: "trusted KRG network (ucsd/sealab/ops/machines)"
+{% if bare_ips %}
+  ip:
+{% for ip in bare_ips %}
+    - "{{ ip }}"
+{% endfor %}
+{% endif %}
+{% if cidrs %}
+  cidr:
+{% for c in cidrs %}
+    - "{{ c }}"
+{% endfor %}
+{% endif %}

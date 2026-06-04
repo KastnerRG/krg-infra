@@ -1,0 +1,302 @@
+# CrowdSec on Debian/PVE — the Proxmox-layer counterpart of
+# nix/modules/security/{crowdsec,crowdsec-bouncer}.nix.
+# Same policy intent ("no public access — US is the floor", issue #74)
+# implemented reactively via community CTI + local scenarios. Replaces
+# fail2ban (see fail2ban_enabled gating in roles/fail2ban; flipped off
+# in group_vars/all.yml when crowdsec is on so the two don't race for
+# iptables rules).
+#
+# WHY iptables, NOT nftables: PVE's pve-firewall is iptables-legacy.
+# Using the nftables bouncer would create disjoint kernel tables that
+# don't see each other — a CrowdSec deny in nftables would let
+# pve-firewall's iptables rules accept the same packet. Keep both
+# layers on iptables-legacy. See crowdsec_bouncer_mode in defaults.
+
+- name: CrowdSec stack
+  when: crowdsec_enabled
+  block:
+
+    # --- 1. APT repo (CrowdSec packagecloud; Debian's own apt has older CrowdSec) ----
+    - name: Ensure /etc/apt/keyrings exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Add CrowdSec apt signing key
+      ansible.builtin.get_url:
+        url: "{{ crowdsec_apt_repo_signing_key_url }}"
+        dest: "{{ crowdsec_apt_keyring_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        force: false  # don't re-download every run; key rotates rarely
+
+    - name: Add CrowdSec apt source (deb822 format)
+      ansible.builtin.copy:
+        # ansible.builtin.deb822_repository would be cleaner but needs
+        # python3-debian on the controller; copy a static deb822 file
+        # instead to keep the role dependency-free.
+        dest: "{{ crowdsec_apt_sources_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible (krg-infra crowdsec role).
+          Types: deb
+          URIs: {{ crowdsec_apt_repo_url }}/{{ ansible_distribution | lower }}
+          Suites: {{ ansible_distribution_release }}
+          Components: main
+          Signed-By: {{ crowdsec_apt_keyring_path }}
+      notify: Refresh apt cache
+
+    - name: Refresh apt cache after repo add (handler usually fires; force here for first-run)
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 0
+      changed_when: false
+
+    # --- 2. Packages -----------------------------------------------------------
+    - name: Install CrowdSec + iptables bouncer
+      ansible.builtin.apt:
+        name:
+          - crowdsec
+          - crowdsec-firewall-bouncer-iptables
+          # geoipupdate intentionally NOT installed: country enrichment
+          # is out of scope for this PR (no scenario branches on country).
+          # Add via per-host apt + the crowdsecurity/geoip-enrich parser
+          # if/when a country-aware scenario lands.
+        state: present
+        update_cache: false  # just refreshed above
+      notify:
+        - Restart crowdsec
+        - Restart crowdsec-firewall-bouncer
+
+    # --- 3. Trusted-net parser whitelist --------------------------------------
+    # Mirrors nix crowdsec.nix's s02-enrich whitelist. Events from these
+    # CIDRs never raise alerts → never produce decisions → never get
+    # banned. Same union (ucsd + sealab + ops + machines) sourced from
+    # the same trusted.json the proxmox_firewall role uses.
+    - name: Ensure CrowdSec s02-enrich parser dir exists
+      ansible.builtin.file:
+        path: /etc/crowdsec/parsers/s02-enrich
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Drop trusted-net whitelist parser
+      ansible.builtin.template:
+        src: krg-whitelist.yaml.j2
+        dest: /etc/crowdsec/parsers/s02-enrich/krg-whitelist.yaml
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart crowdsec
+
+    # --- 4. Acquisition: sshd via journalctl ----------------------------------
+    # Debian's sshd unit is `ssh.service` (NOT sshd.service as on RHEL/Arch).
+    - name: Ensure CrowdSec acquis.d exists
+      ansible.builtin.file:
+        path: /etc/crowdsec/acquis.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Drop sshd journalctl acquisition
+      ansible.builtin.copy:
+        dest: /etc/crowdsec/acquis.d/sshd.yaml
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible (krg-infra crowdsec role).
+          source: journalctl
+          journalctl_filter:
+            - "_SYSTEMD_UNIT=ssh.service"
+          labels:
+            type: syslog
+      notify: Restart crowdsec
+
+    # --- 5. Hub: install collections + parsers --------------------------------
+    # cscli hub upgrade refreshes the index; install commands are
+    # idempotent (no-op if already installed). Run as the crowdsec user
+    # if it exists, else as root (package post-install creates the user).
+    - name: Refresh CrowdSec hub index
+      ansible.builtin.command: cscli hub update
+      register: crowdsec_cscli_hub_update
+      changed_when: "'No upgrade required' not in crowdsec_cscli_hub_update.stdout"
+
+    - name: Install hub collections
+      ansible.builtin.command: "cscli collections install {{ item }}"
+      loop: "{{ crowdsec_hub_collections }}"
+      register: crowdsec_cscli_collections
+      changed_when: "'already exists' not in (crowdsec_cscli_collections.stderr | default(''))"
+      failed_when:
+        - crowdsec_cscli_collections.rc != 0
+        - "'already exists' not in (crowdsec_cscli_collections.stderr | default(''))"
+      notify: Restart crowdsec
+
+    - name: Install hub parsers (operator-supplied; empty by default)
+      ansible.builtin.command: "cscli parsers install {{ item }}"
+      loop: "{{ crowdsec_hub_parsers }}"
+      register: crowdsec_cscli_parsers
+      changed_when: "'already exists' not in (crowdsec_cscli_parsers.stderr | default(''))"
+      failed_when:
+        - crowdsec_cscli_parsers.rc != 0
+        - "'already exists' not in (crowdsec_cscli_parsers.stderr | default(''))"
+      when: crowdsec_hub_parsers | length > 0
+      notify: Restart crowdsec
+
+    # --- 6. CAPI registration (community blocklist feed) ----------------------
+    # The community pull is upstream-default ON, but silently no-ops
+    # without a populated credentials file. The setup script needs to
+    # run `cscli capi register` once. Gate on whether the file already
+    # has a password line WITH A NON-EMPTY VALUE — the Debian crowdsec
+    # package ships an unpopulated template with a bare `password:` line
+    # (no value), so checking for the key alone would skip registration
+    # and leave the community pull silently no-op. The ERE pattern below
+    # requires `password:` followed by whitespace followed by at least
+    # one non-whitespace character.
+    - name: Check CAPI credentials state (populated password value)
+      ansible.builtin.command: "grep -qE '^password:[[:space:]]+[^[:space:]]' {{ crowdsec_capi_credentials_path }}"
+      register: crowdsec_capi_creds_check
+      failed_when: false
+      changed_when: false
+
+    - name: Register with CAPI (one-time, needs outbound TCP/443 to api.crowdsec.net)
+      ansible.builtin.command: cscli capi register
+      when:
+        - crowdsec_capi_register
+        - crowdsec_capi_creds_check.rc != 0
+      # The `when` gate already restricts this to the no-creds-yet case,
+      # so any run is by definition a change (populates the creds file).
+      changed_when: true
+      notify: Restart crowdsec
+
+    # --- 7. Firewall bouncer registration + config ----------------------------
+    # The bouncer authenticates to the local LAPI with an API key minted
+    # by `cscli bouncers add`. Flow:
+    #   1. Read the current bouncer-config file (if it exists) — pull out
+    #      any existing api_key so we don't pointlessly re-mint one.
+    #   2. If no api_key OR a placeholder is present, run `cscli bouncers
+    #      add` to mint one.
+    #   3. Render the config template ON EVERY RUN with the resolved key
+    #      (newly-minted OR previously persisted). This way changes to
+    #      other role vars (mode, update frequency, chain list, log level)
+    #      take effect on subsequent applies — gating the render on "only
+    #      when key changed" would freeze the rest of the config after
+    #      first run.
+    - name: Read existing bouncer config (may not exist yet)
+      ansible.builtin.slurp:
+        src: "{{ crowdsec_bouncer_config_path }}"
+      register: crowdsec_bouncer_config_slurp
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Extract existing api_key from the bouncer config (if any)
+      ansible.builtin.set_fact:
+        # Horizontal whitespace `[ \t]*` instead of `\s*`. In Python's
+        # `re` even with (?m) the `\s` class matches newlines too, so
+        # an EMPTY `api_key:` line followed by another YAML key would
+        # incorrectly capture that next key as the api_key value
+        # (`api_key:\nmode: iptables` → captures `mode:`), making the
+        # role skip `cscli bouncers add` and render an invalid bouncer
+        # config. Restricting to spaces/tabs makes "no value on this
+        # line" return None and triggers re-registration as intended.
+        #
+        # Backslash count (`\1` single, not doubled): correct for a
+        # YAML `>-` folded scalar + Jinja single-quoted string — both
+        # pass backslashes through literally, so the regex engine gets
+        # them intact. Doubling them over-escapes (verified empirically:
+        # doubled form fails to match). YAML-context-dependent — a
+        # `key: "..."` double-quoted scalar would need doubling, since
+        # double-quoted YAML DOES process backslashes.
+        crowdsec_bouncer_existing_api_key: >-
+          {{ ((crowdsec_bouncer_config_slurp.content | b64decode)
+              | regex_search('(?m)^api_key:[ \t]*(\S+)', '\1')
+              | default([''], true) | first) }}
+      when: crowdsec_bouncer_config_slurp.content is defined
+      no_log: true
+
+    - name: Register firewall bouncer with LAPI (one-time)
+      ansible.builtin.command: "cscli bouncers add {{ crowdsec_bouncer_name }} --output raw"
+      register: crowdsec_bouncer_register
+      # Trigger registration when no usable key was persisted: file
+      # absent, key empty, or key is one of the upstream placeholders.
+      when: >-
+        (crowdsec_bouncer_existing_api_key | default('')) == ''
+        or '${API_KEY}' in (crowdsec_bouncer_existing_api_key | default(''))
+        or '<api-key>' in (crowdsec_bouncer_existing_api_key | default(''))
+      changed_when: crowdsec_bouncer_register.rc == 0
+      no_log: true   # raw API key
+
+    - name: Resolve final bouncer api_key (newly minted OR previously persisted)
+      ansible.builtin.set_fact:
+        crowdsec_bouncer_api_key: >-
+          {{ (crowdsec_bouncer_register.stdout | default('') | trim)
+             if (crowdsec_bouncer_register.stdout is defined
+                 and (crowdsec_bouncer_register.stdout | default('') | trim) != '')
+             else (crowdsec_bouncer_existing_api_key | default('')) }}
+      no_log: true
+
+    - name: Render bouncer config (every run; picks up template + var changes)
+      ansible.builtin.template:
+        src: crowdsec-firewall-bouncer.yaml.j2
+        dest: "{{ crowdsec_bouncer_config_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+      # The rendered template contains the raw bouncer API key. Without
+      # no_log, a `--diff` run would print the key to controller logs
+      # whenever the file changes (e.g. on first install or after a
+      # var-driven re-render). Suppress task output entirely; the
+      # surrounding registration + extraction tasks are also no_log so
+      # the secret never appears anywhere in playbook output.
+      no_log: true
+      notify: Restart crowdsec-firewall-bouncer
+
+    # --- 8. Enable + start CrowdSec + bouncer ---------------------------------
+    - name: Enable + start CrowdSec daemon
+      ansible.builtin.systemd_service:
+        name: crowdsec
+        enabled: true
+        state: started
+
+    - name: Enable + start firewall bouncer
+      ansible.builtin.systemd_service:
+        name: crowdsec-firewall-bouncer
+        enabled: true
+        state: started
+
+# When crowdsec_enabled is false on a host that was previously running
+# CrowdSec: stop + disable both services so the bouncer's iptables rules
+# don't race with whatever's replacing it (typically fail2ban during a
+# rollback — see the docs note in group_vars/all.yml). Mirrors the same
+# stop-but-keep-package pattern as roles/fail2ban — flipping the var
+# back to true is a fast re-enable, no apt fetch. Package purge stays
+# operator-driven.
+- name: CrowdSec (disabled) — stop + disable both services, keep packages for rollback
+  when: not crowdsec_enabled
+  block:
+    - name: Read installed-package facts (idempotency guard)
+      ansible.builtin.package_facts:
+        manager: apt
+
+    - name: Stop + disable CrowdSec daemon (only if previously installed)
+      ansible.builtin.systemd_service:
+        name: crowdsec
+        enabled: false
+        state: stopped
+      when: "'crowdsec' in ansible_facts.packages"
+
+    - name: Stop + disable firewall bouncer (only if previously installed)
+      ansible.builtin.systemd_service:
+        name: crowdsec-firewall-bouncer
+        enabled: false
+        state: stopped
+      when: "'crowdsec-firewall-bouncer-iptables' in ansible_facts.packages"

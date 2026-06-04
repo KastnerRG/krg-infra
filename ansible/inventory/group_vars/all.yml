@@ -25,10 +25,24 @@ base_timezone: "America/Los_Angeles"
 ssh_permit_root: "prohibit-password"   # key-only root (PVE relies on root)
 ssh_restrict_algorithms: false         # keep false on clusters (inter-node SSH may use RSA)
 
-# fail2ban
+# fail2ban — SUPERSEDED by CrowdSec (roles/crowdsec) fleet-wide.
+# Default flipped to false here so the role is a no-op everywhere. Set
+# fail2ban_enabled: true in host_vars/<host>.yml if CrowdSec misbehaves
+# on a specific host and you need to roll back without touching the
+# whole fleet. Mirrors the nix layer's `krg.fail2ban.enable = mkDefault
+# false` in profiles/base.nix. Bantime/findtime/maxretry kept here so a
+# re-enable doesn't lose the tuned values.
+fail2ban_enabled: false
 fail2ban_bantime:  "1h"
 fail2ban_findtime: "10m"
 fail2ban_maxretry: 3
+
+# CrowdSec (roles/crowdsec) — replaces fail2ban fleet-wide. On a host
+# where you'd flip fail2ban back on, also flip crowdsec_enabled: false
+# there (running both ban-to-iptables stacks races; the role's gating
+# task will stop+disable services and leave the package installed for
+# fast rollback).
+crowdsec_enabled: true
 
 # Trusted networks / Proxmox IPSets — SHARED source of truth at
 # nix/networks/trusted.json (also templated into the PVE cluster.fw and read by
