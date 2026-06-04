@@ -98,50 +98,49 @@ to the rest of the NAS secrets.
 
 ## First-time UI setup (one-shot)
 
-The Authentik OIDC registration is **now IaC** (`terraform/authentik`). Only
-the DSM AppPortal reverse-proxy + cert stay manual (DSM exposes no
-provider/API for them — tracked alongside [#118](https://github.com/KastnerRG/krg-infra/issues/118)).
+**Fully declarative — no DSM click-ops.** Every surface garage-ui needs is in
+git (a hand-made DSM config would be reaped by the declarative sync anyway):
+
+| surface | source of truth | role/layer |
+|---|---|---|
+| OIDC provider/app/`Garage Admins` group + client secret | `terraform/authentik` → `secret/e4e-nas/garage-ui-oidc` | OpenTofu |
+| `:8443 → 127.0.0.1:8080` reverse proxy | `spec/e4e-nas/app-portal.yml` `reverse_proxy:` | `synology_app_portal` |
+| TLS on `:8443` | default `e4e-nas.ucsd.edu` LE cert, `spec/e4e-nas/certificates.yml` | `synology_certificate` |
+| firewall `:8443` | already allowed by the `geoip-US-floor` / trusted-net all-ports rules (`spec/e4e-nas/security.yml`) — same as DSM web | `synology_security` (no new rule) |
 
 > **DNS note:** the dedicated `garage.e4e-nas.ucsd.edu` subdomain isn't
 > registered (tracked in [#118](https://github.com/KastnerRG/krg-infra/issues/118)).
 > Until then the UI is served under the NAS's own hostname on a dedicated
 > port: **`https://e4e-nas.ucsd.edu:8443`**. When the subdomain lands, update
-> `spec.ui.public_hostname` / `public_port` / `public_url` (and the redirect
-> URI in `terraform/authentik/applications_e4e.tf`) and reissue the cert.
+> `spec.ui.public_hostname` / `public_port` / `public_url`, the redirect URI in
+> `terraform/authentik/applications_e4e.tf`, and the `reverse_proxy` entry's
+> `frontend.fqdn` in `spec/e4e-nas/app-portal.yml`.
 
 1. **Apply the Authentik OpenTofu.** From [`terraform/authentik/`](../../../../terraform/authentik/)
-   (per that module's README — needs the Authentik admin token + a vault
-   token):
+   (needs the Authentik admin token + a vault token):
    ```bash
-   tofu apply   # or: tofu apply -target=authentik_provider_oauth2.garage_ui -target=authentik_application.garage_ui
+   tofu apply
    ```
-   Creates the `garage-ui` OAuth2 provider + application + the `Garage Admins`
-   group, and writes the generated client secret to
-   `secret/e4e-nas/garage-ui-oidc`. **No hand-entry, no copy-paste:** the
-   redirect URI (`…:8443/auth/oidc/callback`), slug (`garage-ui` → issuer
-   `…/application/o/garage-ui/`), and `groups` scope are all fixed in the .tf
-   to match `spec.ui.oidc`. Admins = members of the `Garage Admins` Authentik
-   group (`spec.ui.oidc.admin_roles`).
+   Creates the `garage-ui` provider + application + `Garage Admins` group and
+   writes the client secret to `secret/e4e-nas/garage-ui-oidc`. No hand-entry:
+   redirect URI / slug / `groups` scope are fixed in the .tf to match
+   `spec.ui.oidc`. Admins = members of the `Garage Admins` group.
 2. **Seed the cluster tokens** into OpenBao if not already done (see *Secrets →
    One-time seed*).
-3. **DSM reverse-proxy + Let's Encrypt cert (manual — no IaC).** Control Panel
-   → Login Portal → Reverse Proxy → Create:
-   - Description: `Garage UI`
-   - Source: HTTPS, hostname `e4e-nas.ucsd.edu`, port `8443`; check "Enable HSTS", "HTTP/2"
-   - Destination: HTTP, `127.0.0.1`, `8080`
-   - Save, then Control Panel → Security → Certificate → ensure a
-     Let's Encrypt cert for `e4e-nas.ucsd.edu` exists (DSM web likely already
-     has one for itself on `:6021`) and assign it to the new reverse-proxy
-     entry. No separate cert per port — same `e4e-nas.ucsd.edu` cert covers
-     `:6021`, `:8443`, and any other AppPortal entry on this host.
-   - DSM firewall: allow `:8443` from the same sources that reach DSM web.
-4. **Run the role.** Materialize the secrets (krg-deploy: automatic, #85;
-   local: pull the OIDC secret into `secrets-garage.yml` per *Secrets*), then
-   apply. **Use the full `--tags=synology_garage`, not `--tags=garage_ui`
-   alone, on first UI bring-up** — only the full run drags the garage
-   `v1→v2.3.0` bump that garage-ui's `/v2/` admin API requires (the bump lives
-   in the untagged `deploy` task; `garage_ui` alone would deploy the UI against
-   a v1 API).
+3. **Apply the NAS roles.** Materialize the secrets (krg-deploy: automatic via
+   the deploy pipeline; local: pull the OIDC secret into `secrets-garage.yml`
+   per *Secrets*), then run the garage-ui slice:
+   ```bash
+   ansible-playbook playbook.yml \
+     --tags synology_certificate,synology_garage,synology_app_portal \
+     -e @<materialized vars>
+   ```
+   - `synology_certificate` — ensure the `e4e-nas.ucsd.edu` LE cert exists (the `:8443` proxy uses it as the default cert).
+   - `synology_garage` — bump Garage `v1→v2.3.0` (required by garage-ui's `/v2/` admin API) + deploy the cluster + UI container.
+   - `synology_app_portal` — create the `:8443` reverse proxy (declarative, idempotent — keyed by `frontend.fqdn:port`).
+
+   `--tags=garage_ui` alone is **not** enough: it skips the v2 bump (in the
+   untagged `deploy` task) *and* the reverse proxy.
 
 ## Cluster bootstrap idempotency
 

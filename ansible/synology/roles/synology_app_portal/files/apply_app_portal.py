@@ -86,8 +86,26 @@ def do_config(a):
 
 
 def _list_key(entry):
-    """Stable identity for a list-entry diff. Prefer DSM's id; fall back to alias."""
+    """Stable identity for a list-entry diff. A reverse-proxy entry gets a UUID
+    `id` from DSM on create, so a spec entry can't carry one — key those by their
+    frontend host:port (unique per entry, stable across spec↔live). Everything
+    else keys by DSM id, then alias/name."""
+    fe = entry.get("frontend")
+    if isinstance(fe, dict) and fe.get("fqdn"):
+        return "fe:%s:%s" % (str(fe["fqdn"]).lower(), fe.get("port"))
     return entry.get("id") or entry.get("alias") or entry.get("name")
+
+
+def _covered(desired, live):
+    """True when every key in `desired` is present in `live` with an equal value
+    (recursive for nested dicts like frontend/backend). Lets DSM-filled fields
+    (the assigned id, defaulted timeouts, …) NOT register as drift, so a spec
+    that carries a subset of the live object converges idempotently instead of
+    showing perpetual "update"."""
+    if isinstance(desired, dict):
+        return isinstance(live, dict) and all(
+            k in live and _covered(v, live[k]) for k, v in desired.items())
+    return desired == live
 
 
 def _diff_lists(api, entries_key, desired_list, check):
@@ -98,8 +116,11 @@ def _diff_lists(api, entries_key, desired_list, check):
 
     creates = [e for k, e in desired_by_id.items() if k not in live_by_id]
     deletes = [live_by_id[k] for k in (set(live_by_id) - set(desired_by_id))]
+    # Subset compare (not `!=`): DSM returns the live object with its assigned id
+    # + defaulted fields the spec omits; only flag an update when a value the
+    # spec DOES set differs. Otherwise every run would re-"update" forever.
     updates = [(k, desired_by_id[k]) for k in (set(live_by_id) & set(desired_by_id))
-               if live_by_id[k] != desired_by_id[k]]
+               if not _covered(desired_by_id[k], live_by_id[k])]
 
     drift = {}
     if creates: drift["create"] = creates

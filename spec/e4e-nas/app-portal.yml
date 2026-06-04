@@ -30,8 +30,35 @@ portal_apps:
     hsts: false                     # per-portal HSTS — DSM-wide HSTS in dsm-web.yml
     fqdn: null
 
-# Reverse-proxy entries (DSM Login Portal → Reverse Proxy). Live: empty.
-reverse_proxy: []
+# Reverse-proxy entries (DSM Login Portal → Reverse Proxy).
+# Public HTTPS front door for the Garage admin UI: e4e-nas.ucsd.edu:8443 (TLS,
+# the default LE cert from certificates.yml) → 127.0.0.1:8080 (garage-ui, bound
+# to loopback by the synology_garage role). Declarative so this entry is part of
+# the spec, NOT a hand-made DSM config the declarative sync would later reap.
+#
+# SCHEMA NOTE: field shape derived from DSM's own AppPortal UI code (read-only
+# discovery — protocol enum 1=HTTPS/0=HTTP, nested frontend/backend). Confirm
+# with `apply_app_portal.py reverse-proxy --check` against the NAS before the
+# first real apply (the repo's standard for flipping OUT_KEYS field-name
+# mismatches), per docs/garage-ui-bringup.md.
+reverse_proxy:
+  - description: Garage UI
+    frontend:
+      fqdn: e4e-nas.ucsd.edu
+      port: 8443
+      protocol: 1                     # 1 = HTTPS
+      https:
+        hsts: true
+    backend:
+      fqdn: 127.0.0.1
+      port: 8080
+      protocol: 0                     # 0 = HTTP (garage-ui's loopback bind)
+    http2: true
+    customize_headers: []
+    proxy_connect_timeout: 60
+    proxy_read_timeout: 60
+    proxy_send_timeout: 60
+    proxy_intercept_errors: false
 
 # Per-portal access control (DSM Login Portal → Advanced → IP allow/deny). Live: empty.
 access_control: []
