@@ -499,7 +499,7 @@ def test_render_ui_config_writes_when_missing(monkeypatch, capsys):
     monkeypatch.setattr(m, "_ensure_jwt_key", lambda p: "PEM-CONTENT")
     writes = []
     monkeypatch.setattr(m, "_atomic_write",
-                        lambda p, c, mode: writes.append((p, c, mode)))
+                        lambda p, c, mode, uid=0, gid=0: writes.append((p, c, mode, uid, gid)))
 
     rc = m.do_render_ui_config(_render_ui_args())
     out = capsys.readouterr().out
@@ -509,8 +509,11 @@ def test_render_ui_config_writes_when_missing(monkeypatch, capsys):
     assert payload["config_path"] == "/volume1/docker/garage-ui/config.yaml"
     # No secret leaks in payload (only hash):
     assert "y" * 32 not in out and "x" * 64 not in out
-    _, content, mode = writes[0]
+    _, content, mode, uid, gid = writes[0]
     assert mode == 0o400
+    # config.yaml is owned by the non-root garage-ui container UID so the
+    # container reads its own secret config without running as root.
+    assert (uid, gid) == (m._GARAGE_UI_UID, m._GARAGE_UI_GID) == (1000, 1000)
     assert 'client_secret: "' + "y" * 32 + '"' in content
     assert 'admin_token: "' + "x" * 64 + '"' in content
     assert 'root_url: "https://s3-admin.e4e.ucsd.edu"' in content

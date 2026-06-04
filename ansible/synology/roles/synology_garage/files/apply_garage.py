@@ -186,6 +186,11 @@ GARAGE_UI_COMPOSE_TEMPLATE = """\
 # `--config` flag. So we do NOT override `command:` (overriding it dropped the
 # binary → docker exec'd "--config" as argv[0]) and mount the config to
 # /app/config.yaml.
+#
+# We DON'T override `user:` — the image runs as its non-root USER garageui
+# (UID 1000), and render-ui-config writes config.yaml owned by that UID (mode
+# 0400) so the container can read its own secret-bearing config without running
+# as root. See _GARAGE_UI_UID.
 services:
   %(container_name)s:
     image: %(image)s:%(image_tag)s
@@ -227,9 +232,12 @@ def _read(path):
         return None
 
 
-def _atomic_write(path, content, mode):
-    """Write `content` to `path` via tmp+rename; chmod+chown root:root.
-    Same dir as the target so rename is atomic on the same filesystem."""
+def _atomic_write(path, content, mode, uid=0, gid=0):
+    """Write `content` to `path` via tmp+rename; chmod + chown (default root:root).
+    Same dir as the target so rename is atomic on the same filesystem.
+    `uid`/`gid` let a secret file be owned by a non-root container's runtime UID
+    so that container can read it WITHOUT the container running as root (see
+    _GARAGE_UI_UID)."""
     d = os.path.dirname(path) or "."
     os.makedirs(d, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".krg-", dir=d)
@@ -237,7 +245,7 @@ def _atomic_write(path, content, mode):
         with os.fdopen(fd, "w") as fh:
             fh.write(content)
         os.chmod(tmp, mode)
-        os.chown(tmp, 0, 0)
+        os.chown(tmp, uid, gid)
         os.replace(tmp, path)
     except Exception:
         try:
@@ -503,6 +511,16 @@ def do_layout(a):
 _JWT_KEY_FILENAME = "jwt-key.pem"
 _UI_SECRET_ENV_VAR = "GARAGE_UI_OIDC_CLIENT_SECRET"
 
+# The noooste/garage-ui image runs as USER garageui (UID/GID 1000). config.yaml
+# carries secrets (OIDC client_secret, admin token, JWT key) so it's mode 0400 —
+# own it by the container's UID so the NON-ROOT container can read it (instead of
+# escalating the container to root). On DSM no real account is UID 1000 (DSM users
+# start ≥ 1026), so on the host the file stays effectively root-only. If a future
+# garage-ui image changes this UID, the container will fail "permission denied" on
+# config.yaml — update these to match the image's `USER`.
+_GARAGE_UI_UID = 1000
+_GARAGE_UI_GID = 1000
+
 
 def _ensure_jwt_key(config_path):
     """Generate an Ed25519 PEM key next to the config if not present.
@@ -605,7 +623,17 @@ def do_render_ui_config(a):
     current = _read(a.config_path)
     current_hash = _sha256(current) if current is not None else None
 
-    if current_hash == desired_hash and not key_missing:
+    # Ownership is part of "correct" here: the file is 0400 and must be owned by
+    # the garage-ui container UID (else the non-root container can't read it — a
+    # prior render as root:root would otherwise stick forever on content-match).
+    # Treat an owner mismatch as drift so the role re-asserts it (self-heals on
+    # the next run / nightly converge). stat failure (missing file) → not-owned.
+    try:
+        owner_ok = os.stat(a.config_path).st_uid == _GARAGE_UI_UID
+    except OSError:
+        owner_ok = False
+
+    if current_hash == desired_hash and not key_missing and owner_ok:
         return _emit("no-change", {}, a.check)
 
     payload = {
@@ -618,7 +646,9 @@ def do_render_ui_config(a):
     if a.check:
         return _emit("would-change", payload, True)
 
-    _atomic_write(a.config_path, desired, 0o400)
+    # Owned by the garage-ui container UID (not root) so the non-root container
+    # reads its own 0400 config — see _GARAGE_UI_UID.
+    _atomic_write(a.config_path, desired, 0o400, _GARAGE_UI_UID, _GARAGE_UI_GID)
     return _emit("changed", payload, False)
 
 
