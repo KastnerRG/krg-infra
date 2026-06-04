@@ -47,7 +47,7 @@
           # Managed by Ansible (krg-infra crowdsec role).
           Types: deb
           URIs: {{ crowdsec_apt_repo_url }}/{{ ansible_distribution | lower }}
-          Suites: {{ ansible_distribution_release }}
+          Suites: {{ crowdsec_apt_suite }}
           Components: main
           Signed-By: {{ crowdsec_apt_keyring_path }}
       notify: Refresh apt cache
