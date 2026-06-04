@@ -1,0 +1,76 @@
+name: Nightly flake update
+
+# Nightly `nix flake update` → commit the refreshed nix/flake.lock to main, the
+# same one-liner the base.nix autoUpgrade note documents ("in nix/, run `nix flake
+# update`, commit + push to main"). Keeps the fleet-wide pinned nixpkgs current
+# without a human remembering to bump it.
+#
+# WHY THE SELF-GATE (and not a downstream CI trigger): a commit pushed with the
+# default GITHUB_TOKEN does NOT trigger other workflows (GitHub's recursion guard),
+# so this push does NOT kick off build.yml / tests.yml / deploy.yml. That makes the
+# `nix flake check` step below the ONLY gate before the lock bump lands on main — it
+# evaluates every nixosConfiguration and type-checks modules, and a failure fails the
+# job BEFORE the commit step, so a broken lock never reaches main. It does NOT do a
+# full build (heavy CUDA closure); each host's own 04:00 autoUpgrade build is the
+# backstop (a non-building lock just leaves hosts on their current generation —
+# allowReboot=false, switch fails, no rollout — rather than a propagated breakage).
+#
+# Timing: 07:00 UTC ≈ 00:00 America/Los_Angeles, ~4h before the hosts' 04:00 local
+# autoUpgrade tick (profiles/base.nix), so a fresh lock is on main before the fleet
+# pulls main that night. Manual dispatch kept for ad-hoc bumps.
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+# One lock-bump at a time; never cancel an in-flight run mid-push.
+concurrency:
+  group: flake-update
+  cancel-in-progress: false
+
+# Direct push to main needs write; the checkout token carries it.
+permissions:
+  contents: write
+
+jobs:
+  flake-update:
+    name: nix flake update → main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@v16
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v9
+
+      # `nix flake update` runs from the flake dir (nix/). In modern Nix a positional
+      # arg is an INPUT name, not a path, so `nix flake update ./nix` would fail —
+      # use working-directory instead. Set changed=true only if the lock moved, so a
+      # no-op night skips the check + commit entirely.
+      - name: Update flake inputs
+        id: update
+        working-directory: nix
+        run: |
+          nix flake update
+          if git -C "$GITHUB_WORKSPACE" diff --quiet -- nix/flake.lock; then
+            echo "No flake input changes — nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git -C "$GITHUB_WORKSPACE" --no-pager diff -- nix/flake.lock
+          fi
+
+      # Self-gate (see header): eval + module type-check all hosts before committing.
+      # Mirrors build.yml's check job. A failure here aborts before the commit step.
+      - name: Check flake (self-gate)
+        if: steps.update.outputs.changed == 'true'
+        run: nix flake check ./nix --all-systems
+
+      - name: Commit and push to main
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add nix/flake.lock
+          git commit -m "chore(nix): flake update"
+          git push origin HEAD:main
