@@ -1,0 +1,86 @@
+name: Deploy fleet
+
+# Push-to-main continuous deploy, run on the self-hosted runner on krg-deploy
+# (the control node — nix/hosts/krg-deploy/default.nix wires up the runner).
+# This turns the nightly pull-based apply (NixOS system.autoUpgrade + the
+# krg-deploy ansible-apply timer) into a push-triggered apply.
+#
+# GATED ON GREEN CI: this never runs on `push` directly. It runs after the
+# "Build NixOS configurations" (build.yml) and "Python unit tests" (tests.yml)
+# workflows COMPLETE on main, and the gate step below additionally confirms that
+# BOTH succeeded for the same commit before anything touches the fleet — a single
+# workflow_run event only tells us about one workflow, so we re-check both via the
+# API. A broken commit therefore never deploys.
+on:
+  workflow_run:
+    workflows: ["Build NixOS configurations", "Python unit tests"]
+    types: [completed]
+
+# One deploy at a time — a single control node means no concurrent applies
+# (ADR 0005). Don't cancel an in-flight deploy; let it finish.
+concurrency:
+  group: deploy-fleet
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  deploy:
+    name: Apply to fleet
+    runs-on: [self-hosted, krg-deploy]
+    # Fast pre-filter: only consider main, and only when the triggering run itself
+    # was green (the cross-workflow check happens in the gate step).
+    if: >-
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Check out the commit that passed CI
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      # Confirm BOTH required CI workflows succeeded for THIS commit. If not (e.g.
+      # the other one is still running, or failed), skip the apply silently — when
+      # the other workflow finishes green it fires its own deploy run.
+      - name: Gate on green CI (both workflows)
+        id: gate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.payload.workflow_run.head_sha;
+            const required = ["Build NixOS configurations", "Python unit tests"];
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRunsForRepo,
+              { owner: context.repo.owner, repo: context.repo.repo,
+                head_sha: sha, per_page: 100 });
+            let ok = true;
+            for (const name of required) {
+              const latest = runs
+                .filter(r => r.name === name && r.event !== 'workflow_run')
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+              const conclusion = latest ? latest.conclusion : 'no run';
+              core.info(`${name}: ${conclusion}`);
+              if (!latest || latest.conclusion !== 'success') ok = false;
+            }
+            core.setOutput('ok', ok ? 'true' : 'false');
+            if (!ok) core.notice(`Not all required CI green for ${sha} yet — skipping deploy.`);
+
+      - name: Deploy NixOS hosts
+        if: steps.gate.outputs.ok == 'true'
+        run: ./deploy/deploy-nixos.sh
+
+      - name: Apply Ansible layer
+        if: steps.gate.outputs.ok == 'true'
+        run: ./deploy/deploy-ansible.sh
+
+      # OpenTofu layer — DEFERRED to a second step (state backend, encryption
+      # passphrase, and per-target .deploy-env creds still to be wired). The
+      # deploy/deploy-tofu.sh script is in place and dormant; re-enable here once
+      # those are sorted.
+      # - name: Apply OpenTofu layer
+      #   if: steps.gate.outputs.ok == 'true'
+      #   env:
+      #     TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
+      #   run: ./deploy/deploy-tofu.sh

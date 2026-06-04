@@ -8,6 +8,8 @@
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+# Per-target deploy secrets sourced by deploy/deploy-tofu.sh (VAULT_TOKEN, TF_VAR_*).
+.deploy-env
 # DSM config exports / SQL dumps — secret + PII-bearing, never commit (review locally only)
 *.dss
 *.sql
