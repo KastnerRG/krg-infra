@@ -32,14 +32,7 @@ in {
     nameservers    = [ "132.239.0.252" "8.8.8.8" "1.1.1.1" ];
   };
 
-  # label_studio_admin group (from the old fabricant-prod label_studio.yaml)
-  users.groups.label_studio_admin = {};
-
   systemd.tmpfiles.rules = [
-    # ── Shared host storage ───────────────────────────────────────────────
-    # Shared Label Studio file storage; mounted into the container as /data
-    "d /share/label-studio/files 0777 root root -"
-
     # ── Working directory layout under /var/lib/krg/krg-prod/ ─────────────
     # (the compose-stack module already creates /var/lib/krg/krg-prod/ and .secrets/)
 
@@ -48,7 +41,6 @@ in {
     # working dir where compose.yml can find them by name.
     "L+ /var/lib/krg/krg-prod/compose.authentik.yml    - - - - ${composeDir}/compose.authentik.yml"
     "L+ /var/lib/krg/krg-prod/compose.grafana.yml      - - - - ${composeDir}/compose.grafana.yml"
-    "L+ /var/lib/krg/krg-prod/compose.label-studio.yml - - - - ${composeDir}/compose.label-studio.yml"
     "L+ /var/lib/krg/krg-prod/compose.outline.yml      - - - - ${composeDir}/compose.outline.yml"
     "L+ /var/lib/krg/krg-prod/compose.mlflow.yml       - - - - ${composeDir}/compose.mlflow.yml"
 
@@ -64,13 +56,7 @@ in {
     "L  /var/lib/krg/krg-prod/loki/promtail-config.yaml     - - - - ${composeDir}/loki/promtail-config.yaml"
     "d  /var/lib/krg/krg-prod/loki/loki-data                0750 1000 1000 -"
 
-    # Label-studio postgres: config (read-only symlinks) + data (writable)
-    "d  /var/lib/krg/krg-prod/postgres                      0750 root   docker -"
-    "L  /var/lib/krg/krg-prod/postgres/config               - - - - ${composeDir}/postgres/config"
-    "L  /var/lib/krg/krg-prod/postgres/scripts              - - - - ${composeDir}/postgres/scripts"
-    "d  /var/lib/krg/krg-prod/postgres/data                 0750 1000 1000 -"
-
-    # Authentik postgres: same pattern
+    # Authentik postgres: config (read-only symlinks) + data (writable)
     "d  /var/lib/krg/krg-prod/authentik                     0750 root   docker -"
     "d  /var/lib/krg/krg-prod/authentik/postgres            0750 root   docker -"
     "L  /var/lib/krg/krg-prod/authentik/postgres/config     - - - - ${composeDir}/authentik/postgres/config"
@@ -96,9 +82,6 @@ in {
     "d  /var/lib/krg/krg-prod/grafana-storage               0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/prometheus-data               0750 1000 1000 -"
 
-    # Label Studio data
-    "d  /var/lib/krg/krg-prod/label_studio_data_pg          0750 1000 1000 -"
-
     # Traefik TLS certificate storage
     "d  /var/lib/krg/krg-prod/traefik-data                  0750 root docker -"
     "d  /var/lib/krg/krg-prod/traefik-data/letsencrypt      0750 root docker -"
@@ -113,15 +96,13 @@ in {
 
   # TODO Automate secrets
   # krg-prod runs as a single compose project (compose.yml uses `include:` to
-  # bring in authentik, grafana, label-studio, mlflow, and outline stacks).
+  # bring in authentik, grafana, mlflow, and outline stacks).
   #
   # Secrets required in /var/lib/krg/krg-prod/.secrets/ before starting:
   #   authentik_postgres_admin_password.txt
   #   authentik_admin_password.env      (AUTHENTIK_SECRET_KEY=... AUTHENTIK_POSTGRESQL__PASSWORD=...)
   #   authentik_traefik_token.env
   #   gf_admin_password.txt
-  #   label_studio_admin_password_pg.env
-  #   postgres_admin_password.txt       (for label-studio postgres)
   #   outline_secrets.env               (SECRET_KEY, UTILS_SECRET, OIDC_CLIENT_SECRET, DATABASE_URL, ...)
   #   mlflow.env                        (POSTGRES_PASSWORD, OIDC_* vars)
   #

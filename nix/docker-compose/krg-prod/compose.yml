@@ -2,7 +2,6 @@ include:
   - compose.authentik.yml
   - compose.grafana.yml
   # Temporarily disabled — bring up once verified.
-  # - compose.label-studio.yml
   # - compose.outline.yml
   # - compose.mlflow.yml
 
@@ -46,18 +45,17 @@ services:
       authentik:
       traefik_proxy:
         aliases:
-          - auth.fabricant.ucsd.edu
-          - dashboard.waiter.ucsd.edu
+          - auth.krg.ucsd.edu
+          - monitoring.krg.ucsd.edu
+          - roster.krg.ucsd.edu
           # Aliases for the temporarily-disabled stacks — re-enable alongside their
           # compose includes above:
-          # - s3.fabricant.ucsd.edu
-          # - labeler.e4e.ucsd.edu
-          # - orchestrator.fishsense.e4e.ucsd.edu
-          # - data.smartfin.e4e.ucsd.edu
-          # - wiki.fabricant.ucsd.edu
-          - roster.e4e.ucsd.edu
-          # - github-sync.e4e.ucsd.edu
+          # - docs.krg.ucsd.edu
+          # - github.roster.krg.ucsd.edu
           # - mlflow.krg.ucsd.edu
+          # s3 (s3.krg.ucsd.edu) is served by the fabricant hypervisor's storage
+          # pool, not krg-prod's Traefik — see docs/fleet-inventory.md.
+          # fishsense/smartfin APIs (api.fishsense / api.smartfin) move to e4e-prod.
 
   # minio:
   #   image: quay.io/minio/minio

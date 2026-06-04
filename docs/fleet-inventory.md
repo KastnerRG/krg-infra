@@ -85,9 +85,9 @@ flowchart LR
 | DCGM exporter | 9400 | Docker (CDI GPU) | waiter (+ any GPU host) | coupled to the NVIDIA driver ([`nvidia.nix`](../nix/modules/hardware/nvidia.nix)) |
 | docker metrics | 9323 | dockerd | waiter | Docker daemon metrics endpoint |
 
-> ⚠️ **The committed Prometheus scrape config is stale.** [`prometheus.yml`](../nix/docker-compose/krg-prod/prometheus/prometheus.yml)
-> still targets the *old* hostnames (`fabricant.ucsd.edu`, `fabricant-prod.ucsd.edu`,
-> `kastner-ml.ucsd.edu`) and keeps a dead `ansible_deploy_monitor` job on `:9000`
-> (replaced by `system.autoUpgrade` — now connection-refused). Updating it to the
-> hosts above is the **DNS/URL migration** tracked in `CLAUDE.md` "Pending Items".
-> Blackbox probe targets (E4E/lab websites) are independent of this and still valid.
+> **Prometheus scrape config** [`prometheus.yml`](../nix/docker-compose/krg-prod/prometheus/prometheus.yml)
+> now targets the renamed hosts (`krg-prod.ucsd.edu`, etc.) per the machine/CNAME
+> rename plan. Two known leftovers remain: the dead `ansible_deploy_monitor` job on
+> `:9000` (replaced by `system.autoUpgrade` — now connection-refused), and the
+> `kastner-ml.ucsd.edu` targets, which stay until that host is provisioned (out of
+> scope today). Blackbox probe targets (E4E/lab websites) track the new CNAMEs.

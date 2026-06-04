@@ -11,7 +11,7 @@ scrape_configs:
           - waiter.ucsd.edu:9100
           - kastner-ml.ucsd.edu:9100
           - fabricant.ucsd.edu:9100
-          - fabricant-prod.ucsd.edu:9100
+          - krg-prod.ucsd.edu:9100
 
   - job_name: 'dcgm_exporter'
     scrape_interval: 15s
@@ -36,7 +36,7 @@ scrape_configs:
       - targets:
           - waiter.ucsd.edu:9000
           - kastner-ml.ucsd.edu:9000
-          - fabricant-prod.ucsd.edu:9000
+          - krg-prod.ucsd.edu:9000
           - fabricant.ucsd.edu:9000
 
   - job_name: ipmi_exporter
@@ -61,14 +61,13 @@ scrape_configs:
           - https://e4e.ucsd.edu/
           - https://kastner.ucsd.edu/
           - https://e4e-nas.ucsd.edu:6021/
-          - https://labeler.e4e.ucsd.edu/version
-          - https://vault.e4e-gateway.ucsd.edu/
+          - https://vaultwarden.krg.ucsd.edu/
           - https://etap.nsf.gov/award/2378/opportunity/10235
           - https://fishsense.e4e.ucsd.edu/
           - https://analytics.fishsense.e4e.ucsd.edu/login/
-          - https://orchestrator.fishsense.e4e.ucsd.edu
-          - https://orchestrator.fishsense.e4e.ucsd.edu/api/v1/data/ping
-          - https://workflows.fishsense.e4e.ucsd.edu/login
+          - https://api.fishsense.e4e.ucsd.edu
+          - https://api.fishsense.e4e.ucsd.edu/api/v1/data/ping
+          - https://workflows.krg.ucsd.edu/login
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -89,7 +88,7 @@ scrape_configs:
           - waiter.ucsd.edu
           - kastner-ml.ucsd.edu
           - fabricant.ucsd.edu
-          - fabricant-prod.ucsd.edu
+          - krg-prod.ucsd.edu
           - e4e-octopi.dynamic.ucsd.edu
           - e4e-gateway.ucsd.edu
     relabel_configs:
@@ -111,7 +110,7 @@ scrape_configs:
     scrape_interval: 15s
     static_configs:
       - targets:
-          - fabricant-prod.ucsd.edu:8080
+          - krg-prod.ucsd.edu:8080
 
   - job_name: 'temporal'
     scrape_interval: 15s
