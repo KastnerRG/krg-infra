@@ -275,7 +275,12 @@ in {
 
     # kinit/klist for domain users; adcli for the one-time domain JOIN (and re-join
     # after a rebuild/DR) — without it the documented `adcli join` is "command not found".
-    environment.systemPackages = [ pkgs.krb5 pkgs.adcli ];
+    # kstart provides krenew (+ k5start): wrap a long job as `krenew -K 60 -- <job>`
+    # and it refreshes the TGT before each 10h expiry, so training/batch runs (and the
+    # cifs.upcall ticket for sec=krb5 mounts) survive past one ticket lifetime without a
+    # re-`kinit`. Renewability itself comes from renew_lifetime in krb5.conf below.
+    # See docs/kerberos-long-jobs.md.
+    environment.systemPackages = [ pkgs.krb5 pkgs.adcli pkgs.kstart ];
 
     # Resolve the DC without depending on it for DNS (member hosts). On the DC this
     # is its own name→IP, harmless. mkDefault so a host can override.
@@ -305,6 +310,20 @@ in {
           dns_lookup_realm = false
           dns_lookup_kdc = ${if cfg.server != null then "false" else "true"}
           rdns = false
+          # Renewable tickets for long-running jobs. The 10h ticket lifetime stays
+          # (it's the revocation cadence — a leaked ccache dies in 10h), but with
+          # renew_lifetime set a plain `kinit` yields a ticket RENEWABLE for 7d, so
+          # `krenew -K 60 -- <job>` rolls fresh 10h tickets for a week with no password.
+          # The DC's MaxRenewAge already permits 7d (verified); this is the client ask.
+          renew_lifetime = 7d
+          # Pin the ccache to a deterministic, persistent, per-uid FILE. The kernel's
+          # cifs.upcall (sec=krb5 mounts) runs in a bare env and can't see $KRB5CCNAME —
+          # it resolves the cache by uid + this setting. Pinning it makes kinit, krenew,
+          # and cifs.upcall agree on ONE cache, so a renewed TGT actually reaches the
+          # mount's reconnect upcall. FILE in /tmp survives logout (left-running jobs
+          # keep auth) and matches krb5's current compiled default — pinned so a future
+          # nixpkgs default change (e.g. to KEYRING) can't silently break the chain.
+          default_ccache_name = FILE:/tmp/krb5cc_%{uid}
       ${optionalString (cfg.server != null) ''
         [realms]
             ${cfg.realm} = {
