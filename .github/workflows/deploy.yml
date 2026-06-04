@@ -70,9 +70,13 @@ jobs:
             }
 
             const required = ["Build NixOS configurations", "Python unit tests"];
+            // Explicit map fn extracts the nested workflow_runs array per page —
+            // unambiguous regardless of paginate's auto-normalization, so `runs` is
+            // always the flat array the filters below expect.
             const runs = await github.paginate(
               github.rest.actions.listWorkflowRunsForRepo,
-              { owner, repo, head_sha: sha, per_page: 100 });
+              { owner, repo, head_sha: sha, per_page: 100 },
+              (response) => response.data.workflow_runs);
 
             // The push-on-main run of each required workflow for this SHA — not a
             // pull_request / workflow_dispatch run of the same commit, which could

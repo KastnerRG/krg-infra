@@ -22,22 +22,32 @@ DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-/var/lib/krg-admin/.ssh/id_ed25519}"
 [[ -f "$DEPLOY_SSH_KEY" ]] && export ANSIBLE_PRIVATE_KEY_FILE="${ANSIBLE_PRIVATE_KEY_FILE:-$DEPLOY_SSH_KEY}"
 
 echo "::group::ansible site.yml (Proxmox hosts)"
-(
+# if ! (...) so set -e can't exit before ::endgroup:: — keeps the Actions log group
+# closed on failure (same pattern as deploy-nixos.sh / deploy-tofu.sh).
+if ! (
   cd "${REPO_ROOT}/ansible"
   # Collections (ansible/requirements.yml) are provisioned ON the control node, not
   # installed per-run — this matches the nightly ansible-apply service and avoids an
   # unpinned upstream pull on every deploy (non-reproducible). Pinning them and
   # managing the install via Nix so both paths share one set is tracked in #129.
   ansible-playbook playbooks/site.yml
-)
+); then
+  echo "FAILED: ansible site.yml"
+  echo "::endgroup::"
+  exit 1
+fi
 echo "::endgroup::"
 
 if [[ "${DEPLOY_SYNOLOGY:-false}" == "true" ]]; then
   echo "::group::ansible synology (e4e-nas)"
-  (
+  if ! (
     cd "${REPO_ROOT}/ansible/synology"
     ansible-playbook playbook.yml
-  )
+  ); then
+    echo "FAILED: ansible synology"
+    echo "::endgroup::"
+    exit 1
+  fi
   echo "::endgroup::"
 else
   echo "skip synology: DEPLOY_SYNOLOGY!=true (NAS bring-up gates not cleared — see docs/e4e-nas-dsm.md)"
