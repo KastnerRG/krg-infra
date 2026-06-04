@@ -103,7 +103,7 @@ def _deploy_ui_args(**overrides):
         "compose_path":   "/volume1/docker/garage-ui/docker-compose.yml",
         "container_name": "garage-ui",
         "image":          "noooste/garage-ui",
-        "image_tag":      "0.6.1",
+        "image_tag":      "v0.6.1",
         "config_path":    "/volume1/docker/garage-ui/config.yaml",
         "check":          False,
     }
@@ -616,7 +616,7 @@ def test_deploy_ui_no_change(monkeypatch, capsys):
     monkeypatch.setattr(m, "_read", lambda p: desired_compose)
     monkeypatch.setattr(m.os.path, "exists", lambda p: True)
     monkeypatch.setattr(m, "_container_running", lambda n: True)
-    monkeypatch.setattr(m, "_container_image", lambda n: "noooste/garage-ui:0.6.1")
+    monkeypatch.setattr(m, "_container_image", lambda n: "noooste/garage-ui:v0.6.1")
 
     rc = m.do_deploy_ui(a)
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
@@ -657,7 +657,7 @@ def test_deploy_ui_image_drift_triggers_compose_up(monkeypatch, capsys):
     monkeypatch.setattr(m, "_read", lambda p: desired_compose)
     monkeypatch.setattr(m.os.path, "exists", lambda p: True)
     monkeypatch.setattr(m, "_container_running", lambda n: True)
-    monkeypatch.setattr(m, "_container_image", lambda n: "noooste/garage-ui:0.6.1")
+    monkeypatch.setattr(m, "_container_image", lambda n: "noooste/garage-ui:v0.6.1")
     monkeypatch.setattr(m.os, "makedirs", lambda p, exist_ok=False: None)
     monkeypatch.setattr(m, "_atomic_write", lambda *a, **kw: None)
     runs = []
