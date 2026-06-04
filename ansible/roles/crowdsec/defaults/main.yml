@@ -77,3 +77,13 @@ crowdsec_apt_repo_url: https://packagecloud.io/crowdsec/crowdsec
 crowdsec_apt_repo_signing_key_url: https://packagecloud.io/crowdsec/crowdsec/gpgkey
 crowdsec_apt_keyring_path: /etc/apt/keyrings/crowdsec.asc
 crowdsec_apt_sources_path: /etc/apt/sources.list.d/crowdsec.sources
+
+# Apt suite (codename) to pull from. CrowdSec's packagecloud repo lags
+# Debian stable releases — as of 2026-06 it publishes bookworm (Debian 12)
+# but NOT yet trixie (Debian 13): the trixie dist 404s (no Release file),
+# which fails `apt update`. Map the running codename to the newest
+# CrowdSec-published suite (bookworm packages run fine on trixie). Drop
+# the mapping (or add `trixie: trixie`) once packagecloud ships trixie.
+crowdsec_apt_suite_map:
+  trixie: bookworm
+crowdsec_apt_suite: "{{ crowdsec_apt_suite_map[ansible_distribution_release] | default(ansible_distribution_release) }}"
