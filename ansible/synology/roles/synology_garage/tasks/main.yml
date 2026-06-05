@@ -199,6 +199,7 @@
     --image {{ garage_spec.ui.image | quote }}
     --image-tag {{ garage_spec.ui.image_tag | quote }}
     --config-path {{ garage_spec.ui.config_path | quote }}
+    {{ '--config-changed' if (ui_cfg_apply is defined and ui_cfg_apply is changed) else '' }}
     {{ '--check' if ansible_check_mode else '' }}
   register: ui_deploy_apply
   changed_when: "'CHANGED' in ui_deploy_apply.stdout or 'WOULD-CHANGE' in ui_deploy_apply.stdout"

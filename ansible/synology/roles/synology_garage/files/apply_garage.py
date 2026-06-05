@@ -681,15 +681,24 @@ def do_deploy_ui(a):
     current_image = _container_image(a.container_name)
     image_drift = (current_image != desired_image)
     not_running = not _container_running(a.container_name)
+    # config.yaml is a read-only bind mount that garage-ui parses ONCE at
+    # startup. A plain `docker compose up -d` will NOT restart a running,
+    # otherwise-unchanged container just because that file's contents changed —
+    # so a config-only edit (e.g. updated admin_roles) would never take effect.
+    # render-ui-config reports whether it rewrote the file; the task threads that
+    # status in via --config-changed so we restart the container to reload it.
+    config_changed = a.config_changed
 
-    drift = compose_drift or image_drift or not_running
+    recreate = compose_drift or image_drift or not_running
+    drift = recreate or config_changed
     payload = {
-        "compose_path":  a.compose_path,
-        "compose_drift": compose_drift,
-        "image_drift":   image_drift,
-        "image_current": current_image,
-        "image_desired": desired_image,
-        "not_running":   not_running,
+        "compose_path":   a.compose_path,
+        "compose_drift":  compose_drift,
+        "image_drift":    image_drift,
+        "image_current":  current_image,
+        "image_desired":  desired_image,
+        "not_running":    not_running,
+        "config_changed": config_changed,
     }
     if not drift:
         return _emit("no-change", {}, a.check)
@@ -700,9 +709,17 @@ def do_deploy_ui(a):
     if compose_drift:
         _atomic_write(a.compose_path, desired_compose, 0o644)
 
-    r = _run("docker", "compose", "-f", a.compose_path, "up", "-d")
+    # `up -d` creates/recreates on compose/image drift or when stopped; when the
+    # ONLY drift is the config file, the container is already up-to-date by
+    # compose's reckoning, so restart it explicitly to re-read config.yaml.
+    if recreate:
+        r = _run("docker", "compose", "-f", a.compose_path, "up", "-d")
+        op = "up"
+    else:
+        r = _run("docker", "compose", "-f", a.compose_path, "restart")
+        op = "restart"
     if r.returncode != 0:
-        return _fail({"reason":  "docker compose up failed",
+        return _fail({"reason":  "docker compose %s failed" % op,
                       "stdout":  r.stdout, "stderr": r.stderr,
                       "payload": payload})
     payload["compose_out"] = r.stderr.strip() or r.stdout.strip()
@@ -791,6 +808,9 @@ def main(argv):
     du.add_argument("--image", required=True)
     du.add_argument("--image-tag", required=True)
     du.add_argument("--config-path", required=True)
+    # render-ui-config rewrote config.yaml this run → restart to reload it
+    # (garage-ui reads config only at startup; `up -d` alone won't restart).
+    du.add_argument("--config-changed", action="store_true")
     du.add_argument("--check", action="store_true")
     du.set_defaults(fn=do_deploy_ui)
 

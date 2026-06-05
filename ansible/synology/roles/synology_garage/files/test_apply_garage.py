@@ -105,6 +105,7 @@ def _deploy_ui_args(**overrides):
         "image":          "noooste/garage-ui",
         "image_tag":      "v0.6.1",
         "config_path":    "/volume1/docker/garage-ui/config.yaml",
+        "config_changed": False,
         "check":          False,
     }
     base.update(overrides)
@@ -676,3 +677,34 @@ def test_deploy_ui_image_drift_triggers_compose_up(monkeypatch, capsys):
     payload = json.loads(out.split(" ", 1)[1])
     assert payload["image_drift"] is True
     assert any("compose" in c and "up" in c for c in runs)
+
+
+def test_deploy_ui_config_changed_restarts_container(monkeypatch, capsys):
+    """config.yaml content changed but compose/image/running are all stable:
+    deploy-ui must `docker compose restart` (NOT `up -d`, which won't restart an
+    up-to-date container) so garage-ui re-reads the new config at startup."""
+    a = _deploy_ui_args(config_changed=True)
+    desired_compose = m.GARAGE_UI_COMPOSE_TEMPLATE % {
+        "container_name": a.container_name,
+        "image":          a.image,
+        "image_tag":      a.image_tag,
+        "config_path":    a.config_path,
+    }
+    monkeypatch.setattr(m, "_read", lambda p: desired_compose)
+    monkeypatch.setattr(m.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(m, "_container_running", lambda n: True)
+    monkeypatch.setattr(m, "_container_image", lambda n: "noooste/garage-ui:v0.6.1")
+    monkeypatch.setattr(m.os, "makedirs", lambda p, exist_ok=False: None)
+    monkeypatch.setattr(m, "_atomic_write", lambda *a, **kw: None)
+    runs = []
+    monkeypatch.setattr(m, "_run",
+                        lambda *cmd, **kw: runs.append(cmd) or _RunResult(0, stdout="garage-ui Restarted\n"))
+
+    rc = m.do_deploy_ui(a)
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["config_changed"] is True
+    assert payload["compose_drift"] is False and payload["image_drift"] is False
+    assert any("restart" in c for c in runs)
+    assert not any("up" in c for c in runs)
