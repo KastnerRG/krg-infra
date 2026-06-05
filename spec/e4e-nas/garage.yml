@@ -116,9 +116,17 @@ ui:
     # Authentik puts the user's groups under the `groups` top-level claim.
     role_attribute_path: groups
     # Admin = grants every UI capability (buckets, keys, browse, upload).
-    # Members of these AD-backed Authentik groups get admin.
+    # garage-ui grants admin on ANY match in this list (ANY-of). Names are
+    # AD-sourced group names (synced via the LDAP source, ldap.tf). This is the
+    # E4E Garage instance (e4e-nas); a future KRG Garage gets its own OIDC app
+    # + "KRG Garage Admins"/"KRG Admins".
+    #
+    # NOTE: AD group-in-group nesting does NOT flatten through Authentik's LDAP
+    # sync, so we list both groups here rather than nesting "E4E Admins" inside
+    # "E4E Garage Admins" — membership in EITHER AD group grants admin.
     admin_roles:
-      - Garage Admins                     # Authentik group (AD-synced)
+      - E4E Garage Admins                 # dedicated AD group, for garage-specific grants
+      - E4E Admins                        # for now: all E4E admins are garage admins
 
 # --- Sub-PR 5 of #101: bucket / key management (NOT YET IMPLEMENTED) ---------
 buckets: []   # TODO
