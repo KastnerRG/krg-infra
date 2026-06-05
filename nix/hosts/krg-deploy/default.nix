@@ -87,6 +87,12 @@
       hostNames = [ "fabricant.ucsd.edu" ];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN846n66tuIGzD33kP6HKCVf7s7nAS+HkNBtTObQ2OFW";
     };
+    # Synology NAS — for the Ansible synology leg (ansible/synology connects to
+    # e4e-admin@e4e-nas by IP via inventory.yml ansible_host, so pin both names).
+    e4e-nas = {
+      hostNames = [ "e4e-nas.ucsd.edu" "132.239.17.124" ];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILcS4fE6LEZa4QavcZr4Xi8Bv84ZReg75Wwky5a7rgoH";
+    };
     # e4e-prod omitted — host not provisioned yet (also absent from deploy ORDER).
   };
 
@@ -104,8 +110,17 @@
   #       lab-owned bot-account PAT stored in OpenBao — tracked in #121.
   #   /var/lib/krg-admin/.ssh/id_ed25519
   #       krg-admin's private key to the fleet (already required by ansible-apply).
+  #   /var/lib/krg-admin/.secrets/openbao-role-id
+  #   /var/lib/krg-admin/.secrets/openbao-secret-id
+  #       krg-deploy's OpenBao AppRole creds (role_id is non-secret, secret_id is).
+  #       deploy-ansible.sh logs in with these to read secret/e4e-nas/* from
+  #       krg-vault and materialize them as ansible extra_vars for the synology
+  #       playbook. Provision: role_id from terraform/openbao output; secret_id
+  #       via `bao write -f auth/approle/role/krg-deploy/secret-id` (krg-deploy's
+  #       own policy can mint these). The read capability is in terraform/openbao.
   # The deploy sources per-layer secrets at run time (see deploy/*.sh):
   #   tofu   — terraform/<target>/.deploy-env + the TOFU_STATE_PASSPHRASE secret.
+  #   ansible (synology) — krg-deploy AppRole login → bao kv get → extra_vars.
   services.github-runners.krg-deploy = {
     enable      = true;
     name        = "krg-deploy";
@@ -125,10 +140,12 @@
   };
 
   # Periodic Ansible apply — mirrors NixOS autoUpgrade on the Ansible layer.
-  # Pulls main and runs site.yml nightly; drift gets corrected automatically.
+  # Pulls main and runs deploy/deploy-ansible.sh nightly (Proxmox site.yml + the
+  # e4e-nas converge); drift gets corrected automatically. openbao + jq +
+  # coreutils are for deploy-ansible.sh's OpenBao secret materialization.
   systemd.services.ansible-apply = {
     description = "Apply Ansible playbooks to managed infrastructure";
-    path = [ pkgs.openssh pkgs.git pkgs.ansible pkgs.python3 ];
+    path = [ pkgs.openssh pkgs.git pkgs.ansible pkgs.python3 pkgs.openbao pkgs.jq pkgs.coreutils ];
     serviceConfig = {
       Type             = "oneshot";
       User             = "krg-admin";
@@ -143,9 +160,13 @@
             /var/lib/krg-admin/krg-infra
         fi
         ${pkgs.git}/bin/git -C /var/lib/krg-admin/krg-infra pull --ff-only
-        # cd into ansible/ so ansible.cfg is found and roles_path = roles resolves correctly.
-        cd /var/lib/krg-admin/krg-infra/ansible
-        ${pkgs.ansible}/bin/ansible-playbook playbooks/site.yml
+        # Same entrypoint as the push-CD (deploy.yml): site.yml (Proxmox) + the
+        # e4e-nas converge. DEPLOY_SYNOLOGY=true includes the NAS — inert until
+        # the OpenBao AppRole creds are provisioned (graceful skip otherwise),
+        # so provisioning them is the go-live switch. deploy-ansible.sh resolves
+        # REPO_ROOT from its own path, so no cd is needed.
+        DEPLOY_SYNOLOGY=true \
+          ${pkgs.bash}/bin/bash /var/lib/krg-admin/krg-infra/deploy/deploy-ansible.sh
       '';
     };
   };

@@ -52,6 +52,17 @@ resource "vault_policy" "krg_deploy" {
       capabilities = ["read"]
     }
 
+    # Read e4e-nas (Synology) secrets. krg-deploy is the control node that runs
+    # the synology_* ansible roles against e4e-nas; DSM has no vault-agent (the
+    # synology subtree is intentionally zero-prereq), so deploy/deploy-ansible.sh
+    # AppRole-logs in here and materializes the NAS secrets as ansible extra_vars
+    # at apply time. Covers garage (rpc/admin/metrics tokens), garage-ui-oidc, and
+    # the other NAS secrets as #110/#75 seed them. Read-only — krg-deploy applies
+    # config, it does not generate these.
+    path "secret/data/e4e-nas/*" {
+      capabilities = ["read"]
+    }
+
     # Generate secret_ids for other roles so OpenTofu can bootstrap them
     path "auth/approle/role/+/secret-id" {
       capabilities = ["create", "update"]
