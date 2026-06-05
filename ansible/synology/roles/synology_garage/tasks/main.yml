@@ -1,0 +1,131 @@
+---
+# synology_garage — deploy + configure Garage S3 on Container Manager from
+# spec/e4e-nas/garage.yml. THREE steps in load-bearing order:
+#   1. render-config  — write /volume1/docker/garage/garage.toml (root:root 0400)
+#                       from spec.config + 3 extra_vars secrets (no_log:true).
+#   2. deploy         — render docker-compose.yml + `docker compose up -d`
+#                       when image/mounts/env/restart drift. Container would
+#                       crash-loop without step 1 → strict ordering.
+#   3. layout         — single-node `garage layout assign` + `apply`. Idempotent
+#                       after first apply; anti-rebalance guard refuses to
+#                       mutate an already-defined layout (capacity bumps are
+#                       operator-driven, not auto-applied).
+#
+# ARCHITECTURAL NOTE: this role replaces terraform's `synology_container_project`
+# for Garage. The terraform provider hit three distinct bugs against DSM's
+# SYNO.Docker.Project API in one session (#110/#113/#114) — see
+# docs/adr/0007-dsm-config-ansible-not-terraform.md "Garage retreat". We
+# invoke `docker compose` directly (the underlying primitive); container
+# still shows in DSM Container Manager's Container tab.
+#
+# CROSS-REFERENCE: terraform/e4e-nas/containers.tf creates three
+# `synology_filestation_folder` resources for the FileStation paths
+# /docker/garage and /s3-data/{meta,data} — DSM's FileStation API only
+# sees dirs created through itself, so any container bind-mount source
+# needs index-registration. The mapping from those FileStation paths to
+# on-disk absolute paths (which volume hosts the `docker` and `s3-data`
+# shares) is whatever DSM's share catalogue says; this role takes the
+# resolved disk paths via spec (`compose_path`, `config_path`, `meta_dir`,
+# `data_dir`) and assumes they already exist on disk + are FileStation-
+# tracked. If you change which volume hosts a share, update both the
+# share spec AND these path fields in spec/e4e-nas/garage.yml.
+
+- name: Load the Garage spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_garage_spec }}"
+    name: garage_spec
+
+# --- Anti-error guard: secrets must be supplied as extra_vars ------------------
+# render-config carries no_log:true (it's the task that actually injects the
+# secrets via GARAGE_* environment), so a missing var would surface as
+# "AnsibleUndefinedVariable" with no value (good — but the error site would
+# be inside a no_log task, hiding the cause). deploy + layout don't see the
+# secrets and aren't no_log. Fail loudly here, before anything secret-bearing
+# runs.
+- name: Refuse to deploy Garage without secrets in extra_vars
+  ansible.builtin.assert:
+    that:
+      - garage_rpc_secret    | default('') | length >= 32
+      - garage_admin_token   | default('') | length >= 32
+      - garage_metrics_token | default('') | length >= 32
+    fail_msg: >-
+      Garage requires extra_vars: garage_rpc_secret, garage_admin_token,
+      garage_metrics_token (each at least 32 chars). Supply via
+      `-e @~/.config/krg/secrets-garage.yml` (operator-local, mode 0600,
+      outside the repo). Generate with `openssl rand -hex 32`. #110
+      (OpenBao migration) eventually replaces this with a vault-backed
+      lookup.
+
+# --- 1. garage.toml ------------------------------------------------------------
+# Secrets pass via ENVIRONMENT (not cmdline argv) — argv is visible to other
+# processes on the NAS via `ps`/`top`/`/proc/<pid>/cmdline` even for the
+# brief window the script runs, so cmdline secrets would leak to local
+# users despite ansible's no_log. apply_garage.py reads GARAGE_* env vars
+# directly (os.environ). no_log:true keeps secret values out of ansible's
+# stdout-capture machinery too. The script's stdout payload deliberately
+# omits secret values; it only reports `desired_sha256` (the rendered
+# config's hash) so the operator can confirm a meaningful change without
+# the bytes leaking.
+- name: Render garage.toml (atomic write, root:root 0400)
+  ansible.builtin.script: >-
+    apply_garage.py render-config
+    --config-path {{ garage_spec.deployment.config_path | quote }}
+    --meta-dir {{ garage_spec.deployment.meta_dir | quote }}
+    --data-dir {{ garage_spec.deployment.data_dir | quote }}
+    --db-engine {{ garage_spec.config.db_engine | quote }}
+    --replication-factor {{ garage_spec.config.replication_factor }}
+    --compression-level {{ garage_spec.config.compression_level }}
+    --rpc-bind-addr {{ garage_spec.config.rpc_bind_addr | quote }}
+    --rpc-public-addr {{ garage_spec.config.rpc_public_addr | quote }}
+    --s3-api-bind-addr {{ garage_spec.config.s3_api.api_bind_addr | quote }}
+    --s3-region {{ garage_spec.config.s3_api.region | quote }}
+    --s3-root-domain {{ garage_spec.config.s3_api.root_domain | quote }}
+    --s3-web-bind-addr {{ garage_spec.config.s3_web.bind_addr | quote }}
+    --s3-web-root-domain {{ garage_spec.config.s3_web.root_domain | quote }}
+    --s3-web-index {{ garage_spec.config.s3_web.index | quote }}
+    --admin-api-bind-addr {{ garage_spec.config.admin.api_bind_addr | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  environment:
+    GARAGE_RPC_SECRET: "{{ garage_rpc_secret }}"
+    GARAGE_ADMIN_TOKEN: "{{ garage_admin_token }}"
+    GARAGE_METRICS_TOKEN: "{{ garage_metrics_token }}"
+  register: cfg_apply
+  changed_when: "'CHANGED' in cfg_apply.stdout or 'WOULD-CHANGE' in cfg_apply.stdout"
+  failed_when: "cfg_apply.rc != 0 or 'FAIL' in cfg_apply.stdout"
+  check_mode: false
+  no_log: true
+
+# --- 2. container ---------------------------------------------------------------
+- name: Deploy Garage container (docker compose up -d on drift)
+  ansible.builtin.script: >-
+    apply_garage.py deploy
+    --compose-path {{ garage_spec.deployment.compose_path | quote }}
+    --container-name {{ garage_spec.deployment.container_name | quote }}
+    --image {{ garage_spec.deployment.image | quote }}
+    --image-tag {{ garage_spec.deployment.image_tag | quote }}
+    --network-mode {{ garage_spec.deployment.network_mode | quote }}
+    --restart-policy {{ garage_spec.deployment.restart_policy | quote }}
+    --meta-dir {{ garage_spec.deployment.meta_dir | quote }}
+    --data-dir {{ garage_spec.deployment.data_dir | quote }}
+    --config-path {{ garage_spec.deployment.config_path | quote }}
+    --rust-log {{ garage_spec.deployment.rust_log | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: deploy_apply
+  changed_when: "'CHANGED' in deploy_apply.stdout or 'WOULD-CHANGE' in deploy_apply.stdout"
+  failed_when: "deploy_apply.rc != 0 or 'FAIL' in deploy_apply.stdout"
+  check_mode: false
+
+# --- 3. cluster layout ----------------------------------------------------------
+# After first apply this is a one-shot: layout version stays at 1 forever
+# (single node, no capacity drift permitted from the spec). Re-runs no-op.
+- name: Bootstrap Garage cluster layout (single-node, anti-rebalance)
+  ansible.builtin.script: >-
+    apply_garage.py layout
+    --container-name {{ garage_spec.deployment.container_name | quote }}
+    --zone {{ garage_spec.cluster.zone | quote }}
+    --capacity {{ garage_spec.cluster.capacity | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: layout_apply
+  changed_when: "'CHANGED' in layout_apply.stdout or 'WOULD-CHANGE' in layout_apply.stdout"
+  failed_when: "layout_apply.rc != 0 or 'FAIL' in layout_apply.stdout"
+  check_mode: false

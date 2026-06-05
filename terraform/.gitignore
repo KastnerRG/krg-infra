@@ -10,6 +10,13 @@
 !*.tfvars.example
 # Per-target deploy secrets sourced by deploy/deploy-tofu.sh (VAULT_TOKEN, TF_VAR_*).
 .deploy-env
+# Operator-rendered config files that may carry secrets (historically
+# garage.toml — rpc_secret / admin_token / metrics_token). The Ansible
+# `synology_garage` role owns Garage config now (no_log + ansible-vault); the
+# rule stays because *.tfvars already covers the canonical secret carrier
+# and a stray rendered *.toml under terraform/ should never reach git.
+*.toml
+!*.toml.example
 # DSM config exports / SQL dumps — secret + PII-bearing, never commit (review locally only)
 *.dss
 *.sql

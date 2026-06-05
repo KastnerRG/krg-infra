@@ -3,8 +3,22 @@
 #   cp terraform.tfvars.example terraform.tfvars
 
 dsm_host = "https://e4e-nas.ucsd.edu:6021"
-dsm_user = "e4e-admin" # E4E hardware → e4e-admin slot; an administrators-group account, NOT the built-in 'admin'
+dsm_user = "e4e-automation" # dedicated administrators-group API account, NOT the built-in 'admin'
 
-# Secrets — prefer `export TF_VAR_dsm_password=...` over writing them here.
-# dsm_password   = "CHANGE_ME"
-# dsm_otp_secret = "" # only if the API account has TOTP 2FA
+# --- Secrets ------------------------------------------------------------------
+# STRONGLY prefer `export TF_VAR_<name>=...` over writing secrets to a file on
+# disk. The state file will hold the values either way (encrypt state once a
+# backend is wired); the variable doesn't need to also be on disk.
+#
+# DSM API account password — rotate via #75 (synouser --setpw via OpenBao) when
+# that lands; until then operator-managed:
+#   export TF_VAR_dsm_password="$(yq -r '.synology_user_passwords."e4e-automation"' ~/.config/krg/secrets-syno.yml)"
+#
+# DSM TOTP secret — only if e4e-automation has 2FA enabled; base32 shared
+# secret, NOT the 6-digit code, NOT the otpauth:// URI:
+#   export TF_VAR_dsm_otp_secret="JBSWY3DPEHPK3PXP..."   # length 16-32
+
+# --- Garage (S3) — per ADR 0002 + 0003 ----------------------------------------
+# Garage is NOT terraform-managed (provider too immature — see ADR 0007 +
+# containers.tf header). Deployment, config, and cluster bootstrap live in
+# the `synology_garage` Ansible role; spec in spec/e4e-nas/garage.yml.

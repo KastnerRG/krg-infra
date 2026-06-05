@@ -103,5 +103,5 @@ Run from the repo root: `pytest ansible/synology/roles/synology_certificate/file
 
 ## Roadmap
 
-- Wildcard certs once `garage.e4e-nas.ucsd.edu` ([#118](https://github.com/KastnerRG/krg-infra/issues/118)) lands and we want `*.s3.garage.e4e-nas.ucsd.edu` for virtual-host-style S3 routing.
+- Wildcard certs for virtual-host-style S3 routing (`*.s3.e4e.ucsd.edu`, per-bucket hostnames) — [#118](https://github.com/KastnerRG/krg-infra/issues/118). The path-style `s3.e4e.ucsd.edu` + `s3-admin.e4e.ucsd.edu` endpoints use SANs on the host cert (see `spec/e4e-nas/certificates.yml`).
 - DNS-01 challenge integration (would let us close port 80 entirely; needs programmatic update access to the `ucsd.edu` zone, which we don't have today — see security.yml comment on `lets-encrypt-http-01`).

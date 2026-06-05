@@ -25,3 +25,7 @@ variable "dsm_otp_secret" {
   default     = null
   nullable    = true
 }
+
+# Garage (S3 object store) inputs — including the image tag — live in the
+# `synology_garage` Ansible role (spec/e4e-nas/garage.yml). See containers.tf
+# for the split rationale (ADR 0007).

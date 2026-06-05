@@ -22,12 +22,19 @@ provider (`synology-community/synology`) only exposes a *subset* of DSM:
 
 | Managed here (Terraform) | NOT in the provider — see the runbook |
 |---|---|
-| Container Manager projects (`synology_container_project`) | AD/LDAP domain join |
+| Container Manager projects (`synology_container_project`) † | AD/LDAP domain join |
 | Packages (`synology_core_package`) | Shared folders + ACLs |
 | Scheduled tasks (`synology_core_event`) | SMB/NFS service settings |
 | File/folder provisioning (`synology_filestation_*`) | Users / groups, firewall, SSH |
 | VMs (`synology_virtualization_*`) | DSM update + snapshot/backup schedules |
 | Generic `synology_api` escape hatch (any DSM Web API) | |
+
+† `synology_container_project` is modeled by the provider on paper, but the
+implementation flunked the maturity test for Garage (3 distinct bugs in one
+session: #110/#113/#114). Container workloads live in the
+`synology_garage`-style Ansible roles until the resource matures — see
+[ADR 0007](../../docs/adr/0007-dsm-config-ansible-not-terraform.md) "Garage
+retreat" and the *Workloads → Garage* section below.
 
 Everything in the right column — including the **identity** and **hardening**
 work that matters most — lives in the runbook:
@@ -42,6 +49,37 @@ settings that survive DSM updates (unlike SSH-level edits, which updates revert)
   `terraform/.gitignore` keeps `*.tfstate` and `*.tfvars` out of git.
 - Migrate state to a remote backend later (add a `backend` block to
   `versions.tf`, then `tofu init -migrate-state`). See [state encryption](../README.md#secrets--state-shared-rules).
+
+## Workloads
+
+### Garage (S3 object store)
+
+Garage is **not managed from this terraform target**. The `synology-community/synology`
+provider's `synology_container_project` resource hit three distinct upstream
+bugs in one sitting on 2026-06-02 (#110 secrets-content-not-sensitive, #113
+FileStation index instability, #114 JSON parser bombs on the docker-compose
+streamed output) — which is the empirical signal [ADR 0007](../../docs/adr/0007-dsm-config-ansible-not-terraform.md)
+anticipated for moving a surface to Ansible.
+
+Deployment, `garage.toml` rendering, and cluster bootstrap (`layout assign` +
+`apply`) all live in the `synology_garage` Ansible role under
+[`../../ansible/synology/`](../../ansible/synology/); spec in
+[`../../spec/e4e-nas/garage.yml`](../../spec/e4e-nas/garage.yml).
+
+What *does* live here (containers.tf): three `synology_filestation_folder`
+resources for `/docker/garage`, `/s3-data/meta`, `/s3-data/data`. DSM's
+FileStation API only sees directories created through itself, so any
+container workload bind-mounting these paths needs them index-registered.
+The role can rely on the dirs existing without `sudo mkdir` workarounds.
+
+> **Bring-up order:** the parent **shared folders** (`docker` on `/volume1`
+> or wherever `spec/e4e-nas/shares.yml` puts it, and `s3-data` on
+> `/volume2`) must exist before `tofu apply` here, or `FileStation.CreateFolder`
+> errors with "path not found". Share creation is owned by the Ansible
+> [`synology_shares`](../../ansible/synology/roles/synology_shares/) role
+> driven from `spec/e4e-nas/shares.yml`. On a fresh NAS the canonical
+> sequence is: Ansible `synology_shares` first → then this terraform
+> target → then the Ansible `synology_garage` role.
 
 ## Shared source of truth
 

@@ -42,3 +42,15 @@
     # `--tags=synology_certificate` drag the export in.
     - synology_certificate
     - synology_app_portal              # AppPortal config + reverse-proxy + access-control (service-specific cert bindings live here)
+
+    # --- WORKLOAD LAYER (containerised services on the NAS) ---
+    # Garage S3 — replaces the prior terraform `synology_container_project` after
+    # three provider bugs in one session (#110/#113/#114). See ADR 0007 "Garage
+    # retreat". Requires extra_vars: garage_rpc_secret, garage_admin_token,
+    # garage_metrics_token (operator-supplied via
+    # `-e @~/.config/krg/secrets-garage.yml`; #110 OpenBao migration
+    # replaces this).
+    #
+    # Tagged so an operator can target this role alone:
+    #   ansible-playbook playbook.yml --tags=synology_garage -e garage_…=…
+    - { role: synology_garage, tags: ['synology_garage', 'workload'] }
