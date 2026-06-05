@@ -15,7 +15,14 @@
 
 deployment:
   image: dxflrs/garage
-  image_tag: v1.1.0                       # pinned per ADR 0002 — bump deliberately
+  # v2.x is required for the garage-ui admin UI (uses the /v2/ admin API).
+  # Upstream v1→v2 migration is "restart all nodes at once with the new
+  # binary, on-disk data + layout are compatible, only `replication_mode`
+  # config-key is dropped" — our spec already uses `replication_factor` so
+  # no config changes needed. Our cluster is fresh (no buckets/keys/data),
+  # so worst case is re-running `layout assign + apply` (the role does it
+  # idempotently). Pinned per ADR 0002 — bump deliberately + verify changelog.
+  image_tag: v2.3.0
   container_name: garage
   network_mode: host                      # single-node — host is simplest; revisit if a 2nd node lands
   # On-disk paths are explicit (no volume guessing). The terraform-tracked
@@ -61,6 +68,65 @@ cluster:
   # NOTE: the role refuses to mutate an already-defined layout (anti-rebalance
   # guard). To change capacity, run `garage layout assign` + `apply` on the
   # NAS manually after thinking about the rebalance impact.
+
+# --- Admin UI (Noooste/garage-ui) ---------------------------------------------
+# Browser-based bucket / access-key / cluster admin + S3 object browse +
+# drag-and-drop upload, gated by Authentik SSO via native OIDC. Talks to
+# Garage on loopback (`localhost:3900` S3, `localhost:3903` admin). Public
+# access via a DSM AppPortal reverse-proxy on `s3-admin.e4e.ucsd.edu` (443),
+# its own DNS name with a SAN on the host LE cert. Fully declarative: the
+# reverse-proxy entry is in app-portal.yml, the cert SAN in certificates.yml,
+# and the Authentik OIDC provider in terraform/authentik — nothing hand-made
+# on the box for the declarative sync to reap.
+#
+# TOOL CHOICE NOTE: Noooste/garage-ui is the only Garage admin UI today that
+# speaks OIDC natively. Long-term plan is to swap to the official
+# Deuxfleurs/garage-webadmin once it leaves "do not use yet" (NLnet-funded;
+# tracking issue #117). Bucket/key spec is declarative, so the swap is
+# "redeploy + re-apply" — cheap.
+ui:
+  image: noooste/garage-ui
+  image_tag: "v0.6.1"                     # tags are v-prefixed on Docker Hub; v2.x admin API required (v0.6.2/v0.7.0/v0.8.0 exist — bump per ADR 0002 w/ changelog)
+  container_name: garage-ui
+  compose_path: /volume1/docker/garage-ui/docker-compose.yml
+  config_path: /volume1/docker/garage-ui/config.yaml
+  bind_host: 127.0.0.1                    # loopback only; DSM AppPortal terminates TLS publicly
+  port: 8080                              # internal UI port; the AppPortal entry proxies the public port here
+
+  # Public access. The admin UI has its own DNS name `s3-admin.e4e.ucsd.edu`
+  # (paired with the S3 API at `s3.e4e.ucsd.edu`), so it's served on standard
+  # HTTPS (443) via a DSM AppPortal reverse-proxy. TLS uses a SAN on the host
+  # LE cert (see certificates.yml). Authentik's OIDC redirect URI MUST match
+  # `<public_url>/auth/oidc/callback` exactly (set in terraform/authentik).
+  public_hostname: s3-admin.e4e.ucsd.edu
+  public_port: 443                        # standard HTTPS; DSM web is on 6021 so 443 is free on the NAS
+  public_url: https://s3-admin.e4e.ucsd.edu
+
+  # OIDC — points at krg-prod's Authentik. client_secret is an extra_var
+  # (`garage_ui_oidc_client_secret`) carried via `environment:` (no_log;
+  # never on argv). #110 (OpenBao) eventually replaces the operator-managed
+  # secret with a vault-backed lookup.
+  oidc:
+    provider_name: Authentik
+    client_id: garage-ui
+    # Authentik moved to auth.krg.ucsd.edu in the krg-prod CNAME migration.
+    # Issuer URL pattern: https://<authentik-host>/application/o/<app-slug>/
+    issuer_url: https://auth.krg.ucsd.edu/application/o/garage-ui/
+    scopes: [openid, email, profile, groups]
+    # Authentik puts the user's groups under the `groups` top-level claim.
+    role_attribute_path: groups
+    # Admin = grants every UI capability (buckets, keys, browse, upload).
+    # garage-ui grants admin on ANY match in this list (ANY-of). Names are
+    # AD-sourced group names (synced via the LDAP source, ldap.tf). This is the
+    # E4E Garage instance (e4e-nas); a future KRG Garage gets its own OIDC app
+    # + "KRG Garage Admins"/"KRG Admins".
+    #
+    # NOTE: AD group-in-group nesting does NOT flatten through Authentik's LDAP
+    # sync, so we list both groups here rather than nesting "E4E Admins" inside
+    # "E4E Garage Admins" — membership in EITHER AD group grants admin.
+    admin_roles:
+      - E4E Garage Admins                 # dedicated AD group, for garage-specific grants
+      - E4E Admins                        # for now: all E4E admins are garage admins
 
 # --- Sub-PR 5 of #101: bucket / key management (NOT YET IMPLEMENTED) ---------
 buckets: []   # TODO

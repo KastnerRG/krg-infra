@@ -32,15 +32,21 @@ def _sd_args(**overrides):
     return type("A", (), base)()
 
 
-def _cert(domain, *, cid="xPpc1W", default=False, valid_till_dt=None, valid_till_raw=None):
-    """Build a cert dict matching the SYNO.Core.Certificate.CRT.list shape."""
+def _cert(domain, *, cid="xPpc1W", default=False, valid_till_dt=None, valid_till_raw=None,
+          desc=None):
+    """Build a cert dict matching the SYNO.Core.Certificate.CRT.list shape.
+
+    `desc` doubles as the managed-SAN-set marker (the role writes the
+    semicolon-joined CN+SANs there). Default = the domain (a role-managed
+    single-domain cert) so SAN-less no-change tests match; override to model a
+    drifted/foreign cert or a multi-SAN cert."""
     if valid_till_raw is None:
         if valid_till_dt is None:
             valid_till_dt = datetime(2027, 5, 31, 4, 5, 39, tzinfo=timezone.utc)
         valid_till_raw = valid_till_dt.strftime("%b %d %H:%M:%S %Y") + " GMT"
     return {
         "id":         cid,
-        "desc":       "",
+        "desc":       domain if desc is None else desc,
         "subject":    {"common_name": domain},
         "is_default": default,
         "valid_till": valid_till_raw,
@@ -136,6 +142,44 @@ def test_letsencrypt_create_reissues_when_within_buffer(monkeypatch, capsys):
         "empty SAN list must NOT send a SAN_list param"
     assert not any(p.startswith("domain=") for p in params), \
         "wizard uses `domain_name=`, not `domain=` — regression guard"
+
+
+def test_letsencrypt_create_reissues_on_san_drift(monkeypatch, capsys):
+    """Cert exists, NOT expiring, but the spec adds SANs not on it (desc marker
+    mismatch) → CHANGED, re-issued as a semicolon-joined multi-domain cert.
+    Regression guard for the bug where adding `sans:` to an unexpired cert was
+    a silent no-op (left s3-admin/s3 uncovered)."""
+    far_future = m._now_utc() + timedelta(days=300)
+    # Existing cert is single-domain (desc == CN), plenty of life left.
+    monkeypatch.setattr(m, "_list_certs", _stub_list([
+        _cert("e4e-nas.ucsd.edu", valid_till_dt=far_future)]))
+    calls = []
+    monkeypatch.setattr(m, "_exec",
+                        lambda *args: calls.append(args) or {"success": True})
+    rc = m.do_letsencrypt_create(_le_args(
+        sans_json='["s3-admin.e4e.ucsd.edu","s3.e4e.ucsd.edu"]'))
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert "SAN" in payload["reason"]
+    api, *params = calls[0]
+    want = "e4e-nas.ucsd.edu;s3-admin.e4e.ucsd.edu;s3.e4e.ucsd.edu"
+    # SANs ride in domain_name (CN first, ';'-joined) — DSM has no SAN_list param.
+    assert 'domain_name="%s"' % want in params
+    assert 'desc="%s"' % want in params          # desc doubles as the SAN-set marker
+    assert not any(p.startswith("SAN_list=") for p in params)
+
+
+def test_letsencrypt_create_no_change_when_sans_already_present(monkeypatch, capsys):
+    """Existing cert's desc already == the desired CN+SAN list and not expiring
+    → no-change (idempotent across runs once the SANs are on the cert)."""
+    far_future = m._now_utc() + timedelta(days=300)
+    want = "e4e-nas.ucsd.edu;s3-admin.e4e.ucsd.edu;s3.e4e.ucsd.edu"
+    monkeypatch.setattr(m, "_list_certs", _stub_list([
+        _cert("e4e-nas.ucsd.edu", valid_till_dt=far_future, desc=want)]))
+    rc = m.do_letsencrypt_create(_le_args(
+        sans_json='["s3-admin.e4e.ucsd.edu","s3.e4e.ucsd.edu"]'))
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
 
 
 def test_letsencrypt_create_issues_when_missing(monkeypatch, capsys):
@@ -431,7 +475,7 @@ def test_bind_services_rejects_malformed_binding(monkeypatch, capsys):
 # --- list (read-only debug + drift export) ------------------------------------
 def test_list_trims_to_stable_fields(monkeypatch, capsys):
     monkeypatch.setattr(m, "_list_certs",
-                        _stub_list([_cert("e4e-nas.ucsd.edu", cid="abc", default=True)]))
+                        _stub_list([_cert("e4e-nas.ucsd.edu", cid="abc", default=True, desc="")]))
     rc = m.do_list(type("A", (), {})())
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)

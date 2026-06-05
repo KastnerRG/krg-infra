@@ -10,8 +10,9 @@
 # case on the next apply (`--check --diff` previews the drift).
 #
 # Service-specific cert bindings (e.g. AppPortal reverse-proxy entries for
-# garage-ui on :8443) live in `synology_app_portal` — this role owns "which
-# certs EXIST on the box and which is DEFAULT" only.
+# the Garage UI / S3 API on s3-admin.e4e.ucsd.edu / s3.e4e.ucsd.edu) live in
+# `synology_app_portal` — this role owns "which certs EXIST on the box and
+# which is DEFAULT" only.
 
 letsencrypt:
   # The NAS's own hostname — the cert that DSM web / SSH / AppPortal
@@ -23,7 +24,18 @@ letsencrypt:
     # `e4e-ops@eng.ucsd.edu` (the original placeholder) does not exist.
     email: e4e@ucsd.edu
     default: true                     # bind as DSM's default cert
-    sans: []                          # additional SANs; empty = single-domain cert
+    # Additional SANs on the host cert. The Garage public endpoints have their
+    # own DNS names but share this one LE cert (one cert, multi-domain) so the
+    # AppPortal reverse-proxy entries (app-portal.yml) get valid TLS without a
+    # separate cert per name — and since this is the DSM DEFAULT cert, it's
+    # served for those SNIs with no per-entry binding. Each name must resolve to
+    # the NAS + be HTTP-01 reachable on :80 for LE issuance.
+    # DSM encodes SANs as a ';'-joined `domain_name` (CN first); apply_certificate.py
+    # re-issues when the cert's SAN set differs from this list (verified against
+    # the DSM 7.3 wizard 2026-06-04).
+    sans:
+      - s3-admin.e4e.ucsd.edu          # Garage admin UI (garage-ui)
+      - s3.e4e.ucsd.edu                # Garage S3 API
 
     # Re-issuance window: if a cert exists but expires within this many days
     # the role triggers a new LE issuance regardless of DSM auto-renew

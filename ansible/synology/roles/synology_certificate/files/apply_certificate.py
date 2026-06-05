@@ -32,10 +32,13 @@ field names match what DSM itself sends through Chrome DevTools network traces):
     {"data": {"certificates": [{"id", "desc", "subject": {"common_name"},
      "is_default", "valid_till", "services": [{"service", "subscriber",
      "display_name", "isPkg", "owner"}]}]}}
-- `SYNO.Core.Certificate.LetsEncrypt method=create version=1` accepts the
-  short form `desc + domain_name + email` (NOT the longer `domain + SAN_list +
-  server` shape from community DSM-6 captures). DSM defaults to the LE prod
-  server; no `server=` param is sent by the wizard.
+- `SYNO.Core.Certificate.LetsEncrypt method=create version=1` accepts
+  `desc + domain_name + email` (NOT `domain`, and NO `SAN_list`/`server`).
+  Multi-domain (SAN) certs put ALL names in `domain_name` as a ';'-joined list,
+  CN first: `domain_name="cn;san1;san2"` (wizard-captured 2026-06-04). DSM
+  defaults to the LE prod server; no `server=` param is sent. We mirror the
+  list into `desc` so it doubles as a managed-SAN-set marker for drift
+  detection (CRT.list doesn't surface a cert's SANs, but it returns `desc`).
 - `SYNO.Core.Certificate.CRT method=set version=1` takes `as_default=true +
   desc + id`. There is NO `method=set_default` on DSM 7.3 — the older string
   is from DSM-6 captures and returns "API not found" (102).
@@ -153,19 +156,38 @@ def do_letsencrypt_create(a):
     except RuntimeError as e:
         return _fail({"reason": str(e), "domain": a.domain})
 
-    payload_base = {"domain": a.domain, "email": a.email,
-                    "sans": json.loads(a.sans_json or "[]")}
+    sans = json.loads(a.sans_json or "[]")
+    if not isinstance(sans, list) or not all(isinstance(s, str) for s in sans):
+        return _fail({"reason": "--sans-json must be a JSON array of strings",
+                      "got": a.sans_json})
+
+    # DSM encodes a multi-domain (SAN) LE cert as ONE semicolon-joined
+    # `domain_name` with the CN first — there is no `SAN_list` param (captured
+    # from the DSM 7.3 wizard POST: domain_name="cn;san1;san2"). We write that
+    # same string into `desc` too, so `desc` doubles as a managed-SAN-set
+    # marker: CRT.list does NOT surface a cert's SANs, but it DOES return
+    # `desc`, so comparing the existing cert's `desc` to the desired domain
+    # list lets us detect SAN drift (e.g. a SAN added to the spec after the
+    # cert was first issued) and re-issue. Without this, adding a SAN to an
+    # unexpired cert was a silent no-op (the bug that left s3-admin uncovered).
+    domain_list = ";".join([a.domain] + sans)
+
+    payload_base = {"domain": a.domain, "email": a.email, "sans": sans}
 
     if existing is not None:
         valid_till = _parse_valid_till(existing.get("valid_till", ""))
         buffer = timedelta(days=int(a.renewal_buffer_days))
-        if valid_till is None:
+        if existing.get("desc") != domain_list:
+            # SAN set differs from spec (or cert wasn't role-managed) → re-issue.
+            payload = dict(payload_base, reason="cert SAN set differs from spec",
+                           current_desc=existing.get("desc"), desired=domain_list)
+        elif valid_till is None:
             # Couldn't parse — defensive re-issue. Don't no-op on an
             # unknown-expiry cert; safer to push a fresh one.
             payload = dict(payload_base, reason="cert exists but valid_till unparseable",
                            valid_till_raw=existing.get("valid_till"))
         elif valid_till - _now_utc() > buffer:
-            # Plenty of life left — DSM's auto-renew will take care of it.
+            # SANs match AND plenty of life left — DSM's auto-renew handles it.
             return _emit("no-change", {}, a.check)
         else:
             payload = dict(payload_base, reason="cert exists but expiring within buffer",
@@ -177,27 +199,14 @@ def do_letsencrypt_create(a):
     if a.check:
         return _emit("would-change", payload, True)
 
-    sans = json.loads(a.sans_json or "[]")
-    if not isinstance(sans, list) or not all(isinstance(s, str) for s in sans):
-        return _fail({"reason": "--sans-json must be a JSON array of strings",
-                      "got": a.sans_json})
-
-    # Param shape captured from DSM 7.3 wizard's POST on e4e-nas
-    # 2026-06-02 — three fields: `desc` (display description, conventional
-    # to use the domain), `domain_name` (NOT just `domain`), `email`. The
-    # wizard does NOT send `SAN_list` or `server` for a single-domain LE
-    # request. If SANs are needed, the param name is unverified — empty
-    # list short-circuits here and we'd need a wizard capture with SANs
-    # to confirm the name + JSON shape.
+    # `desc` = `domain_name` = the semicolon-joined CN+SANs (see above). For a
+    # single-domain cert (no sans) this is just the CN, unchanged from before.
     le_params = [
         "version=1", "method=create",
-        "desc=" + json.dumps(a.domain),
-        "domain_name=" + json.dumps(a.domain),
+        "desc=" + json.dumps(domain_list),
+        "domain_name=" + json.dumps(domain_list),
         "email=" + json.dumps(a.email),
     ]
-    if sans:
-        # Best-guess; flag for verification on first successful apply with SANs.
-        le_params.append("SAN_list=" + json.dumps(sans))
     r = _exec(LE_API, *le_params)
     if not r.get("success"):
         return _fail({"reason": "%s.create failed" % LE_API,

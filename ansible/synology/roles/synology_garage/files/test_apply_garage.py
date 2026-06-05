@@ -76,6 +76,49 @@ def _layout_args(**overrides):
     return type("A", (), base)()
 
 
+def _render_ui_args(**overrides):
+    base = {
+        "config_path":              "/volume1/docker/garage-ui/config.yaml",
+        "bind_host":                "127.0.0.1",
+        "port":                     "8080",
+        "public_hostname":          "s3-admin.e4e.ucsd.edu",
+        "public_url":               "https://s3-admin.e4e.ucsd.edu",
+        "garage_s3_port":           "3900",
+        "garage_admin_port":        "3903",
+        "garage_region":            "garage",
+        "oidc_provider_name":       "Authentik",
+        "oidc_client_id":           "garage-ui",
+        "oidc_issuer_url":          "https://auth.example.com/application/o/garage-ui/",
+        "oidc_role_attribute_path": "groups",
+        "oidc_scopes_json":         '["openid","email","profile","groups"]',
+        "oidc_admin_roles_json":    '["Garage Admins"]',
+        "check":                    False,
+    }
+    base.update(overrides)
+    return type("A", (), base)()
+
+
+def _deploy_ui_args(**overrides):
+    base = {
+        "compose_path":   "/volume1/docker/garage-ui/docker-compose.yml",
+        "container_name": "garage-ui",
+        "image":          "noooste/garage-ui",
+        "image_tag":      "v0.6.1",
+        "config_path":    "/volume1/docker/garage-ui/config.yaml",
+        "config_changed": False,
+        "check":          False,
+    }
+    base.update(overrides)
+    return type("A", (), base)()
+
+
+def _set_ui_secret_env(monkeypatch, oidc="y" * 32, admin=None):
+    """Set GARAGE_UI_OIDC_CLIENT_SECRET (+ GARAGE_ADMIN_TOKEN if given)."""
+    monkeypatch.setenv("GARAGE_UI_OIDC_CLIENT_SECRET", oidc)
+    if admin is not None:
+        monkeypatch.setenv("GARAGE_ADMIN_TOKEN", admin)
+
+
 class _RunResult:
     def __init__(self, rc, stdout="", stderr=""):
         self.returncode = rc
@@ -445,3 +488,223 @@ def test_main_dispatches_to_subcommand(monkeypatch, capsys):
         "--meta-dir", "/m", "--data-dir", "/d",
     ])
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
+
+
+# --- render-ui-config ---------------------------------------------------------
+def test_render_ui_config_writes_when_missing(monkeypatch, capsys):
+    """OIDC client_secret + admin_token come from env vars (NEVER argv).
+    JWT key is generated + persisted alongside config on first run."""
+    _set_ui_secret_env(monkeypatch, oidc="y" * 32, admin="x" * 64)
+    monkeypatch.setattr(m, "_read", lambda p: "PEM-CONTENT")
+    monkeypatch.setattr(m.os.path, "exists", lambda p: False)
+    monkeypatch.setattr(m, "_ensure_jwt_key", lambda p: "PEM-CONTENT")
+    writes = []
+    monkeypatch.setattr(m, "_atomic_write",
+                        lambda p, c, mode, uid=0, gid=0: writes.append((p, c, mode, uid, gid)))
+
+    rc = m.do_render_ui_config(_render_ui_args())
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["key_generated"] is True
+    assert payload["config_path"] == "/volume1/docker/garage-ui/config.yaml"
+    # No secret leaks in payload (only hash):
+    assert "y" * 32 not in out and "x" * 64 not in out
+    _, content, mode, uid, gid = writes[0]
+    assert mode == 0o400
+    # config.yaml is owned by the non-root garage-ui container UID so the
+    # container reads its own secret config without running as root.
+    assert (uid, gid) == (m._GARAGE_UI_UID, m._GARAGE_UI_GID) == (1000, 1000)
+    assert 'client_secret: "' + "y" * 32 + '"' in content
+    assert 'admin_token: "' + "x" * 64 + '"' in content
+    assert 'root_url: "https://s3-admin.e4e.ucsd.edu"' in content
+    assert '- "Garage Admins"' in content
+    for s in ("openid", "email", "profile", "groups"):
+        assert '- "%s"' % s in content
+
+
+def test_render_ui_config_fails_clean_when_oidc_secret_unset(monkeypatch, capsys):
+    """Missing GARAGE_UI_OIDC_CLIENT_SECRET → structured FAIL."""
+    monkeypatch.delenv("GARAGE_UI_OIDC_CLIENT_SECRET", raising=False)
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "x" * 64)
+    rc = m.do_render_ui_config(_render_ui_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["vars"] == ["GARAGE_UI_OIDC_CLIENT_SECRET"]
+
+
+def test_render_ui_config_fails_clean_when_admin_token_unset(monkeypatch, capsys):
+    """Missing GARAGE_ADMIN_TOKEN → structured FAIL (UI reuses the cluster
+    admin_token to call Garage's admin API)."""
+    monkeypatch.setenv("GARAGE_UI_OIDC_CLIENT_SECRET", "y" * 32)
+    monkeypatch.delenv("GARAGE_ADMIN_TOKEN", raising=False)
+    rc = m.do_render_ui_config(_render_ui_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["vars"] == ["GARAGE_ADMIN_TOKEN"]
+
+
+def test_render_ui_config_check_mode_doesnt_write_or_genkey(monkeypatch, capsys):
+    _set_ui_secret_env(monkeypatch, oidc="y" * 32, admin="x" * 64)
+    monkeypatch.setattr(m, "_read", lambda p: None)
+    monkeypatch.setattr(m.os.path, "exists", lambda p: False)
+    genkey_called = []
+    monkeypatch.setattr(m, "_ensure_jwt_key",
+                        lambda p: genkey_called.append(p) or "PEM")
+    writes = []
+    monkeypatch.setattr(m, "_atomic_write",
+                        lambda p, c, mode: writes.append((p, c, mode)))
+
+    rc = m.do_render_ui_config(_render_ui_args(check=True))
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("WOULD-CHANGE ")
+    assert writes == [] and genkey_called == []   # never side-effect in check mode
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("oidc_client_secret", '"'),
+    ("garage_admin_token", "\n"),
+])
+def test_render_ui_config_rejects_injection_chars(monkeypatch, capsys, field, bad):
+    """Reject `"`, `\\n`, `\\r` in any YAML string field — defense in depth."""
+    if field == "oidc_client_secret":
+        _set_ui_secret_env(monkeypatch, oidc="abc" + bad + "def", admin="x" * 64)
+    else:
+        _set_ui_secret_env(monkeypatch, oidc="y" * 32, admin="abc" + bad + "def")
+    monkeypatch.setattr(m.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(m, "_read", lambda p: "PEM")
+    rc = m.do_render_ui_config(_render_ui_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["field"] == field
+
+
+def test_render_ui_config_rejects_empty_admin_roles(monkeypatch, capsys):
+    _set_ui_secret_env(monkeypatch, oidc="y" * 32, admin="x" * 64)
+    monkeypatch.setattr(m.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(m, "_read", lambda p: "PEM")
+    rc = m.do_render_ui_config(_render_ui_args(oidc_admin_roles_json="[]"))
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert "admin_roles" in payload["reason"]
+
+
+def test_yaml_list_lines_quotes_and_indents():
+    out = m._yaml_list_lines(["openid", "email", "profile"], 6)
+    assert out == '      - "openid"\n      - "email"\n      - "profile"'
+
+
+def test_yaml_list_lines_rejects_doublequote():
+    with pytest.raises(ValueError):
+        m._yaml_list_lines(['has"quote'], 6)
+
+
+def test_yaml_list_lines_rejects_newline():
+    with pytest.raises(ValueError):
+        m._yaml_list_lines(["has\nnewline"], 6)
+
+
+# --- deploy-ui ----------------------------------------------------------------
+def test_deploy_ui_no_change(monkeypatch, capsys):
+    a = _deploy_ui_args()
+    desired_compose = m.GARAGE_UI_COMPOSE_TEMPLATE % {
+        "container_name": a.container_name,
+        "image":          a.image,
+        "image_tag":      a.image_tag,
+        "config_path":    a.config_path,
+    }
+    monkeypatch.setattr(m, "_read", lambda p: desired_compose)
+    monkeypatch.setattr(m.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(m, "_container_running", lambda n: True)
+    monkeypatch.setattr(m, "_container_image", lambda n: "noooste/garage-ui:v0.6.1")
+
+    rc = m.do_deploy_ui(a)
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
+
+
+def test_deploy_ui_missing_config_fails_on_apply(monkeypatch, capsys):
+    a = _deploy_ui_args()
+    monkeypatch.setattr(m, "_read", lambda p: None)
+    monkeypatch.setattr(m.os.path, "exists", lambda p: False)
+    rc = m.do_deploy_ui(a)
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert "render-ui-config" in payload["reason"]
+
+
+def test_deploy_ui_missing_config_check_mode_planned(monkeypatch, capsys):
+    """--check on a fresh box (no config.yaml yet) reports WOULD-CHANGE."""
+    a = _deploy_ui_args(check=True)
+    monkeypatch.setattr(m, "_read", lambda p: None)
+    monkeypatch.setattr(m.os.path, "exists", lambda p: False)
+    runs = []
+    monkeypatch.setattr(m, "_run", lambda *cmd, **kw: runs.append(cmd) or _RunResult(0))
+    rc = m.do_deploy_ui(a)
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("WOULD-CHANGE ")
+    assert runs == []
+
+
+def test_deploy_ui_image_drift_triggers_compose_up(monkeypatch, capsys):
+    a = _deploy_ui_args(image_tag="0.7.0")
+    desired_compose = m.GARAGE_UI_COMPOSE_TEMPLATE % {
+        "container_name": a.container_name,
+        "image":          a.image,
+        "image_tag":      a.image_tag,
+        "config_path":    a.config_path,
+    }
+    monkeypatch.setattr(m, "_read", lambda p: desired_compose)
+    monkeypatch.setattr(m.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(m, "_container_running", lambda n: True)
+    monkeypatch.setattr(m, "_container_image", lambda n: "noooste/garage-ui:v0.6.1")
+    monkeypatch.setattr(m.os, "makedirs", lambda p, exist_ok=False: None)
+    monkeypatch.setattr(m, "_atomic_write", lambda *a, **kw: None)
+    runs = []
+
+    def fake_run(*cmd, **kw):
+        runs.append(cmd)
+        return _RunResult(0, stdout="garage-ui Recreated\n")
+    monkeypatch.setattr(m, "_run", fake_run)
+
+    rc = m.do_deploy_ui(a)
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["image_drift"] is True
+    assert any("compose" in c and "up" in c for c in runs)
+
+
+def test_deploy_ui_config_changed_restarts_container(monkeypatch, capsys):
+    """config.yaml content changed but compose/image/running are all stable:
+    deploy-ui must `docker compose restart` (NOT `up -d`, which won't restart an
+    up-to-date container) so garage-ui re-reads the new config at startup."""
+    a = _deploy_ui_args(config_changed=True)
+    desired_compose = m.GARAGE_UI_COMPOSE_TEMPLATE % {
+        "container_name": a.container_name,
+        "image":          a.image,
+        "image_tag":      a.image_tag,
+        "config_path":    a.config_path,
+    }
+    monkeypatch.setattr(m, "_read", lambda p: desired_compose)
+    monkeypatch.setattr(m.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(m, "_container_running", lambda n: True)
+    monkeypatch.setattr(m, "_container_image", lambda n: "noooste/garage-ui:v0.6.1")
+    monkeypatch.setattr(m.os, "makedirs", lambda p, exist_ok=False: None)
+    monkeypatch.setattr(m, "_atomic_write", lambda *a, **kw: None)
+    runs = []
+    monkeypatch.setattr(m, "_run",
+                        lambda *cmd, **kw: runs.append(cmd) or _RunResult(0, stdout="garage-ui Restarted\n"))
+
+    rc = m.do_deploy_ui(a)
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["config_changed"] is True
+    assert payload["compose_drift"] is False and payload["image_drift"] is False
+    assert any("restart" in c for c in runs)
+    assert not any("up" in c for c in runs)

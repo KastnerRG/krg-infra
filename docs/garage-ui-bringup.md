@@ -74,17 +74,28 @@ bao kv put secret/e4e-nas/garage \
 bao kv get secret/e4e-nas/garage              # verify
 ```
 
-## 4. DSM AppPortal reverse-proxy + cert (manual — no API)
+## 4. DSM AppPortal reverse-proxy + cert (declarative — applied in step 5)
 
-In DSM web (`https://e4e-nas.ucsd.edu:6021`): Control Panel → Login Portal →
-Reverse Proxy → Create:
+These are **no longer manual** — they're in the spec and applied by the roles
+in step 5:
 
-- Source: **HTTPS**, `e4e-nas.ucsd.edu`, port **8443**; enable HSTS + HTTP/2
-- Destination: **HTTP**, `127.0.0.1`, port **8080**
-- Control Panel → Security → Certificate: assign the existing
-  `e4e-nas.ucsd.edu` Let's Encrypt cert to this entry (one cert covers `:6021`,
-  `:8443`, …)
-- DSM firewall: allow `:8443` from the same sources that reach DSM web
+- **Reverse proxies** (`spec/e4e-nas/app-portal.yml` `reverse_proxy:`, role
+  `synology_app_portal`):
+  - `s3-admin.e4e.ucsd.edu:443` (HTTPS) → `127.0.0.1:8080` (garage-ui)
+  - `s3.e4e.ucsd.edu:443` (HTTPS) → `127.0.0.1:3900` (Garage S3 API)
+- **TLS** (`spec/e4e-nas/certificates.yml` `sans:`, role
+  `synology_certificate`): `s3-admin.e4e.ucsd.edu` + `s3.e4e.ucsd.edu` are SANs
+  on the host LE cert. Both names must resolve to the NAS and be HTTP-01
+  reachable on `:80` for LE issuance.
+- **Firewall**: `:443` is already allowed by the `geoip-US-floor` / trusted-net
+  rules in `spec/e4e-nas/security.yml` — no new rule.
+
+> First-apply caveat (no API to dry-run cleanly): the AppPortal field shape is
+> a discovery best-guess — run `apply_app_portal.py reverse-proxy --check` first.
+> The LE SAN encoding is verified (DSM puts SANs in a ';'-joined `domain_name`,
+> CN first; the cert's SAN set is tracked via the `desc` marker so a spec SAN
+> change re-issues). The host LE cert is DSM's DEFAULT cert, so once re-issued
+> with the `s3-admin`/`s3` SANs it's served for those names with no binding.
 
 ## 5. Deploy the garage role — targeted, secrets materialized from OpenBao
 
@@ -114,12 +125,17 @@ jq -n \
   }' > "$vars"
 
 cd "$(git rev-parse --show-toplevel)/ansible/synology"
-ansible-playbook playbook.yml --tags=synology_garage --check --diff -e @"$vars"   # dry run
-ansible-playbook playbook.yml --tags=synology_garage              -e @"$vars"     # apply
+TAGS=synology_certificate,synology_garage,synology_app_portal
+ansible-playbook playbook.yml --tags="$TAGS" --check --diff -e @"$vars"   # dry run
+ansible-playbook playbook.yml --tags="$TAGS"               -e @"$vars"    # apply
 ```
 
-This bumps Garage `v1.1.0 → v2.3.0` (data + layout compatible; cluster is
-fresh) and brings up the `garage-ui` container.
+This issues/updates the host cert with the new SANs (`synology_certificate`),
+bumps Garage `v1.1.0 → v2.3.0` (data + layout compatible; cluster is fresh) and
+brings up the `garage-ui` container (`synology_garage`), and creates the
+`s3-admin.e4e.ucsd.edu` + `s3.e4e.ucsd.edu` reverse proxies
+(`synology_app_portal`). Tag-scoped, so it does **not** trigger the full-NAS
+destructive sync.
 
 ## 6. Verify
 
@@ -127,11 +143,12 @@ fresh) and brings up the `garage-ui` container.
 ssh e4e-admin@e4e-nas.ucsd.edu 'sudo /usr/local/bin/docker ps \
   --format "{{.Names}}\t{{.Image}}\t{{.Status}}"'
 #   expect: garage  dxflrs/garage:v2.3.0  Up …
-#           garage-ui  noooste/garage-ui:0.6.1  Up …
+#           garage-ui  noooste/garage-ui:v0.6.1  Up …
 ```
 
-Browser: `https://e4e-nas.ucsd.edu:8443` → Authentik login → confirm the
-`Garage Admins` gate → list/create a bucket → upload a test file.
+Browser: `https://s3-admin.e4e.ucsd.edu` → Authentik login → confirm the
+`Garage Admins` gate → list/create a bucket → upload a test file. The S3 API
+answers at `https://s3.e4e.ucsd.edu` (e.g. `aws --endpoint-url …`).
 
 ## After bring-up — CD takes over
 
