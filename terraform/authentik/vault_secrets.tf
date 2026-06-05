@@ -51,5 +51,37 @@ resource "vault_kv_secret_v2" "roster_oidc" {
   })
 }
 
+# garage-ui — the ONLY garage secret tofu generates (Authentik mints it; brand
+# new, so writing it is pure creation, not a rotation of a live value). Path is
+# secret/e4e-nas/* (not krg-prod/*) because the consumer is the NAS. The garage
+# CLUSTER tokens (rpc/admin/metrics) already exist live and are NOT generated
+# here — they're seeded into secret/e4e-nas/garage at their current values once
+# (see ansible/synology/roles/synology_garage/README.md "Secrets").
+# The synology_garage ansible role consumes both paths; krg-deploy's AppRole
+# reads secret/data/e4e-nas/* (see ../openbao/main.tf).
+resource "vault_kv_secret_v2" "garage_ui_oidc" {
+  mount = "secret"
+  name  = "e4e-nas/garage-ui-oidc"
+  data_json = jsonencode({
+    client_id     = authentik_provider_oauth2.garage_ui.client_id
+    client_secret = authentik_provider_oauth2.garage_ui.client_secret
+    issuer_url    = "${var.authentik_url}/application/o/garage-ui/"
+  })
+}
+
+# DSM web-login SSO — the e4e_nas OAuth2 provider (above) mints this; the
+# synology_sso ansible role consumes it as DSM_SSO_OIDC_CLIENT_SECRET. Path is
+# secret/e4e-nas/* (the NAS is the consumer); krg-deploy's AppRole reads
+# secret/data/e4e-nas/* (../openbao/main.tf). Same shape as garage_ui_oidc.
+resource "vault_kv_secret_v2" "dsm_sso_oidc" {
+  mount = "secret"
+  name  = "e4e-nas/dsm-sso-oidc"
+  data_json = jsonencode({
+    client_id     = authentik_provider_oauth2.e4e_nas.client_id
+    client_secret = authentik_provider_oauth2.e4e_nas.client_secret
+    issuer_url    = "${var.authentik_url}/application/o/e4e-nas/"
+  })
+}
+
 # outpost token: retrieved manually from Admin → Outposts → View token after apply.
 # Store with: bao kv put secret/krg-prod/authentik-outpost-token token=<value>
