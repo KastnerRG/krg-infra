@@ -6,9 +6,10 @@ data "vault_kv_secret_v2" "grafana_oidc" {
 
 # Configure Grafana generic OAuth SSO via Authentik.
 # Role mapping: Domain Admins → GrafanaAdmin, everyone else → Viewer.
-# (Domain Admins comes through LDAP sync from Samba AD verbatim; the
-#  Authentik-only "KRG Admins" group is a separate is_superuser marker for
-#  Authentik admin access, not propagated as a Grafana role.)
+# (Domain Admins comes through LDAP sync from Samba AD verbatim, and is also
+#  flagged is_superuser in Authentik via a group property mapping — see
+#  terraform/authentik/groups.tf. Either way the GrafanaAdmin mapping below keys
+#  off the group NAME in the `groups` claim, not Authentik's superuser bit.)
 # Grafana evaluates role_attribute_path as JMESPath against the userinfo claims;
 # Authentik includes `groups` in the profile scope.
 resource "grafana_sso_settings" "authentik" {

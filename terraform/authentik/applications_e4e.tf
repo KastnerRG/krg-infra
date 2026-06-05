@@ -24,6 +24,57 @@ resource "authentik_application" "e4e_nas" {
   meta_description  = "E4E network-attached storage"
 }
 
+# ── Garage UI (Noooste/garage-ui admin/data browser) ──────────────────────────
+# client_id, slug, redirect URI, and issuer must match spec/e4e-nas/garage.yml
+# `ui.oidc` exactly. The generated client_secret is captured into OpenBao at
+# secret/e4e-nas/garage-ui-oidc (see vault_secrets.tf) — never hand-copied.
+# Served on its own DNS name s3-admin.e4e.ucsd.edu (443), DSM AppPortal proxy:
+#   redirect = <public_url>/auth/oidc/callback  (the UI auto-builds this path)
+#   issuer   = ${authentik_url}/application/o/garage-ui/  (slug-derived)
+# `groups` scope is added so garage-ui's group-based admin gate sees the claim.
+
+# Stock Authentik ships no managed `groups` scope, so create one. Opt-in per
+# provider (added to garage_ui below, not local.std_scopes) — most apps map
+# groups→roles in their own config and don't need the raw claim. The expression
+# emits the user's Authentik group names (AD-synced via the LDAP source).
+resource "authentik_property_mapping_provider_scope" "groups" {
+  name        = "OIDC Scope — groups (KRG)"
+  scope_name  = "groups"
+  description = "User's Authentik groups (AD-synced); consumed by app role gates (e.g. garage-ui)."
+  expression  = <<-EOT
+    return {
+      "groups": [group.name for group in request.user.ak_groups.all()],
+    }
+  EOT
+}
+
+resource "authentik_provider_oauth2" "garage_ui" {
+  name               = "Provider for Garage UI"
+  client_id          = "garage-ui"
+  authorization_flow = data.authentik_flow.default_authorization.id
+  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris = [{ matching_mode = "strict",
+    url = "https://s3-admin.e4e.ucsd.edu/auth/oidc/callback" }]
+  property_mappings = concat(local.std_scopes,
+    [authentik_property_mapping_provider_scope.groups.id])
+  # RS256 signing key — REQUIRED for OIDC clients that verify the ID token
+  # against jwks_uri (garage-ui / go-oidc). Without it Authentik falls back to
+  # HS256 (symmetric) + an empty JWKS → "Invalid ID token". Use Authentik's
+  # default self-signed cert.
+  signing_key            = data.authentik_certificate_key_pair.default.id
+  sub_mode               = "user_email"
+  access_token_validity  = "minutes=60"
+  refresh_token_validity = "days=30"
+}
+
+resource "authentik_application" "garage_ui" {
+  name              = "Garage UI"
+  slug              = "garage-ui"
+  protocol_provider = authentik_provider_oauth2.garage_ui.id
+  meta_launch_url   = "https://s3-admin.e4e.ucsd.edu"
+  meta_description  = "Garage S3 bucket/key admin + object browser"
+}
+
 # ── FishSense Workflows (Temporal) ────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "fishsense_workflows" {

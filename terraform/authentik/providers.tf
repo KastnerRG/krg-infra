@@ -3,7 +3,7 @@
 #
 # Bootstrap order:
 #   1. Bring up the krg-prod compose stack (Authentik must be healthy)
-#   2. Log into https://auth.fabricant.ucsd.edu as the akadmin account
+#   2. Log into https://auth.krg.ucsd.edu as the akadmin account
 #   3. Create a long-lived API token: Admin → System → API Tokens
 #   4. Store it in vault:
 #        bao kv put secret/krg-deploy/authentik-admin-token token=<token>

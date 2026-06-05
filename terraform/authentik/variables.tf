@@ -1,7 +1,7 @@
 variable "authentik_url" {
   description = "Authentik base URL"
   type        = string
-  default     = "https://auth.fabricant.ucsd.edu"
+  default     = "https://auth.krg.ucsd.edu"
 }
 
 variable "authentik_token" {
