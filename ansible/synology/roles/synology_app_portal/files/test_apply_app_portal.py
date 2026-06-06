@@ -86,6 +86,63 @@ def test_reverse_proxy_check_only(monkeypatch, capsys):
     assert method_calls == []
 
 
+# --- reverse-proxy with the real DSM nested shape (frontend/backend) -------------
+# DSM assigns a UUID `id` on create, so a spec entry carries none and is keyed by
+# frontend host:port. Regression guard: keyed by id/alias/name only, such an entry
+# returns _list_key None and is SILENTLY DROPPED (never created). This is the
+# garage-ui reverse-proxy entry shape (spec/e4e-nas/app-portal.yml).
+_GARAGE_UI_RP = {
+    "description": "Garage UI",
+    "frontend": {"fqdn": "s3-admin.e4e.ucsd.edu", "port": 443, "protocol": 1,
+                 "https": {"hsts": True}},
+    "backend": {"fqdn": "127.0.0.1", "port": 8080, "protocol": 0},
+    "proxy_http_version": 1, "customize_headers": [],
+    "proxy_connect_timeout": 60, "proxy_read_timeout": 60,
+    "proxy_send_timeout": 60, "proxy_intercept_errors": False,
+}
+
+
+def test_reverse_proxy_frontend_entry_is_created_not_dropped(monkeypatch, capsys):
+    """A spec entry with no id/alias/name (only frontend) must be keyed by
+    frontend host:port and CREATED — not silently dropped — and the whole entry
+    goes out as a single `entry=<json>` param (DSM 4151'd a flattened payload)."""
+    fake, captured = _factory({"SYNO.Core.AppPortal.ReverseProxy": {"list": {"entries": []}}})
+    monkeypatch.setattr(m, "_exec", fake)
+    rc = m.main(["reverse-proxy", "--entries", json.dumps([_GARAGE_UI_RP])])
+    assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
+    create = next(p for _, p in captured if "method=create" in p)
+    entry_param = next(t for t in create if t.startswith("entry="))
+    payload = json.loads(entry_param[len("entry="):])
+    assert payload["frontend"]["fqdn"] == "s3-admin.e4e.ucsd.edu"
+    assert payload["proxy_http_version"] == 1
+    # fields are NOT flattened into separate params (that shape got err 4151)
+    assert not any(t.startswith("description=") for t in create)
+
+
+def test_reverse_proxy_frontend_idempotent(monkeypatch, capsys):
+    """Live = the spec entry plus DSM's assigned UUID (+ any defaulted fields);
+    the spec is a subset → no-change, not a perpetual update."""
+    live_entry = dict(_GARAGE_UI_RP, UUID="315f4955-uuid")   # DSM-assigned UUID the spec lacks
+    fake, _ = _factory({"SYNO.Core.AppPortal.ReverseProxy": {"list": {"entries": [live_entry]}}})
+    monkeypatch.setattr(m, "_exec", fake)
+    rc = m.main(["reverse-proxy", "--entries", json.dumps([_GARAGE_UI_RP])])
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
+
+
+def test_reverse_proxy_frontend_update_injects_live_uuid(monkeypatch, capsys):
+    """A changed nested field → update, with DSM's live UUID injected into the
+    `entry=<json>` payload (the spec carries none)."""
+    live_entry = dict(_GARAGE_UI_RP, UUID="315f4955-uuid",
+                      backend={"fqdn": "127.0.0.1", "port": 9999, "protocol": 0})  # drifted port
+    fake, captured = _factory({"SYNO.Core.AppPortal.ReverseProxy": {"list": {"entries": [live_entry]}}})
+    monkeypatch.setattr(m, "_exec", fake)
+    rc = m.main(["reverse-proxy", "--entries", json.dumps([_GARAGE_UI_RP])])
+    assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
+    upd = next(p for _, p in captured if "method=update" in p)
+    entry_param = next(t for t in upd if t.startswith("entry="))
+    assert json.loads(entry_param[len("entry="):])["UUID"] == "315f4955-uuid"
+
+
 def test_access_control_uses_same_diff(monkeypatch, capsys):
     fake, captured = _factory({"SYNO.Core.AppPortal.AccessControl": {"list": {"entries": []}}})
     monkeypatch.setattr(m, "_exec", fake)

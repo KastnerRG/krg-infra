@@ -3,8 +3,10 @@
 
   config           SYNO.Core.AppPortal.Config set v1 (show_titlebar) — full-object.
   reverse-proxy    SYNO.Core.AppPortal.ReverseProxy create/update/delete v1 — list of
-                   entries diffed by id (or alias if no id). Idempotent declarative sync:
-                   spec entries → live entries; create new, update changed, delete extras.
+                   entries diffed by frontend host:port. Each mutation passes the whole
+                   entry as a single `entry=<json>` param (wizard-captured); live entries
+                   carry a DSM `UUID` used to target update/delete. Idempotent declarative
+                   sync: spec → live; create new, update changed, delete extras.
   access-control   SYNO.Core.AppPortal.AccessControl create/update/delete v1 — same model.
 
 Per-app portal entries (SYNO.Core.AppPortal) have a more complex shape (alias, fqdn,
@@ -86,8 +88,26 @@ def do_config(a):
 
 
 def _list_key(entry):
-    """Stable identity for a list-entry diff. Prefer DSM's id; fall back to alias."""
+    """Stable identity for a list-entry diff. A reverse-proxy entry gets a UUID
+    `id` from DSM on create, so a spec entry can't carry one — key those by their
+    frontend host:port (unique per entry, stable across spec↔live). Everything
+    else keys by DSM id, then alias/name."""
+    fe = entry.get("frontend")
+    if isinstance(fe, dict) and fe.get("fqdn"):
+        return "fe:%s:%s" % (str(fe["fqdn"]).lower(), fe.get("port"))
     return entry.get("id") or entry.get("alias") or entry.get("name")
+
+
+def _covered(desired, live):
+    """True when every key in `desired` is present in `live` with an equal value
+    (recursive for nested dicts like frontend/backend). Lets DSM-filled fields
+    (the assigned id, defaulted timeouts, …) NOT register as drift, so a spec
+    that carries a subset of the live object converges idempotently instead of
+    showing perpetual "update"."""
+    if isinstance(desired, dict):
+        return isinstance(live, dict) and all(
+            k in live and _covered(v, live[k]) for k, v in desired.items())
+    return desired == live
 
 
 def _diff_lists(api, entries_key, desired_list, check):
@@ -98,8 +118,11 @@ def _diff_lists(api, entries_key, desired_list, check):
 
     creates = [e for k, e in desired_by_id.items() if k not in live_by_id]
     deletes = [live_by_id[k] for k in (set(live_by_id) - set(desired_by_id))]
+    # Subset compare (not `!=`): DSM returns the live object with its assigned id
+    # + defaulted fields the spec omits; only flag an update when a value the
+    # spec DOES set differs. Otherwise every run would re-"update" forever.
     updates = [(k, desired_by_id[k]) for k in (set(live_by_id) & set(desired_by_id))
-               if live_by_id[k] != desired_by_id[k]]
+               if not _covered(desired_by_id[k], live_by_id[k])]
 
     drift = {}
     if creates: drift["create"] = creates
@@ -110,28 +133,38 @@ def _diff_lists(api, entries_key, desired_list, check):
         # Return the first failed _exec result so _result() reports FAIL and
         # the role's failed_when fires. Hardcoding {"success": True} would
         # swallow err 2001 / bad-id / etc. and silently report CHANGED.
+        #
+        # PAYLOAD SHAPE (DSM 7.3, wizard-captured on e4e-nas 2026-06-04): the
+        # AppPortal entry-list APIs take the WHOLE entry as a single JSON param
+        # `entry=<json>` — NOT the fields flattened as separate params (that got
+        # err 4151). Live entries carry a DSM-assigned `UUID` (not `id`), used to
+        # target update/delete. CREATE is wizard-verified; update/delete mirror
+        # the same entry/UUID shape but the method names are not yet captured —
+        # in steady state neither runs (the spec is a subset of live → no-change).
         for e in creates:
-            r = _exec(api, "version=1", "method=create", *_args_from(e))
+            r = _exec(api, "version=1", "method=create", "entry=" + json.dumps(e))
             if not r.get("success"):
                 return r
         for k, d in updates:
-            # When we update by alias-fallback (no live id), include the id
-            # we DID find in live_by_id so DSM knows which entry to mutate.
+            # Inject the live UUID so DSM knows which entry to mutate (the spec
+            # carries none — it's DSM-assigned on create).
             args = dict(d)
-            if "id" not in args and live_by_id[k].get("id") is not None:
-                args["id"] = live_by_id[k]["id"]
-            r = _exec(api, "version=1", "method=update", *_args_from(args))
+            luid = live_by_id[k].get("UUID") or live_by_id[k].get("id")
+            if luid is not None and "UUID" not in args:
+                args["UUID"] = luid
+            r = _exec(api, "version=1", "method=update", "entry=" + json.dumps(args))
             if not r.get("success"):
                 return r
         for e in deletes:
-            # Delete by id when present; fall back to alias/name (matches the
-            # same _list_key the diff uses, so we don't send an empty key).
-            del_key = ({"id": e["id"]} if e.get("id") is not None
+            # Delete by the DSM-assigned UUID; fall back to alias/name (matches
+            # the same _list_key the diff uses, so we don't send an empty key).
+            uid = e.get("UUID") or e.get("id")
+            del_key = ({"UUID": uid} if uid is not None
                        else {"alias": e["alias"]} if e.get("alias") is not None
                        else {"name": e["name"]} if e.get("name") is not None
                        else None)
             if del_key is None:
-                return {"success": False, "error": {"reason": "delete: no id/alias/name", "entry": e}}
+                return {"success": False, "error": {"reason": "delete: no UUID/alias/name", "entry": e}}
             r = _exec(api, "version=1", "method=delete", *_args_from(del_key))
             if not r.get("success"):
                 return r

@@ -112,6 +112,96 @@ services:
 """
 
 
+# --- garage-ui (Noooste/garage-ui) -----------------------------------------
+# Two templates: the UI's own config.yaml (carries the OIDC client_secret →
+# rendered with no_log, secret read from env not argv) and the UI's compose
+# file (no secrets). UI runs with `network_mode: host` so it can reach garage
+# on localhost:3900/3903; its own bind is locked to 127.0.0.1 via server.host
+# so DSM AppPortal is the only public path.
+GARAGE_UI_CONFIG_TEMPLATE = """\
+# RENDERED BY synology_garage ansible role — DO NOT HAND-EDIT.
+# Source of truth: spec/e4e-nas/garage.yml `ui:` block + the
+# GARAGE_UI_OIDC_CLIENT_SECRET env var.
+server:
+  host: "%(bind_host)s"
+  port: %(port)d
+  environment: production
+  domain: "%(public_hostname)s"
+  protocol: https
+  root_url: "%(public_url)s"
+
+garage:
+  endpoint: "http://127.0.0.1:%(garage_s3_port)d"
+  region: "%(garage_region)s"
+  admin_endpoint: "http://127.0.0.1:%(garage_admin_port)d"
+  admin_token: "%(garage_admin_token)s"
+
+auth:
+  jwt_private_key: "%(jwt_private_key)s"
+  admin:
+    enabled: false
+  token:
+    enabled: false
+  oidc:
+    enabled: true
+    provider_name: "%(oidc_provider_name)s"
+    client_id: "%(oidc_client_id)s"
+    client_secret: "%(oidc_client_secret)s"
+    scopes:
+%(oidc_scopes_yaml)s
+    issuer_url: "%(oidc_issuer_url)s"
+    skip_issuer_check: false
+    skip_expiry_check: false
+    email_attribute: "email"
+    username_attribute: "preferred_username"
+    name_attribute: "name"
+    role_attribute_path: "%(oidc_role_attribute_path)s"
+    admin_roles:
+%(oidc_admin_roles_yaml)s
+    tls_skip_verify: false
+    session_max_age: 86400
+    cookie_name: "garage_ui_session"
+    cookie_secure: true
+    cookie_http_only: true
+    cookie_same_site: "lax"
+
+cors:
+  enabled: false
+
+logging:
+  level: "info"
+  format: "json"
+"""
+
+GARAGE_UI_COMPOSE_TEMPLATE = """\
+# RENDERED BY synology_garage ansible role — DO NOT HAND-EDIT.
+# Source of truth: spec/e4e-nas/garage.yml `ui:` block.
+# NOTE: garage + garage-ui are SEPARATE compose projects, so no
+# `depends_on:` (cross-project depends aren't supported). If garage isn't
+# up yet, `restart: unless-stopped` reconverges. Both use host networking,
+# so UI reaches garage at 127.0.0.1:3900 / 127.0.0.1:3903.
+#
+# The image has NO ENTRYPOINT and `CMD ["./garage-ui"]` (WORKDIR /app); it reads
+# config from the FIXED path /app/config.yaml automatically — there is no
+# `--config` flag. So we do NOT override `command:` (overriding it dropped the
+# binary → docker exec'd "--config" as argv[0]) and mount the config to
+# /app/config.yaml.
+#
+# We DON'T override `user:` — the image runs as its non-root USER garageui
+# (UID 1000), and render-ui-config writes config.yaml owned by that UID (mode
+# 0400) so the container can read its own secret-bearing config without running
+# as root. See _GARAGE_UI_UID.
+services:
+  %(container_name)s:
+    image: %(image)s:%(image_tag)s
+    container_name: %(container_name)s
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - %(config_path)s:/app/config.yaml:ro
+"""
+
+
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -142,9 +232,12 @@ def _read(path):
         return None
 
 
-def _atomic_write(path, content, mode):
-    """Write `content` to `path` via tmp+rename; chmod+chown root:root.
-    Same dir as the target so rename is atomic on the same filesystem."""
+def _atomic_write(path, content, mode, uid=0, gid=0):
+    """Write `content` to `path` via tmp+rename; chmod + chown (default root:root).
+    Same dir as the target so rename is atomic on the same filesystem.
+    `uid`/`gid` let a secret file be owned by a non-root container's runtime UID
+    so that container can read it WITHOUT the container running as root (see
+    _GARAGE_UI_UID)."""
     d = os.path.dirname(path) or "."
     os.makedirs(d, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".krg-", dir=d)
@@ -152,7 +245,7 @@ def _atomic_write(path, content, mode):
         with os.fdopen(fd, "w") as fh:
             fh.write(content)
         os.chmod(tmp, mode)
-        os.chown(tmp, 0, 0)
+        os.chown(tmp, uid, gid)
         os.replace(tmp, path)
     except Exception:
         try:
@@ -408,6 +501,232 @@ def do_layout(a):
 
 
 # ---------------------------------------------------------------------------
+# render-ui-config — write garage-ui's config.yaml (OIDC + admin_token)
+# ---------------------------------------------------------------------------
+# JWT private key persistence: garage-ui can auto-generate an Ed25519 key on
+# startup, but every restart invalidates all sessions ("If not specified, a
+# new key will be generated on each startup (tokens won't persist across
+# restarts)" — upstream config.example.yaml). Generate once + persist next
+# to the config file so user logins survive container restarts + image bumps.
+_JWT_KEY_FILENAME = "jwt-key.pem"
+_UI_SECRET_ENV_VAR = "GARAGE_UI_OIDC_CLIENT_SECRET"
+
+# The noooste/garage-ui image runs as USER garageui (UID/GID 1000). config.yaml
+# carries secrets (OIDC client_secret, admin token, JWT key) so it's mode 0400 —
+# own it by the container's UID so the NON-ROOT container can read it (instead of
+# escalating the container to root). On DSM no real account is UID 1000 (DSM users
+# start ≥ 1026), so on the host the file stays effectively root-only. If a future
+# garage-ui image changes this UID, the container will fail "permission denied" on
+# config.yaml — update these to match the image's `USER`.
+_GARAGE_UI_UID = 1000
+_GARAGE_UI_GID = 1000
+
+
+def _ensure_jwt_key(config_path):
+    """Generate an Ed25519 PEM key next to the config if not present.
+    Returns the PEM content (multi-line) for inline embedding in YAML."""
+    key_path = os.path.join(os.path.dirname(config_path), _JWT_KEY_FILENAME)
+    if not os.path.exists(key_path):
+        os.makedirs(os.path.dirname(key_path), exist_ok=True)
+        r = _run("openssl", "genpkey", "-algorithm", "ED25519", "-out", key_path)
+        if r.returncode != 0:
+            raise RuntimeError(
+                "openssl genpkey ED25519 failed: " + (r.stderr or r.stdout))
+        os.chmod(key_path, 0o400)
+        os.chown(key_path, 0, 0)
+    with open(key_path, "r") as fh:
+        return fh.read()
+
+
+def _yaml_list_lines(items, indent):
+    """Render a Python list as YAML list items at `indent` columns. Each
+    item is double-quoted; rejects `"`, `\\n`, `\\r` to defend the literal."""
+    pad = " " * indent
+    out = []
+    for v in items:
+        s = str(v)
+        if '"' in s or "\n" in s or "\r" in s:
+            raise ValueError("YAML list item contains unescaped quote or newline: " + s)
+        out.append('%s- "%s"' % (pad, s))
+    return "\n".join(out)
+
+
+def do_render_ui_config(a):
+    # OIDC client_secret comes from env (NOT argv — same rationale as the
+    # cluster secrets: kept out of /proc/<pid>/cmdline and `ps`).
+    oidc_client_secret = os.environ.get(_UI_SECRET_ENV_VAR, "")
+    if not oidc_client_secret:
+        return _fail({"reason": "required secret env var unset",
+                      "vars": [_UI_SECRET_ENV_VAR]})
+
+    # admin_token reuse: read from GARAGE_ADMIN_TOKEN env (already required
+    # by render-config). Same secret, same source, no duplication.
+    garage_admin_token = os.environ.get("GARAGE_ADMIN_TOKEN", "")
+    if not garage_admin_token:
+        return _fail({"reason": "required secret env var unset",
+                      "vars": ["GARAGE_ADMIN_TOKEN"]})
+
+    str_fields = {
+        "bind_host":                a.bind_host,
+        "public_hostname":          a.public_hostname,
+        "public_url":               a.public_url,
+        "garage_region":            a.garage_region,
+        "garage_admin_token":       garage_admin_token,
+        "oidc_provider_name":       a.oidc_provider_name,
+        "oidc_client_id":           a.oidc_client_id,
+        "oidc_client_secret":       oidc_client_secret,
+        "oidc_issuer_url":          a.oidc_issuer_url,
+        "oidc_role_attribute_path": a.oidc_role_attribute_path,
+    }
+    # Same TOML/YAML injection defense as the garage.toml render: reject
+    # raw `"`, `\n`, `\r` in any string-typed field.
+    for k, v in str_fields.items():
+        if isinstance(v, str) and ('"' in v or "\n" in v or "\r" in v):
+            return _fail({"reason": "field contains unescaped quote or newline",
+                          "field": k})
+
+    scopes = json.loads(a.oidc_scopes_json)
+    admin_roles = json.loads(a.oidc_admin_roles_json)
+    if not admin_roles:
+        return _fail({"reason": "ui.oidc.admin_roles must list at least one role"})
+
+    key_path = os.path.join(os.path.dirname(a.config_path), _JWT_KEY_FILENAME)
+    key_missing = not os.path.exists(key_path)
+    if key_missing and not a.check:
+        _ensure_jwt_key(a.config_path)
+        jwt_pem = _read(key_path).rstrip()
+    elif key_missing and a.check:
+        jwt_pem = "<would-generate-on-apply>"
+    else:
+        jwt_pem = _read(key_path).rstrip()
+
+    fields = {
+        "bind_host":                a.bind_host,
+        "port":                     int(a.port),
+        "public_hostname":          a.public_hostname,
+        "public_url":               a.public_url,
+        "garage_s3_port":           int(a.garage_s3_port),
+        "garage_admin_port":        int(a.garage_admin_port),
+        "garage_region":            a.garage_region,
+        "garage_admin_token":       garage_admin_token,
+        "jwt_private_key":          jwt_pem.replace("\n", "\\n"),
+        "oidc_provider_name":       a.oidc_provider_name,
+        "oidc_client_id":           a.oidc_client_id,
+        "oidc_client_secret":       oidc_client_secret,
+        "oidc_issuer_url":          a.oidc_issuer_url,
+        "oidc_role_attribute_path": a.oidc_role_attribute_path,
+        "oidc_scopes_yaml":         _yaml_list_lines(scopes, 6),
+        "oidc_admin_roles_yaml":    _yaml_list_lines(admin_roles, 6),
+    }
+    desired = GARAGE_UI_CONFIG_TEMPLATE % fields
+    desired_hash = _sha256(desired)
+    current = _read(a.config_path)
+    current_hash = _sha256(current) if current is not None else None
+
+    # Ownership is part of "correct" here: the file is 0400 and must be owned by
+    # the garage-ui container UID (else the non-root container can't read it — a
+    # prior render as root:root would otherwise stick forever on content-match).
+    # Treat an owner mismatch as drift so the role re-asserts it (self-heals on
+    # the next run / nightly converge). stat failure (missing file) → not-owned.
+    try:
+        owner_ok = os.stat(a.config_path).st_uid == _GARAGE_UI_UID
+    except OSError:
+        owner_ok = False
+
+    if current_hash == desired_hash and not key_missing and owner_ok:
+        return _emit("no-change", {}, a.check)
+
+    payload = {
+        "config_path":    a.config_path,
+        "jwt_key_path":   key_path,
+        "key_generated":  key_missing,
+        "had_existing":   current is not None,
+        "desired_sha256": desired_hash,
+    }
+    if a.check:
+        return _emit("would-change", payload, True)
+
+    # Owned by the garage-ui container UID (not root) so the non-root container
+    # reads its own 0400 config — see _GARAGE_UI_UID.
+    _atomic_write(a.config_path, desired, 0o400, _GARAGE_UI_UID, _GARAGE_UI_GID)
+    return _emit("changed", payload, False)
+
+
+# ---------------------------------------------------------------------------
+# deploy-ui — render compose + `docker compose up -d` on drift
+# ---------------------------------------------------------------------------
+def do_deploy_ui(a):
+    fields = {
+        "container_name": a.container_name,
+        "image":          a.image,
+        "image_tag":      a.image_tag,
+        "config_path":    a.config_path,
+    }
+    desired_compose = GARAGE_UI_COMPOSE_TEMPLATE % fields
+    current_compose = _read(a.compose_path)
+
+    config_missing = not os.path.exists(a.config_path)
+    if config_missing:
+        if not a.check:
+            return _fail({"reason": "garage-ui config.yaml missing — run render-ui-config first",
+                          "config_path": a.config_path})
+        return _emit("would-change", {
+            "compose_path":   a.compose_path,
+            "config_missing": True,
+            "reason":         "render-ui-config must run before deploy-ui on apply",
+        }, True)
+
+    desired_image = "%s:%s" % (a.image, a.image_tag)
+    compose_drift = (current_compose != desired_compose)
+    current_image = _container_image(a.container_name)
+    image_drift = (current_image != desired_image)
+    not_running = not _container_running(a.container_name)
+    # config.yaml is a read-only bind mount that garage-ui parses ONCE at
+    # startup. A plain `docker compose up -d` will NOT restart a running,
+    # otherwise-unchanged container just because that file's contents changed —
+    # so a config-only edit (e.g. updated admin_roles) would never take effect.
+    # render-ui-config reports whether it rewrote the file; the task threads that
+    # status in via --config-changed so we restart the container to reload it.
+    config_changed = a.config_changed
+
+    recreate = compose_drift or image_drift or not_running
+    drift = recreate or config_changed
+    payload = {
+        "compose_path":   a.compose_path,
+        "compose_drift":  compose_drift,
+        "image_drift":    image_drift,
+        "image_current":  current_image,
+        "image_desired":  desired_image,
+        "not_running":    not_running,
+        "config_changed": config_changed,
+    }
+    if not drift:
+        return _emit("no-change", {}, a.check)
+    if a.check:
+        return _emit("would-change", payload, True)
+
+    os.makedirs(os.path.dirname(a.compose_path), exist_ok=True)
+    if compose_drift:
+        _atomic_write(a.compose_path, desired_compose, 0o644)
+
+    # `up -d` creates/recreates on compose/image drift or when stopped; when the
+    # ONLY drift is the config file, the container is already up-to-date by
+    # compose's reckoning, so restart it explicitly to re-read config.yaml.
+    if recreate:
+        r = _run("docker", "compose", "-f", a.compose_path, "up", "-d")
+        op = "up"
+    else:
+        r = _run("docker", "compose", "-f", a.compose_path, "restart")
+        op = "restart"
+    if r.returncode != 0:
+        return _fail({"reason":  "docker compose %s failed" % op,
+                      "stdout":  r.stdout, "stderr": r.stderr,
+                      "payload": payload})
+    payload["compose_out"] = r.stderr.strip() or r.stdout.strip()
+    return _emit("changed", payload, False)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 def main(argv):
@@ -459,6 +778,41 @@ def main(argv):
     ly.add_argument("--capacity", required=True)
     ly.add_argument("--check", action="store_true")
     ly.set_defaults(fn=do_layout)
+
+    ru = sub.add_parser("render-ui-config")
+    ru.add_argument("--config-path", required=True)
+    ru.add_argument("--bind-host", required=True)
+    ru.add_argument("--port", required=True)
+    ru.add_argument("--public-hostname", required=True)
+    ru.add_argument("--public-url", required=True,
+                    help="Public root URL (e.g. https://s3-admin.e4e.ucsd.edu); "
+                         "becomes server.root_url + OIDC callback root")
+    ru.add_argument("--garage-s3-port", required=True)
+    ru.add_argument("--garage-admin-port", required=True)
+    ru.add_argument("--garage-region", required=True)
+    ru.add_argument("--oidc-provider-name", required=True)
+    ru.add_argument("--oidc-client-id", required=True)
+    # OIDC client_secret + admin_token come from env (NOT argv). See do_render_ui_config.
+    ru.add_argument("--oidc-issuer-url", required=True)
+    ru.add_argument("--oidc-role-attribute-path", required=True)
+    ru.add_argument("--oidc-scopes-json", required=True,
+                    help="JSON array of scope strings, e.g. [\"openid\",\"email\"]")
+    ru.add_argument("--oidc-admin-roles-json", required=True,
+                    help="JSON array of admin role strings (≥ 1 required)")
+    ru.add_argument("--check", action="store_true")
+    ru.set_defaults(fn=do_render_ui_config)
+
+    du = sub.add_parser("deploy-ui")
+    du.add_argument("--compose-path", required=True)
+    du.add_argument("--container-name", required=True)
+    du.add_argument("--image", required=True)
+    du.add_argument("--image-tag", required=True)
+    du.add_argument("--config-path", required=True)
+    # render-ui-config rewrote config.yaml this run → restart to reload it
+    # (garage-ui reads config only at startup; `up -d` alone won't restart).
+    du.add_argument("--config-changed", action="store_true")
+    du.add_argument("--check", action="store_true")
+    du.set_defaults(fn=do_deploy_ui)
 
     a = p.parse_args(argv)
     return a.fn(a)

@@ -16,10 +16,11 @@ configuration tool (not by guest/host role — some NixOS machines are physical)
 - **`terraform/`** — the **OpenTofu layer**: things driven through a Terraform/
   Web-API provider rather than NixOS or Ansible. **One root module (own state +
   creds) per target** — not one combined config (separate blast radius). Targets:
-  `e4e-nas/` (Synology DSM, built), `authentik/` (SSO config, planned),
-  `vault/` (secrets-engine structure, planned). `authentik/` + `vault/` manage the
-  *config of* services deployed elsewhere (Authentik = compose on krg-prod; Vault =
-  future), not their deployment. e4e-nas is a *hybrid*: the `synology` provider only
+  `e4e-nas/` (Synology DSM), `authentik/` (SSO config), `openbao/` (secrets-engine
+  structure + AppRole auth), `grafana/` (dashboards/datasources/SSO) — **all built
+  out** (real `.tf`, not stubs). `authentik/` + `openbao/` + `grafana/` manage the
+  *config of* services deployed elsewhere (Authentik & Grafana = compose on krg-prod;
+  OpenBao = krg-vault), not their deployment. e4e-nas is a *hybrid*: the `synology` provider only
   covers Container Manager / packages / tasks / files / VMs; identity (AD join),
   shares/ACLs, firewall, SSH, snapshots and DSM updates have no API and live in the
   runbook `docs/e4e-nas-dsm.md` (DSM is a proprietary appliance — SSH-level edits
@@ -157,9 +158,10 @@ krg-infra/
       nfs_server/                  # NFSv4 exports on ZFS datasets under <pool>/nfs (fabricant ONLY play; NFS tcp/2049 opened via fabricant host.fw); ALSO schedules zfs-auto-snapshot (systemd timers) for the opted-in shares — Proxmox has no NixOS services.zfs.autoSnapshot, so retention here MIRRORS nix krg.zfs.autoSnapshot, scoped opt-in via --default-exclude
   terraform/                       # OpenTofu layer — one root module (own state+creds) per target
     README.md  .gitignore          # layer conventions; .gitignore is top-level (covers all targets: *.tfstate*, *.tfvars)
-    e4e-nas/                       # Synology DSM (synology-community/synology): versions/providers/variables.tf + containers/packages/scheduler.tf (templates, commented)
-    authentik/                     # PLANNED (goauthentik/authentik): Authentik SSO objects — apps/providers/flows/groups (README stub)
-    vault/                         # PLANNED (hashicorp/vault): auth methods/policies/secret engines — structure not values (README stub)
+    e4e-nas/                       # Synology DSM (synology-community/synology): containers/packages/scheduler.tf + FileStation folders; Garage CONFIG lives in the ansible role (ADR 0007), here = just the dirs/folders it needs
+    authentik/                     # BUILT (goauthentik/authentik): SSO apps/providers/flows/groups/LDAP-outpost (applications_{krg,e4e}.tf, data.tf, groups.tf, ldap.tf, outpost.tf) + writes generated OIDC client secrets to OpenBao (vault_secrets.tf, roster_secrets.tf)
+    openbao/                       # BUILT (was "vault/"; openbao provider): KV-v2 mount + AppRole auth + per-role policies (krg-deploy, krg-prod) — structure not values (main.tf)
+    grafana/                       # BUILT (grafana/grafana): dashboards/datasources/folders/teams/SSO — reads grafana-oidc from OpenBao (sso.tf)
   spec/e4e-nas/                     # declarative DSM source of truth (shares/groups/smb-globals/nfs-exports/acls/users/garage) — consumed by ansible synology_* roles; seeded from docs/e4e-nas-dsm.md
   docs/
     creating-a-user.md             # AD user-creation runbook

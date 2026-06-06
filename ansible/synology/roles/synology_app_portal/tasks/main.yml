@@ -2,11 +2,18 @@
 # synology_app_portal — DSM Application Portal (config + reverse-proxy + access-control)
 # from spec/e4e-nas/app-portal.yml via synowebapi. Config is full-object set; the
 # entry lists are diffed declaratively (create/update/delete by id).
+#
+# Tags are applied PER TASK (like synology_certificate, not a role-level tag) so
+# `--tags=synology_app_portal` runs the role standalone WITHOUT dragging in the
+# export block — a role-level tag composes DOWN onto every task and overrides the
+# export's `never`. The spec-load is tagged too so the apply tasks always have
+# `portal_spec` defined when the tag is selected. See playbook.yml.
 
 - name: Load the app portal spec
   ansible.builtin.include_vars:
     file: "{{ synology_app_portal_spec }}"
     name: portal_spec
+  tags: [synology_app_portal]
 
 - name: Apply AppPortal.Config (show_titlebar)
   ansible.builtin.script: >-
@@ -17,6 +24,7 @@
   changed_when: "'CHANGED' in cfg_apply.stdout or 'WOULD-CHANGE' in cfg_apply.stdout"
   failed_when: "cfg_apply.rc != 0 or 'FAIL' in cfg_apply.stdout"
   check_mode: false
+  tags: [synology_app_portal]
 
 - name: Apply ReverseProxy entries (declarative list sync)
   ansible.builtin.script: >-
@@ -27,6 +35,7 @@
   changed_when: "'CHANGED' in rp_apply.stdout or 'WOULD-CHANGE' in rp_apply.stdout"
   failed_when: "rp_apply.rc != 0 or 'FAIL' in rp_apply.stdout"
   check_mode: false
+  tags: [synology_app_portal]
 
 - name: Apply AccessControl entries (declarative list sync)
   ansible.builtin.script: >-
@@ -37,6 +46,7 @@
   changed_when: "'CHANGED' in ac_apply.stdout or 'WOULD-CHANGE' in ac_apply.stdout"
   failed_when: "ac_apply.rc != 0 or 'FAIL' in ac_apply.stdout"
   check_mode: false
+  tags: [synology_app_portal]
 
 - name: Export live state for drift detection
   ansible.builtin.import_tasks: export.yml

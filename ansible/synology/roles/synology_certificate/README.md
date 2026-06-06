@@ -88,7 +88,7 @@ Run from the repo root: `pytest ansible/synology/roles/synology_certificate/file
 ## Out of scope
 
 - **Service-specific cert bindings** (e.g. AppPortal reverse-proxy entries
-  for garage-ui on `:8443`, future MLflow public URL) — belong in
+  for garage-ui on `s3-admin.e4e.ucsd.edu`, future MLflow public URL) — belong in
   [`synology_app_portal`](../synology_app_portal/), not here. The split is
   "this role owns which certs EXIST + which is DEFAULT; that role owns
   which services use WHICH cert."

@@ -30,8 +30,56 @@ portal_apps:
     hsts: false                     # per-portal HSTS — DSM-wide HSTS in dsm-web.yml
     fqdn: null
 
-# Reverse-proxy entries (DSM Login Portal → Reverse Proxy). Live: empty.
-reverse_proxy: []
+# Reverse-proxy entries (DSM Login Portal → Reverse Proxy).
+# Public HTTPS front doors for Garage, each on its own DNS name (443), TLS via
+# SANs on the host LE cert (certificates.yml):
+#   - s3-admin.e4e.ucsd.edu → 127.0.0.1:8080 (garage-ui admin UI, loopback bind)
+#   - s3.e4e.ucsd.edu       → 127.0.0.1:3900 (Garage S3 API)
+# Declarative so these entries are part of the spec, NOT hand-made DSM config
+# the declarative sync would later reap.
+#
+# SCHEMA NOTE: field shape verified against the DSM 7.3 create POST (wizard-
+# captured on e4e-nas 2026-06-04). protocol enum 1=HTTPS/0=HTTP; `proxy_http_version: 1`
+# is DSM's HTTP/1.1-backend value (NOT an `http2` toggle). The role passes the
+# whole entry as a single `entry=<json>` param (flattening it got DSM err 4151).
+reverse_proxy:
+  - description: Garage UI
+    frontend:
+      fqdn: s3-admin.e4e.ucsd.edu
+      port: 443
+      protocol: 1                     # 1 = HTTPS
+      https:
+        hsts: true
+    backend:
+      fqdn: 127.0.0.1
+      port: 8080
+      protocol: 0                     # 0 = HTTP (garage-ui's loopback bind)
+    proxy_http_version: 1             # DSM stores HTTP/1.1 backend as 1 (wizard-captured); NOT `http2`
+    customize_headers: []
+    proxy_connect_timeout: 60
+    proxy_read_timeout: 60
+    proxy_send_timeout: 60
+    proxy_intercept_errors: false
+
+  - description: Garage S3 API
+    frontend:
+      fqdn: s3.e4e.ucsd.edu
+      port: 443
+      protocol: 1                     # 1 = HTTPS
+      https:
+        hsts: true
+    backend:
+      fqdn: 127.0.0.1
+      port: 3900                      # garage s3_api.api_bind_addr ([::]:3900)
+      protocol: 0                     # 0 = HTTP (TLS terminated at the proxy)
+    proxy_http_version: 1             # DSM stores HTTP/1.1 backend as 1 (wizard-captured); NOT `http2`
+    customize_headers: []
+    # S3 PUT/multipart uploads can be large + slow — give the API generous
+    # timeouts vs the UI's 60s.
+    proxy_connect_timeout: 60
+    proxy_read_timeout: 600
+    proxy_send_timeout: 600
+    proxy_intercept_errors: false
 
 # Per-portal access control (DSM Login Portal → Advanced → IP allow/deny). Live: empty.
 access_control: []

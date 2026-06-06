@@ -42,6 +42,13 @@ resource "synology_filestation_folder" "docker_garage" {
   path = "/docker/garage"
 }
 
+# Compose dir for the garage-ui admin/data browser (Noooste/garage-ui) — its
+# own `docker-compose.yml` + `config.yaml` (+ persistent `jwt-key.pem`) live
+# here. Same FileStation index-registration rationale as `/docker/garage`.
+resource "synology_filestation_folder" "docker_garage_ui" {
+  path = "/docker/garage-ui"
+}
+
 # Garage's two state directories under the s3-data share. The share itself
 # is spec'd in spec/e4e-nas/shares.yml (Btrfs, snapshots, browseable=false);
 # the subdirectories Garage bind-mounts don't exist on a fresh NAS.
