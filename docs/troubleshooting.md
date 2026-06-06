@@ -191,3 +191,39 @@ underlying reason is the unvalidated nix-ld path above — debug `oec-install` /
 **Control-node precondition:** if the archive is absent at `OEC_INSTALLER`
 (`/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz`), the deploy
 fails immediately with a FATAL before touching any host — stage it out-of-band.
+
+### Validating OEC reporting without console access
+**Context:** the only *authoritative* proof an agent reports is the campus Qualys /
+Trellix console — and we don't have access to it (#22). Short of that, the host
+itself gives strong circumstantial evidence that the agent is genuinely talking to
+its backend, not just running. The deploy's hard gate stays at `systemctl is-active`
+(robust, version-independent); the checks below are a **manual confidence pass**, not
+a deploy gate (agent log formats / the `xagt` status CLI vary by version, so gating
+on them would be brittle). Run them on the host (`krg-admin` + `sudo`) after enrollment.
+
+**Qualys Cloud Agent** — the activation itself is a network round-trip (it contacts
+the Qualys POD and *fails* on bad creds / no route), so a clean `oec-install` already
+means it reached the tenant once. Ongoing reporting:
+```bash
+# 1. Registered → got an AgentID (empty/absent = never registered)
+sudo ls -l /etc/qualys /var/spool/qualys 2>/dev/null
+# 2. Log shows activation + periodic manifest download / upload ("sent"/"uploaded")
+sudo tail -n 50 /var/log/qualys/qualys-cloud-agent.log
+# 3. Live TLS connection out to the Qualys gateway POD
+sudo ss -tnp | grep -i qualys
+```
+
+**Trellix HX / xagt** — `main.db` existing already means enrollment reached the
+appliance (the module gates `xagt.service` on it). For *ongoing* reporting, the
+clearest signal is a live connection to the HX server baked into `agent_config.json`:
+```bash
+sudo ls -l /var/lib/fireeye/xagt/main.db            # enrolled
+sudo ss -tnp | grep -i xagt                          # established conn to the HX manager
+sudo ls -lt /var/lib/fireeye/xagt/ /opt/fireeye/     # recent log/state activity
+```
+
+**Limitation:** none of this proves the data landed in *our* tenant (logs can say
+"uploaded OK" into a tenant we can't see). The only ways to close that gap fully are
+console access or **asking whoever owns the campus tenant (UCSD ITS security) to
+confirm the hosts appear** — a one-line email once enrolled. Until then this residual
+verification stays open by design.
