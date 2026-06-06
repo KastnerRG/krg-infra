@@ -11,7 +11,11 @@ resource "authentik_provider_oauth2" "e4e_nas" {
   invalidation_flow  = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict", url = "https://e4e-nas.ucsd.edu:6021" }]
   property_mappings  = local.std_scopes
-  sub_mode           = "user_email"
+  # RS256 signing key — DSM's SSO client verifies the ID token against jwks_uri.
+  # Without a signing_key Authentik falls back to HS256 (symmetric) and serves an
+  # empty JWKS, so DSM can't verify the token. Same fix as garage_ui (1f0875f).
+  signing_key            = data.authentik_certificate_key_pair.default.id
+  sub_mode               = "user_email"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
 }
