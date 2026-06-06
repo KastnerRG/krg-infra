@@ -1,0 +1,6 @@
+# Revisions to skip in `git blame` (large mechanical reformats, no behavior change).
+# GitHub honors this file automatically. Locally, enable once with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style(nix): format the entire tree with alejandra (#150)
+f7b24302d439701c250d0815f0232056c42e2859
