@@ -46,10 +46,10 @@ Decide the mechanism when Phase 2 lands — do not hand-click it as the fix.
 
 Two things people mean by "Terraform for Vaultwarden":
 
-1. **The SSO integration (what this deployment uses).** The Authentik OIDC
-   provider/application + the OpenBao `krg-prod/vaultwarden-oidc` secret above —
-   owned by the `terraform/authentik` + `terraform/openbao` effort (PRs #79/#81).
-   This is the only Terraform we add now.
+1. **The SSO integration (what this deployment uses, included in this PR).** The
+   Authentik OIDC provider/application + the OpenBao `krg-prod/vaultwarden-oidc`
+   secret, in `terraform/authentik/applications_krg.tf` + `vault_secrets.tf`. This
+   is the only Terraform we add.
 
 2. **Managing Vaultwarden's org/collection/user structure directly.** Two
    community providers exist, but **neither covers groups or group→collection
@@ -73,60 +73,23 @@ Two things people mean by "Terraform for Vaultwarden":
    makes the group→collection mapping the real work); until then the Phase-1 access
    model is the manual org UI.
 
-## Terraform handoff (Authentik + OpenBao — owned by PRs #79/#81)
+## Authentik + OpenBao Terraform (in this PR)
 
-`terraform/authentik/` and `terraform/openbao/` are owned by the parallel SSO
-effort. The Vaultwarden resources below are **not landed in this PR** — contribute
-them there. They mirror the **garage-ui** pattern (which already uses the `groups`
-scope + RS256 signing key): see
-[`applications_e4e.tf`](../terraform/authentik/applications_e4e.tf) lines ~40–68 and
-[`vault_secrets.tf`](../terraform/authentik/vault_secrets.tf) lines ~62–70.
+The OIDC provider/application and the OpenBao client-secret are part of this PR,
+mirroring the **garage-ui** pattern (groups scope + RS256 signing key):
 
-`terraform/authentik/applications_krg.tf` (Vaultwarden is a lab-wide / KRG app):
+- [`terraform/authentik/applications_krg.tf`](../terraform/authentik/applications_krg.tf)
+  — `authentik_provider_oauth2.vaultwarden` + `authentik_application.vaultwarden`
+  (`slug = "vaultwarden"` → issuer `https://auth.krg.ucsd.edu/application/o/vaultwarden/`;
+  redirect `…/identity/connect/oidc-signin`; `local.std_scopes` + the AD-sourced
+  `groups` scope; RS256 `signing_key` — **required**, since Vaultwarden verifies the
+  ID token against `jwks_uri`, else Authentik falls back to HS256 + empty JWKS →
+  "Invalid ID token").
+- [`terraform/authentik/vault_secrets.tf`](../terraform/authentik/vault_secrets.tf)
+  — `vault_kv_secret_v2.vaultwarden_oidc` at `krg-prod/vaultwarden-oidc`.
 
-```hcl
-resource "authentik_provider_oauth2" "vaultwarden" {
-  name               = "Provider for Vaultwarden"
-  client_id          = "vaultwarden"
-  authorization_flow = data.authentik_flow.default_authorization.id
-  invalidation_flow  = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris = [{ matching_mode = "strict",
-    url = "https://vaultwarden.krg.ucsd.edu/identity/connect/oidc-signin" }]
-  # groups scope wired now (AD-sourced) so Phase 2 needs no Authentik change.
-  property_mappings = concat(local.std_scopes,
-    [authentik_property_mapping_provider_scope.groups.id])
-  # RS256 — REQUIRED: Vaultwarden verifies the ID token against jwks_uri. Without
-  # a signing key Authentik falls back to HS256 + empty JWKS → "Invalid ID token"
-  # (same failure garage-ui hit).
-  signing_key            = data.authentik_certificate_key_pair.default.id
-  sub_mode               = "user_email"
-  access_token_validity  = "minutes=60"
-  refresh_token_validity = "days=30"
-}
-
-resource "authentik_application" "vaultwarden" {
-  name              = "Vaultwarden"
-  slug              = "vaultwarden"   # → issuer https://auth.krg.ucsd.edu/application/o/vaultwarden/
-  protocol_provider = authentik_provider_oauth2.vaultwarden.id
-  meta_launch_url   = "https://vaultwarden.krg.ucsd.edu"
-  meta_description  = "KRG lab password manager"
-  group             = "KRG"
-}
-```
-
-`terraform/authentik/vault_secrets.tf`:
-
-```hcl
-resource "vault_kv_secret_v2" "vaultwarden_oidc" {
-  mount = "secret"
-  name  = "krg-prod/vaultwarden-oidc"
-  data_json = jsonencode({
-    client_id     = authentik_provider_oauth2.vaultwarden.client_id
-    client_secret = authentik_provider_oauth2.vaultwarden.client_secret
-    issuer_url    = "${var.authentik_url}/application/o/vaultwarden/"
-  })
-}
-```
+Apply with the rest of `terraform/authentik/` (`tofu apply`); the client secret
+lands in OpenBao, from which it's pulled into `.secrets/vaultwarden.env` (below).
 
 > Gate *who* may reach the provider with an Authentik application policy bound to
 > the appropriate AD group(s), so only intended AD users can SSO in.
@@ -146,7 +109,7 @@ is the **exact** Authentik app issuer (trailing slash, no
 
 ## Bring-up & verification
 
-1. (Authentik/OpenBao effort) apply the Terraform above; `tofu plan` should show
+1. Apply `terraform/authentik/`; `tofu plan` should show
    only the new provider/application/secret.
 2. `nix flake check ./nix` and deploy krg-prod
    (`nixos-rebuild switch --flake ./nix#krg-prod --target-host …`).

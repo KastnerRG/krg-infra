@@ -80,6 +80,40 @@ resource "authentik_application" "mlflow" {
   group             = "KRG"
 }
 
+# ── Vaultwarden ──────────────────────────────────────────────────────────────────
+# Lab password manager (vaultwarden.krg.ucsd.edu). SSO is login-federation only —
+# vaults stay E2E-encrypted under each user's master password. The OIDC callback is
+# auto-derived by Vaultwarden from its DOMAIN as <DOMAIN>/identity/connect/oidc-signin.
+# The `groups` scope is wired now (AD-sourced) so Phase 2 (group→collection access,
+# once upstream Vaultwarden supports it) needs no Authentik change. See
+# docs/vaultwarden-sso.md.
+
+resource "authentik_provider_oauth2" "vaultwarden" {
+  name               = "Provider for Vaultwarden"
+  client_id          = "vaultwarden"
+  authorization_flow = data.authentik_flow.default_authorization.id
+  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://vaultwarden.krg.ucsd.edu/identity/connect/oidc-signin" }]
+  property_mappings = concat(local.std_scopes,
+    [authentik_property_mapping_provider_scope.groups.id])
+  # RS256 signing key — REQUIRED: Vaultwarden verifies the ID token against jwks_uri.
+  # Without it Authentik falls back to HS256 + empty JWKS → "Invalid ID token" (the
+  # same failure garage-ui hit).
+  signing_key            = data.authentik_certificate_key_pair.default.id
+  sub_mode               = "user_email"
+  access_token_validity  = "minutes=60"
+  refresh_token_validity = "days=30"
+}
+
+resource "authentik_application" "vaultwarden" {
+  name              = "Vaultwarden"
+  slug              = "vaultwarden"
+  protocol_provider = authentik_provider_oauth2.vaultwarden.id
+  meta_launch_url   = "https://vaultwarden.krg.ucsd.edu"
+  meta_description  = "KRG lab password manager"
+  group             = "KRG"
+}
+
 # ── Proxmox ────────────────────────────────────────────────────────────────────
 # Commented out — Proxmox auth is currently managed via Ansible/PVE realm config.
 # Uncomment when ready to bring SSO login to the PVE web UI under IaC.
