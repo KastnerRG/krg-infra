@@ -141,7 +141,7 @@ jobs:
           # those are brought up (#165) we converge ONLY the proven garage-ui +
           # DSM-SSO stack. Widen this as roles are reconciled; drop it (→ full
           # converge) once #165 is closed.
-          SYNOLOGY_TAGS: "synology_certificate,synology_app_portal,synology_garage,synology_sso"
+          SYNOLOGY_TAGS: "synology_shares,synology_acls,synology_certificate,synology_app_portal,synology_garage,synology_sso"
         run: ./deploy/deploy-ansible.sh
 
       # OpenTofu layer — DEFERRED to a second step (state backend, encryption

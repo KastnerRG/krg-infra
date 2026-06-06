@@ -172,7 +172,7 @@
         # the full NAS spec isn't bring-up-reconciled yet (#165; SNMPv3 #151,
         # mail OAuth #163). Widen as roles are reconciled; drop it once #165 closes.
         DEPLOY_SYNOLOGY=true \
-        SYNOLOGY_TAGS=synology_certificate,synology_app_portal,synology_garage,synology_sso \
+        SYNOLOGY_TAGS=synology_shares,synology_acls,synology_certificate,synology_app_portal,synology_garage,synology_sso \
           ${pkgs.bash}/bin/bash /var/lib/krg-admin/krg-infra/deploy/deploy-ansible.sh
       '';
     };
