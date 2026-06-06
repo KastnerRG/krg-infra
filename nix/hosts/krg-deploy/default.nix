@@ -165,7 +165,14 @@
         # the OpenBao AppRole creds are provisioned (graceful skip otherwise),
         # so provisioning them is the go-live switch. deploy-ansible.sh resolves
         # REPO_ROOT from its own path, so no cd is needed.
+        #
+        # SYNOLOGY_TAGS scopes the converge to the bring-up-validated roles only
+        # (keep in lockstep with deploy.yml): the full playbook would run every
+        # synology_* role and declaratively DELETE live config not in spec, but
+        # the full NAS spec isn't bring-up-reconciled yet (#165; SNMPv3 #151,
+        # mail OAuth #163). Widen as roles are reconciled; drop it once #165 closes.
         DEPLOY_SYNOLOGY=true \
+        SYNOLOGY_TAGS=synology_certificate,synology_app_portal,synology_garage,synology_sso \
           ${pkgs.bash}/bin/bash /var/lib/krg-admin/krg-infra/deploy/deploy-ansible.sh
       '';
     };
