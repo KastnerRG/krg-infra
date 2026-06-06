@@ -177,3 +177,17 @@ fully satisfy them — this path is **not yet validated on-box**.
 removing the sentinel `/var/lib/krg/oec/.installed` and rebuilding (see the OEC
 section of [nix/README.md](../nix/README.md)). On Debian/PVE the Ansible
 `oec_qualys_trellix` role is the counterpart (set `oec_installer`).
+
+### A deploy fails on "OEC security daemons not both active"
+**Symptom:** the push-to-main deploy fails in the NixOS step ("OEC security daemons
+not both active") or the Ansible step ("Verify both OEC daemons are active").
+**Cause (expected):** the OEC agents are a **hard gate** in the deploy
+([deploy/README.md](../deploy/README.md) *OEC*, #22) — `deploy-nixos.sh` stages the
+archive + verifies `qualys-cloud-agent` + `xagt` are active on every host, and the
+Ansible role does the same on the Proxmox hosts. A host where either daemon is down
+fails the whole deploy by design (no silently-unhardened machine). The likely
+underlying reason is the unvalidated nix-ld path above — debug `oec-install` /
+`qualys-cloud-agent` / `xagt` on the offending host, not the deploy script.
+**Control-node precondition:** if the archive is absent at `OEC_INSTALLER`
+(`/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz`), the deploy
+fails immediately with a FATAL before touching any host — stage it out-of-band.
