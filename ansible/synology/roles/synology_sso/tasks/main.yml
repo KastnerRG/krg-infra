@@ -14,10 +14,11 @@
 # keeps the fallback link) and the break-glass e4e-admin is key-only SSH
 # (synology_ssh) — so a broken IdP can't lock the box out. See sso.yml.
 #
-# DISCOVERY GATE: the DSM SSO-Client API shape in apply_sso.py is a best-guess
-# pending a wizard capture — run `apply_sso.py oidc --check` against the NAS to
-# confirm the GET/field shape before the first real apply (CLAUDE.md "discovery
-# is the only exception").
+# API shape VERIFIED 2026-06-05 via a DevTools capture of the DSM "SSO Client"
+# wizard Save: two APIs — SYNO.Core.Directory.OIDC.SSO (set, profile="oidc") for
+# the profile, and SYNO.Core.Directory.SSO.Setting (set) for the default-login
+# toggle (see apply_sso.py + README "Discovery"). `--check` still does read-only
+# GETs, so a dry run is safe.
 
 - name: Load the DSM SSO spec
   ansible.builtin.include_vars:
@@ -37,15 +38,20 @@
     - sso_spec.oidc.enable | default(false) | bool
     - (dsm_sso_oidc_client_secret | default('')) | length == 0
 
-- name: Apply DSM OIDC SSO-Client config (GET → diff → SET; partial = DSM err 2001)
+- name: Apply DSM OIDC SSO config (OIDC.SSO + SSO.Setting; GET → diff → SET)
+  # oidc_wellknown is the full discovery URL: DSM derives the authorization/token
+  # endpoints from it, so we pass issuer + /.well-known/openid-configuration
+  # (strip any trailing slash on the issuer first to avoid a doubled `//`).
   ansible.builtin.script: >-
     apply_sso.py oidc
     --enable {{ sso_spec.oidc.enable | default(true) }}
     --provider-name {{ sso_spec.oidc.provider_name | default('Authentik') | quote }}
     --client-id {{ sso_spec.oidc.client_id | quote }}
-    --issuer-url {{ sso_spec.oidc.issuer_url | quote }}
+    --wellknown {{ ((sso_spec.oidc.issuer_url | regex_replace('/+$', '')) ~ '/.well-known/openid-configuration') | quote }}
     --redirect-uri {{ sso_spec.oidc.redirect_uri | quote }}
+    --scope {{ sso_spec.oidc.scope | default('openid profile email') | quote }}
     --account-attribute {{ sso_spec.oidc.account_attribute | default('preferred_username') | quote }}
+    --allow-local-user {{ sso_spec.oidc.allow_local_user | default(true) }}
     --set-as-default {{ sso_spec.oidc.set_as_default | default(true) }}
     {{ '--check' if ansible_check_mode else '' }}
   environment:

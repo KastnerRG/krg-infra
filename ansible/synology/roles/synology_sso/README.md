@@ -15,37 +15,44 @@ across the two layers.
 ## How it works
 
 [`files/apply_sso.py`](files/apply_sso.py) (shipped via the `script` module;
-DSM py3.8) — one subcommand:
+DSM py3.8) — one subcommand, `oidc`, driving **two** DSM APIs (diffed + applied
+independently, GET → diff → SET only on drift):
 
-| subcommand | what it does | idempotency |
+| API | method | what it does |
 |---|---|---|
-| `oidc` | `SYNO.Core.SSO.Client` set — enable OIDC, provider name, client id/secret, issuer, redirect, account-match attribute, default-login flag. FULL-OBJECT (partial = err 2001): GET → overlay managed keys → SET. | GET → diff → SET, only on drift |
+| `SYNO.Core.Directory.OIDC.SSO` | `set` (`profile="oidc"`) | the OIDC profile: `oidc_name`, `oidc_wellknown` (discovery URL — DSM derives the auth/token endpoints from it), `oidc_client_id`, `oidc_client_secret`, `oidc_redirect_uri`, `oidc_scope`, `oidc_user_claim`, `oidc_allow_local_user`. Sending it with `profile="oidc"` both configures **and activates** — there's no separate enable call. |
+| `SYNO.Core.Directory.SSO.Setting` | `set` | `sso_default_login` — the "default to SSO instead of the password form" toggle. |
+
+The set is **partial** (managed fields + `profile` only — matching the wizard,
+which doesn't send the DSM-derived endpoint fields), not a full-object overlay.
 
 The OIDC **client secret** is read from the `DSM_SSO_OIDC_CLIENT_SECRET` env var
-(never argv — same rationale as `synology_garage`), and is **write-only**: DSM's
-GET doesn't return it, so it's never diffed and never printed. The render task
-carries `no_log: true`.
+(never argv — same rationale as `synology_garage`). DSM's OIDC GET **does** return
+it in plaintext, so the role diffs it **silently** to catch a rotation, but its
+value is never printed (drift shows `"<changed>"`); the task carries `no_log: true`
+and the drift-export snapshot is mode `0600` (uncommitted).
 
-## ⚠️ Discovery required before first apply
+## Discovery (done — API shape verified 2026-06-05)
 
-The DSM **SSO-Client** API name (`SYNO.Core.SSO.Client`) and field keys in
-`apply_sso.py` are a **best-guess** — there's no public DSM 7.3 API doc for this
-applet, and it's newer than the surfaces the other `synology_*` roles wrap. This
-is the sanctioned "discovery is the only exception" step
-([CLAUDE.md](../../../../CLAUDE.md) / ADR 0001):
+The DSM SSO surface was unknown at scaffold time; it was pinned via the sanctioned
+"discovery is the only exception" step ([CLAUDE.md](../../../../CLAUDE.md) / ADR
+0001) — a read-only `SYNO.API.Info` sweep plus a Chrome DevTools capture of the
+**Control Panel → Domain/LDAP → SSO Client** OIDC wizard's Save:
 
-1. DSM web → **Control Panel → SSO Client** → open the OIDC profile wizard.
-2. Capture the **Save** POST with Chrome DevTools (Network) — note the real
-   `api=` name, `method`, `version`, and the exact field keys.
-3. Flip `SSO_API` / `OIDC_FIELDS` in `apply_sso.py` (and the api/version in
-   `tasks/export.yml`) to match.
-4. `apply_sso.py oidc --check` against the NAS (read-only GET) to confirm the
-   GET shape — **then** apply.
+- The guessed `SYNO.Core.SSO.Client` does **not** exist (err 102). The real
+  surface is the `SYNO.Core.Directory.SSO.*` family; the OIDC profile lives at
+  `SYNO.Core.Directory.OIDC.SSO` and the default-login toggle at
+  `SYNO.Core.Directory.SSO.Setting` (both version 1).
+- Save fires a single partial `OIDC.SSO set` with `profile="oidc"` + the `oidc_*`
+  fields (string values JSON-quoted, e.g. `oidc_name="Authentik"`); the
+  default-login control is a separate `SSO.Setting set`.
 
-Also reconcile the DSM **redirect/callback** URI with
-`authentik_provider_oauth2.e4e_nas.allowed_redirect_uris` once the wizard reveals
-the exact path. Until all this is verified, treat the role as scaffolding —
-**not** part of the unattended converge.
+**Before the first real apply** still run `--check --diff` (read-only GETs) and
+then confirm a login round-trip — and reconcile the **redirect URI**: DSM lets the
+admin set `oidc_redirect_uri` freely, so it must be byte-identical to a value in
+`authentik_provider_oauth2.e4e_nas.allowed_redirect_uris` (Authentik's event log
+shows the exact URI DSM sent on a mismatch). Keep the role OUT of the unattended
+converge until that login is confirmed.
 
 ## Anti-lockout
 

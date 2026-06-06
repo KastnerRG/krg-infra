@@ -1,10 +1,10 @@
 ---
-# Exporter (read-only): snapshot the live DSM SSO-Client config so the
+# Exporter (read-only): snapshot the live DSM OIDC SSO config so the
 # drift_detector can diff it against spec/e4e-nas/sso.yml. Paired half of the role
 # (ADR 0001 — UI = drift). Run: ansible-playbook playbook.yml --tags export
 #
-# NOTE: api/version below mirror apply_sso.py's best-guess SSO_API — flip both
-# together once the DevTools discovery pins the real name.
+# Two APIs mirror apply_sso.py: SYNO.Core.Directory.OIDC.SSO (the profile) and
+# SYNO.Core.Directory.SSO.Setting (the default-login toggle).
 
 - name: Ensure the export dir exists on the control node
   ansible.builtin.file:
@@ -14,20 +14,29 @@
   delegate_to: localhost
   run_once: true
 
-- name: Get live DSM SSO-Client settings
-  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.SSO.Client method=get version=1"
-  register: sso_get
+- name: Get live DSM OIDC SSO profile
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Directory.OIDC.SSO method=get version=1"
+  register: oidc_get
   changed_when: false
   check_mode: false
-  failed_when: false   # API name is unverified — never fail the export sweep on it
+  failed_when: false
+
+- name: Get live DSM SSO default-login setting
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Directory.SSO.Setting method=get version=1"
+  register: setting_get
+  changed_when: false
+  check_mode: false
+  failed_when: false
 
 - name: Write the live-state snapshot
   ansible.builtin.copy:
     dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-sso.yml"
     mode: "0600"
     content: |
-      # Live DSM SSO-Client state on {{ inventory_hostname }} — synology_sso exporter.
+      # Live DSM OIDC SSO state on {{ inventory_hostname }} — synology_sso exporter.
       # raw synowebapi output (preamble on stderr; stdout is the JSON pretty-print).
-      # NOTE: the client secret is write-only; DSM's GET does not return it.
-      sso_raw: {{ sso_get.stdout_lines | default([]) | to_json }}
+      # NOTE: DSM's OIDC GET returns oidc_client_secret in plaintext — treat this
+      # snapshot as sensitive (mode 0600) and do not commit it.
+      oidc_raw: {{ oidc_get.stdout_lines | default([]) | to_json }}
+      setting_raw: {{ setting_get.stdout_lines | default([]) | to_json }}
   delegate_to: localhost
