@@ -1,6 +1,10 @@
 # Server profile: web services, monitoring, reverse proxy (krg-prod, e4e-prod).
 # Import this in a host's default.nix, then add host-specific compose stacks.
-{ config, lib, ... }: {
+{
+  config,
+  lib,
+  ...
+}: {
   imports = [
     ./base.nix
     ../modules/docker.nix
@@ -12,7 +16,7 @@
   ];
 
   krg.base = {
-    enable      = true;
+    enable = true;
     autoUpgrade = true;
     # serviceHost defaults to true via the option default in profiles/base.nix
     # — service hosts use that default to source-restrict in-guest SSH to
@@ -65,7 +69,7 @@
     # server-profile host, 22 would vanish from the input rules
     # entirely. mkDefault is the load-bearing fix even though it looks
     # like style.
-    allowedTCPPorts = lib.mkDefault [ 443 ];
+    allowedTCPPorts = lib.mkDefault [443];
     # 80: DOCUMENTED EXCEPTION to the "no public access" policy. Traefik
     # handles ACME HTTP-01 on this port for the lab's public-facing
     # domains. Let's Encrypt's multi-perspective validation issues
@@ -76,9 +80,9 @@
     # Mirrors the krg-vault publicPorts pattern. DNS-01 migration was
     # considered + rejected (closed issue #89); HTTP-01 + publicPorts
     # opt-in is the long-term answer.
-    publicPorts = [ 80 ];  # reason: ACME HTTP-01 (LE multi-perspective validators are global)
+    publicPorts = [80]; # reason: ACME HTTP-01 (LE multi-perspective validators are global)
     # Native node-exporter (9100), scraped from the monitoring host only. (The old
     # 9000 "service exporter" was the Ansible deploy-monitor, gone under autoUpgrade.)
-    monitoringPorts = [ 9100 ];
+    monitoringPorts = [9100];
   };
 }

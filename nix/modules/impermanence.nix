@@ -25,7 +25,7 @@ with lib; let
   # Used to pre-seed the persisted /etc/krb5.keytab so it isn't a dangling symlink the
   # AD join can't write through. A 0-byte file does NOT work — krb5 rejects it with
   # "Unsupported key table format version number"; it needs this header to append to.
-  emptyKeytab = pkgs.runCommand "empty-krb5-keytab" { } ''printf '\005\002' > $out'';
+  emptyKeytab = pkgs.runCommand "empty-krb5-keytab" {} ''printf '\005\002' > $out'';
 in {
   imports = [inputs.impermanence.nixosModules.impermanence];
 
@@ -126,68 +126,69 @@ in {
       enable = true;
       hideMounts = true; # keep the bind mounts out of `mount`/df noise
 
-      directories = [
-        # --- standard server OS state ---
-        "/var/log" # FULL /var/log (your call: keep everything for debugging),
-        # which includes /var/log/journal — the persistent journal. Needs
-        # /etc/machine-id (below) or journald treats each boot as a new host.
-        "/var/lib/nixos" # GOTCHA: the uid/gid allocation map. Drop this and
-        # dynamically-allocated users/groups get DIFFERENT ids next boot ->
-        # wrong file ownership everywhere. Non-negotiable.
-        "/var/lib/systemd" # random-seed, timer stamps, coredumps, clock, etc.
-        "/var/lib/fail2ban" # ban DB — bans should outlive reboots (this rebuild
-        # is post-breach; losing the jail state every boot defeats it).
-        "/root" # root's shell history / state (sudo target; no root SSH).
-        "/etc/nixos" # for local/break-glass `nixos-rebuild` (autoUpgrade pulls
-        # from GitHub, but keep on-box edits durable).
-        # (break-glass admin home /var/lib/<account> is appended after this list,
-        # guarded — see below.)
+      directories =
+        [
+          # --- standard server OS state ---
+          "/var/log" # FULL /var/log (your call: keep everything for debugging),
+          # which includes /var/log/journal — the persistent journal. Needs
+          # /etc/machine-id (below) or journald treats each boot as a new host.
+          "/var/lib/nixos" # GOTCHA: the uid/gid allocation map. Drop this and
+          # dynamically-allocated users/groups get DIFFERENT ids next boot ->
+          # wrong file ownership everywhere. Non-negotiable.
+          "/var/lib/systemd" # random-seed, timer stamps, coredumps, clock, etc.
+          "/var/lib/fail2ban" # ban DB — bans should outlive reboots (this rebuild
+          # is post-breach; losing the jail state every boot defeats it).
+          "/root" # root's shell history / state (sudo target; no root SSH).
+          "/etc/nixos" # for local/break-glass `nixos-rebuild` (autoUpgrade pulls
+          # from GitHub, but keep on-box edits durable).
+          # (break-glass admin home /var/lib/<account> is appended after this list,
+          # guarded — see below.)
 
-        # --- AD client (krg.adClient, on via base.nix) ---
-        "/var/lib/sss" # SSSD cache: offline creds (cache_credentials=true) +
-        # machine-account rotation state. Wiped = no offline login + needless
-        # re-enumeration each boot. The keytab itself is a file, listed below.
+          # --- AD client (krg.adClient, on via base.nix) ---
+          "/var/lib/sss" # SSSD cache: offline creds (cache_credentials=true) +
+          # machine-account rotation state. Wiped = no offline login + needless
+          # re-enumeration each boot. The keytab itself is a file, listed below.
 
-        # --- Docker + compose (compute profile) ---
-        # NOTE: /var/lib/docker is intentionally NOT here. It's a dedicated ZFS
-        # dataset (nvmepool/docker, see hosts/waiter/disko-config.nix) with its own
-        # snapshot policy, so it survives the rollback as a real mount rather than a
-        # /persist bind — which also keeps image-layer churn out of /persist's
-        # frequent snapshots. A host that enables impermanence WITHOUT such a
-        # dataset must add "/var/lib/docker" back here, or Docker state is wiped.
-        "/var/lib/krg" # compose-stack working dir: .secrets/ AND Grafana/
-        # Prometheus/Loki data + the OEC installer archive. Wiped = monitoring
-        # data loss + secrets gone every boot.
+          # --- Docker + compose (compute profile) ---
+          # NOTE: /var/lib/docker is intentionally NOT here. It's a dedicated ZFS
+          # dataset (nvmepool/docker, see hosts/waiter/disko-config.nix) with its own
+          # snapshot policy, so it survives the rollback as a real mount rather than a
+          # /persist bind — which also keeps image-layer churn out of /persist's
+          # frequent snapshots. A host that enables impermanence WITHOUT such a
+          # dataset must add "/var/lib/docker" back here, or Docker state is wiped.
+          "/var/lib/krg" # compose-stack working dir: .secrets/ AND Grafana/
+          # Prometheus/Loki data + the OEC installer archive. Wiped = monitoring
+          # data loss + secrets gone every boot.
 
-        # NOTE — /local is intentionally NOT here either. krg.localCache mounts it
-        # from its own dataset (nvmepool/local, see hosts/waiter/disko-config.nix),
-        # off the @blank rollback, so the per-user IDE servers + caches it holds are
-        # durable on their own — no /persist bind needed. (Same rationale as
-        # /var/lib/docker above.) See modules/local-cache.nix.
+          # NOTE — /local is intentionally NOT here either. krg.localCache mounts it
+          # from its own dataset (nvmepool/local, see hosts/waiter/disko-config.nix),
+          # off the @blank rollback, so the per-user IDE servers + caches it holds are
+          # durable on their own — no /persist bind needed. (Same rationale as
+          # /var/lib/docker above.) See modules/local-cache.nix.
 
-        # NOTE — /scratch (krg.scratch, modules/scratch.nix) needs NOTHING here. It's
-        # a plain ZFS mount on its own pool (scratchpool, off the @blank rollback), so
-        # it's durable on its own; the overflow job keeps its manifest ON that dataset
-        # and the archive symlinks are the source of truth — no /persist bind, and no
-        # autotier RocksDB to persist anymore (autotier is gone).
-      ]
-      # Break-glass admin home: users/admin.nix pins it to /var/lib/<account> (OFF
-      # /home, so it works when the NFS /home is down) — but that puts it on the
-      # rolled-back root, so persist it or it is wiped each boot. Guarded with `?`
-      # so this module still evaluates on a host that enables impermanence WITHOUT
-      # importing users/admin.nix (which declares krg.adminAccount).
-      #
-      # STRUCTURED (not a bare string) so impermanence creates the /persist source
-      # OWNED BY the admin (0700) instead of root:root. On a FRESH /persist — e.g. a
-      # greenfield rebuild / DR — a bare-string entry leaves the bind-source root-owned,
-      # so the admin can't write its own home (~/.bash_history etc. fail with EACCES).
-      # Group is the account's resolved primary group (NixOS isNormalUser -> "users").
-      ++ optional (config.krg ? adminAccount) {
-        directory = "/var/lib/${config.krg.adminAccount}";
-        user = config.krg.adminAccount;
-        group = config.users.users.${config.krg.adminAccount}.group;
-        mode = "0700";
-      };
+          # NOTE — /scratch (krg.scratch, modules/scratch.nix) needs NOTHING here. It's
+          # a plain ZFS mount on its own pool (scratchpool, off the @blank rollback), so
+          # it's durable on its own; the overflow job keeps its manifest ON that dataset
+          # and the archive symlinks are the source of truth — no /persist bind, and no
+          # autotier RocksDB to persist anymore (autotier is gone).
+        ]
+        # Break-glass admin home: users/admin.nix pins it to /var/lib/<account> (OFF
+        # /home, so it works when the NFS /home is down) — but that puts it on the
+        # rolled-back root, so persist it or it is wiped each boot. Guarded with `?`
+        # so this module still evaluates on a host that enables impermanence WITHOUT
+        # importing users/admin.nix (which declares krg.adminAccount).
+        #
+        # STRUCTURED (not a bare string) so impermanence creates the /persist source
+        # OWNED BY the admin (0700) instead of root:root. On a FRESH /persist — e.g. a
+        # greenfield rebuild / DR — a bare-string entry leaves the bind-source root-owned,
+        # so the admin can't write its own home (~/.bash_history etc. fail with EACCES).
+        # Group is the account's resolved primary group (NixOS isNormalUser -> "users").
+        ++ optional (config.krg ? adminAccount) {
+          directory = "/var/lib/${config.krg.adminAccount}";
+          user = config.krg.adminAccount;
+          group = config.users.users.${config.krg.adminAccount}.group;
+          mode = "0700";
+        };
 
       files = [
         "/etc/machine-id" # GOTCHA: stable host identity. Without it, journald +
