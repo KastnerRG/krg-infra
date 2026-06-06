@@ -21,9 +21,9 @@
   check_mode: false
   failed_when: false
 
-- name: Get live DSM SSO master switch (enable_sso)
-  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Directory.SSO method=get version=1"
-  register: master_get
+- name: Get live DSM SSO activation (sso_profile + sso_enable)
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.Core.Directory.SSO.Profile method=get version=1"
+  register: activate_get
   changed_when: false
   check_mode: false
   failed_when: false
@@ -45,6 +45,6 @@
       # NOTE: DSM's OIDC GET returns oidc_client_secret in plaintext — treat this
       # snapshot as sensitive (mode 0600) and do not commit it.
       oidc_raw: {{ oidc_get.stdout_lines | default([]) | to_json }}
-      master_raw: {{ master_get.stdout_lines | default([]) | to_json }}
+      activate_raw: {{ activate_get.stdout_lines | default([]) | to_json }}
       setting_raw: {{ setting_get.stdout_lines | default([]) | to_json }}
   delegate_to: localhost

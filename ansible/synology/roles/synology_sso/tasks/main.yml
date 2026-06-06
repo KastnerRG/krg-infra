@@ -14,11 +14,13 @@
 # keeps the fallback link) and the break-glass e4e-admin is key-only SSH
 # (synology_ssh) — so a broken IdP can't lock the box out. See sso.yml.
 #
-# API shape VERIFIED 2026-06-05 via a DevTools capture of the DSM "SSO Client"
-# wizard Save: two APIs — SYNO.Core.Directory.OIDC.SSO (set, profile="oidc") for
-# the profile, and SYNO.Core.Directory.SSO.Setting (set) for the default-login
-# toggle (see apply_sso.py + README "Discovery"). `--check` still does read-only
-# GETs, so a dry run is safe.
+# API shape VERIFIED 2026-06-05 via a DevTools capture + live API probing of the
+# DSM "SSO Client" applet: three APIs — SYNO.Core.Directory.OIDC.SSO (set,
+# profile="oidc") for the profile, SYNO.Core.Directory.SSO.Profile (set,
+# sso_profile="oidc"+sso_enable=true) to ACTIVATE it (what renders the login
+# button), and SYNO.Core.Directory.SSO.Setting (set) for the default-login toggle
+# (see apply_sso.py + README). `--check` still does read-only GETs, so a dry run
+# is safe.
 
 - name: Load the DSM SSO spec
   ansible.builtin.include_vars:

@@ -3,21 +3,24 @@
 
   oidc   Point DSM's web login (`:6021`) at an external OpenID Connect IdP
          (Authentik) and optionally make SSO the DEFAULT login, from the
-         spec/e4e-nas/sso.yml `oidc:` block. Drives TWO DSM APIs:
+         spec/e4e-nas/sso.yml `oidc:` block. Drives THREE DSM APIs:
 
            - SYNO.Core.Directory.OIDC.SSO  (method=set, profile="oidc")
              The OIDC profile: name / well-known URL / client id+secret /
-             redirect / scope / user-claim / allow-local-user. Sending this with
-             profile="oidc" both CONFIGURES and ACTIVATES it — there is no
-             separate "enable" call (the SSO.Profile list shows oidc as one of
-             the selectable profiles; the set selects + fills it in one shot).
+             redirect / scope / user-claim / allow-local-user.
+
+           - SYNO.Core.Directory.SSO.Profile (method=set)
+             sso_profile="oidc" + sso_enable=true — ACTIVATES the OIDC profile and
+             switches the SSO service on. This is what makes DSM render the login
+             button; configuring OIDC.SSO alone does NOT. (NOT to be confused with
+             SYNO.Core.Directory.SSO, the Synology-SSO-Server profile.)
 
            - SYNO.Core.Directory.SSO.Setting (method=set)
              sso_default_login — the "default to SSO instead of the password
              form" toggle (a separate control from the profile config).
 
-         Each API is GET -> diff -> SET, only on drift. The two are diffed and
-         applied independently, so flipping just the default-login toggle doesn't
+         Each API is GET -> diff -> SET, only on drift. They're diffed and applied
+         independently, so flipping just the default-login toggle doesn't
          needlessly rewrite the OIDC profile (or re-send the secret).
 
 Invoked by the synology_sso ansible role via the `script` module (DSM Python 3.8
@@ -54,12 +57,17 @@ SETTING_API = "SYNO.Core.Directory.SSO.Setting"
 SETTING_API_VERSION = "1"
 DEFAULT_LOGIN_FIELD = "sso_default_login"
 
-# Master on/off for the SSO service. Configuring OIDC.SSO is NOT enough — DSM only
-# renders the SSO login button (and accepts the redirect) once enable_sso is set
-# here. The wizard's profile Save doesn't flip it; a separate enable control does.
-MASTER_API = "SYNO.Core.Directory.SSO"
-MASTER_API_VERSION = "1"
-ENABLE_FIELD = "enable_sso"
+# Activation: select OIDC as the active SSO type AND switch the service on. This
+# is the object the login page reads to render the SSO button — configuring
+# OIDC.SSO alone is NOT enough. {sso_enable: bool, sso_profile: "<type>"}; the
+# available types come from SSO.Profile `list` (["azure","websphere","oidc"]).
+# (Do NOT confuse with SYNO.Core.Directory.SSO — that's the Synology-SSO-*Server*
+# profile, name "Synology SSO", with appid/host; a different SSO type.)
+ACTIVATE_API = "SYNO.Core.Directory.SSO.Profile"
+ACTIVATE_API_VERSION = "1"
+ACTIVATE_PROFILE = "oidc"
+SSO_ENABLE_FIELD = "sso_enable"
+SSO_PROFILE_FIELD = "sso_profile"
 
 # OIDC client_secret: from env (write-only on argv), DSM field name.
 _SECRET_ENV_VAR = "DSM_SSO_OIDC_CLIENT_SECRET"
@@ -150,7 +158,7 @@ def do_oidc(a):
     desired_default = _bool(a.set_as_default)
 
     cur_oidc = _exec(OIDC_API, OIDC_API_VERSION, "get")["data"]
-    cur_master = _exec(MASTER_API, MASTER_API_VERSION, "get")["data"]
+    cur_activate = _exec(ACTIVATE_API, ACTIVATE_API_VERSION, "get")["data"]
     cur_setting = _exec(SETTING_API, SETTING_API_VERSION, "get")["data"]
 
     # OIDC profile drift (visible fields + the silently-diffed secret).
@@ -159,11 +167,15 @@ def do_oidc(a):
     if cur_oidc.get(_SECRET_FIELD) != secret:
         oidc_drift[_SECRET_FIELD] = "<changed>"      # value redacted, never printed
 
-    # Master SSO-service switch — without this DSM shows no login button (the
-    # profile alone isn't enough). Desired = on (we only reach here when enabling).
-    master_drift = {}
-    if cur_master.get(ENABLE_FIELD) is not True:
-        master_drift[ENABLE_FIELD] = {"current": cur_master.get(ENABLE_FIELD), "desired": True}
+    # Activation drift — select OIDC + switch on. Without this DSM shows no login
+    # button (the profile alone isn't enough). We only reach here when enabling.
+    activate_drift = {}
+    if cur_activate.get(SSO_PROFILE_FIELD) != ACTIVATE_PROFILE:
+        activate_drift[SSO_PROFILE_FIELD] = {
+            "current": cur_activate.get(SSO_PROFILE_FIELD), "desired": ACTIVATE_PROFILE}
+    if cur_activate.get(SSO_ENABLE_FIELD) is not True:
+        activate_drift[SSO_ENABLE_FIELD] = {
+            "current": cur_activate.get(SSO_ENABLE_FIELD), "desired": True}
 
     # Default-login toggle drift (independent API).
     setting_drift = {}
@@ -172,11 +184,11 @@ def do_oidc(a):
             "current": cur_setting.get(DEFAULT_LOGIN_FIELD), "desired": desired_default}
 
     drift = dict(oidc_drift)
-    drift.update(master_drift)
+    drift.update(activate_drift)
     drift.update(setting_drift)
 
     def apply():
-        # Order: configure the profile, THEN enable the service, THEN set default.
+        # Order: configure the profile, THEN activate (select+enable), THEN default.
         if oidc_drift:
             payload = dict(desired_oidc)
             payload["profile"] = OIDC_PROFILE          # configure + activate
@@ -184,9 +196,10 @@ def do_oidc(a):
             r = _exec(OIDC_API, OIDC_API_VERSION, "set", *_args_from(payload))
             if not r.get("success"):
                 return r
-        if master_drift:
-            r = _exec(MASTER_API, MASTER_API_VERSION, "set",
-                      *_args_from({ENABLE_FIELD: True}))
+        if activate_drift:
+            r = _exec(ACTIVATE_API, ACTIVATE_API_VERSION, "set",
+                      *_args_from({SSO_PROFILE_FIELD: ACTIVATE_PROFILE,
+                                   SSO_ENABLE_FIELD: True}))
             if not r.get("success"):
                 return r
         if setting_drift:

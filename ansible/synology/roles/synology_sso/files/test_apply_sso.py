@@ -41,15 +41,15 @@ def _setting_live(default_login=False):
     return {m.DEFAULT_LOGIN_FIELD: default_login}
 
 
-def _master_live(enable=False):
-    # The SYNO.Core.Directory.SSO object — appid/host are for the Synology-SSO
-    # profile type (unmanaged here); enable_sso is the master service switch.
-    return {"appid": "", m.ENABLE_FIELD: enable, "host": "", "pingpong": None,
-            m.DEFAULT_LOGIN_FIELD: enable}
+def _activate_live(enabled=False):
+    # SYNO.Core.Directory.SSO.Profile — the active-profile selector the login page
+    # reads. Empty/off until OIDC is selected + switched on.
+    return {m.SSO_PROFILE_FIELD: m.ACTIVATE_PROFILE if enabled else "",
+            m.SSO_ENABLE_FIELD: enabled}
 
 
-def _exec_factory(oidc_get, master_get, setting_get, set_capture=None):
-    gets = {m.OIDC_API: oidc_get, m.MASTER_API: master_get, m.SETTING_API: setting_get}
+def _exec_factory(oidc_get, activate_get, setting_get, set_capture=None):
+    gets = {m.OIDC_API: oidc_get, m.ACTIVATE_API: activate_get, m.SETTING_API: setting_get}
 
     def fake(api, version, method, *params):
         if method == "get":
@@ -115,7 +115,7 @@ def test_args_from_quotes_strings_bools_and_drops_null():
 def test_oidc_no_change(monkeypatch, capsys):
     monkeypatch.setenv(m._SECRET_ENV_VAR, "s3cr3t")
     monkeypatch.setattr(m, "_exec",
-                        _exec_factory(_oidc_applied(), _master_live(True), _setting_live(True)))
+                        _exec_factory(_oidc_applied(), _activate_live(True), _setting_live(True)))
     rc = m.main(_argv())
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
 
@@ -123,44 +123,44 @@ def test_oidc_no_change(monkeypatch, capsys):
 def test_oidc_would_change_in_check_does_not_set(monkeypatch, capsys):
     monkeypatch.setenv(m._SECRET_ENV_VAR, "s3cr3t")
     sets = []
-    monkeypatch.setattr(m, "_exec", _exec_factory(_oidc_live(), _master_live(), _setting_live(), set_capture=sets))
+    monkeypatch.setattr(m, "_exec", _exec_factory(_oidc_live(), _activate_live(), _setting_live(), set_capture=sets))
     rc = m.main(_argv() + ["--check"])
     out = capsys.readouterr().out
     assert rc == 0 and out.startswith("WOULD-CHANGE")
     assert sets == []                       # --check must not mutate
 
 
-def test_oidc_changed_sets_profile_master_and_setting(monkeypatch, capsys):
+def test_oidc_changed_sets_profile_activation_and_setting(monkeypatch, capsys):
     monkeypatch.setenv(m._SECRET_ENV_VAR, "s3cr3t")
     sets = []
-    monkeypatch.setattr(m, "_exec", _exec_factory(_oidc_live(), _master_live(), _setting_live(), set_capture=sets))
+    monkeypatch.setattr(m, "_exec", _exec_factory(_oidc_live(), _activate_live(), _setting_live(), set_capture=sets))
     rc = m.main(_argv())
     assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
     apis = [api for api, _ in sets]
-    assert m.OIDC_API in apis and m.MASTER_API in apis and m.SETTING_API in apis
-    # OIDC set selects + activates the profile, and carries the managed fields;
-    # it must NOT send the DSM-derived endpoint fields.
+    assert m.OIDC_API in apis and m.ACTIVATE_API in apis and m.SETTING_API in apis
+    # OIDC set carries profile + managed fields; NOT the DSM-derived endpoints.
     oidc_params = _params_to_dict(next(p for api, p in sets if api == m.OIDC_API))
     assert oidc_params["profile"] == '"oidc"'
     assert oidc_params["oidc_client_id"] == '"e4e-nas"'
     assert oidc_params["oidc_allow_local_user"] == "true"
     assert "oidc_authorization_endpoint" not in oidc_params
     assert "oidc_token_endpoint" not in oidc_params
-    # Master set flips the SSO-service switch on.
-    master_params = _params_to_dict(next(p for api, p in sets if api == m.MASTER_API))
-    assert master_params[m.ENABLE_FIELD] == "true"
+    # Activation set selects OIDC and switches the service on.
+    activate_params = _params_to_dict(next(p for api, p in sets if api == m.ACTIVATE_API))
+    assert activate_params[m.SSO_PROFILE_FIELD] == '"oidc"'
+    assert activate_params[m.SSO_ENABLE_FIELD] == "true"
     # Setting set carries the default-login toggle.
     setting_params = _params_to_dict(next(p for api, p in sets if api == m.SETTING_API))
     assert setting_params[m.DEFAULT_LOGIN_FIELD] == "true"
-    # Profile is configured BEFORE the service is enabled.
-    assert apis.index(m.OIDC_API) < apis.index(m.MASTER_API)
+    # Profile is configured BEFORE the service is activated.
+    assert apis.index(m.OIDC_API) < apis.index(m.ACTIVATE_API)
 
 
 def test_oidc_secret_is_write_only(monkeypatch, capsys):
     """Secret reaches the OIDC set payload but never the drift/stdout."""
     monkeypatch.setenv(m._SECRET_ENV_VAR, "TOPSECRET")
     sets = []
-    monkeypatch.setattr(m, "_exec", _exec_factory(_oidc_live(), _master_live(), _setting_live(), set_capture=sets))
+    monkeypatch.setattr(m, "_exec", _exec_factory(_oidc_live(), _activate_live(), _setting_live(), set_capture=sets))
     rc = m.main(_argv())
     out = capsys.readouterr().out
     assert rc == 0
@@ -176,7 +176,7 @@ def test_secret_rotation_triggers_oidc_set_only(monkeypatch, capsys):
     sets = []
     live = _oidc_applied()              # has oidc_client_secret="s3cr3t"
     monkeypatch.setattr(m, "_exec",
-                        _exec_factory(live, _master_live(True), _setting_live(True), set_capture=sets))
+                        _exec_factory(live, _activate_live(True), _setting_live(True), set_capture=sets))
     rc = m.main(_argv())
     out = capsys.readouterr().out
     assert rc == 0 and out.startswith("CHANGED")
@@ -192,7 +192,7 @@ def test_default_login_only_drift_sets_setting_only(monkeypatch, capsys):
     monkeypatch.setenv(m._SECRET_ENV_VAR, "s3cr3t")
     sets = []
     monkeypatch.setattr(m, "_exec",
-                        _exec_factory(_oidc_applied(), _master_live(True), _setting_live(False),
+                        _exec_factory(_oidc_applied(), _activate_live(True), _setting_live(False),
                                       set_capture=sets))
     rc = m.main(_argv())
     assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
@@ -200,26 +200,28 @@ def test_default_login_only_drift_sets_setting_only(monkeypatch, capsys):
     assert apis == [m.SETTING_API]
 
 
-def test_master_enable_only_drift_enables_service(monkeypatch, capsys):
+def test_activation_only_drift_enables_service(monkeypatch, capsys):
     """The exact bug we hit: profile + default-login already correct, but the SSO
-    service is off (enable_sso=False) -> only the master set fires (enable_sso=true),
-    which is what makes DSM render the login button."""
+    service isn't activated (sso_enable=False, sso_profile="") -> only the
+    activation set fires (sso_profile=oidc, sso_enable=true), which is what makes
+    DSM render the login button."""
     monkeypatch.setenv(m._SECRET_ENV_VAR, "s3cr3t")
     sets = []
     monkeypatch.setattr(m, "_exec",
-                        _exec_factory(_oidc_applied(), _master_live(False), _setting_live(True),
+                        _exec_factory(_oidc_applied(), _activate_live(False), _setting_live(True),
                                       set_capture=sets))
     rc = m.main(_argv())
     assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
     apis = [api for api, _ in sets]
-    assert apis == [m.MASTER_API]
-    master_params = _params_to_dict(sets[0][1])
-    assert master_params[m.ENABLE_FIELD] == "true"
+    assert apis == [m.ACTIVATE_API]
+    activate_params = _params_to_dict(sets[0][1])
+    assert activate_params[m.SSO_PROFILE_FIELD] == '"oidc"'
+    assert activate_params[m.SSO_ENABLE_FIELD] == "true"
 
 
 def test_oidc_enabled_without_secret_fails(monkeypatch, capsys):
     monkeypatch.delenv(m._SECRET_ENV_VAR, raising=False)
-    monkeypatch.setattr(m, "_exec", _exec_factory(_oidc_live(), _master_live(), _setting_live()))
+    monkeypatch.setattr(m, "_exec", _exec_factory(_oidc_live(), _activate_live(), _setting_live()))
     rc = m.main(_argv())
     out = capsys.readouterr().out
     assert rc == 1 and out.startswith("FAIL")
@@ -231,7 +233,7 @@ def test_oidc_disabled_is_noop_without_secret(monkeypatch, capsys):
     """enable=false: leave DSM untouched, require no secret, fire no SET."""
     monkeypatch.delenv(m._SECRET_ENV_VAR, raising=False)
     sets = []
-    monkeypatch.setattr(m, "_exec", _exec_factory(_oidc_live(), _master_live(), _setting_live(), set_capture=sets))
+    monkeypatch.setattr(m, "_exec", _exec_factory(_oidc_live(), _activate_live(), _setting_live(), set_capture=sets))
     rc = m.main(["oidc", "--enable", "false"])
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
     assert sets == []
