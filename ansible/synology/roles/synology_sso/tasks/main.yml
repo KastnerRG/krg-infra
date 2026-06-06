@@ -52,6 +52,8 @@
     --provider-name {{ sso_spec.oidc.provider_name | default('Authentik') | quote }}
     --client-id {{ sso_spec.oidc.client_id | quote }}
     --wellknown {{ ((sso_spec.oidc.issuer_url | regex_replace('/+$', '')) ~ '/.well-known/openid-configuration') | quote }}
+    --authorization-endpoint {{ sso_spec.oidc.authorization_endpoint | quote }}
+    --token-endpoint {{ sso_spec.oidc.token_endpoint | quote }}
     --redirect-uri {{ sso_spec.oidc.redirect_uri | quote }}
     --scope {{ sso_spec.oidc.scope | default('openid profile email') | quote }}
     --account-attribute {{ sso_spec.oidc.account_attribute | default('preferred_username') | quote }}

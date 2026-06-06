@@ -34,10 +34,11 @@ GET DOES return the secret in plaintext, so we diff it silently to catch a
 rotation — but its value is never printed (drift shows `"<changed>"` only).
 
 API shape + field names + the JSON-quoted value encoding were VERIFIED 2026-06-05
-from a Chrome DevTools capture of the DSM "SSO Client" wizard Save (see the role
-README "Discovery"). The wizard's Save is a single partial `OIDC.SSO set` with
-profile="oidc" plus the oidc_* fields — DSM derives the authorization/token
-endpoints from oidc_wellknown, so we don't manage them.
+from a Chrome DevTools capture of the DSM "SSO Client" wizard Save + live probing.
+The OIDC.SSO set is partial (managed oidc_* fields + profile). DSM stores
+oidc_authorization_endpoint + oidc_token_endpoint explicitly (it does NOT derive
+them from oidc_wellknown on an API set), but fetches jwks/userinfo from
+oidc_wellknown at runtime.
 """
 import argparse
 import json
@@ -83,13 +84,19 @@ def _bool(s):
 # OIDC discovery URL (issuer + /.well-known/openid-configuration) — the role
 # derives it from spec.issuer_url and passes it via --wellknown.
 OIDC_FIELDS = [
-    ("provider_name",     "oidc_name",             str),
-    ("wellknown",         "oidc_wellknown",        str),
-    ("client_id",         "oidc_client_id",        str),
-    ("redirect_uri",      "oidc_redirect_uri",     str),
-    ("scope",             "oidc_scope",            str),
-    ("account_attribute", "oidc_user_claim",       str),
-    ("allow_local_user",  "oidc_allow_local_user", _bool),
+    ("provider_name",          "oidc_name",                   str),
+    ("wellknown",              "oidc_wellknown",              str),
+    # DSM does NOT auto-derive these from oidc_wellknown on an API set (the wizard
+    # fetches the discovery doc client-side and fills them in) — so we set them
+    # explicitly, else DSM can't build the authorize redirect ("SSO not properly
+    # configured"). jwks/userinfo ARE fetched from oidc_wellknown at runtime.
+    ("authorization_endpoint", "oidc_authorization_endpoint", str),
+    ("token_endpoint",         "oidc_token_endpoint",         str),
+    ("client_id",              "oidc_client_id",              str),
+    ("redirect_uri",           "oidc_redirect_uri",           str),
+    ("scope",                  "oidc_scope",                  str),
+    ("account_attribute",      "oidc_user_claim",             str),
+    ("allow_local_user",       "oidc_allow_local_user",       _bool),
 ]
 
 

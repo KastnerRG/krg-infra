@@ -36,6 +36,14 @@ oidc:
   client_id: e4e-nas
   issuer_url: https://auth.krg.ucsd.edu/application/o/e4e-nas/
 
+  # DSM stores the authorize/token endpoints EXPLICITLY — it does not derive them
+  # from oidc_wellknown on an API set, so without these the SSO flow fails with
+  # "SSO not properly configured". Values are from the issuer's discovery doc
+  # (<issuer>.well-known/openid-configuration); for Authentik they're global (not
+  # under the app slug). jwks/userinfo are fetched from the wellknown at runtime.
+  authorization_endpoint: https://auth.krg.ucsd.edu/application/o/authorize/
+  token_endpoint: https://auth.krg.ucsd.edu/application/o/token/
+
   # DSM's OIDC redirect/callback (admin-chosen — DSM doesn't impose a path) →
   # `oidc_redirect_uri`. MUST be byte-identical to a value in the terraform
   # provider's `allowed_redirect_uris` (currently `https://e4e-nas.ucsd.edu:6021`,

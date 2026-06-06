@@ -19,8 +19,7 @@ import apply_sso as m  # noqa: E402
 
 # --- live-GET fixtures ----------------------------------------------------------
 def _oidc_live(**overrides):
-    """A SYNO.Core.Directory.OIDC.SSO get. Includes the DSM-derived endpoint
-    fields (which the role does NOT manage) to prove they're left alone."""
+    """A SYNO.Core.Directory.OIDC.SSO get (all empty = unconfigured box)."""
     base = {
         "oidc_allow_local_user": False,
         "oidc_authorization_endpoint": "",   # derived by DSM; unmanaged
@@ -63,10 +62,14 @@ def _exec_factory(oidc_get, activate_get, setting_get, set_capture=None):
 # Desired spec (matches what tasks/main.yml passes). _WELLKNOWN is the derived
 # discovery URL (issuer + /.well-known/openid-configuration).
 _WELLKNOWN = "https://auth.krg.ucsd.edu/application/o/e4e-nas/.well-known/openid-configuration"
+_AUTHZ = "https://auth.krg.ucsd.edu/application/o/authorize/"
+_TOKEN = "https://auth.krg.ucsd.edu/application/o/token/"
 _DESIRED = dict(
     enable="true",
     provider_name="Authentik",
     wellknown=_WELLKNOWN,
+    authorization_endpoint=_AUTHZ,
+    token_endpoint=_TOKEN,
     client_id="e4e-nas",
     redirect_uri="https://e4e-nas.ucsd.edu:6021",
     scope="openid profile email",
@@ -91,7 +94,8 @@ def _oidc_applied():
                       oidc_client_secret="s3cr3t", oidc_name="Authentik",
                       oidc_redirect_uri="https://e4e-nas.ucsd.edu:6021",
                       oidc_scope="openid profile email",
-                      oidc_user_claim="preferred_username", oidc_wellknown=_WELLKNOWN)
+                      oidc_user_claim="preferred_username", oidc_wellknown=_WELLKNOWN,
+                      oidc_authorization_endpoint=_AUTHZ, oidc_token_endpoint=_TOKEN)
 
 
 def _params_to_dict(params):
@@ -143,8 +147,9 @@ def test_oidc_changed_sets_profile_activation_and_setting(monkeypatch, capsys):
     assert oidc_params["profile"] == '"oidc"'
     assert oidc_params["oidc_client_id"] == '"e4e-nas"'
     assert oidc_params["oidc_allow_local_user"] == "true"
-    assert "oidc_authorization_endpoint" not in oidc_params
-    assert "oidc_token_endpoint" not in oidc_params
+    # endpoints ARE managed/sent (DSM doesn't derive them from wellknown)
+    assert oidc_params["oidc_authorization_endpoint"] == '"%s"' % _AUTHZ
+    assert oidc_params["oidc_token_endpoint"] == '"%s"' % _TOKEN
     # Activation set selects OIDC and switches the service on.
     activate_params = _params_to_dict(next(p for api, p in sets if api == m.ACTIVATE_API))
     assert activate_params[m.SSO_PROFILE_FIELD] == '"oidc"'
