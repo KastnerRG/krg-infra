@@ -41,6 +41,7 @@ in {
     # working dir where compose.yml can find them by name.
     "L+ /var/lib/krg/krg-prod/compose.authentik.yml    - - - - ${composeDir}/compose.authentik.yml"
     "L+ /var/lib/krg/krg-prod/compose.grafana.yml      - - - - ${composeDir}/compose.grafana.yml"
+    "L+ /var/lib/krg/krg-prod/compose.vaultwarden.yml  - - - - ${composeDir}/compose.vaultwarden.yml"
     "L+ /var/lib/krg/krg-prod/compose.outline.yml      - - - - ${composeDir}/compose.outline.yml"
     "L+ /var/lib/krg/krg-prod/compose.mlflow.yml       - - - - ${composeDir}/compose.mlflow.yml"
 
@@ -82,6 +83,10 @@ in {
     "d  /var/lib/krg/krg-prod/grafana-storage               0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/prometheus-data               0750 1000 1000 -"
 
+    # Vaultwarden: SQLite datastore (writable; owned by the container's uid 1000)
+    "d  /var/lib/krg/krg-prod/vaultwarden                   0750 1000 1000 -"
+    "d  /var/lib/krg/krg-prod/vaultwarden/data              0750 1000 1000 -"
+
     # Traefik TLS certificate storage
     "d  /var/lib/krg/krg-prod/traefik-data                  0750 root docker -"
     "d  /var/lib/krg/krg-prod/traefik-data/letsencrypt      0750 root docker -"
@@ -105,6 +110,9 @@ in {
   #   gf_admin_password.txt
   #   outline_secrets.env               (SECRET_KEY, UTILS_SECRET, OIDC_CLIENT_SECRET, DATABASE_URL, ...)
   #   mlflow.env                        (POSTGRES_PASSWORD, OIDC_* vars)
+  #   vaultwarden.env                   (ADMIN_TOKEN=<argon2 hash>, SSO_CLIENT_SECRET=<from OpenBao>)
+  #     ADMIN_TOKEN:      vaultwarden hash   (or argon2 a strong password) — gates /admin
+  #     SSO_CLIENT_SECRET: bao kv get -field=client_secret secret/krg-prod/vaultwarden-oidc
   #
   # Also create /var/lib/krg/krg-prod/.env with:
   #   USER_ID=<UID of the account that owns the working directory>
