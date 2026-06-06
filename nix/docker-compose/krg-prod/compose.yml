@@ -16,9 +16,11 @@ services:
       # past the firewall); 80/443 must override that to serve the perimeter.
       - 0.0.0.0:80:80
       - 0.0.0.0:443:443
-      # 8080 (Traefik API/metrics) intentionally NOT published: it exposed /metrics
-      # on the host's external interface. Prometheus scrapes traefik:8080 over the
-      # docker network instead (add prometheus to traefik_proxy when re-enabled).
+      # 8080 (Traefik API/dashboard) intentionally NOT published — it would expose
+      # the API on the host's external interface. Prometheus metrics are served on a
+      # SEPARATE, also-unpublished entrypoint (metrics :8082, see command below) and
+      # scraped by Prometheus as traefik:8082 over the traefik_proxy docker network
+      # (prometheus joined that network in compose.grafana.yml).
       # - 8080:8080
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -40,7 +42,16 @@ services:
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
       # - "--certificatesresolvers.letsencrypt.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
       - "--providers.docker.network=traefik_proxy"
+      # Prometheus metrics on a dedicated internal entrypoint (:8082, NOT in the
+      # ports: list above, so it never reaches the host's external interface).
+      # Scraped over the docker network as traefik:8082 — see the 'traefik' job in
+      # prometheus/prometheus.yml. addEntryPointsLabels/addServicesLabels enrich the
+      # series (per-entrypoint + per-service request/latency breakdowns).
+      - "--entrypoints.metrics.address=:8082"
       - "--metrics.prometheus=true"
+      - "--metrics.prometheus.entrypoint=metrics"
+      - "--metrics.prometheus.addEntryPointsLabels=true"
+      - "--metrics.prometheus.addServicesLabels=true"
     networks:
       authentik:
       traefik_proxy:

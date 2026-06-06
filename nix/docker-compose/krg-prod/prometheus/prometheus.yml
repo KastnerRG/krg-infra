@@ -12,6 +12,11 @@ scrape_configs:
           - kastner-ml.ucsd.edu:9100
           - fabricant.ucsd.edu:9100
           - krg-prod.ucsd.edu:9100
+          # node_exporter is on every NixOS host via profiles/base.nix, but these
+          # were never scraped. Added so the Node Fleet dashboard covers the fleet.
+          - e4e-prod.ucsd.edu:9100
+          - krg-ldap.ucsd.edu:9100
+          - krg-vault.ucsd.edu:9100
 
   - job_name: 'dcgm_exporter'
     scrape_interval: 15s
@@ -27,24 +32,27 @@ scrape_configs:
           - waiter.ucsd.edu:9323
           - kastner-ml.ucsd.edu:9323
 
-  # ansible_deploy_monitor scraped port 9000 from all managed hosts.
-  # In NixOS this service is replaced by system.autoUpgrade; these targets
-  # will return connection refused until removed or repurposed.
-  - job_name: ansible_deploy_monitor
-    scrape_interval: 5s
+  # Removed: the ansible_deploy_monitor job (port 9000). That exporter belonged to
+  # the old Ansible deploy host; under NixOS it's replaced by system.autoUpgrade, so
+  # every target returned connection-refused. See docs/monitoring.md.
+
+  # Prometheus self-scrape — unlocks prometheus_* metrics (TSDB head series, scrape
+  # backlog, rule eval) used by the Monitoring Health dashboard.
+  - job_name: prometheus
     static_configs:
       - targets:
-          - waiter.ucsd.edu:9000
-          - kastner-ml.ucsd.edu:9000
-          - krg-prod.ucsd.edu:9000
-          - fabricant.ucsd.edu:9000
+          - localhost:9090
 
   - job_name: ipmi_exporter
     scrape_interval: 15s
     static_configs:
       - targets:
+          # localhost = krg-prod (a VM, no BMC) — kept for parity but expected down.
           - localhost:9290
           - waiter.ucsd.edu:9290
+          # fabricant runs ipmi_exporter via the ansible monitoring role but was
+          # never scraped — it's the hypervisor, so its BMC sensors matter most.
+          - fabricant.ucsd.edu:9290
 
   - job_name: 'blackbox_exporter'
     static_configs:
@@ -109,8 +117,11 @@ scrape_configs:
   - job_name: 'traefik'
     scrape_interval: 15s
     static_configs:
+      # Scraped over the traefik_proxy docker network (Prometheus joined it in
+      # compose.grafana.yml). Traefik serves Prometheus metrics on its dedicated,
+      # unpublished 'metrics' entrypoint :8082 — NOT the host's external interface.
       - targets:
-          - krg-prod.ucsd.edu:8080
+          - traefik:8082
 
   - job_name: 'temporal'
     scrape_interval: 15s

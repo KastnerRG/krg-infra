@@ -15,47 +15,46 @@
       }
     ]
   },
+  "description": "Compute host waiter (137.110.161.67): CPU/mem/GPU + the ZFS scratch storage stack (scratchpool/nvmepool, ARC/L2ARC, pool health).",
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "links": [],
   "panels": [
     {
+      "type": "text",
+      "title": "",
       "gridPos": {
-        "h": 7,
+        "h": 4,
         "w": 24,
         "x": 0,
         "y": 0
       },
-      "id": 38,
+      "id": 1,
       "options": {
-        "code": {
-          "language": "plaintext",
-          "showLineNumbers": false,
-          "showMiniMap": false
-        },
-        "content": "<h1 style=\"font-size: 100px\">Waiter</h1>",
-        "mode": "html"
+        "mode": "markdown",
+        "content": "<h1 style=\"font-size:64px;margin:0\">Waiter</h1>"
       },
-      "pluginVersion": "12.3.6",
-      "type": "text"
+      "pluginVersion": "12.3.6"
     },
     {
+      "type": "row",
+      "title": "Current State",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 4
       },
-      "id": 10,
-      "panels": [],
-      "title": "Current State",
-      "type": "row"
+      "id": 2,
+      "panels": []
     },
     {
+      "type": "gauge",
+      "title": "CPU Busy",
+      "description": "",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
@@ -64,23 +63,28 @@
           "color": {
             "mode": "thresholds"
           },
+          "custom": {},
           "mappings": [],
-          "max": 128,
-          "min": 0,
+          "unit": "percent",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 70
               },
               {
                 "color": "red",
-                "value": 100
+                "value": 90
               }
             ]
           },
-          "unit": "percentunit"
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
@@ -88,23 +92,23 @@
         "h": 6,
         "w": 4,
         "x": 0,
-        "y": 8
+        "y": 5
       },
-      "id": 1,
+      "id": 3,
       "options": {
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
         "minVizHeight": 75,
         "minVizWidth": 75,
-        "orientation": "auto",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
           "fields": "",
           "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
+        }
       },
       "pluginVersion": "12.3.6",
       "targets": [
@@ -114,45 +118,49 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum by (instance) (rate(node_cpu_seconds_total{instance=\"waiter.ucsd.edu:9100\",mode!=\"idle\"}[30s]))",
+          "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\",instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval])))",
+          "legendFormat": "cpu",
           "instant": false,
-          "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
-      ],
-      "title": "Current CPU Usage",
-      "type": "gauge"
+      ]
     },
     {
+      "type": "gauge",
+      "title": "Memory Used",
+      "description": "",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
-      "description": "",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
+          "custom": {},
           "mappings": [],
-          "max": 404950306816,
-          "min": 0,
+          "unit": "percent",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 80
               },
               {
                 "color": "red",
-                "value": 323960245452.8
+                "value": 90
               }
             ]
           },
-          "unit": "bytes"
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
@@ -160,23 +168,23 @@
         "h": 6,
         "w": 4,
         "x": 4,
-        "y": 8
+        "y": 5
       },
-      "id": 2,
+      "id": 4,
       "options": {
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
         "minVizHeight": 75,
         "minVizWidth": 75,
-        "orientation": "auto",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
           "fields": "",
           "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
+        }
       },
       "pluginVersion": "12.3.6",
       "targets": [
@@ -186,45 +194,41 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "node_memory_Shmem_bytes{instance=\"waiter.ucsd.edu:9100\"} + \r\nnode_memory_MemTotal_bytes{instance=\"waiter.ucsd.edu:9100\"}\r\n- node_memory_MemFree_bytes{instance=\"waiter.ucsd.edu:9100\"}\r\n- node_memory_Buffers_bytes{instance=\"waiter.ucsd.edu:9100\"}\r\n- node_memory_SReclaimable_bytes{instance=\"waiter.ucsd.edu:9100\"}\r\n- node_memory_Cached_bytes{instance=\"waiter.ucsd.edu:9100\"}\r\n",
+          "expr": "100 * (1 - node_memory_MemAvailable_bytes{instance=\"waiter.ucsd.edu:9100\"} / node_memory_MemTotal_bytes{instance=\"waiter.ucsd.edu:9100\"})",
+          "legendFormat": "mem",
           "instant": false,
-          "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
-      ],
-      "title": "Current Memory in Use",
-      "type": "gauge"
+      ]
     },
     {
+      "type": "gauge",
+      "title": "GPU Utilization (avg)",
+      "description": "",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
-      "description": "",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
+          "custom": {},
           "mappings": [],
-          "max": 31995788368282,
-          "min": 0,
+          "unit": "percent",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 26388279066624
+                "value": null
               }
             ]
           },
-          "unit": "bytes"
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
@@ -232,259 +236,23 @@
         "h": 6,
         "w": 4,
         "x": 8,
-        "y": 8
-      },
-      "id": 3,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.3.6",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "sum by(instance) (node_filesystem_size_bytes{instance=\"waiter.ucsd.edu:9100\",mountpoint=\"/\"} - node_filesystem_free_bytes{instance=\"waiter.ucsd.edu:9100\",mountpoint=\"/\"})",
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Current Disk Usage",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "default": true,
-        "type": "prometheus",
-        "uid": "de0e1fh1fk35sc"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 1073741824,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 966367641
-              }
-            ]
-          },
-          "unit": "Bps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 8,
-        "x": 12,
-        "y": 8
-      },
-      "id": 4,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.3.6",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "rate(node_network_transmit_bytes_total{instance=\"waiter.ucsd.edu:9100\",device=\"eno1np0\"}[30s])",
-          "instant": false,
-          "legendFormat": "Tx",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "rate(node_network_receive_bytes_total{instance=\"waiter.ucsd.edu:9100\",device=\"eno1np0\"}[30s])",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "Rx",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Current eno1np0 Network Activity",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "default": true,
-        "type": "prometheus",
-        "uid": "de0e1fh1fk35sc"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "#EAB839",
-                "value": 60
-              },
-              {
-                "color": "orange",
-                "value": 70
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "celsius"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 4,
-        "x": 20,
-        "y": 8
-      },
-      "id": 7,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.3.6",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "avg by(instance) (node_hwmon_temp_celsius{instance=\"waiter.ucsd.edu:9100\", chip=\"pci0000:00_0000:00:18_3\", sensor!=\"temp1\"})",
-          "fullMetaSearch": false,
-          "includeNullMetadata": true,
-          "instant": false,
-          "legendFormat": "{{sensor}}",
-          "range": true,
-          "refId": "A",
-          "useBackend": false
-        }
-      ],
-      "title": "Average CPU Temp",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "default": true,
-        "type": "prometheus",
-        "uid": "de0e1fh1fk35sc"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 400,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 360
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 4,
-        "x": 0,
-        "y": 14
+        "y": 5
       },
       "id": 5,
       "options": {
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
         "minVizHeight": 75,
         "minVizWidth": 75,
-        "orientation": "auto",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
           "fields": "",
           "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
+        }
       },
       "pluginVersion": "12.3.6",
       "targets": [
@@ -494,19 +262,19 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum by (instance) (DCGM_FI_DEV_GPU_UTIL{instance=\"waiter.ucsd.edu:9400\"})",
+          "expr": "avg(DCGM_FI_DEV_GPU_UTIL{instance=\"waiter.ucsd.edu:9400\"})",
+          "legendFormat": "gpu",
           "instant": false,
-          "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
-      ],
-      "title": "Current GPU Utilization",
-      "type": "gauge"
+      ]
     },
     {
+      "type": "gauge",
+      "title": "Max GPU Temp",
+      "description": "",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
@@ -515,47 +283,52 @@
           "color": {
             "mode": "thresholds"
           },
+          "custom": {},
           "mappings": [],
-          "max": 24570,
-          "min": 0,
+          "unit": "celsius",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 75
               },
               {
                 "color": "red",
-                "value": 22113
+                "value": 85
               }
             ]
           },
-          "unit": "mbytes"
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "gridPos": {
         "h": 6,
-        "w": 16,
-        "x": 4,
-        "y": 14
+        "w": 4,
+        "x": 12,
+        "y": 5
       },
       "id": 6,
       "options": {
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
         "minVizHeight": 75,
         "minVizWidth": 75,
-        "orientation": "auto",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
           "fields": "",
           "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
+        }
       },
       "pluginVersion": "12.3.6",
       "targets": [
@@ -564,21 +337,20 @@
             "type": "prometheus",
             "uid": "de0e1fh1fk35sc"
           },
-          "editorMode": "builder",
-          "exemplar": false,
-          "expr": "DCGM_FI_DEV_FB_USED{instance=\"waiter.ucsd.edu:9400\"}",
-          "instant": true,
-          "legendFormat": "{{device}}",
-          "range": false,
+          "editorMode": "code",
+          "expr": "max(DCGM_FI_DEV_GPU_TEMP{instance=\"waiter.ucsd.edu:9400\"})",
+          "legendFormat": "t",
+          "instant": false,
+          "range": true,
           "refId": "A"
         }
-      ],
-      "title": "Current GPU Memory Usage",
-      "type": "gauge"
+      ]
     },
     {
+      "type": "stat",
+      "title": "GPU Power",
+      "description": "",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
@@ -587,21 +359,84 @@
           "color": {
             "mode": "thresholds"
           },
+          "custom": {},
           "mappings": [],
+          "unit": "watt",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
+                "value": null
               }
             ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 16,
+        "y": 5
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
           },
-          "unit": "celsius"
+          "editorMode": "code",
+          "expr": "sum(DCGM_FI_DEV_POWER_USAGE{instance=\"waiter.ucsd.edu:9400\"})",
+          "legendFormat": "p",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Uptime",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {},
+          "mappings": [],
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -609,7 +444,7 @@
         "h": 6,
         "w": 4,
         "x": 20,
-        "y": 14
+        "y": 5
       },
       "id": 8,
       "options": {
@@ -617,17 +452,15 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
-        "percentChangeColorMode": "standard",
+        "textMode": "auto",
+        "wideLayout": true,
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
           "fields": "",
           "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        }
       },
       "pluginVersion": "12.3.6",
       "targets": [
@@ -636,25 +469,33 @@
             "type": "prometheus",
             "uid": "de0e1fh1fk35sc"
           },
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "exemplar": false,
-          "expr": "DCGM_FI_DEV_GPU_TEMP{instance=\"waiter.ucsd.edu:9400\"}",
-          "fullMetaSearch": false,
-          "includeNullMetadata": true,
-          "instant": true,
-          "legendFormat": "{{device}}",
-          "range": false,
-          "refId": "A",
-          "useBackend": false
+          "editorMode": "code",
+          "expr": "time() - node_boot_time_seconds{instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "up",
+          "instant": false,
+          "range": true,
+          "refId": "A"
         }
-      ],
-      "title": "GPU Temperature",
-      "type": "stat"
+      ]
     },
     {
+      "type": "row",
+      "title": "ZFS & Storage Health",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 11
+      },
+      "id": 9,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Pool Health",
+      "description": "0 = ONLINE. From the krg.zfs zpool-health textfile metric.",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
@@ -663,47 +504,62 @@
           "color": {
             "mode": "thresholds"
           },
-          "mappings": [],
-          "max": 210,
-          "min": 0,
+          "custom": {},
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "ONLINE",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "NOT OK",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
               },
               {
                 "color": "red",
-                "value": 200
+                "value": 1
               }
             ]
-          },
-          "unit": "watt"
+          }
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 6,
-        "w": 16,
+        "h": 5,
+        "w": 8,
         "x": 0,
-        "y": 20
+        "y": 12
       },
-      "id": 9,
+      "id": 10,
       "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
           "fields": "",
           "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
+        }
       },
       "pluginVersion": "12.3.6",
       "targets": [
@@ -712,112 +568,208 @@
             "type": "prometheus",
             "uid": "de0e1fh1fk35sc"
           },
-          "editorMode": "builder",
-          "exemplar": false,
-          "expr": "DCGM_FI_DEV_POWER_USAGE{instance=\"waiter.ucsd.edu:9400\"}",
-          "instant": true,
-          "legendFormat": "{{device}}",
-          "range": false,
+          "editorMode": "code",
+          "expr": "max by(pool)(zpool_health{instance=\"waiter.ucsd.edu:9100\"})",
+          "legendFormat": "{{pool}}",
+          "instant": false,
+          "range": true,
           "refId": "A"
         }
-      ],
-      "title": "GPU Power Use",
-      "type": "gauge"
+      ]
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 26
-      },
-      "id": 12,
-      "panels": [],
-      "title": "CPU History",
-      "type": "row"
-    },
-    {
+      "type": "stat",
+      "title": "ARC Hit Ratio",
+      "description": "Requires the node_exporter zfs collector.",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 30,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
+          "custom": {},
           "mappings": [],
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 80
+              },
+              {
+                "color": "green",
+                "value": 95
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 8,
+        "y": 12
+      },
+      "id": 11,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "100 * rate(node_zfs_arc_hits{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]) / (rate(node_zfs_arc_hits{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]) + rate(node_zfs_arc_misses{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
+          "legendFormat": "arc",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "ARC Size",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {},
+          "mappings": [],
+          "unit": "bytes",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 100
+                "value": null
               }
             ]
-          },
-          "unit": "percentunit"
+          }
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 27
+        "h": 5,
+        "w": 4,
+        "x": 12,
+        "y": 12
+      },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_zfs_arc_size{instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "arc",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Failed Units",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {},
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 16,
+        "y": 12
       },
       "id": 13,
       "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         }
       },
       "pluginVersion": "12.3.6",
@@ -828,313 +780,66 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum by(cpu) (rate(node_cpu_seconds_total{instance=\"waiter.ucsd.edu:9100\",mode!=\"idle\"}[$__interval]))",
+          "expr": "count(node_systemd_unit_state{instance=\"waiter.ucsd.edu:9100\",state=\"failed\"} == 1) or vector(0)",
+          "legendFormat": "failed",
           "instant": false,
-          "legendFormat": "CPU {{cpu}}",
           "range": true,
           "refId": "A"
         }
-      ],
-      "title": "CPU Usage",
-      "type": "timeseries"
+      ]
     },
     {
+      "type": "stat",
+      "title": "Exporters Up",
+      "description": "",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 30,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
+          "custom": {},
           "mappings": [],
+          "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": 0
+                "color": "red",
+                "value": null
               },
               {
-                "color": "red",
-                "value": 100
+                "color": "green",
+                "value": 1
               }
             ]
-          },
-          "unit": "percentunit"
+          }
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 35
-      },
-      "id": 35,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.3.6",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "sum by(mode) (rate(node_cpu_seconds_total{instance=\"waiter.ucsd.edu:9100\",mode!=\"idle\"}[$__interval]))",
-          "instant": false,
-          "legendFormat": "{{mode}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "CPU Usage",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "default": true,
-        "type": "prometheus",
-        "uid": "de0e1fh1fk35sc"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 60
-              }
-            ]
-          },
-          "unit": "celsius"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 43
+        "h": 5,
+        "w": 4,
+        "x": 20,
+        "y": 12
       },
       "id": 14,
       "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.3.6",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "node_hwmon_temp_celsius{instance=\"waiter.ucsd.edu:9100\", chip=\"pci0000:00_0000:00:18_3\", sensor!=\"temp1\"}",
-          "fullMetaSearch": false,
-          "includeNullMetadata": true,
-          "instant": false,
-          "legendFormat": "{{sensor}}",
-          "range": true,
-          "refId": "A",
-          "useBackend": false
-        }
-      ],
-      "title": "CPU Temp",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 51
-      },
-      "id": 30,
-      "panels": [],
-      "title": "Memory History",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "default": true,
-        "type": "prometheus",
-        "uid": "de0e1fh1fk35sc"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 30,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 52
-      },
-      "id": 31,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         }
       },
       "pluginVersion": "12.3.6",
@@ -1145,337 +850,19 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "node_memory_Shmem_bytes{instance=\"waiter.ucsd.edu:9100\"}",
-          "hide": false,
+          "expr": "count(up{instance=~\"waiter.*\"} == 1)",
+          "legendFormat": "up",
           "instant": false,
-          "legendFormat": "Shared",
-          "range": true,
-          "refId": "D"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "node_memory_SUnreclaim_bytes{instance=\"waiter.ucsd.edu:9100\"}",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "SUnreclaim",
-          "range": true,
-          "refId": "E"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "node_memory_SwapCached_bytes{instance=\"waiter.ucsd.edu:9100\"}",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "Swap Cached",
-          "range": true,
-          "refId": "F"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "node_memory_PageTables_bytes{instance=\"waiter.ucsd.edu:9100\"}",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "Page Tables",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "node_memory_MemTotal_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_MemFree_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_Buffers_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_SReclaimable_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_Cached_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_SUnreclaim_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_SwapCached_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_PageTables_bytes{instance=\"waiter.ucsd.edu:9100\"}",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "Application Memory",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Allocated Memory Usage",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "default": true,
-        "type": "prometheus",
-        "uid": "de0e1fh1fk35sc"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 30,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 60
-      },
-      "id": 34,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.3.6",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "node_memory_Shmem_bytes{instance=\"waiter.ucsd.edu:9100\"} + node_memory_SUnreclaim_bytes{instance=\"waiter.ucsd.edu:9100\"} + node_memory_SwapCached_bytes{instance=\"waiter.ucsd.edu:9100\"} + node_memory_PageTables_bytes{instance=\"waiter.ucsd.edu:9100\"} + node_memory_MemTotal_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_MemFree_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_Buffers_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_SReclaimable_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_Cached_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_SUnreclaim_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_SwapCached_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_PageTables_bytes{instance=\"waiter.ucsd.edu:9100\"}",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "Used",
-          "range": true,
-          "refId": "D"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "node_memory_Cached_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_Shmem_bytes{instance=\"waiter.ucsd.edu:9100\"}",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "Cached",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "node_memory_SReclaimable_bytes{instance=\"waiter.ucsd.edu:9100\"}",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "SReclaimable",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "node_memory_Buffers_bytes{instance=\"waiter.ucsd.edu:9100\"}",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "Buffers",
-          "range": true,
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "node_memory_MemFree_bytes{instance=\"waiter.ucsd.edu:9100\"}",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "Free Memory",
-          "range": true,
-          "refId": "E"
-        }
-      ],
-      "title": "Total Memory Usage",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 68
-      },
-      "id": 15,
-      "panels": [],
-      "title": "GPU History",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "default": true,
-        "type": "prometheus",
-        "uid": "de0e1fh1fk35sc"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 30,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 360
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 69
-      },
-      "id": 16,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.3.6",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "(DCGM_FI_DEV_GPU_UTIL{instance=\"waiter.ucsd.edu:9400\"})",
-          "instant": false,
-          "legendFormat": "{{device}}",
           "range": true,
           "refId": "A"
         }
-      ],
-      "title": "Current GPU Utilization",
-      "type": "timeseries"
+      ]
     },
     {
+      "type": "timeseries",
+      "title": "Filesystem Usage %",
+      "description": "scratchpool overflow mover triggers at 85% (\u219275%).",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
@@ -1485,62 +872,340 @@
             "mode": "palette-classic"
           },
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
             "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
             },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "thresholdsStyle": {
               "mode": "off"
             }
           },
           "mappings": [],
+          "unit": "percent",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
               },
               {
                 "color": "red",
-                "value": 22113
+                "value": 85
               }
             ]
           },
-          "unit": "mbytes"
+          "min": 0
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 9,
-        "w": 24,
+        "h": 8,
+        "w": 12,
         "x": 0,
-        "y": 77
+        "y": 17
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "100 - node_filesystem_avail_bytes{fstype!~\"tmpfs|devtmpfs|squashfs|overlay|ramfs|nsfs|fuse.*\",instance=\"waiter.ucsd.edu:9100\"} * 100 / node_filesystem_size_bytes",
+          "legendFormat": "{{mountpoint}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Mounts",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false,
+            "filterable": true
+          },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Size"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Avail"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Used %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "#EAB839",
+                      "value": 80
+                    },
+                    {
+                      "color": "red",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "id": 16,
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "fields": ""
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_filesystem_size_bytes{fstype!~\"tmpfs|devtmpfs|squashfs|overlay|ramfs|nsfs|fuse.*\",instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_filesystem_avail_bytes{fstype!~\"tmpfs|devtmpfs|squashfs|overlay|ramfs|nsfs|fuse.*\",instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "100 - node_filesystem_avail_bytes{fstype!~\"tmpfs|devtmpfs|squashfs|overlay|ramfs|nsfs|fuse.*\",instance=\"waiter.ucsd.edu:9100\"} * 100 / node_filesystem_size_bytes",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "C"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true,
+              "device": true,
+              "fstype": true
+            },
+            "renameByName": {
+              "Value #A": "Size",
+              "Value #B": "Avail",
+              "Value #C": "Used %",
+              "mountpoint": "Mount"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "ARC / L2ARC Size",
+      "description": "ARC capped at 96 GiB on waiter. Requires the zfs collector.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 25
       },
       "id": 17,
       "options": {
@@ -1551,9 +1216,8 @@
           "showLegend": true
         },
         "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "pluginVersion": "12.3.6",
@@ -1563,21 +1227,44 @@
             "type": "prometheus",
             "uid": "de0e1fh1fk35sc"
           },
-          "editorMode": "builder",
-          "exemplar": false,
-          "expr": "DCGM_FI_DEV_FB_USED{instance=\"waiter.ucsd.edu:9400\"}",
+          "editorMode": "code",
+          "expr": "node_zfs_arc_size{instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "ARC",
           "instant": false,
-          "legendFormat": "{{device}}",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_zfs_arc_c_max{instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "ARC max (cap)",
+          "instant": false,
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_zfs_arc_l2_size{instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "L2ARC",
+          "instant": false,
+          "range": true,
+          "refId": "C"
         }
-      ],
-      "title": "Current GPU Memory Usage",
-      "type": "timeseries"
+      ]
     },
     {
+      "type": "timeseries",
+      "title": "ARC / L2ARC Hit Ratio",
+      "description": "",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
@@ -1587,62 +1274,52 @@
             "mode": "palette-classic"
           },
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
             "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
             },
             "thresholdsStyle": {
               "mode": "off"
             }
           },
           "mappings": [],
+          "unit": "percent",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
+                "value": null
               }
             ]
           },
-          "unit": "celsius"
+          "min": 0
         },
         "overrides": []
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 86
+        "w": 12,
+        "x": 12,
+        "y": 25
       },
       "id": 18,
       "options": {
@@ -1653,9 +1330,8 @@
           "showLegend": true
         },
         "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "pluginVersion": "12.3.6",
@@ -1665,104 +1341,190 @@
             "type": "prometheus",
             "uid": "de0e1fh1fk35sc"
           },
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "exemplar": false,
-          "expr": "DCGM_FI_DEV_GPU_TEMP{instance=\"waiter.ucsd.edu:9400\"}",
-          "fullMetaSearch": false,
-          "includeNullMetadata": true,
+          "editorMode": "code",
+          "expr": "100 * rate(node_zfs_arc_hits{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]) / (rate(node_zfs_arc_hits{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]) + rate(node_zfs_arc_misses{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
+          "legendFormat": "ARC",
           "instant": false,
-          "legendFormat": "{{device}}",
           "range": true,
-          "refId": "A",
-          "useBackend": false
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "100 * rate(node_zfs_arc_l2_hits{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]) / (rate(node_zfs_arc_l2_hits{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]) + rate(node_zfs_arc_l2_misses{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
+          "legendFormat": "L2ARC",
+          "instant": false,
+          "range": true,
+          "refId": "B"
         }
-      ],
-      "title": "GPU Temperature",
-      "type": "timeseries"
+      ]
     },
     {
+      "type": "row",
+      "title": "CPU",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 94
+        "y": 33
       },
       "id": 19,
-      "panels": [],
-      "title": "Network Activity",
-      "type": "row"
+      "panels": []
     },
     {
+      "type": "timeseries",
+      "title": "CPU Busy % (per core)",
+      "description": "",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
-      "description": "",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
             "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
             },
             "thresholdsStyle": {
               "mode": "off"
             }
           },
           "mappings": [],
-          "min": 0,
+          "unit": "percent",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 966367641
+                "value": null
               }
             ]
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
+        "h": 8,
         "w": 24,
         "x": 0,
-        "y": 95
+        "y": 34
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "100 * (1 - rate(node_cpu_seconds_total{mode=\"idle\",instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
+          "legendFormat": "core {{cpu}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU by Mode",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 42
       },
       "id": 21,
       "options": {
@@ -1773,9 +1535,1003 @@
           "showLegend": true
         },
         "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "sum by(mode)(rate(node_cpu_seconds_total{mode!=\"idle\",instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
+          "legendFormat": "{{mode}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU Temperature",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "celsius",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 42
+      },
+      "id": 22,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_hwmon_temp_celsius{instance=\"waiter.ucsd.edu:9100\",chip=\"pci0000:00_0000:00:18_3\",sensor!=\"temp1\"}",
+          "legendFormat": "{{sensor}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Memory",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 50
+      },
+      "id": 23,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory Usage",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 51
+      },
+      "id": 24,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_memory_MemTotal_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_MemFree_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_Buffers_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_Cached_bytes{instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "Used",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_memory_Cached_bytes{instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "Cached",
+          "instant": false,
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_memory_Buffers_bytes{instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "Buffers",
+          "instant": false,
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_memory_MemFree_bytes{instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "Free",
+          "instant": false,
+          "range": true,
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Swap Used",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 51
+      },
+      "id": 25,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_memory_SwapTotal_bytes{instance=\"waiter.ucsd.edu:9100\"} - node_memory_SwapFree_bytes{instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "Swap",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "GPU",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 59
+      },
+      "id": 26,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU Utilization",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 60
+      },
+      "id": 27,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "DCGM_FI_DEV_GPU_UTIL{instance=\"waiter.ucsd.edu:9400\"}",
+          "legendFormat": "gpu{{gpu}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU Framebuffer Used",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "decmbytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 60
+      },
+      "id": 28,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "DCGM_FI_DEV_FB_USED{instance=\"waiter.ucsd.edu:9400\"}",
+          "legendFormat": "gpu{{gpu}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU Temperature",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "celsius",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 68
+      },
+      "id": 29,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "DCGM_FI_DEV_GPU_TEMP{instance=\"waiter.ucsd.edu:9400\"}",
+          "legendFormat": "gpu{{gpu}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU Power",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "watt",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 68
+      },
+      "id": 30,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "DCGM_FI_DEV_POWER_USAGE{instance=\"waiter.ucsd.edu:9400\"}",
+          "legendFormat": "gpu{{gpu}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU XID Errors (flat 0 = good)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 68
+      },
+      "id": 31,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "DCGM_FI_DEV_XID_ERRORS{instance=\"waiter.ucsd.edu:9400\"}",
+          "legendFormat": "gpu{{gpu}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Network",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 76
+      },
+      "id": 32,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Uplink (eno1np0)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "Bps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 77
+      },
+      "id": 33,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "rate(node_network_receive_bytes_total{instance=\"waiter.ucsd.edu:9100\",device=\"eno1np0\"}[$__rate_interval])",
+          "legendFormat": "Rx",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "rate(node_network_transmit_bytes_total{instance=\"waiter.ucsd.edu:9100\",device=\"eno1np0\"}[$__rate_interval])",
+          "legendFormat": "Tx",
+          "instant": false,
+          "range": true,
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Active TCP Connections",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 77
+      },
+      "id": 34,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "pluginVersion": "12.3.6",
@@ -1787,77 +2543,65 @@
           },
           "editorMode": "code",
           "expr": "node_netstat_Tcp_CurrEstab{instance=\"waiter.ucsd.edu:9100\"}",
+          "legendFormat": "established",
           "instant": false,
-          "legendFormat": "Active Connections",
           "range": true,
           "refId": "A"
         }
-      ],
-      "title": "Active Connections",
-      "type": "timeseries"
+      ]
     },
     {
+      "type": "timeseries",
+      "title": "All Interfaces (Rx)",
+      "description": "",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
-      "description": "",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
             "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
             },
             "thresholdsStyle": {
               "mode": "off"
             }
           },
           "mappings": [],
-          "min": 0,
+          "unit": "Bps",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 966367641
+                "value": null
               }
             ]
           },
-          "unit": "Bps"
+          "min": 0
         },
         "overrides": []
       },
@@ -1865,9 +2609,9 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 102
+        "y": 85
       },
-      "id": 24,
+      "id": 35,
       "options": {
         "legend": {
           "calcs": [],
@@ -1876,9 +2620,8 @@
           "showLegend": true
         },
         "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "pluginVersion": "12.3.6",
@@ -1889,461 +2632,89 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "rate(node_network_transmit_bytes_total{instance=\"waiter.ucsd.edu:9100\",device=\"eno1np0\"}[$__interval])",
+          "expr": "rate(node_network_receive_bytes_total{instance=\"waiter.ucsd.edu:9100\",device!=\"lo\"}[$__rate_interval])",
+          "legendFormat": "{{device}}",
           "instant": false,
-          "legendFormat": "Tx",
           "range": true,
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "rate(node_network_receive_bytes_total{instance=\"waiter.ucsd.edu:9100\",device=\"eno1np0\"}[$__interval])",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "Rx",
-          "range": true,
-          "refId": "B"
         }
-      ],
-      "title": "eno1np0",
-      "type": "timeseries"
+      ]
     },
     {
-      "datasource": {
-        "default": true,
-        "type": "prometheus",
-        "uid": "de0e1fh1fk35sc"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 966367641
-              }
-            ]
-          },
-          "unit": "Bps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 109
-      },
-      "id": 20,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.3.6",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "rate(node_network_transmit_bytes_total{instance=\"waiter.ucsd.edu:9100\",device=\"lo\"}[30s])",
-          "instant": false,
-          "legendFormat": "Tx",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "rate(node_network_receive_bytes_total{instance=\"waiter.ucsd.edu:9100\",device=\"lo\"}[30s])",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "Rx",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "lo",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "default": true,
-        "type": "prometheus",
-        "uid": "de0e1fh1fk35sc"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 966367641
-              }
-            ]
-          },
-          "unit": "Bps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 115
-      },
-      "id": 23,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.3.6",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "rate(node_network_transmit_bytes_total{instance=\"waiter.ucsd.edu:9100\",device=\"br-125925f6d3bc\"}[$__interval])",
-          "instant": false,
-          "legendFormat": "Tx",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "rate(node_network_receive_bytes_total{instance=\"waiter.ucsd.edu:9100\",device=\"br-125925f6d3bc\"}[$__interval])",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "Rx",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "br-125925f6d3bc",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "default": true,
-        "type": "prometheus",
-        "uid": "de0e1fh1fk35sc"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 966367641
-              }
-            ]
-          },
-          "unit": "Bps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 121
-      },
-      "id": 22,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.3.6",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "rate(node_network_transmit_bytes_total{instance=\"waiter.ucsd.edu:9100\",device=\"docker0\"}[30s])",
-          "instant": false,
-          "legendFormat": "Tx",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "rate(node_network_receive_bytes_total{instance=\"waiter.ucsd.edu:9100\",device=\"docker0\"}[30s])",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "Rx",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "docker0",
-      "type": "timeseries"
-    },
-    {
+      "type": "row",
+      "title": "Storage I/O",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 127
+        "y": 92
       },
-      "id": 25,
-      "panels": [],
-      "title": "Storage Activity",
-      "type": "row"
+      "id": 36,
+      "panels": []
     },
     {
+      "type": "timeseries",
+      "title": "Disk Throughput",
+      "description": "",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
-      "description": "",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
             "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
             },
             "thresholdsStyle": {
               "mode": "off"
             }
           },
           "mappings": [],
+          "unit": "binBps",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 11200621250560
+                "value": null
               }
             ]
           },
-          "unit": "bytes"
+          "min": 0
         },
         "overrides": []
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
+        "w": 12,
         "x": 0,
-        "y": 128
+        "y": 93
       },
-      "id": 26,
+      "id": 37,
       "options": {
         "legend": {
           "calcs": [],
@@ -2352,9 +2723,8 @@
           "showLegend": true
         },
         "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "pluginVersion": "12.3.6",
@@ -2365,107 +2735,9 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum by(instance) (node_filesystem_size_bytes{instance=\"waiter.ucsd.edu:9100\",mountpoint=\"/\"} - node_filesystem_free_bytes{instance=\"waiter.ucsd.edu:9100\",mountpoint=\"/\"})",
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Disk Usage on /",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "default": true,
-        "type": "prometheus",
-        "uid": "de0e1fh1fk35sc"
-      },
-      "description": "",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "binBps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 136
-      },
-      "id": 32,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.3.6",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "de0e1fh1fk35sc"
-          },
-          "editorMode": "code",
-          "expr": "sum by (instance) (rate(node_disk_read_bytes_total{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
-          "instant": false,
+          "expr": "sum(rate(node_disk_read_bytes_total{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
           "legendFormat": "Read",
+          "instant": false,
           "range": true,
           "refId": "A"
         },
@@ -2475,84 +2747,76 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum by (instance) (rate(node_disk_written_bytes_total{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
-          "hide": false,
-          "instant": false,
+          "expr": "sum(rate(node_disk_written_bytes_total{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
           "legendFormat": "Write",
+          "instant": false,
           "range": true,
           "refId": "B"
         }
-      ],
-      "title": "Disk Transfer",
-      "type": "timeseries"
+      ]
     },
     {
+      "type": "timeseries",
+      "title": "Disk IOPS",
+      "description": "",
       "datasource": {
-        "default": true,
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
       },
-      "description": "",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
             "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
             },
             "thresholdsStyle": {
               "mode": "off"
             }
           },
           "mappings": [],
+          "unit": "iops",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
               }
             ]
           },
-          "unit": "iops"
+          "min": 0
         },
         "overrides": []
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 144
+        "w": 12,
+        "x": 12,
+        "y": 93
       },
-      "id": 33,
+      "id": 38,
       "options": {
         "legend": {
           "calcs": [],
@@ -2561,9 +2825,8 @@
           "showLegend": true
         },
         "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "pluginVersion": "12.3.6",
@@ -2573,39 +2836,31 @@
             "type": "prometheus",
             "uid": "de0e1fh1fk35sc"
           },
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "sum by(instance) (rate(node_disk_reads_completed_total{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
-          "fullMetaSearch": false,
-          "includeNullMetadata": true,
-          "instant": false,
+          "editorMode": "code",
+          "expr": "sum(rate(node_disk_reads_completed_total{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
           "legendFormat": "Read",
+          "instant": false,
           "range": true,
-          "refId": "A",
-          "useBackend": false
+          "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "de0e1fh1fk35sc"
           },
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "sum by(instance) (rate(node_disk_writes_completed_total{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
-          "fullMetaSearch": false,
-          "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
+          "editorMode": "code",
+          "expr": "sum(rate(node_disk_writes_completed_total{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval]))",
           "legendFormat": "Write",
+          "instant": false,
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "B"
         }
-      ],
-      "title": "Disk IOPS",
-      "type": "timeseries"
+      ]
     },
     {
+      "type": "timeseries",
+      "title": "Per-Disk Throughput (read)",
+      "description": "",
       "datasource": {
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
@@ -2616,46 +2871,130 @@
             "mode": "palette-classic"
           },
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
             "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
             },
             "thresholdsStyle": {
               "mode": "off"
             }
           },
           "mappings": [],
+          "unit": "binBps",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 101
+      },
+      "id": 39,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "rate(node_disk_read_bytes_total{instance=\"waiter.ucsd.edu:9100\"}[$__rate_interval])",
+          "legendFormat": "{{device}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "NVMe / Drive Temperature",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "celsius",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -2663,17 +3002,17 @@
               }
             ]
           },
-          "unit": "celsius"
+          "min": 0
         },
         "overrides": []
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 152
+        "w": 12,
+        "x": 12,
+        "y": 101
       },
-      "id": 36,
+      "id": 40,
       "options": {
         "legend": {
           "calcs": [],
@@ -2682,33 +3021,35 @@
           "showLegend": true
         },
         "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "pluginVersion": "12.3.6",
       "targets": [
         {
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "node_hwmon_temp_celsius{instance=\"waiter.ucsd.edu:9100\", chip=~\"nvme_nvme0|nvme_nvme2|nvme_nvme3|nvme_nvme1\"}",
-          "fullMetaSearch": false,
-          "includeNullMetadata": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_hwmon_temp_celsius{instance=\"waiter.ucsd.edu:9100\",chip=~\"nvme_nvme.*\"}",
           "legendFormat": "{{chip}}",
+          "instant": false,
           "range": true,
-          "refId": "A",
-          "useBackend": false
+          "refId": "A"
         }
-      ],
-      "title": "NVME Temp",
-      "type": "timeseries"
+      ]
     }
   ],
   "preload": false,
   "refresh": "auto",
   "schemaVersion": 42,
-  "tags": [],
+  "tags": [
+    "krg",
+    "waiter",
+    "compute"
+  ],
   "templating": {
     "list": []
   },
@@ -2718,7 +3059,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "KRG Waiter",
+  "title": "KRG \u00b7 Waiter",
   "uid": "ee0e2rvzbh2wwf",
   "weekStart": ""
 }
