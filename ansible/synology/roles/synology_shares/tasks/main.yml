@@ -30,6 +30,7 @@
   ansible.builtin.include_vars:
     file: "{{ synology_shares_spec }}"
     name: shares_spec
+  tags: [synology_shares]
 
 - name: Probe each share (rc != 0 == missing)
   # DSM CLIs return 255 for "not found", which collides with SSH's own 255
@@ -47,6 +48,7 @@
   loop: "{{ shares_spec.shares | default([]) }}"
   loop_control:
     label: "{{ item.name }}"
+  tags: [synology_shares]
 
 # --- WOULD-CREATE report under --check -----------------------------------------
 # `raw:` doesn't honor ansible_check_mode (the module has no check-mode support;
@@ -63,6 +65,7 @@
   loop_control:
     label: "{{ item.item.name }}"
   changed_when: true   # reflect intent in --check --diff output
+  tags: [synology_shares]
 
 - name: Create missing shares
   # synoshare --add <name> <desc> <path> <na> <rw> <ro> <browsable 0|1> <adv_privilege 0~7>
@@ -82,6 +85,7 @@
   loop: "{{ synoshare_probe.results }}"
   loop_control:
     label: "{{ item.item.name }}"
+  tags: [synology_shares]
   # NOTE — follow-ups (all need the exporter's current-state diff to stay idempotent):
   #   * desc/browse drift correction: synoshare --setdesc <name> <desc> / --setbrowse <name> {0|1}
   #   * recycle bin (spec `recycle_bin`): NO synoshare arg — separate file-service setting
