@@ -1,0 +1,71 @@
+# DSM web-login SSO for e4e-nas — point the DSM UI (`:6021`) at Authentik via
+# OpenID Connect and make SSO the DEFAULT login, demoting the local password
+# form. Source of truth for the `synology_sso` Ansible role; git is truth, UI =
+# drift (ADR 0001).
+#
+# IaC home: `synology_sso` (apply_sso.py over synowebapi, GET→diff→SET). The
+# IdP side is OpenTofu: terraform/authentik `authentik_provider_oauth2.e4e_nas`
+# (client_id "e4e-nas", app slug "e4e-nas") mints the client; its client_secret
+# is written to OpenBao at `secret/e4e-nas/dsm-sso-oidc` (vault_secrets.tf) and
+# reaches the role as the DSM_SSO_OIDC_CLIENT_SECRET env var (never argv/logs).
+#
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ VERIFIED + LIVE 2026-06-05 — DSM web login via Authentik OIDC works end-to- ║
+# ║ end (login round-trip confirmed). Three APIs: SYNO.Core.Directory.OIDC.SSO  ║
+# ║ (profile incl. authorize/token endpoints), SYNO.Core.Directory.SSO.Profile  ║
+# ║ (ACTIVATE — sso_profile="oidc"+sso_enable, what renders the login button),  ║
+# ║ and SYNO.Core.Directory.SSO.Setting (default-login). The client_secret is   ║
+# ║ materialized from OpenBao by deploy/deploy-ansible.sh, so the role runs in   ║
+# ║ the unattended converge. `--check --diff` does read-only GETs (safe).       ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+#
+# ANTI-LOCKOUT: `set_as_default: true` makes Authentik the default login, but
+# DSM keeps the local password form reachable as a fallback link — and the
+# break-glass `e4e-admin` is key-only SSH (synology_ssh), which bypasses the web
+# login entirely. So a broken IdP / OIDC misconfig can never lock the box out.
+# Do NOT add a "hide local login" toggle without re-checking that path.
+
+oidc:
+  enable: true
+  provider_name: Authentik
+
+  # MUST match terraform/authentik `authentik_provider_oauth2.e4e_nas`
+  # (client_id) and `authentik_application.e4e_nas` (slug → issuer path). The
+  # role derives DSM's `oidc_wellknown` from this issuer by appending
+  # `.well-known/openid-configuration` (DSM auto-discovers the auth/token
+  # endpoints from it, so we don't set them).
+  client_id: e4e-nas
+  issuer_url: https://auth.krg.ucsd.edu/application/o/e4e-nas/
+
+  # DSM stores the authorize/token endpoints EXPLICITLY — it does not derive them
+  # from oidc_wellknown on an API set, so without these the SSO flow fails with
+  # "SSO not properly configured". Values are from the issuer's discovery doc
+  # (<issuer>.well-known/openid-configuration); for Authentik they're global (not
+  # under the app slug). jwks/userinfo are fetched from the wellknown at runtime.
+  authorization_endpoint: https://auth.krg.ucsd.edu/application/o/authorize/
+  token_endpoint: https://auth.krg.ucsd.edu/application/o/token/
+
+  # DSM's OIDC redirect/callback (admin-chosen — DSM doesn't impose a path) →
+  # `oidc_redirect_uri`. MUST be byte-identical to a value in the terraform
+  # provider's `allowed_redirect_uris` (currently `https://e4e-nas.ucsd.edu:6021`,
+  # strict). If the first login fails on a redirect_uri mismatch, the exact URI
+  # DSM sent shows in Authentik's event log — update BOTH this and the .tf.
+  redirect_uri: https://e4e-nas.ucsd.edu:6021
+
+  # OIDC scopes DSM requests → `oidc_scope`. `profile` carries preferred_username
+  # (the account-match claim below); `email` for completeness.
+  scope: openid profile email
+
+  # Which OIDC claim DSM matches to a local/AD account → `oidc_user_claim`. DSM
+  # users come from KRG.LOCAL via winbind (synology_ad); `preferred_username`
+  # carries the AD sAMAccountName from Authentik (LDAP-sourced), so it's 1:1.
+  account_attribute: preferred_username
+
+  # ANTI-LOCKOUT → `oidc_allow_local_user`: keep local/AD accounts able to
+  # authenticate alongside SSO — notably the break-glass `e4e-admin` DSM account.
+  # Leave true; see the ANTI-LOCKOUT note above.
+  allow_local_user: true
+
+  # "Default to Authentik instead of the password UI" → SYNO.Core.Directory.
+  # SSO.Setting `sso_default_login`. See ANTI-LOCKOUT above.
+  set_as_default: true
