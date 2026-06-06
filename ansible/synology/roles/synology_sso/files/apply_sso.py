@@ -54,6 +54,13 @@ SETTING_API = "SYNO.Core.Directory.SSO.Setting"
 SETTING_API_VERSION = "1"
 DEFAULT_LOGIN_FIELD = "sso_default_login"
 
+# Master on/off for the SSO service. Configuring OIDC.SSO is NOT enough — DSM only
+# renders the SSO login button (and accepts the redirect) once enable_sso is set
+# here. The wizard's profile Save doesn't flip it; a separate enable control does.
+MASTER_API = "SYNO.Core.Directory.SSO"
+MASTER_API_VERSION = "1"
+ENABLE_FIELD = "enable_sso"
+
 # OIDC client_secret: from env (write-only on argv), DSM field name.
 _SECRET_ENV_VAR = "DSM_SSO_OIDC_CLIENT_SECRET"
 _SECRET_FIELD = "oidc_client_secret"
@@ -143,6 +150,7 @@ def do_oidc(a):
     desired_default = _bool(a.set_as_default)
 
     cur_oidc = _exec(OIDC_API, OIDC_API_VERSION, "get")["data"]
+    cur_master = _exec(MASTER_API, MASTER_API_VERSION, "get")["data"]
     cur_setting = _exec(SETTING_API, SETTING_API_VERSION, "get")["data"]
 
     # OIDC profile drift (visible fields + the silently-diffed secret).
@@ -151,6 +159,12 @@ def do_oidc(a):
     if cur_oidc.get(_SECRET_FIELD) != secret:
         oidc_drift[_SECRET_FIELD] = "<changed>"      # value redacted, never printed
 
+    # Master SSO-service switch — without this DSM shows no login button (the
+    # profile alone isn't enough). Desired = on (we only reach here when enabling).
+    master_drift = {}
+    if cur_master.get(ENABLE_FIELD) is not True:
+        master_drift[ENABLE_FIELD] = {"current": cur_master.get(ENABLE_FIELD), "desired": True}
+
     # Default-login toggle drift (independent API).
     setting_drift = {}
     if cur_setting.get(DEFAULT_LOGIN_FIELD) != desired_default:
@@ -158,14 +172,21 @@ def do_oidc(a):
             "current": cur_setting.get(DEFAULT_LOGIN_FIELD), "desired": desired_default}
 
     drift = dict(oidc_drift)
+    drift.update(master_drift)
     drift.update(setting_drift)
 
     def apply():
+        # Order: configure the profile, THEN enable the service, THEN set default.
         if oidc_drift:
             payload = dict(desired_oidc)
             payload["profile"] = OIDC_PROFILE          # configure + activate
             payload[_SECRET_FIELD] = secret            # write-only; never in drift
             r = _exec(OIDC_API, OIDC_API_VERSION, "set", *_args_from(payload))
+            if not r.get("success"):
+                return r
+        if master_drift:
+            r = _exec(MASTER_API, MASTER_API_VERSION, "set",
+                      *_args_from({ENABLE_FIELD: True}))
             if not r.get("success"):
                 return r
         if setting_drift:

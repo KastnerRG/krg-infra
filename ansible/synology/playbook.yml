@@ -46,13 +46,17 @@
     # DSM web-login SSO — point DSM (:6021) at Authentik via OIDC and default to
     # it (local password form stays reachable for break-glass; see role README).
     # e4e-nas-specific (ties to the lab Authentik), so it's here rather than in
-    # the universal synology_base. Tagged so an operator can target it alone:
+    # the universal synology_base. Like synology_certificate, its tasks are tagged
+    # [synology_sso, web] INSIDE tasks/main.yml (not at the play level) so the
+    # `tags: [export, never]` on its drift-export block stays effective — a
+    # play-level role tag composes down onto imported tasks and overrides `never`,
+    # which would drag the (secret-bearing) export into every --tags=synology_sso
+    # run. Target it alone with:
     #   ansible-playbook playbook.yml --tags=synology_sso \
     #     -e dsm_sso_oidc_client_secret="$(bao kv get -field=client_secret secret/e4e-nas/dsm-sso-oidc)"
-    # GATED on discovery: the DSM SSO-Client API shape is a best-guess pending a
-    # wizard capture (role README "Discovery") — verify with `--check` before the
-    # first real apply / before flipping it into the unattended converge.
-    - { role: synology_sso, tags: ['synology_sso', 'web'] }
+    # API shape verified (role README "Discovery"); run `--check` + a login round-
+    # trip before flipping it into the unattended converge.
+    - synology_sso
 
     # --- WORKLOAD LAYER (containerised services on the NAS) ---
     # Garage S3 — replaces the prior terraform `synology_container_project` after

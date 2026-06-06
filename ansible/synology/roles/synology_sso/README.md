@@ -20,7 +20,8 @@ independently, GET → diff → SET only on drift):
 
 | API | method | what it does |
 |---|---|---|
-| `SYNO.Core.Directory.OIDC.SSO` | `set` (`profile="oidc"`) | the OIDC profile: `oidc_name`, `oidc_wellknown` (discovery URL — DSM derives the auth/token endpoints from it), `oidc_client_id`, `oidc_client_secret`, `oidc_redirect_uri`, `oidc_scope`, `oidc_user_claim`, `oidc_allow_local_user`. Sending it with `profile="oidc"` both configures **and activates** — there's no separate enable call. |
+| `SYNO.Core.Directory.OIDC.SSO` | `set` (`profile="oidc"`) | the OIDC profile: `oidc_name`, `oidc_wellknown` (discovery URL — DSM derives the auth/token endpoints from it), `oidc_client_id`, `oidc_client_secret`, `oidc_redirect_uri`, `oidc_scope`, `oidc_user_claim`, `oidc_allow_local_user`. |
+| `SYNO.Core.Directory.SSO` | `set` | `enable_sso` — the **master SSO-service switch**. Configuring the profile is NOT enough: DSM only renders the SSO login button once this is on. Applied *after* the profile. |
 | `SYNO.Core.Directory.SSO.Setting` | `set` | `sso_default_login` — the "default to SSO instead of the password form" toggle. |
 
 The set is **partial** (managed fields + `profile` only — matching the wizard,

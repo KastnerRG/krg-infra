@@ -24,6 +24,7 @@
   ansible.builtin.include_vars:
     file: "{{ synology_sso_spec }}"
     name: sso_spec
+  tags: [synology_sso, web]
 
 # Fail-soft: if SSO is enabled in spec but no client_secret was materialized,
 # SKIP (warn) rather than fail the whole DSM converge — the box keeps its current
@@ -37,6 +38,7 @@
   when:
     - sso_spec.oidc.enable | default(false) | bool
     - (dsm_sso_oidc_client_secret | default('')) | length == 0
+  tags: [synology_sso, web]
 
 - name: Apply DSM OIDC SSO config (OIDC.SSO + SSO.Setting; GET → diff → SET)
   # oidc_wellknown is the full discovery URL: DSM derives the authorization/token
@@ -64,6 +66,7 @@
   when:
     - sso_spec.oidc.enable | default(false) | bool
     - (dsm_sso_oidc_client_secret | default('')) | length > 0
+  tags: [synology_sso, web]
 
 # --- Drift export (read-only) — only with `--tags export` -----------------------
 - name: Export live state for drift detection
