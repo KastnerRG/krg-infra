@@ -57,6 +57,7 @@ the OIDC secret which tofu writes):
 | `secret/e4e-nas/users` | `e4e-admin`, `e4e-automation` (passwords) | ✅ | `secrets-syno.yml` `synology_user_passwords.*`; `e4e-automation` = the tofu `dsm_password` |
 | `secret/e4e-nas/snmp` | `auth_password`, `priv_password` | ✅ | `secrets-syno.yml` `snmp_v3_*` |
 | `secret/e4e-nas/garage-ui-oidc` | `client_secret` | ⬜ | **tofu** (`terraform/authentik`) |
+| `secret/e4e-nas/dsm-sso-oidc` | `client_secret` | ⬜ | **tofu** (`terraform/authentik`) — DSM web-login SSO (`synology_sso`) |
 | `secret/e4e-nas/hyper-backup` | `<job>: <password>` | ⬜ | `secrets-hb.yml` (`{}` today — no jobs) |
 | `secret/e4e-nas/ad` | `join_password` | ⬜ | one-time Domain-Admin pw for the AD join |
 

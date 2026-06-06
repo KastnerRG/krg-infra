@@ -14,9 +14,9 @@
 #
 # All NAS secrets are materialized from OpenBao below (#110): garage + users
 # (break-glass e4e-admin + e4e-automation API account; humans come from AD via
-# winbind, not created here) + snmp are REQUIRED; garage-ui-oidc + hyper-backup +
-# ad-join are optional. A missing REQUIRED secret fails the synology apply — it
-# never falls through to an empty password.
+# winbind, not created here) + snmp are REQUIRED; garage-ui-oidc + dsm-sso-oidc +
+# hyper-backup + ad-join are optional. A missing REQUIRED secret fails the synology
+# apply — it never falls through to an empty password.
 #
 # OPERATOR PRECONDITION for the FULL run: the spec must already capture intended
 # live state (bring-up — pre-flight captures + .dss backup + `--check --diff`
@@ -88,10 +88,11 @@ else
 
     # jq escapes every value (no quote/YAML injection). REQUIRED groups
     # (garage / users / snmp) abort the run if unreadable — never fall through to
-    # an empty password. OPTIONAL groups (garage-ui-oidc / hyper-backup / ad-join)
-    # are omitted when absent: garage-ui-oidc only exists after terraform/authentik
-    # runs and is only needed when spec has a `ui:` block; hyper-backup jobs are
-    # empty today; ad_join_password is a one-time join input. Layout: #110 /
+    # an empty password. OPTIONAL groups (garage-ui-oidc / dsm-sso-oidc /
+    # hyper-backup / ad-join) are omitted when absent: garage-ui-oidc + dsm-sso-oidc
+    # only exist after terraform/authentik runs (and are needed only when spec has a
+    # `ui:` / `oidc:` block respectively); hyper-backup jobs are empty today;
+    # ad_join_password is a one-time join input. Layout: #110 /
     # docs/krg-deploy-ansible-setup.md "Seeding".
     # echo the error to STDERR (a `$(...)`-captured stdout would hide it) and
     # return non-zero so the `|| exit 1` aborts the synology apply (→ FAILED).
@@ -100,6 +101,7 @@ else
     users="$(_req secret/e4e-nas/users)"   || exit 1   # {e4e-admin: <pw>, e4e-automation: <pw>}
     snmp="$(_req secret/e4e-nas/snmp)"     || exit 1   # {auth_password, priv_password}
     oidc_secret=""; oidc_secret="$(bao kv get -field=client_secret secret/e4e-nas/garage-ui-oidc 2>/dev/null || true)"
+    dsm_sso="";     dsm_sso="$(bao kv get -field=client_secret secret/e4e-nas/dsm-sso-oidc    2>/dev/null || true)"
     ad_join="";     ad_join="$(bao kv get -field=join_password   secret/e4e-nas/ad             2>/dev/null || true)"
     hb='{}'; if _hb="$(bao kv get -format=json secret/e4e-nas/hyper-backup 2>/dev/null)"; then hb="$(jq '.data.data' <<<"$_hb")"; fi
 
@@ -109,6 +111,7 @@ else
       --argjson s "$(jq '.data.data' <<<"$snmp")" \
       --argjson hb "$hb" \
       --arg oidc "$oidc_secret" \
+      --arg dsmsso "$dsm_sso" \
       --arg adjoin "$ad_join" \
       '{
         garage_rpc_secret:       $g.rpc_secret,
@@ -120,8 +123,9 @@ else
         snmp_v3_priv_password:   $s.priv_password,
         hyper_backup_secrets:    $hb
       }
-      + (if $oidc   != "" then { garage_ui_oidc_client_secret: $oidc }  else {} end)
-      + (if $adjoin != "" then { ad_join_password: $adjoin }           else {} end)' \
+      + (if $oidc   != "" then { garage_ui_oidc_client_secret: $oidc }   else {} end)
+      + (if $dsmsso != "" then { dsm_sso_oidc_client_secret: $dsmsso }   else {} end)
+      + (if $adjoin != "" then { ad_join_password: $adjoin }            else {} end)' \
       > "$vars_file"
 
     ansible-playbook playbook.yml ${SYNOLOGY_TAGS:+--tags "$SYNOLOGY_TAGS"} -e @"$vars_file"
