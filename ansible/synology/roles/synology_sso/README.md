@@ -48,12 +48,13 @@ The DSM SSO surface was unknown at scaffold time; it was pinned via the sanction
   fields (string values JSON-quoted, e.g. `oidc_name="Authentik"`); the
   default-login control is a separate `SSO.Setting set`.
 
-**Before the first real apply** still run `--check --diff` (read-only GETs) and
-then confirm a login round-trip — and reconcile the **redirect URI**: DSM lets the
-admin set `oidc_redirect_uri` freely, so it must be byte-identical to a value in
-`authentik_provider_oauth2.e4e_nas.allowed_redirect_uris` (Authentik's event log
-shows the exact URI DSM sent on a mismatch). Keep the role OUT of the unattended
-converge until that login is confirmed.
+Login round-trip **confirmed live 2026-06-05**, so the role is in the unattended
+converge. The **redirect URI** is reconciled: DSM lets the admin set
+`oidc_redirect_uri` freely, so it must be byte-identical to a value in
+`authentik_provider_oauth2.e4e_nas.allowed_redirect_uris` (both
+`https://e4e-nas.ucsd.edu:6021`; on a mismatch Authentik's event log shows the
+exact URI DSM sent). Re-verify with `--check --diff` (read-only GETs) after any
+endpoint/redirect change.
 
 ## Anti-lockout
 
@@ -77,11 +78,11 @@ the same IdP, promote it into the baseline composer then.
 |---|---|---|
 | `dsm_sso_oidc_client_secret` | `secret/e4e-nas/dsm-sso-oidc` (`client_secret`) | **OpenTofu** (`terraform/authentik`, Authentik mints it) |
 
-Fail-soft: if SSO is enabled in spec but the secret is empty (not materialized /
-not passed via `-e`), the role **skips with a warning** rather than failing the
-DSM converge — the box keeps its current login. Wiring the secret into the
-unattended krg-deploy materialization (`deploy/deploy-ansible.sh`) is a follow-up
-(it lives in the #136 secret-materialization PR).
+`deploy/deploy-ansible.sh` materializes this from OpenBao on the unattended
+converge (optional group, alongside `garage-ui-oidc`) — present only after
+`terraform/authentik` has run. Fail-soft: if SSO is enabled in spec but the secret
+is empty (OpenBao path unseeded / not passed via `-e`), the role **skips with a
+warning** rather than failing the DSM converge — the box keeps its current login.
 
 ## Run
 
