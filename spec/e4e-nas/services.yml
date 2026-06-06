@@ -56,9 +56,17 @@ rsync:
 # to the krg-prod monitoring host, for Prometheus → Grafana visibility into the NAS.
 # DRIFT to fix on apply: enable v3, sysName/contact/location, USM user, ACL by source.
 snmp:
-  enable_snmp: true                    # HARDEN: live=false; spec ON for monitoring
+  # ⚠️ TEMPORARILY GATED OFF — re-enable after SNMPv3 field-name discovery (#151).
+  # The SNMPv3 USM `set` field names in apply_services.py (v3_auth_passwd etc.) are
+  # an unverified best-guess; the first real apply WITH creds (once the OpenBao
+  # secret was materialized) hit DSM err 2202 and FAILED the whole unattended
+  # converge before the SSO/garage workload. Daemon stays off (v1v2 off too, so an
+  # enabled daemon with no working protocol would itself err 2202). Flip both back
+  # to `true` once a DevTools capture pins the real v3 field names (#151) — the
+  # intent is still SNMPv3-only for krg-prod monitoring (#77).
+  enable_snmp: false                   # was true; gated pending #151
   enable_snmp_v1v2: false              # v1/v2 stay OFF (cleartext)
-  enable_snmp_v3: true
+  enable_snmp_v3: false                # was true; gated pending #151
   contact: "e4e@ucsd.edu"              # E4E hardware — confirmed 2026-05-28
   location: "Building/Room — UCSD"     # TODO confirm
   name: e4e-nas                        # sysName
