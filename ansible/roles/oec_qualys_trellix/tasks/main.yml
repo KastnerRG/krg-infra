@@ -35,6 +35,18 @@
         name: xagt
         enabled: true
         state: started
+
+    # Final gate: both daemons must report active. `systemd_service: state=started`
+    # above only kicks a one-time start — this catches a daemon that started then
+    # crashed, so the deploy fails (campus-mandated) rather than reporting success
+    # on a half-hardened host. `systemctl is-active a b` exits non-zero if EITHER
+    # is not active.
+    - name: Verify both OEC daemons are active
+      ansible.builtin.command:
+        cmd: systemctl is-active qualys-cloud-agent xagt
+      register: oec_daemons
+      changed_when: false
+      failed_when: oec_daemons.rc != 0
   always:
     # The archive + extracted tree hold live enrollment credentials — never
     # leave them on disk, even if a step above failed.
