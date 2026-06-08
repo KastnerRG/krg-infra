@@ -33,16 +33,32 @@
   # copyKernels is required because /boot is vfat (can't symlink into the Nix
   # store); configurationLimit bounds how many generations' kernels sit on the 2G ESP.
   boot.loader.grub = {
-    enable                = true;
-    efiSupport            = true;
+    enable = true;
+    efiSupport = true;
     efiInstallAsRemovable = true;
-    copyKernels           = true;
-    configurationLimit    = 10;
+    copyKernels = true;
+    configurationLimit = 10;
     mirroredBoots = [
-      { path = "/boot";   efiSysMountPoint = "/boot";   devices = [ "nodev" ]; }
-      { path = "/boot-1"; efiSysMountPoint = "/boot-1"; devices = [ "nodev" ]; }
-      { path = "/boot-2"; efiSysMountPoint = "/boot-2"; devices = [ "nodev" ]; }
-      { path = "/boot-3"; efiSysMountPoint = "/boot-3"; devices = [ "nodev" ]; }
+      {
+        path = "/boot";
+        efiSysMountPoint = "/boot";
+        devices = ["nodev"];
+      }
+      {
+        path = "/boot-1";
+        efiSysMountPoint = "/boot-1";
+        devices = ["nodev"];
+      }
+      {
+        path = "/boot-2";
+        efiSysMountPoint = "/boot-2";
+        devices = ["nodev"];
+      }
+      {
+        path = "/boot-3";
+        efiSysMountPoint = "/boot-3";
+        devices = ["nodev"];
+      }
     ];
   };
   # Required with efiInstallAsRemovable (and we can't touch NVRAM on a mirrored ESP).

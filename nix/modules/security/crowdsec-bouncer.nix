@@ -29,9 +29,12 @@
 #   * `nft list set inet crowdsec crowdsec-blacklists` — what the bouncer
 #     pushed to nftables right now.
 #   * `journalctl -u crowdsec-firewall-bouncer` — bouncer poll/push.
-{ config, lib, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  ...
+}:
+with lib; let
   cfg = config.krg.crowdsecBouncer;
 in {
   options.krg.crowdsecBouncer = {
@@ -97,11 +100,12 @@ in {
     # LAPI socket not yet accepting). Both are inert/harmless when
     # registerBouncer is disabled.
     systemd.services.crowdsec-firewall-bouncer = {
-      after = lib.optional
+      after =
+        lib.optional
         config.services.crowdsec-firewall-bouncer.registerBouncer.enable
         "crowdsec-firewall-bouncer-register.service";
       serviceConfig = {
-        Restart    = "on-failure";
+        Restart = "on-failure";
         RestartSec = "5s";
       };
     };

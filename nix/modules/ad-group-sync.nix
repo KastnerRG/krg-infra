@@ -14,12 +14,16 @@
 # Consumers wire their own semantic options into this rather than hand-rolling the
 # unit: modules/hardware/nvidia.nix (krg.nvidia.cudaAccessGroups → GPU device group)
 # and modules/docker.nix (krg.docker.accessGroups → the Docker daemon group).
-{ config, lib, pkgs, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; let
   cfg = config.krg.adGroupSync;
   # An entry with no AD groups generates no unit (nothing to sync).
-  active = filterAttrs (_: b: b.adGroups != [ ]) cfg;
+  active = filterAttrs (_: b: b.adGroups != []) cfg;
 
   # Local accounts the flake declares directly into <localGroup>: users that list it
   # in extraGroups, plus the group's own declared members. `gpasswd -M` REPLACES the
@@ -27,9 +31,11 @@ let
   # silently drop them (e.g. the break-glass admin via krg.users.defaultGroups). The
   # `or []` tolerates a localGroup that isn't otherwise declared. Lazy: only forced
   # for groups that actually have an active bridge.
-  declaredMembers = localGroup: unique (
-    (attrNames (filterAttrs (_: u: elem localGroup u.extraGroups) config.users.users))
-    ++ (config.users.groups.${localGroup}.members or [ ]));
+  declaredMembers = localGroup:
+    unique (
+      (attrNames (filterAttrs (_: u: elem localGroup u.extraGroups) config.users.users))
+      ++ (config.users.groups.${localGroup}.members or [])
+    );
 
   syncScript = b: ''
     set -uo pipefail
@@ -64,7 +70,7 @@ let
   '';
 in {
   options.krg.adGroupSync = mkOption {
-    default = { };
+    default = {};
     description = ''
       AD-group → local-group bridges. For each attribute `<name>`, members of the
       listed `adGroups` are synced into the local group `localGroup` (default: the
@@ -74,17 +80,17 @@ in {
       unchanged when no AD group resolves (SSSD/AD down). An entry whose `adGroups`
       is empty generates no unit.
     '';
-    type = types.attrsOf (types.submodule ({ name, ... }: {
+    type = types.attrsOf (types.submodule ({name, ...}: {
       options = {
         localGroup = mkOption {
-          type        = types.str;
-          default     = name;
+          type = types.str;
+          default = name;
           description = "Local group whose membership is synced (defaults to the attribute name).";
         };
         adGroups = mkOption {
-          type        = types.listOf types.str;
-          default     = [ ];
-          example     = [ "Docker Users" ];
+          type = types.listOf types.str;
+          default = [];
+          example = ["Docker Users"];
           description = "AD groups whose members are bridged into localGroup. Empty = no unit generated.";
         };
       };
@@ -95,24 +101,26 @@ in {
     systemd.services = mapAttrs' (name: b:
       nameValuePair "${name}-group-sync" {
         description = "Sync AD group members into the local ${b.localGroup} group";
-        after       = [ "sssd.service" "network-online.target" ];
-        wants       = [ "sssd.service" "network-online.target" ];
+        after = ["sssd.service" "network-online.target"];
+        wants = ["sssd.service" "network-online.target"];
         # getent MUST be pkgs.getent (the NixOS NSS-correct build), NOT pkgs.glibc.bin:
         # the raw glibc getent can't load the `sss` NSS module in a unit, so AD group
         # lookups silently return nothing.
-        path               = [ pkgs.shadow pkgs.coreutils pkgs.gnused pkgs.getent ];
+        path = [pkgs.shadow pkgs.coreutils pkgs.gnused pkgs.getent];
         serviceConfig.Type = "oneshot";
-        script             = syncScript b;
-      }) active;
+        script = syncScript b;
+      })
+    active;
 
     systemd.timers = mapAttrs' (name: _:
       nameValuePair "${name}-group-sync" {
-        wantedBy    = [ "timers.target" ];
+        wantedBy = ["timers.target"];
         timerConfig = {
-          OnBootSec       = "30s";
+          OnBootSec = "30s";
           OnUnitActiveSec = "10min";
-          Persistent      = true;
+          Persistent = true;
         };
-      }) active;
+      })
+    active;
   };
 }

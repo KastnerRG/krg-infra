@@ -1,13 +1,16 @@
-{ config, lib, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  ...
+}:
+with lib; let
   cfg = config.krg.ipmiExporter;
 in {
   options.krg.ipmiExporter = {
     enable = mkEnableOption "Prometheus IPMI exporter (native systemd service)";
 
     port = mkOption {
-      type    = types.port;
+      type = types.port;
       default = 9290;
     };
   };
@@ -18,7 +21,7 @@ in {
   config = mkIf cfg.enable {
     services.prometheus.exporters.ipmi = {
       enable = true;
-      port   = cfg.port;
+      port = cfg.port;
     };
   };
 }

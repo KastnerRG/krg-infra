@@ -52,6 +52,7 @@ shares:
   # --- /volume2 ---
   - { name: 2024_kastner_ml_dump, path: /volume2/2024_kastner_ml_dump, description: "" }
   - { name: 2025_kastner_ml_hdd_8tb_dump, path: /volume2/2025_kastner_ml_hdd_8tb_dump, description: "" }
+  - { name: 2026_kastner_ml_dump, path: /volume2/2026_kastner_ml_dump, description: "" }
   - { name: aid_data, path: /volume2/aid_data, description: "" }
   - { name: aid_elephants_interaction, path: /volume2/aid_elephants_interaction, description: "" }
   - { name: aid_nat_geo_coral, path: /volume2/aid_nat_geo_coral, description: "" }

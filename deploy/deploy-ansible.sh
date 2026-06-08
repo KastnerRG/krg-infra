@@ -32,6 +32,21 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-/var/lib/krg-admin/.ssh/id_ed25519}"
 [[ -f "$DEPLOY_SSH_KEY" ]] && export ANSIBLE_PRIVATE_KEY_FILE="${ANSIBLE_PRIVATE_KEY_FILE:-$DEPLOY_SSH_KEY}"
 
+# ── OEC (campus-mandated Qualys + Trellix) ──────────────────────────────────
+# Same credentialed archive + policy as the NixOS layer (deploy-nixos.sh): the
+# agents are mandatory on every host, so a missing archive is fatal — never a
+# silently-unhardened hypervisor. We pass the control-node path to site.yml as
+# `oec_installer`; the oec_qualys_trellix role copies it to the host, runs the
+# vendor installer, and verifies both daemons are active (the deploy fails if
+# they aren't). The role still no-ops gracefully when oec_installer is unset, so
+# `--check`/local runs are unaffected — enforcement lives here in the CD path.
+OEC_INSTALLER="${OEC_INSTALLER:-/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz}"
+if [[ ! -r "$OEC_INSTALLER" ]]; then
+  echo "FATAL: OEC installer not readable on the control node: $OEC_INSTALLER"
+  echo "       Stage it out-of-band (see deploy/README.md) — hypervisors cannot be hardened without it."
+  exit 1
+fi
+
 echo "::group::ansible site.yml (Proxmox hosts)"
 # if ! (...) so set -e can't exit before ::endgroup:: — keeps the Actions log group
 # closed on failure (same pattern as deploy-nixos.sh / deploy-tofu.sh).
@@ -41,7 +56,7 @@ if ! (
   # installed per-run — this matches the nightly ansible-apply service and avoids an
   # unpinned upstream pull on every deploy (non-reproducible). Pinning them and
   # managing the install via Nix so both paths share one set is tracked in #129.
-  ansible-playbook playbooks/site.yml
+  ansible-playbook playbooks/site.yml -e "oec_installer=${OEC_INSTALLER}"
 ); then
   echo "FAILED: ansible site.yml"
   echo "::endgroup::"

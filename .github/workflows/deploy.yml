@@ -122,6 +122,13 @@ jobs:
       # default, so without it a failed NixOS apply would NOT stop the Ansible (or
       # OpenTofu) stage. Combined with each script's own internal fail-fast, one
       # failed host/target halts the whole deploy.
+      # Stages the campus-mandated OEC (Qualys + Trellix) installer to each host and
+      # verifies both security daemons are active — the deploy FAILS if the archive
+      # is missing on the control node or any host's daemons aren't up (#22). The
+      # credentialed archive is staged out-of-band at
+      # /var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz (see
+      # deploy/README.md "OEC"); override with OEC_INSTALLER if elsewhere. Same
+      # gate applies to the Proxmox hosts in the Ansible step below.
       - name: Deploy NixOS hosts
         if: success() && steps.gate.outputs.ok == 'true'
         run: ./deploy/deploy-nixos.sh
@@ -131,11 +138,17 @@ jobs:
         env:
           # Include e4e-nas in the converge. Inert until krg-deploy's OpenBao
           # AppRole creds are provisioned (graceful skip otherwise — see
-          # deploy/deploy-ansible.sh), so provisioning them is the real go-live
-          # switch. SYNOLOGY_TAGS unset = the full NAS playbook; its declarative
-          # sync deletes not-in-spec config, so provision the AppRole ONLY after
-          # the bring-up reconciliation (docs/e4e-nas-dsm.md).
+          # deploy/deploy-ansible.sh).
           DEPLOY_SYNOLOGY: "true"
+          # SCOPED to the bring-up-validated roles only. The FULL playbook (tags
+          # unset) runs every synology_* role, and its declarative sync DELETES
+          # live config not in spec (shares / ACLs / AppPortal / NFS) — but the
+          # full NAS spec isn't bring-up-reconciled yet (docs/e4e-nas-dsm.md), and
+          # several roles fail unattended (SNMPv3 #151, mail OAuth #163). So until
+          # those are brought up (#165) we converge ONLY the proven garage-ui +
+          # DSM-SSO stack. Widen this as roles are reconciled; drop it (→ full
+          # converge) once #165 is closed.
+          SYNOLOGY_TAGS: "synology_shares,synology_acls,synology_certificate,synology_app_portal,synology_garage,synology_sso"
         run: ./deploy/deploy-ansible.sh
 
       # OpenTofu layer — DEFERRED to a second step (state backend, encryption
