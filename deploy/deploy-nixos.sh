@@ -89,6 +89,23 @@ verify_oec() {
   return 1
 }
 
+# krg-deploy verifies ITSELF, locally (no ssh, no rebuild). It's excluded from the
+# rebuild loop below — a self-switch would restart this very github-runner mid-job
+# — and enrolls instead via its nightly autoUpgrade (which points oec-install at
+# the archive the control node already holds; see nix/hosts/krg-deploy). This is
+# verify-only: if its daemons aren't up yet (e.g. before the first autoUpgrade has
+# enrolled it), the deploy fails like any other host — bootstrap with a one-off
+# `sudo nixos-rebuild switch --flake ./nix#krg-deploy` if needed.
+verify_oec_local() {
+  if systemctl is-active --quiet qualys-cloud-agent && systemctl is-active --quiet xagt; then
+    echo "OK: krg-deploy (local) — qualys-cloud-agent + xagt active"
+    return 0
+  fi
+  echo "FAILED: krg-deploy (local) — OEC security daemons not both active:"
+  systemctl is-active qualys-cloud-agent xagt || true
+  return 1
+}
+
 # Fail-fast: stop on the first failed host. Order is dependency-first (vault/AD
 # before the services that use them), so a failure early means the dependents
 # would be deploying against a broken base — don't.
@@ -126,6 +143,8 @@ for host in "${ORDER[@]}"; do
   target="${ADMIN}@${ADDR[$host]}"
   verify_oec "$target" "$host" || oec_failed=1
 done
+# ...plus the control node itself (excluded from the rebuild loop above).
+verify_oec_local || oec_failed=1
 echo "::endgroup::"
 if [[ "$oec_failed" -ne 0 ]]; then
   echo "FAILED: OEC security daemons not running on one or more hosts — deploy considered failed"
