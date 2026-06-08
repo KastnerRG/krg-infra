@@ -11,7 +11,6 @@ actually operate / recover this" layer.
 | Doc | When you need it |
 |---|---|
 | [disaster-recovery.md](disaster-recovery.md) | Rebuild a host (or the whole fleet) from bare metal; what's reproducible vs. what must be restored from backup |
-| [kastner-ml-onboarding.md](kastner-ml-onboarding.md) | Convert the Ubuntu kastner-ml GPU box into a fleet NixOS host: ZFS disk design (3 single disks, Optane-accelerated scratch) + nixos-anywhere bring-up |
 | [joining-a-host-to-the-domain.md](joining-a-host-to-the-domain.md) | One-time AD domain join (NixOS member / Debian / the DC) |
 | [creating-a-user.md](creating-a-user.md) | Create a `KRG.LOCAL` account and grant it login / GPU access |
 | [openbao-bringup.md](openbao-bringup.md) | Day-0 init / unseal / structure of OpenBao on krg-vault (prerequisite for the deploy + Garage runbooks) |
