@@ -4,7 +4,7 @@
   inputs = {
     # Latest NixOS stable (release branch, not unstable): production rebuilds and
     # the nightly autoUpgrade then only pull backported fixes, not rolling churn.
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
     # Declarative disk partitioning/formatting (waiter's ZFS layout). Pin its
     # nixpkgs to ours so disko's lib matches the system being built.
