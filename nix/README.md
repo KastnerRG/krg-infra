@@ -9,12 +9,14 @@ See [CLAUDE.md](CLAUDE.md) for the full architecture (modules, profiles, hosts).
 
 ## Hosts
 
-| Host        | Profile     | Role                                                       |
-|-------------|-------------|------------------------------------------------------------|
-| `krg-prod`  | `server`    | KRG lab-wide production (Traefik, Authentik, Grafana, MLflow…) |
-| `e4e-prod`  | `server`    | E4E project-specific services (scaffold; FishSense etc.)   |
-| `waiter`    | `compute`   | GPU/FPGA research box (CUDA, Vivado, XRDP)                  |
-| `krg-ldap`  | `directory` | Samba AD domain controller                                 |
+| Host         | Profile     | Role                                                       |
+|--------------|-------------|------------------------------------------------------------|
+| `krg-prod`   | `server`    | KRG lab-wide production (Traefik, Authentik, Grafana, MLflow…) |
+| `e4e-prod`   | `server`    | E4E project-specific services (scaffold; FishSense etc.)   |
+| `waiter`     | `compute`   | GPU/FPGA research box (CUDA, Vivado, XRDP)                  |
+| `krg-ldap`   | `directory` | Samba AD domain controller                                 |
+| `krg-vault`  | `base`      | OpenBao secrets manager                                    |
+| `krg-deploy` | `base`      | Ansible control node + OpenTofu (drives the `ansible/` + `terraform/` layers) |
 
 ## Prerequisites
 

@@ -1,4 +1,5 @@
 """Unit tests for the inlined DSMSession in apply_security.py — mock urllib at the opener level."""
+
 import io
 import json
 import os
@@ -10,8 +11,12 @@ import apply_security as m  # noqa: E402  (DSMSession + DSMError live here now)
 
 class _FakeResp(io.BytesIO):
     """urllib opener-compatible response (.read(), context manager)."""
-    def __enter__(self): return self
-    def __exit__(self, *a): return False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
 
 
 def _opener_factory(responses):
@@ -22,12 +27,15 @@ def _opener_factory(responses):
 
     class FakeOpener:
         def open(self, req, timeout=None):
-            state["calls"].append({
-                "url": req.full_url,
-                "data": req.data,
-                "headers": dict(req.headers),
-            })
+            state["calls"].append(
+                {
+                    "url": req.full_url,
+                    "data": req.data,
+                    "headers": dict(req.headers),
+                }
+            )
             return _FakeResp(json.dumps(state["responses"].pop(0)).encode())
+
     return FakeOpener(), state
 
 
@@ -71,9 +79,12 @@ def test_call_omits_token_header_before_login(monkeypatch):
 
 
 def test_login_captures_token(monkeypatch):
-    s, state = _new_session(monkeypatch, [
-        {"success": True, "data": {"synotoken": "T0KEN", "sid": "S"}},
-    ])
+    s, state = _new_session(
+        monkeypatch,
+        [
+            {"success": True, "data": {"synotoken": "T0KEN", "sid": "S"}},
+        ],
+    )
     data = s.login()
     assert s.token == "T0KEN"
     assert data["sid"] == "S"
@@ -84,10 +95,14 @@ def test_login_captures_token(monkeypatch):
 
 
 def test_login_failure_raises(monkeypatch):
-    s, _ = _new_session(monkeypatch, [
-        {"success": False, "error": {"code": 400}},
-    ])
+    s, _ = _new_session(
+        monkeypatch,
+        [
+            {"success": False, "error": {"code": 400}},
+        ],
+    )
     import pytest
+
     with pytest.raises(m.DSMError) as exc:
         s.login()
     assert exc.value.code == 400
@@ -99,8 +114,10 @@ def test_profile_set_sends_full_profile_json(monkeypatch):
     (matches what the DSM UI sends; we captured the shape in a HAR)."""
     s, state = _new_session(monkeypatch, [{"success": True, "data": {}}])
     s.token = "T"
-    profile = {"name": "default", "global": {"policy": "deny",
-              "rules": [{"name": "r1", "policy": "allow"}]}}
+    profile = {
+        "name": "default",
+        "global": {"policy": "deny", "rules": [{"name": "r1", "policy": "allow"}]},
+    }
     s.profile_set(profile, applying=False)
     body = state["calls"][0]["data"].decode()
     assert "api=SYNO.Core.Security.Firewall.Profile" in body
@@ -108,21 +125,26 @@ def test_profile_set_sends_full_profile_json(monkeypatch):
     assert "profile_applying=false" in body
     # The profile= field is JSON-encoded then URL-encoded; decode + parse it
     import urllib.parse as up
+
     qs = up.parse_qs(body)
     assert json.loads(qs["profile"][0]) == profile
 
 
 def test_profile_apply_two_phase_polls_until_finish(monkeypatch):
     """profile_apply: start → status polls until finish=true → stop."""
-    s, state = _new_session(monkeypatch, [
-        {"success": True, "data": {"task_id": "@adm/fw123"}},
-        {"success": True, "data": {"finish": False}},
-        {"success": True, "data": {"finish": True}},
-        {"success": True, "data": {}},   # stop
-    ])
+    s, state = _new_session(
+        monkeypatch,
+        [
+            {"success": True, "data": {"task_id": "@adm/fw123"}},
+            {"success": True, "data": {"finish": False}},
+            {"success": True, "data": {"finish": True}},
+            {"success": True, "data": {}},  # stop
+        ],
+    )
     s.token = "T"
     # No sleeping during tests — patch out time.sleep
     import time as _time
+
     monkeypatch.setattr(_time, "sleep", lambda *a, **k: None)
     result = s.profile_apply("default", poll_interval=0.001, timeout=5)
     assert result["finish"] is True
@@ -130,7 +152,7 @@ def test_profile_apply_two_phase_polls_until_finish(monkeypatch):
     assert len(state["calls"]) == 4
     bodies = [c["data"].decode() for c in state["calls"]]
     assert "method=start" in bodies[0]
-    assert "profile_applying=false" in bodies[0]   # matches UI value
+    assert "profile_applying=false" in bodies[0]  # matches UI value
     assert "method=status" in bodies[1] and "task_id=" in bodies[1]
     assert "method=status" in bodies[2]
     assert "method=stop" in bodies[3]
@@ -138,18 +160,23 @@ def test_profile_apply_two_phase_polls_until_finish(monkeypatch):
 
 def test_profile_apply_stop_called_even_on_timeout(monkeypatch):
     """If status never reports finish, stop must still run (finally block)."""
-    s, state = _new_session(monkeypatch, [
-        {"success": True, "data": {"task_id": "@adm/fw123"}},
-        {"success": True, "data": {"finish": False}},  # never finishes
-        {"success": True, "data": {}},   # stop in finally
-    ])
+    s, state = _new_session(
+        monkeypatch,
+        [
+            {"success": True, "data": {"task_id": "@adm/fw123"}},
+            {"success": True, "data": {"finish": False}},  # never finishes
+            {"success": True, "data": {}},  # stop in finally
+        ],
+    )
     s.token = "T"
     import time as _time
+
     monkeypatch.setattr(_time, "sleep", lambda *a, **k: None)
     # Force timeout immediately: set monotonic to advance
     times = iter([0.0, 100.0, 200.0])
     monkeypatch.setattr(_time, "monotonic", lambda: next(times))
     import pytest
+
     with pytest.raises(m.DSMError) as exc:
         s.profile_apply("default", poll_interval=0.001, timeout=1)
     assert "timed out" in str(exc.value)
@@ -159,10 +186,12 @@ def test_profile_apply_stop_called_even_on_timeout(monkeypatch):
 
 def test_context_manager_logs_out_on_exit(monkeypatch):
     """`with DSMSession() as s:` must call logout on __exit__ even after exceptions."""
-    opener, state = _opener_factory([
-        {"success": True, "data": {"synotoken": "T"}},  # login
-        {"success": True, "data": {}},                   # logout
-    ])
+    opener, state = _opener_factory(
+        [
+            {"success": True, "data": {"synotoken": "T"}},  # login
+            {"success": True, "data": {}},  # logout
+        ]
+    )
     s = m.DSMSession(password="pw")
     monkeypatch.setattr(s, "_opener", opener)
     with s:
@@ -175,13 +204,16 @@ def test_context_manager_logs_out_on_exit(monkeypatch):
 
 def test_context_manager_swallows_logout_errors(monkeypatch):
     """Logout failure during __exit__ must not mask the original exception."""
-    opener, state = _opener_factory([
-        {"success": True, "data": {"synotoken": "T"}},
-        {"success": False, "error": {"code": 119}},  # logout fails
-    ])
+    opener, state = _opener_factory(
+        [
+            {"success": True, "data": {"synotoken": "T"}},
+            {"success": False, "error": {"code": 119}},  # logout fails
+        ]
+    )
     s = m.DSMSession(password="pw")
     monkeypatch.setattr(s, "_opener", opener)
     import pytest
+
     with pytest.raises(ValueError) as exc:
         with s:
             raise ValueError("inner")

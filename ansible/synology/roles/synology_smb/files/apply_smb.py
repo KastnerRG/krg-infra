@@ -14,6 +14,7 @@ script). Prints one of: `OK no-change` / `WOULD-CHANGE <drift-json>` (--check) /
 synowebapi lives in /usr/syno/bin (not on root's PATH) and emits a `[Line N] Exec
 WebAPI: ...` preamble before its JSON, which we strip.
 """
+
 import argparse
 import json
 import subprocess
@@ -28,7 +29,8 @@ def _exec(*params):
     """Run synowebapi and parse its JSON (skipping the preamble line)."""
     out = subprocess.run(
         [WEBAPI, "--exec", "api=" + API, *params],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     txt = out.stdout
     brace = txt.find("{")
@@ -76,9 +78,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--min-protocol", choices=PROTO)
     ap.add_argument("--max-protocol", choices=PROTO)
-    ap.add_argument("--enable")          # SMB service on/off
+    ap.add_argument("--enable")  # SMB service on/off
     ap.add_argument("--server-signing")  # require server signing
-    ap.add_argument("--ntlmv1-auth")     # allow legacy NTLMv1
+    ap.add_argument("--ntlmv1-auth")  # allow legacy NTLMv1
     ap.add_argument("--check", action="store_true", help="report drift, change nothing")
     a = ap.parse_args(argv)
 

@@ -106,6 +106,23 @@ in {
       ];
     };
 
+    # ── HARD RULE: the docker daemon NEVER restarts on nixos-rebuild ─────────
+    # Incident 2026-06-08: a nightly flake-update advanced the lock, which rebuilt
+    # docker (same 28.5.2 version, NEW store path because its deps changed) →
+    # nixos-rebuild switch restarted docker.service → the daemon bounce killed
+    # every running container, including experiments that had been running on
+    # waiter for ~1.5 weeks. Major data/compute loss.
+    #
+    # restartIfChanged=false makes an unrelated `nixos-rebuild switch` (BOTH the
+    # nightly autoUpgrade and the push-deploy use switch) leave a running daemon
+    # untouched, so containers survive system updates. Docker engine/config changes
+    # then take effect ONLY on an explicit `systemctl restart docker` or a reboot —
+    # i.e. only during a planned maintenance window. Same approach the OEC agents
+    # use (modules/security/oec-qualys-trellix.nix). Restarting docker.socket does
+    # not bounce the daemon, so it needs no override. (Belt-and-suspenders for the
+    # reboot vector: the nightly autoUpgrade runs with allowReboot=false.)
+    systemd.services.docker.restartIfChanged = false;
+
     # Bridge the accessGroups AD groups into the local docker group (Docker daemon
     # access). The boot+timer sync engine + its fail-safe/union semantics live in the
     # shared modules/ad-group-sync.nix (imported above); this just wires this module's

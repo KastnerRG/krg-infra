@@ -101,7 +101,7 @@ login — make sure it holds the AD username, or just use the literal name.)
 
 ```bash
 sudo sss_cache -E                              # drop stale negative cache entries
-getent passwd <username>                       # ...:10001:10000:...:/home/<username>:/bin/bash
+getent passwd <username>                       # ...:10001:10000:...:/home/<username>:<shell> (store bash on NixOS; /bin/bash on Debian)
 id <username>                                  # groups include the access group
 sss_ssh_authorizedkeys <username>              # echoes the key back
 ```

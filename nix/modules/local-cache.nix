@@ -203,7 +203,7 @@ in {
       # The local dataset is mounted here (disko leaves it mountpoint=legacy with no
       # fileSystems entry, like the scratch datasets, so this module owns the mount).
       fileSystems.${cfg.mountPoint} = {
-        device = cfg.device;
+        inherit (cfg) device;
         fsType = "zfs";
         options = cfg.mountOptions;
       };

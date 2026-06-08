@@ -167,6 +167,41 @@ warning; pool health also goes to Prometheus via the textfile collector
 
 ## Security agents (OEC: Qualys + Trellix)
 
+### `xagt.service` fails after a rebuild (`status=245`, flapping)
+**Symptom:** a `nixos-rebuild switch` fails with `the following units failed:
+xagt.service`; the unit is `activating (auto-restart)`, `ExecStart=/opt/fireeye/bin/xagt
+-M DAEMON` exited `status=245`, yet a `xagt -M DAEMON` is still alive in the cgroup.
+**Cause:** the vendor unit uses `KillMode=process`, so stopping xagt kills only the
+launcher and leaves the agent **daemon** running. When a rebuild restarts the unit,
+the fresh `xagt -M DAEMON` finds an instance already running and exits non-zero, and
+`Restart=always` flaps it — which `switch-to-configuration` reports as a failed unit,
+failing the deploy.
+**Fix (in tree):** `restartIfChanged = false` on `xagt` (and `qualys-cloud-agent`) —
+nixos-rebuild no longer bounces the self-managing EDR daemons; they still start on
+boot/first-enroll and still recover from real crashes via the unit's `Restart=always`.
+**Recovering a host already stuck in the flap** (one-time, break-glass — the live
+unit's own restart loop won't self-heal): stop the unit, kill any stray daemon, start
+one clean instance:
+```bash
+sudo systemctl stop xagt
+sudo pkill -f '/opt/fireeye/bin/xagt' || true
+sleep 2
+sudo systemctl start xagt
+systemctl is-active xagt   # expect: active
+```
+
+### `oec-install` fails: `gzip: stdin: not in gzip format`
+**Symptom:** `oec-install.service` fails immediately at extraction with
+`gzip: stdin: not in gzip format` / `tar: Child returned status 1`, failing the
+`nixos-rebuild switch` (and the deploy).
+**Cause:** despite the `.tgz` name the vendor archive is a **plain (uncompressed)
+tar** — its first bytes are the `trellixandqualys/` tar header, not the gzip magic.
+`tar -xzf` forces gzip and rejects it.
+**Fix (in tree):** the module extracts with `tar -xf` (auto-detect), which handles
+plain tar / gzip / xz transparently; `deploy-nixos.sh` also sanity-checks the
+control-node archive with `tar -tf` before staging. If you re-roll the archive,
+either format is fine — just keep it a tar.
+
 ### `oec-install` doesn't enroll on NixOS
 **Symptom:** the OEC oneshot runs but Qualys/Trellix don't come up.
 **Cause:** the vendor archive ships **unpatched Ubuntu binaries** that assume an
@@ -227,3 +262,35 @@ sudo ls -lt /var/lib/fireeye/xagt/ /opt/fireeye/     # recent log/state activity
 console access or **asking whoever owns the campus tenant (UCSD ITS security) to
 confirm the hosts appear** — a one-line email once enrolled. Until then this residual
 verification stays open by design.
+
+## Docker / containers
+
+### A nightly update killed running containers (the docker-daemon-bounce rule)
+
+**HARD RULE: the docker daemon must never restart on `nixos-rebuild`** — only on a
+deliberate `systemctl restart docker` or a reboot during a planned maintenance
+window. Enforced **fleet-wide** for every host that enables `krg.docker` (all
+compute *and* service hosts — it lives in `nix/modules/docker.nix` under
+`mkIf cfg.enable`, so a newly-built compute box inherits it with no extra config):
+
+```nix
+systemd.services.docker.restartIfChanged = false;   # modules/docker.nix
+```
+
+plus `system.autoUpgrade.allowReboot = false` in `nix/profiles/base.nix` (also a
+fleet default), which closes the other nightly restart vector — a reboot.
+
+**Why** (2026-06-08): a nightly `nix flake update` advanced the lock, which rebuilt
+docker (*same* 28.5.2 version, new store path because its deps changed) →
+`nixos-rebuild switch` restarted `docker.service` → the daemon bounce killed every
+running container, including experiments that had been running on waiter for ~1.5
+weeks.
+
+**Consequence:** docker engine/config changes (e.g. the 28→29 upgrade in the
+nixos-26.05 PR) take effect only on an explicit restart/reboot — schedule them in a
+maintenance window. Verify a host is protected:
+
+```bash
+nix eval .#nixosConfigurations.<host>.config.systemd.services.docker.restartIfChanged   # false
+nix eval .#nixosConfigurations.<host>.config.system.autoUpgrade.allowReboot             # false
+```

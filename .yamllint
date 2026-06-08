@@ -1,0 +1,23 @@
+# yamllint config. Shared by the standalone yamllint gate (spec/, compose,
+# .github/, ansible group_vars/host_vars) AND ansible-lint's embedded yamllint
+# (ansible-lint auto-detects this file), so the two agree on YAML style.
+#
+# Posture: catch real defects (duplicate keys, trailing whitespace, bad
+# indentation, syntax) — NOT width or deliberate alignment.
+extends: relaxed
+
+rules:
+  # IaC YAML is full of long inline dicts, URLs and command lines. Width is not
+  # a defect here (Nix/Python have their own formatters that DO wrap).
+  line-length: disable
+
+  # spec/e4e-nas/*.yml use column-aligned inline-dict tables (extra spaces after
+  # commas/colons) so the human-edited declarative source reads as a table.
+  # That alignment is intentional — don't fight it.
+  commas: disable
+  colons: disable
+
+  # Ansible idioms: `yes`/`no` booleans and no `---` start marker are fine.
+  truthy: disable
+  document-start: disable
+  comments-indentation: disable

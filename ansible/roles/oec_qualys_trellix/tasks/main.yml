@@ -42,6 +42,9 @@
     # on a half-hardened host. `systemctl is-active a b` exits non-zero if EITHER
     # is not active.
     - name: Verify both OEC daemons are active
+      # noqa: command-instead-of-module — one `is-active a b` gate checks BOTH
+      # units' aggregate state (rc!=0 if either is down); systemd_service only
+      # inspects one unit, so the module can't express this in a single check.
       ansible.builtin.command:
         cmd: systemctl is-active qualys-cloud-agent xagt
       register: oec_daemons

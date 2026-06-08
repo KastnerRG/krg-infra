@@ -11,6 +11,7 @@ admin running it as root preserves the original owner. By default the now-redund
 NFS copy is removed AFTER the local copy is verified (so cold storage doesn't keep
 orphans); pass --keep-cold to leave it.
 """
+
 import argparse
 import hashlib
 import os
@@ -48,8 +49,8 @@ def copy_and_hash(src, dst):
                 if not buf:
                     break
                 mv = memoryview(buf)
-                while mv:                       # os.write may short-write; drain it
-                    mv = mv[os.write(dst_fd, mv):]
+                while mv:  # os.write may short-write; drain it
+                    mv = mv[os.write(dst_fd, mv) :]
                 h.update(buf)
                 n += len(buf)
         os.fsync(dst_fd)
@@ -62,8 +63,7 @@ def copy_and_hash(src, dst):
 def tmp_sibling(path, tag):
     """Short unique temp path in path's dir (same fs -> atomic os.replace); a fixed
     short prefix avoids overflowing NAME_MAX when path's basename is near the limit."""
-    return os.path.join(os.path.dirname(path) or ".",
-                        f".{tag}-{os.urandom(6).hex()}.tmp")
+    return os.path.join(os.path.dirname(path) or ".", f".{tag}-{os.urandom(6).hex()}.tmp")
 
 
 def fd_sha256(fd):
@@ -107,8 +107,10 @@ def restore_one(link, scratch_roots, cold_roots, pairs, keep_cold, verbose):
     # Resolve the parent and require it to stay within a configured scratch root.
     link_parent = os.path.realpath(os.path.dirname(link))
     if scratch_roots and not under_any(link_parent, scratch_roots):
-        log(f"REFUSE {link}: resolves outside the scratch area(s) {scratch_roots} "
-            f"(symlinked path component?) — not restoring")
+        log(
+            f"REFUSE {link}: resolves outside the scratch area(s) {scratch_roots} "
+            f"(symlinked path component?) — not restoring"
+        )
         return False
     target = os.readlink(link)
     if not os.path.isabs(target):
@@ -119,8 +121,10 @@ def restore_one(link, scratch_roots, cold_roots, pairs, keep_cold, verbose):
     # running as root that could delete an arbitrary file. Only act on targets that
     # resolve inside a configured cold area.
     if not under_any(target, cold_roots):
-        log(f"REFUSE {link}: target {target} is outside the cold area(s) "
-            f"{cold_roots} — not an archived scratch file (suspicious symlink?)")
+        log(
+            f"REFUSE {link}: target {target} is outside the cold area(s) "
+            f"{cold_roots} — not an archived scratch file (suspicious symlink?)"
+        )
         return False
     # STRONGER (when we know the scratch->cold pairing): the target must be exactly
     # THIS link's canonical archive location, cold + relpath(link, scratch). Otherwise
@@ -135,19 +139,20 @@ def restore_one(link, scratch_roots, cold_roots, pairs, keep_cold, verbose):
                 expected = os.path.realpath(os.path.join(croot, rel))
                 break
         if expected is None or target != expected:
-            log(f"REFUSE {link}: target {target} is not this link's archive location "
-                f"(expected {expected}) — not an archived scratch file")
+            log(
+                f"REFUSE {link}: target {target} is not this link's archive location "
+                f"(expected {expected}) — not an archived scratch file"
+            )
             return False
     if not os.path.isfile(target):
-        log(f"skip {link}: archive target missing or not a file "
-            f"({target}) — is NFS mounted?")
+        log(f"skip {link}: archive target missing or not a file ({target}) — is NFS mounted?")
         return False
 
     tst = os.stat(target)
     part = tmp_sibling(link, "sr")
     try:
         if os.path.lexists(part):
-            os.unlink(part)               # clear any stale/planted temp (no follow)
+            os.unlink(part)  # clear any stale/planted temp (no follow)
         src_sha, n, fd = copy_and_hash(target, part)
         try:
             # verify + set metadata THROUGH the fd (never re-resolving `part`).
@@ -170,9 +175,12 @@ def restore_one(link, scratch_roots, cold_roots, pairs, keep_cold, verbose):
                 tcur = os.stat(target)
             except OSError:
                 tcur = None
-            if tcur is None or (tcur.st_ino, tcur.st_size, tcur.st_mtime_ns,
-                                tcur.st_ctime_ns) != (tst.st_ino, tst.st_size,
-                                                      tst.st_mtime_ns, tst.st_ctime_ns):
+            if tcur is None or (tcur.st_ino, tcur.st_size, tcur.st_mtime_ns, tcur.st_ctime_ns) != (
+                tst.st_ino,
+                tst.st_size,
+                tst.st_mtime_ns,
+                tst.st_ctime_ns,
+            ):
                 os.unlink(part)
                 log(f"skip {link}: cold target changed during restore — left the symlink")
                 return False
@@ -199,9 +207,12 @@ def restore_one(link, scratch_roots, cold_roots, pairs, keep_cold, verbose):
         # changed, keep it and warn rather than risk deleting newer data.
         try:
             tst2 = os.stat(target)
-            unchanged = (tst2.st_ino, tst2.st_size, tst2.st_mtime_ns,
-                         tst2.st_ctime_ns) == (tst.st_ino, tst.st_size,
-                                               tst.st_mtime_ns, tst.st_ctime_ns)
+            unchanged = (tst2.st_ino, tst2.st_size, tst2.st_mtime_ns, tst2.st_ctime_ns) == (
+                tst.st_ino,
+                tst.st_size,
+                tst.st_mtime_ns,
+                tst.st_ctime_ns,
+            )
         except OSError:
             unchanged = False
         if unchanged:
@@ -211,8 +222,10 @@ def restore_one(link, scratch_roots, cold_roots, pairs, keep_cold, verbose):
             except OSError as e:
                 log(f"restored {link} but could not remove cold copy {target}: {e}")
         else:
-            log(f"restored {link} but cold copy {target} changed during restore — "
-                f"kept it (rerun with the file idle to reclaim NFS space)")
+            log(
+                f"restored {link} but cold copy {target} changed during restore — "
+                f"kept it (rerun with the file idle to reclaim NFS space)"
+            )
     log(f"restored {link} ({tst.st_size} bytes)")
     return True
 
@@ -227,20 +240,39 @@ def walk_links(root):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Restore archived /scratch files (symlinks) to local storage.")
+        description="Restore archived /scratch files (symlinks) to local storage."
+    )
     ap.add_argument("paths", nargs="+", help="archived file(s) or directories to restore")
-    ap.add_argument("--keep-cold", action="store_true",
-                    help="keep the NFS copy after restoring (default: remove it)")
-    ap.add_argument("--cold-root", action="append", default=[], metavar="DIR",
-                    help="allowed cold-area root a symlink target must resolve under "
-                         "(repeatable). Defaults to $SCRATCH_COLD_ROOTS (colon-separated).")
-    ap.add_argument("--scratch-root", action="append", default=[], metavar="DIR",
-                    help="allowed scratch root a link must resolve under (repeatable). "
-                         "Defaults to $SCRATCH_ROOTS (colon-separated).")
-    ap.add_argument("--overflow-map", action="append", default=[], metavar="SCRATCH=COLD",
-                    help="scratch-root=cold-root pairing used to pin a link's target to "
-                         "its canonical archive location (repeatable). Defaults to "
-                         "$SCRATCH_OVERFLOW_MAP (semicolon-separated).")
+    ap.add_argument(
+        "--keep-cold",
+        action="store_true",
+        help="keep the NFS copy after restoring (default: remove it)",
+    )
+    ap.add_argument(
+        "--cold-root",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="allowed cold-area root a symlink target must resolve under "
+        "(repeatable). Defaults to $SCRATCH_COLD_ROOTS (colon-separated).",
+    )
+    ap.add_argument(
+        "--scratch-root",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="allowed scratch root a link must resolve under (repeatable). "
+        "Defaults to $SCRATCH_ROOTS (colon-separated).",
+    )
+    ap.add_argument(
+        "--overflow-map",
+        action="append",
+        default=[],
+        metavar="SCRATCH=COLD",
+        help="scratch-root=cold-root pairing used to pin a link's target to "
+        "its canonical archive location (repeatable). Defaults to "
+        "$SCRATCH_OVERFLOW_MAP (semicolon-separated).",
+    )
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -252,15 +284,18 @@ def main():
     # legit archive from a planted symlink, and refusing to follow/delete is fail-safe.
     cold_roots = build(args.cold_root, "SCRATCH_COLD_ROOTS")
     if not cold_roots:
-        log("no cold-area root configured — set $SCRATCH_COLD_ROOTS or pass "
-            "--cold-root DIR (refusing to follow/delete arbitrary symlink targets)")
+        log(
+            "no cold-area root configured — set $SCRATCH_COLD_ROOTS or pass "
+            "--cold-root DIR (refusing to follow/delete arbitrary symlink targets)"
+        )
         return 2
     # Scratch roots (where links must live) are a best-effort extra containment.
     scratch_roots = build(args.scratch_root, "SCRATCH_ROOTS")
     # scratch->cold pairs ("scratch=cold;..."): when present, restore pins each link's
     # target to its canonical archive location (the strongest check).
     raw_pairs = list(args.overflow_map) + [
-        m for m in os.environ.get("SCRATCH_OVERFLOW_MAP", "").split(";") if m]
+        m for m in os.environ.get("SCRATCH_OVERFLOW_MAP", "").split(";") if m
+    ]
     pairs = []
     for m in raw_pairs:
         if "=" in m:
@@ -272,7 +307,9 @@ def main():
     for p in args.paths:
         if os.path.isdir(p) and not os.path.islink(p):
             for link in walk_links(p):
-                if restore_one(link, scratch_roots, cold_roots, pairs, args.keep_cold, args.verbose):
+                if restore_one(
+                    link, scratch_roots, cold_roots, pairs, args.keep_cold, args.verbose
+                ):
                     restored += 1
                 else:
                     # every link under the dir is an archived file we meant to restore

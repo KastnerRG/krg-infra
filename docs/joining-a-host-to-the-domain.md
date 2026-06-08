@@ -41,7 +41,7 @@ unresolvable `krg.local` looks the same.)
 
 ---
 
-## Case 1 — NixOS member host (waiter, krg-prod, e4e-prod)
+## Case 1 — NixOS member host (waiter, krg-prod, e4e-prod, krg-vault, krg-deploy)
 
 The config is already in the `base` profile (`krg.adClient`, pinned to the DC at
 137.110.161.109). After the host is deployed:
@@ -166,3 +166,4 @@ group to exist in AD with members — also covered in
 | waiter | ✅ joined 2026-05-21 (`adcli --login-ccache`) |
 | fabricant | ⏳ pending (`-e ad_join_password=…`) + on-box validation |
 | krg-prod / e4e-prod | ⏳ pending (not yet deployed) |
+| krg-vault / krg-deploy | ⏳ pending — `krg.adClient.enable = false` until a keytab is provisioned |
