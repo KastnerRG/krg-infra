@@ -262,3 +262,35 @@ sudo ls -lt /var/lib/fireeye/xagt/ /opt/fireeye/     # recent log/state activity
 console access or **asking whoever owns the campus tenant (UCSD ITS security) to
 confirm the hosts appear** — a one-line email once enrolled. Until then this residual
 verification stays open by design.
+
+## Docker / containers
+
+### A nightly update killed running containers (the docker-daemon-bounce rule)
+
+**HARD RULE: the docker daemon must never restart on `nixos-rebuild`** — only on a
+deliberate `systemctl restart docker` or a reboot during a planned maintenance
+window. Enforced **fleet-wide** for every host that enables `krg.docker` (all
+compute *and* service hosts — it lives in `nix/modules/docker.nix` under
+`mkIf cfg.enable`, so a newly-built compute box inherits it with no extra config):
+
+```nix
+systemd.services.docker.restartIfChanged = false;   # modules/docker.nix
+```
+
+plus `system.autoUpgrade.allowReboot = false` in `nix/profiles/base.nix` (also a
+fleet default), which closes the other nightly restart vector — a reboot.
+
+**Why** (2026-06-08): a nightly `nix flake update` advanced the lock, which rebuilt
+docker (*same* 28.5.2 version, new store path because its deps changed) →
+`nixos-rebuild switch` restarted `docker.service` → the daemon bounce killed every
+running container, including experiments that had been running on waiter for ~1.5
+weeks.
+
+**Consequence:** docker engine/config changes (e.g. the 28→29 upgrade in the
+nixos-26.05 PR) take effect only on an explicit restart/reboot — schedule them in a
+maintenance window. Verify a host is protected:
+
+```bash
+nix eval .#nixosConfigurations.<host>.config.systemd.services.docker.restartIfChanged   # false
+nix eval .#nixosConfigurations.<host>.config.system.autoUpgrade.allowReboot             # false
+```
