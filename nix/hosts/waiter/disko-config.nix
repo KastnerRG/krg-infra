@@ -112,7 +112,7 @@ in {
                 type = "filesystem";
                 format = "vfat";
                 mountpoint = "/boot";
-                mountOptions = [ "umask=0077" "nofail" ];
+                mountOptions = ["umask=0077" "nofail"];
               };
             };
             os = {
@@ -156,7 +156,7 @@ in {
                 type = "filesystem";
                 format = "vfat";
                 mountpoint = "/boot-1";
-                mountOptions = [ "umask=0077" "nofail" ];
+                mountOptions = ["umask=0077" "nofail"];
               };
             };
             os = {
@@ -200,7 +200,7 @@ in {
                 type = "filesystem";
                 format = "vfat";
                 mountpoint = "/boot-2";
-                mountOptions = [ "umask=0077" "nofail" ];
+                mountOptions = ["umask=0077" "nofail"];
               };
             };
             os = {
@@ -244,7 +244,7 @@ in {
                 type = "filesystem";
                 format = "vfat";
                 mountpoint = "/boot-3";
-                mountOptions = [ "umask=0077" "nofail" ];
+                mountOptions = ["umask=0077" "nofail"];
               };
             };
             os = {
@@ -432,16 +432,16 @@ in {
             # DATA: 2× HDD as two single-disk vdevs => STRIPED (~29 TiB). Where the
             # bytes live. Striped, not mirrored, to double capacity (regenerable).
             vdev = [
-              { members = [ (byPartlabel "hdd0") ]; }
-              { members = [ (byPartlabel "hdd1") ]; }
+              {members = [(byPartlabel "hdd0")];}
+              {members = [(byPartlabel "hdd1")];}
             ];
             # SPECIAL: metadata-only vdev, 4× NVMe striped. Keeps directory listings /
             # find fast over 29 TiB. Striped matches the data vdev's no-redundancy.
             special = [
-              { members = [ (byPartlabel "nvme0-special") ]; }
-              { members = [ (byPartlabel "nvme1-special") ]; }
-              { members = [ (byPartlabel "nvme2-special") ]; }
-              { members = [ (byPartlabel "nvme3-special") ]; }
+              {members = [(byPartlabel "nvme0-special")];}
+              {members = [(byPartlabel "nvme1-special")];}
+              {members = [(byPartlabel "nvme2-special")];}
+              {members = [(byPartlabel "nvme3-special")];}
             ];
             # CACHE (L2ARC): hot-read cache, 4× NVMe striped. Losing it is harmless.
             cache = [

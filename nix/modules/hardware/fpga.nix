@@ -1,6 +1,10 @@
-{ config, lib, pkgs, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; let
   cfg = config.krg.fpga;
   # 1. Create a tiny derivation specifically to provide the libtinfo.so.5 symlink
   vivado-tinfo-shim = pkgs.runCommand "vivado-tinfo-shim" {} ''
@@ -11,20 +15,26 @@ in {
   options.krg.fpga = {
     enable = mkEnableOption "FPGA/EDA development tools (Verilator, GTKWave, Vivado, Questa)";
 
-    enableVerilator = mkOption { type = types.bool; default = true; };
-    enableGtkwave   = mkOption { type = types.bool; default = true; };
+    enableVerilator = mkOption {
+      type = types.bool;
+      default = true;
+    };
+    enableGtkwave = mkOption {
+      type = types.bool;
+      default = true;
+    };
 
     # Vivado/Vitis must be installed manually using the Xilinx installer.
     # waiter installs to /tools/Xilinx with versions:
     #   Vivado 2018.2, 2019.1, 2020.2, 2024.1 | Vitis 2022.2 | XRT 2024.1
     vivadoPath = mkOption {
-      type    = types.str;
+      type = types.str;
       default = "/tools/Xilinx";
     };
 
     # waiter vivado.yml: XILINXD_LICENSE_FILE="2100@cselm2.ucsd.edu"
     licenseServer = mkOption {
-      type    = types.str;
+      type = types.str;
       default = "2100@cselm2.ucsd.edu";
     };
 
@@ -32,7 +42,7 @@ in {
     # Install manually using scripts/install_questa_base_2023.4.sh.
     # waiter installs to: /tools/Siemens/Questa/Base/2023.4
     questaPath = mkOption {
-      type    = types.str;
+      type = types.str;
       default = "/tools/Siemens/Questa/Base/2023.4";
     };
   };
@@ -66,22 +76,22 @@ in {
       libuuid
       libxcrypt-legacy
       ncurses
-      vivado-tinfo-shim  # <-- Injects our custom symlink into the library path
+      vivado-tinfo-shim # <-- Injects our custom symlink into the library path
 
       # X11 / GUI Graphic Libraries
-      xorg.libXext 
-      xorg.libX11 
-      xorg.libXrender 
+      xorg.libXext
+      xorg.libX11
+      xorg.libXrender
       xorg.libXtst
-      xorg.libXi 
-      xorg.libXft 
+      xorg.libXi
+      xorg.libXft
       xorg.libxcb
 
       # System fonts and styling
-      freetype 
-      fontconfig 
-      glib 
-      gtk2 
+      freetype
+      fontconfig
+      glib
+      gtk2
       gtk3
     ];
     environment.interactiveShellInit = ''

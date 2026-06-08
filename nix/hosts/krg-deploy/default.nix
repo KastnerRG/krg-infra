@@ -1,4 +1,4 @@
-{ pkgs, ... }: {
+{pkgs, ...}: {
   imports = [
     ../../profiles/base.nix
     ../../modules/users.nix
@@ -10,38 +10,49 @@
 
   # Proxmox VM — QEMU guest agent; in-guest firewall stays ON.
   krg.base = {
-    enable      = true;
+    enable = true;
     autoUpgrade = true;
-    serviceHost = true;   # restrict SSH to trusted UCSD nets in-guest
-    isVM        = true;
+    serviceHost = true; # restrict SSH to trusted UCSD nets in-guest
+    isVM = true;
   };
 
   krg.firewall = {
     # SSH (22) inherits from base.nix's default allowedTCPPorts = [22];
     # serviceHost = true (also from base.nix default) restricts it to
     # ucsd + ops via sshSources. node-exporter monitoring on 9100.
-    monitoringPorts = [ 9100 ];
+    monitoringPorts = [9100];
   };
+
+  # OEC (Qualys + Trellix). krg-deploy is EXCLUDED from the push deploy's
+  # stage+verify (deploy/deploy-nixos.sh — a self-rebuild would restart this
+  # runner mid-job), so it isn't staged the way the rest of the fleet is. Instead
+  # point the module at the credentialed archive the control node ALREADY holds
+  # (it's the OEC_INSTALLER deploy source): its nightly autoUpgrade rebuild then
+  # fires oec-install and enrolls with no extra staging. deploy-nixos.sh verifies
+  # this host's daemons LOCALLY at the end of each run.
+  krg.oecQualysTrellix.installerArchive = "/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz";
 
   networking = {
     hostName = "krg-deploy";
-    domain   = "ucsd.edu";
-    useDHCP  = false;
-    interfaces.ens18.ipv4.addresses = [{
-      address      = "137.110.161.122";
-      prefixLength = 24;
-    }];
+    domain = "ucsd.edu";
+    useDHCP = false;
+    interfaces.ens18.ipv4.addresses = [
+      {
+        address = "137.110.161.122";
+        prefixLength = 24;
+      }
+    ];
     defaultGateway = "137.110.161.1";
-    nameservers    = [ "132.239.0.252" "8.8.8.8" "1.1.1.1" ];
+    nameservers = ["132.239.0.252" "8.8.8.8" "1.1.1.1"];
   };
 
   # Ansible control node + OpenTofu for infrastructure provisioning.
   environment.systemPackages = with pkgs; [
     ansible
     opentofu
-    openbao     # bao CLI — talks to krg-vault for secrets management
-    python3     # ansible runtime dependency
-    sshpass     # needed by some ansible connection scenarios
+    openbao # bao CLI — talks to krg-vault for secrets management
+    python3 # ansible runtime dependency
+    sshpass # needed by some ansible connection scenarios
     jq
   ];
 
@@ -64,33 +75,33 @@
   # /etc/ssh/ssh_host_ed25519_key.pub (trusted channel) if it ever changes.
   programs.ssh.knownHosts = {
     krg-vault = {
-      hostNames = [ "krg-vault.ucsd.edu" "137.110.161.123" ];
+      hostNames = ["krg-vault.ucsd.edu" "137.110.161.123"];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtSXiHTb0pe3ST5L2bMwbLEQxc/SXx3590fPHWR5feP";
     };
     krg-ldap = {
-      hostNames = [ "krg-ldap.ucsd.edu" "137.110.161.109" ];
+      hostNames = ["krg-ldap.ucsd.edu" "137.110.161.109"];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMBjXnLvMjFvKJjRE2BhhD7Arx2PzXXbQbjFbSCZKizQ";
     };
     waiter = {
-      hostNames = [ "waiter.ucsd.edu" "137.110.161.67" ];
+      hostNames = ["waiter.ucsd.edu" "137.110.161.67"];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINf+Y0cKbiA1tyroR3QM2XK86ZPDC3JSsevNPYiTDYw/";
     };
     # krg-prod was REINSTALLED (fresh key, root@nixos) — the old fabricant-prod key
     # did NOT match. Confirmed 2026-06-04 via an authenticated SSH session to the
     # live host: `cat /etc/ssh/ssh_host_ed25519_key.pub`.
     krg-prod = {
-      hostNames = [ "krg-prod.ucsd.edu" "137.110.161.106" ];
+      hostNames = ["krg-prod.ucsd.edu" "137.110.161.106"];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILeQ8gYCBKrTWwDGtvcGrBA9/efa7T0N6rndXYI5yVAV";
     };
     # Proxmox hypervisor — for the Ansible leg (deploy-ansible.sh → root@fabricant).
     fabricant = {
-      hostNames = [ "fabricant.ucsd.edu" ];
+      hostNames = ["fabricant.ucsd.edu"];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN846n66tuIGzD33kP6HKCVf7s7nAS+HkNBtTObQ2OFW";
     };
     # Synology NAS — for the Ansible synology leg (ansible/synology connects to
     # e4e-admin@e4e-nas by IP via inventory.yml ansible_host, so pin both names).
     e4e-nas = {
-      hostNames = [ "e4e-nas.ucsd.edu" "132.239.17.124" ];
+      hostNames = ["e4e-nas.ucsd.edu" "132.239.17.124"];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILcS4fE6LEZa4QavcZr4Xi8Bv84ZReg75Wwky5a7rgoH";
     };
     # e4e-prod omitted — host not provisioned yet (also absent from deploy ORDER).
@@ -122,20 +133,30 @@
   #   tofu   — terraform/<target>/.deploy-env + the TOFU_STATE_PASSPHRASE secret.
   #   ansible (synology) — krg-deploy AppRole login → bao kv get → extra_vars.
   services.github-runners.krg-deploy = {
-    enable      = true;
-    name        = "krg-deploy";
-    url         = "https://github.com/KastnerRG/krg-infra";
-    tokenFile   = "/var/lib/krg-admin/.secrets/github-runner-token";
-    user        = "krg-admin";   # reuse the control-node identity (SSH + sudo + tofu state)
-    replace     = true;          # re-register if a stale runner of this name exists
-    extraLabels = [ "krg-deploy" ];   # deploy.yml targets [self-hosted, krg-deploy]
+    enable = true;
+    name = "krg-deploy";
+    url = "https://github.com/KastnerRG/krg-infra";
+    tokenFile = "/var/lib/krg-admin/.secrets/github-runner-token";
+    user = "krg-admin"; # reuse the control-node identity (SSH + sudo + tofu state)
+    replace = true; # re-register if a stale runner of this name exists
+    extraLabels = ["krg-deploy"]; # deploy.yml targets [self-hosted, krg-deploy]
     # The deploy toolchain on the runner's PATH (system-wide pkgs aren't on the
     # service PATH). nixos-rebuild evaluates the flake (needs nix + git); the rest
     # drive the Ansible / OpenTofu / OpenBao layers.
     extraPackages = with pkgs; [
-      nix nixos-rebuild git openssh
-      ansible opentofu openbao python3
-      jq sshpass gnused gawk coreutils
+      nix
+      nixos-rebuild
+      git
+      openssh
+      ansible
+      opentofu
+      openbao
+      python3
+      jq
+      sshpass
+      gnused
+      gawk
+      coreutils
     ];
   };
 
@@ -145,10 +166,10 @@
   # coreutils are for deploy-ansible.sh's OpenBao secret materialization.
   systemd.services.ansible-apply = {
     description = "Apply Ansible playbooks to managed infrastructure";
-    path = [ pkgs.openssh pkgs.git pkgs.ansible pkgs.python3 pkgs.openbao pkgs.jq pkgs.coreutils ];
+    path = [pkgs.openssh pkgs.git pkgs.ansible pkgs.python3 pkgs.openbao pkgs.jq pkgs.coreutils];
     serviceConfig = {
-      Type             = "oneshot";
-      User             = "krg-admin";
+      Type = "oneshot";
+      User = "krg-admin";
       WorkingDirectory = "/var/lib/krg-admin";
       ExecStart = pkgs.writeShellScript "ansible-apply" ''
         # Bootstrap: clone on first run if the repo isn't present yet.
@@ -165,7 +186,14 @@
         # the OpenBao AppRole creds are provisioned (graceful skip otherwise),
         # so provisioning them is the go-live switch. deploy-ansible.sh resolves
         # REPO_ROOT from its own path, so no cd is needed.
+        #
+        # SYNOLOGY_TAGS scopes the converge to the bring-up-validated roles only
+        # (keep in lockstep with deploy.yml): the full playbook would run every
+        # synology_* role and declaratively DELETE live config not in spec, but
+        # the full NAS spec isn't bring-up-reconciled yet (#165; SNMPv3 #151,
+        # mail OAuth #163). Widen as roles are reconciled; drop it once #165 closes.
         DEPLOY_SYNOLOGY=true \
+        SYNOLOGY_TAGS=synology_shares,synology_acls,synology_certificate,synology_app_portal,synology_garage,synology_sso \
           ${pkgs.bash}/bin/bash /var/lib/krg-admin/krg-infra/deploy/deploy-ansible.sh
       '';
     };
@@ -173,10 +201,10 @@
 
   systemd.timers.ansible-apply = {
     description = "Nightly Ansible apply";
-    wantedBy    = [ "timers.target" ];
+    wantedBy = ["timers.target"];
     timerConfig = {
-      OnCalendar = "04:30";   # 30 min after NixOS autoUpgrade so NixOS lands first
-      Persistent = true;      # catch up if the machine was off at fire time
+      OnCalendar = "04:30"; # 30 min after NixOS autoUpgrade so NixOS lands first
+      Persistent = true; # catch up if the machine was off at fire time
     };
   };
 

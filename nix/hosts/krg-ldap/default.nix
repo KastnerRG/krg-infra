@@ -1,5 +1,4 @@
-{ ... }:
-{
+{...}: {
   imports = [
     ../../profiles/directory.nix
     ./hardware-configuration.nix
@@ -16,18 +15,20 @@
 
   # Proxmox/QEMU VM — bootloader carried over from the installer config.
   boot.loader.grub = {
-    enable      = true;
-    device      = "/dev/sda";
+    enable = true;
+    device = "/dev/sda";
     useOSProber = true;
   };
 
   networking = {
     hostName = "krg-ldap";
-    useDHCP  = false;
-    interfaces.ens18.ipv4.addresses = [{
-      address      = "137.110.161.109";
-      prefixLength = 24;
-    }];
+    useDHCP = false;
+    interfaces.ens18.ipv4.addresses = [
+      {
+        address = "137.110.161.109";
+        prefixLength = 24;
+      }
+    ];
     defaultGateway = "137.110.161.1";
     # Resolver is owned by modules/samba-ad.nix: it force-sets nameservers to
     # 127.0.0.1 (the DC's own internal DNS) with an upstream fallback, so any

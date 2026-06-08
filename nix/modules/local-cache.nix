@@ -41,9 +41,13 @@
 # with `id -un` at shell start (robust where $USER expansion in sessionVariables is
 # not), and only exported when /local/<user> exists — so a host/user without this
 # cache (or with /local unmounted) just keeps the home defaults.
-{ config, lib, pkgs, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; let
   cfg = config.krg.localCache;
 
   # --- per-user dir + symlink creation (pam_exec session hook) ----------------
@@ -110,14 +114,13 @@ let
   # mountPoint goes through a shell var (escaped ONCE) so it's never interpolated raw
   # inside a double-quoted bash string (a non-standard mountPoint with $/backticks would
   # otherwise expand).
-  shellInitSnippet = optionalString (cfg.cacheEnv != { }) ''
+  shellInitSnippet = optionalString (cfg.cacheEnv != {}) ''
     # krg.localCache: redirect regenerable caches onto node-local NVMe (/local).
     __krg_mp=${escapeShellArg cfg.mountPoint}
     if ${pkgs.util-linux}/bin/mountpoint -q -- "$__krg_mp"; then
       __krg_lc="$__krg_mp/$(${pkgs.coreutils}/bin/id -un 2>/dev/null)"
       if [ -d "$__krg_lc" ]; then
-    ${concatStringsSep "\n" (mapAttrsToList (var: rel:
-      "    export ${var}=\"$__krg_lc/${rel}\"") cfg.cacheEnv)}
+    ${concatStringsSep "\n" (mapAttrsToList (var: rel: "    export ${var}=\"$__krg_lc/${rel}\"") cfg.cacheEnv)}
       fi
       unset __krg_lc
     fi
@@ -142,13 +145,13 @@ in {
 
     mountOptions = mkOption {
       type = types.listOf types.str;
-      default = [ "defaults" "nofail" ];
+      default = ["defaults" "nofail"];
       description = "Mount options for the /local dataset. `nofail` so a missing/late dataset never wedges boot (the pam hook + shellInit both guard on the mount being present).";
     };
 
     symlinks = mkOption {
       type = types.listOf types.str;
-      default = [ ".vscode-server" ".cursor-server" ];
+      default = [".vscode-server" ".cursor-server"];
       description = ''
         Home-relative paths symlinked into <mountPoint>/<user> on login (e.g.
         ~/.vscode-server -> /local/<user>/.vscode-server). Created only if the home
@@ -161,11 +164,11 @@ in {
     cacheEnv = mkOption {
       type = types.attrsOf types.str;
       default = {
-        XDG_CACHE_HOME  = ".cache";              # pip, matplotlib, many tools
-        HF_HOME         = ".cache/huggingface";  # Hugging Face hub (hardcodes ~/.cache, ignores XDG)
-        TORCH_HOME      = ".cache/torch";         # torch.hub model cache
-        CONDA_PKGS_DIRS = ".conda/pkgs";          # conda PACKAGE cache (envs stay in home)
-        npm_config_cache = ".cache/npm";          # npm download cache
+        XDG_CACHE_HOME = ".cache"; # pip, matplotlib, many tools
+        HF_HOME = ".cache/huggingface"; # Hugging Face hub (hardcodes ~/.cache, ignores XDG)
+        TORCH_HOME = ".cache/torch"; # torch.hub model cache
+        CONDA_PKGS_DIRS = ".conda/pkgs"; # conda PACKAGE cache (envs stay in home)
+        npm_config_cache = ".cache/npm"; # npm download cache
       };
       description = ''
         Cache env vars -> path RELATIVE to <mountPoint>/<user>, exported per shell
@@ -175,7 +178,7 @@ in {
     };
 
     perUser = mkOption {
-      default = { };
+      default = {};
       description = "On-login creation of the private <mountPoint>/<user> dir (the symlink targets live under it).";
       type = types.submodule {
         options = {
@@ -187,7 +190,7 @@ in {
           };
           loginServices = mkOption {
             type = types.listOf types.str;
-            default = [ "sshd" "login" ];
+            default = ["sshd" "login"];
             description = "PAM services the per-user/symlink session hook is added to (add `xrdp` if the desktop is enabled).";
           };
         };
@@ -207,7 +210,7 @@ in {
 
       # Bare mountpoint perms before the dataset mounts; once mounted the dataset
       # root (0755 root) shows through, and each user's dir is 0700 (perUser hook).
-      systemd.tmpfiles.rules = [ "d ${cfg.mountPoint} 0755 root root -" ];
+      systemd.tmpfiles.rules = ["d ${cfg.mountPoint} 0755 root root -"];
 
       environment.shellInit = shellInitSnippet;
     }
@@ -219,7 +222,7 @@ in {
         rules.session.krgLocalCacheMkdir = {
           control = "optional";
           modulePath = "${pkgs.pam}/lib/security/pam_exec.so";
-          args = [ "${mkPerUserScript}" ];
+          args = ["${mkPerUserScript}"];
           order = 13500; # session open, after pam_mkhomedir and krg.scratch's hook
         };
       });

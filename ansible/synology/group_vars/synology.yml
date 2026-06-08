@@ -32,3 +32,14 @@ syno_path: "/usr/syno/sbin:/usr/syno/bin"
 # playbook_dir is the new location ansible/synology/, so ../../ still reaches
 # the repo root (same depth as the old playbooks/ location).
 nas_spec_dir: "{{ playbook_dir }}/../../spec/e4e-nas"
+
+# --- Bring-up gates -----------------------------------------------------------
+# DSM mail notifications use Gmail OAuth (spec/e4e-nas/notifications.yml
+# `mail.enable_oauth: true`), whose token is bootstrapped INTERACTIVELY in the DSM
+# UI (Notification → Email → Sign in) — it can't be set via the webapi. Until that
+# one-time sign-in is done, Notification.Mail.Conf.set validates the relay and
+# returns err 4600, which FAILS the unattended converge (synology_notifications).
+# Defer the mail SET so the converge stays green (other notification channels +
+# the rest of the playbook still apply). Flip to false after the OAuth bootstrap.
+# Tracked in #163.
+synology_notifications_defer_mail: true

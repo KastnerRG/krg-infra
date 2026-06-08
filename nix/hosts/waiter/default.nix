@@ -1,4 +1,8 @@
-{ inputs, pkgs, ... }: {
+{
+  inputs,
+  pkgs,
+  ...
+}: {
   imports = [
     ../../profiles/compute.nix
     ./hardware-configuration.nix
@@ -54,7 +58,7 @@
   # to close that window is a tracked follow-up (see CLAUDE.md pending items).
   krg.nfsHome = {
     enable = true;
-    server = "137.110.161.98";   # fabricant (the hypervisor serving rpool/nfs)
+    server = "137.110.161.98"; # fabricant (the hypervisor serving rpool/nfs)
   };
 
   # scratchpool (HDD data + NVMe special/cache) holds the /scratch dataset, imported
@@ -62,7 +66,7 @@
   # the (unmounted) e4e scaffolding dataset's pool still imports at boot. (nvmepool is
   # imported because / lives on it.) The old hddpool is gone — its disks are now the
   # scratchpool data vdev (see disko-config.nix).
-  krg.zfs.extraPools = [ "scratchpool" ];
+  krg.zfs.extraPools = ["scratchpool"];
 
   # /scratch for the krg lab — PLAIN ZFS now (modules/scratch.nix), not autotier/FUSE.
   # /scratch/krg is scratchpool/scratch-krg: bytes on the striped HDD, hot reads served
@@ -143,8 +147,8 @@
   # pressure). zstd-compressed RAM cushion for OOM bursts. memoryPercent is a cap on
   # the zram device size, not a reservation. Interacts with earlyoom + the ARC cap below.
   zramSwap = {
-    enable        = true;
-    algorithm     = "zstd";
+    enable = true;
+    algorithm = "zstd";
     memoryPercent = 50;
   };
 
@@ -174,7 +178,7 @@
   # here for waiter (the box that actually needs it) as part of this redesign.
   services.earlyoom = {
     enable = true;
-    freeMemThreshold = 5;   # act when <5% RAM free
+    freeMemThreshold = 5; # act when <5% RAM free
     freeSwapThreshold = 10;
   };
   systemd.oomd.enable = false;
@@ -201,11 +205,11 @@
   # default. Break-glass krg-admin (local) is unaffected. NOTE: the "Waiter" AD group
   # must exist and have members (AD-side, see docs/creating-a-user.md); it's matched
   # under CN=Users — use krg.adClient.accessFilter if it ever lives in a custom OU.
-  krg.adClient.allowedGroups = [ "Domain Admins" "Waiter" ];
+  krg.adClient.allowedGroups = ["Domain Admins" "Waiter"];
 
   networking = {
     hostName = "waiter";
-    domain   = "ucsd.edu";
+    domain = "ucsd.edu";
 
     # Static IP on the UCSD-facing onboard NIC. VERIFIED on the installed system
     # via `ip -br link`: name = eno1np0, MAC cc:28:aa:0a:58:fa. The `np0` suffix is
@@ -214,16 +218,21 @@
     # stable per hardware+driver, so this won't drift across reboots/rebuilds; only
     # a NIC swap or major driver change could rename it (then re-check, or pin by
     # MAC with a systemd .link rename).
-    useDHCP  = false;
+    useDHCP = false;
     interfaces.eno1np0 = {
-      ipv4.addresses = [{ address = "137.110.161.67"; prefixLength = 24; }];
+      ipv4.addresses = [
+        {
+          address = "137.110.161.67";
+          prefixLength = 24;
+        }
+      ];
     };
     defaultGateway = "137.110.161.1";
     # The AD DC (krg-ldap) is prepended as the PRIMARY resolver by krg.adClient
     # (modules/sssd-ad-client.nix) for every domain member — so SSSD can resolve the
     # internal krg.local zone instead of flapping offline. These are just waiter's
     # site fallbacks, used after the DC.
-    nameservers    = [ "132.239.0.252" "8.8.8.8" "1.1.1.1" ];
+    nameservers = ["132.239.0.252" "8.8.8.8" "1.1.1.1"];
 
     # ZFS requires a unique hostId — generate with:
     #   python3 -c "import uuid; print(str(uuid.uuid4())[:8])"
@@ -239,7 +248,7 @@
   # then rebuild; the oec-install service enrolls the agents on next boot.
 
   # GNU Make for researchers building from source on this workstation.
-  environment.systemPackages = [ pkgs.gnumake ];
+  environment.systemPackages = [pkgs.gnumake];
 
   system.stateVersion = "25.11";
 }

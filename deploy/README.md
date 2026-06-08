@@ -31,8 +31,8 @@ uses).
 
 | Script | Applies | Notes |
 |---|---|---|
-| `deploy-nixos.sh` | krg-vault, krg-ldap, krg-prod, waiter | `--build-host = --target-host` so each host builds its own closure (krg-deploy only evaluates). **krg-deploy itself is excluded** — it runs the job; it stays current via nightly `autoUpgrade`. **e4e-prod is omitted** until the host is provisioned. |
-| `deploy-ansible.sh` | `ansible/playbooks/site.yml` (Proxmox) | Synology is **opt-in** (`DEPLOY_SYNOLOGY=true`, off by default) — its declarative sync deletes, and bring-up has gates (see [docs/e4e-nas-dsm.md](../docs/e4e-nas-dsm.md)). Galaxy collections (`ansible/requirements.yml`) must be **provisioned on the control node** (not installed per-run — matches the nightly `ansible-apply`); deterministic/Nix-managed collections tracked in #129. |
+| `deploy-nixos.sh` | krg-vault, krg-ldap, krg-prod, waiter | `--build-host = --target-host` so each host builds its own closure (krg-deploy only evaluates). **krg-deploy itself is excluded** from the rebuild — it runs the job; it stays current via nightly `autoUpgrade` (and self-verifies OEC locally — see *OEC* below). **e4e-prod is omitted** until the host is provisioned. **Stages the OEC installer to each host before the switch and verifies both security daemons are active afterwards** (see *OEC* below). |
+| `deploy-ansible.sh` | `ansible/playbooks/site.yml` (Proxmox) | Synology is **opt-in** (`DEPLOY_SYNOLOGY=true`, off by default) — its declarative sync deletes, and bring-up has gates (see [docs/e4e-nas-dsm.md](../docs/e4e-nas-dsm.md)). Galaxy collections (`ansible/requirements.yml`) must be **provisioned on the control node** (not installed per-run — matches the nightly `ansible-apply`); deterministic/Nix-managed collections tracked in #129. **Passes `oec_installer` so the Proxmox hosts enroll + verify the OEC daemons too** (see *OEC* below). |
 | `deploy-tofu.sh` | each `terraform/<target>/` with a `.deploy-env` | **Deferred** — the step is commented out in `deploy.yml`. Script is in place and dormant. State persists under `TOFU_STATE_ROOT` (CI checkout is ephemeral); encrypted when `TOFU_STATE_PASSPHRASE` is set. |
 
 The scripts run by hand on krg-deploy too (they only need the deploy toolchain + the
@@ -64,9 +64,44 @@ deploying on top of a half-broken fleet.
 - `terraform/<target>/.deploy-env` — sourced per target to export `VAULT_TOKEN`,
   `TF_VAR_*`, etc. Targets without it are **skipped** (safe to land before creds exist).
 - `TOFU_STATE_PASSPHRASE` — repo Actions secret; encrypts OpenTofu state.
+- `/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz` — the
+  campus-mandated **OEC** (Qualys + Trellix) vendor archive, holding live enrollment
+  creds (gitignored). Both deploy scripts **fail if it's absent** (`OEC_INSTALLER`
+  overrides the path) — see *OEC* below.
+
+## OEC (campus-mandated Qualys + Trellix) — enforced
+
+The Qualys Cloud Agent + Trellix HX (xagt) endpoint agents are **mandatory on every
+host** ([#22](https://github.com/KastnerRG/krg-infra/issues/22)), so the deploy treats
+them as a hard gate rather than best-effort:
+
+- **NixOS** (`deploy-nixos.sh`): `scp`s the archive to each host's runtime path
+  (`/var/lib/krg/oec/…`) **before** `nixos-rebuild switch` — so that switch's
+  `oec-install` oneshot ([`modules/security/oec-qualys-trellix.nix`](../nix/modules/security/oec-qualys-trellix.nix))
+  enrolls on the same run — then, after the whole fleet has rebuilt, checks
+  `qualys-cloud-agent` + `xagt` are `active` on every host.
+- **krg-deploy itself** (the control node) is excluded from the rebuild loop — a
+  self-`switch` would restart the running github-runner mid-job — so it enrolls via
+  its nightly `autoUpgrade` instead, pointed at the archive it already holds in
+  `.secrets/` ([`nix/hosts/krg-deploy`](../nix/hosts/krg-deploy/default.nix) sets
+  `krg.oecQualysTrellix.installerArchive`). `deploy-nixos.sh` still verifies it,
+  **locally** (no ssh/rebuild), folded into the same gate.
+- **Proxmox** (`deploy-ansible.sh`): passes `oec_installer`; the
+  [`oec_qualys_trellix`](../ansible/roles/oec_qualys_trellix) role copies + installs
+  the archive and asserts both daemons are active.
+- **A missing archive on the control node, or any host where either daemon is not
+  active, fails the deploy** — no silently-unhardened machine. (The Ansible role
+  still no-ops gracefully when `oec_installer` is unset, so `--check`/local runs are
+  unaffected; enforcement lives in the CD path.)
+- **Bring-up note:** issue #22 had the nix-ld path validated only on krg-ldap. With
+  this gate, deploys now fail until the agents come up on krg-prod / e4e-prod / waiter
+  too — that's the intended forcing function, but expect the first push after staging
+  the archive to surface any remaining per-host nix-ld/library gaps.
 
 ## Tunables (env)
 
 `DEPLOY_ADMIN` (`krg-admin`) · `DEPLOY_SSH_KEY` · `DEPLOY_SSH_ACCEPT_NEW` (`false`) ·
-`DEPLOY_SYNOLOGY` (`false`) · `TOFU_TARGETS` (`openbao authentik grafana e4e-nas`) ·
+`DEPLOY_SYNOLOGY` (`false`) · `OEC_INSTALLER`
+(`/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz`) ·
+`TOFU_TARGETS` (`openbao authentik grafana e4e-nas`) ·
 `TOFU_STATE_ROOT` (`/var/lib/krg-admin/tofu-state`).
