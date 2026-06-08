@@ -10,6 +10,13 @@ as ADRs in [`adr/`](adr/); this is the working map.
 
 Git is the source of truth; UI/by-hand changes are drift (ADR 0001).
 
+> **Status (2026-06):** the NAS IaC is now largely built out — see the 20+
+> `synology_*` roles under [`../ansible/synology/`](../ansible/synology), the full
+> [`../spec/e4e-nas/*.yml`](../spec/e4e-nas), and ADRs 0006/0007. The milestone
+> list below is the *original* standup plan; some scaffolding it references (e.g.
+> the `nix/test/dsm-rig.nix` rig and `apps.dsm-vm`) was superseded — the DSM test
+> rig now lives in [`../test/`](../test/README.md).
+
 ## Where each piece lives (integrated, not a parallel repo — ADR 0005)
 
 | Concern | Home | Tool |

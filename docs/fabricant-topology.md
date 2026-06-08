@@ -100,6 +100,9 @@ flowchart TB
     end
     subgraph guests["VM guests — per-VM &lt;vmid&gt;.fw"]
       kl["krg-ldap (100)<br/>137.110.161.109"]
+      kv["krg-vault (101)<br/>137.110.161.123"]
+      kd["krg-deploy (102)<br/>137.110.161.122"]
+      kp["krg-prod (103)<br/>137.110.161.106"]
     end
   end
 
@@ -131,5 +134,5 @@ cluster's terminal `IN DROP` never shadows the NFS ACCEPT. IPSets (`public`,
 > **Bootstrap dependency:** fabricant is an SSSD AD client of `krg-ldap`, which
 > runs as a VM **on fabricant itself** — so host identity depends on a guest it
 > hosts. The local break-glass `krg-admin` (key-only, off AD) is the deliberate
-> escape hatch. The per-VM `100.fw` that guards krg-ldap's AD ports only applies
-> if that VM's NIC has `firewall=1` set.
+> escape hatch. The per-VM `<vmid>.fw` files (100 krg-ldap, 101 krg-vault,
+> 102 krg-deploy, 103 krg-prod) only apply if each VM's NIC has `firewall=1` set.

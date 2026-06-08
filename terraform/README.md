@@ -17,8 +17,8 @@ and secrets. A NAS `apply` must not be able to touch Vault's state.
 
 | Target | Provider | Manages | Status |
 |---|---|---|---|
-| [`e4e-nas/`](e4e-nas/) | `synology-community/synology` | Synology DSM: Container Manager, packages, tasks, files, VMs (+ runbook for the rest) | **built (scaffold)** — resources still commented pending provider-attr verification |
-| [`authentik/`](authentik/) | `goauthentik/authentik` + `hashicorp/vault` | Authentik **SSO config**: applications, OAuth2/OIDC + proxy providers, LDAP outpost, groups; writes OIDC client secrets into OpenBao | **built** |
+| [`e4e-nas/`](e4e-nas/) | `synology-community/synology` | Synology DSM: Container Manager package + FileStation folders (active); scheduler/VMs scaffolded (+ runbook for the rest) | **built (hybrid)** — most of DSM has no API; see ADR 0007 |
+| [`authentik/`](authentik/) | `goauthentik/authentik` + `hashicorp/vault` + `hashicorp/random` | Authentik **SSO config**: applications, OAuth2/OIDC + proxy providers, LDAP source/outpost, groups; writes OIDC client secrets into OpenBao | **built** |
 | [`openbao/`](openbao/) | `hashicorp/vault` (OpenBao is API-compatible) | OpenBao **structure**: KV-v2 mount, AppRole auth, per-consumer policies (krg-deploy, krg-prod) | **built** |
 | [`grafana/`](grafana/) | `grafana/grafana` + `hashicorp/vault` | Grafana objects: data sources, folders, dashboards, SSO via Authentik (creds from OpenBao) | **built** |
 
