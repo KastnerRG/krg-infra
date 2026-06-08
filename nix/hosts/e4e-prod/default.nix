@@ -1,5 +1,4 @@
-{ ... }:
-{
+{...}: {
   imports = [
     ../../profiles/server.nix
     ./hardware-configuration.nix
@@ -16,7 +15,7 @@
 
   networking = {
     hostName = "e4e-prod";
-    domain   = "ucsd.edu";
+    domain = "ucsd.edu";
   };
 
   # E4E project services attach here as krg.composeStacks.<name> once defined,

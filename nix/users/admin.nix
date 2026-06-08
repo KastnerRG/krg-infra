@@ -2,9 +2,12 @@
 # Each host gets exactly one default admin — krg-admin (KastnerRG) or
 # e4e-admin (Engineers for Exploration) — selected via `krg.adminAccount`.
 # Requires modules/users.nix to be imported on the host.
-{ config, lib, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  ...
+}:
+with lib; let
   account = config.krg.adminAccount;
 
   # Canonical SSH keys per team admin — single source of truth shared with the
@@ -27,15 +30,15 @@ let
   adminHashedPasswords = builtins.fromJSON (builtins.readFile ../keys/admin-passwords.json);
 in {
   options.krg.adminAccount = mkOption {
-    type        = types.enum [ "krg-admin" "e4e-admin" ];
-    default     = "krg-admin";
+    type = types.enum ["krg-admin" "e4e-admin"];
+    default = "krg-admin";
     description = "Which baseline administrator account this machine gets.";
   };
 
   config = {
     krg.users.users.${account} = {
-      description    = "Baseline administrator (${account})";
-      groups         = [ "wheel" ];
+      description = "Baseline administrator (${account})";
+      groups = ["wheel"];
       sudoNoPassword = true;
       authorizedKeys = adminKeys.${account};
       # Home OFF /home: the break-glass admin must work when /home is a network
@@ -43,7 +46,7 @@ in {
       # home would be shadowed by that mount and unavailable whenever the NFS
       # server is down — defeating the break-glass guarantee. /var/lib/<account>
       # is local and always present (persist it if a host runs impermanence).
-      home           = "/var/lib/${account}";
+      home = "/var/lib/${account}";
       # null for accounts without a hash above -> console-locked, SSH key-only.
       hashedPassword = adminHashedPasswords.${account} or null;
     };

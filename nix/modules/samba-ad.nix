@@ -15,9 +15,13 @@
 #   * Frees UDP/TCP 53 for Samba's internal DNS by disabling systemd-resolved and
 #     pointing the resolver at the DC itself (127.0.0.1) with an upstream fallback.
 #   * krb5.conf is deterministic from the realm, so we render it declaratively.
-{ config, lib, pkgs, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; let
   cfg = config.krg.sambaAD;
 
   # nixpkgs' samba derivation (servers/samba/4.x.nix) builds samba-tool's
@@ -29,40 +33,40 @@ let
   # pythonPath; wrapPython then resolves cryptography's transitive closure too.
   # This forces a from-source samba rebuild (no binary-cache hit for the override).
   sambaAdDc = pkgs.samba4Full.overrideAttrs (old: {
-    pythonPath = (old.pythonPath or [ ]) ++ [ pkgs.python3Packages.cryptography ];
+    pythonPath = (old.pythonPath or []) ++ [pkgs.python3Packages.cryptography];
   });
 in {
   options.krg.sambaAD = {
     enable = mkEnableOption "Samba Active Directory domain controller";
 
     package = mkOption {
-      type        = types.package;
-      default     = sambaAdDc;
+      type = types.package;
+      default = sambaAdDc;
       defaultText = literalExpression "pkgs.samba4Full (+ python3Packages.cryptography on pythonPath)";
       description = "Samba package — must be AD-DC-capable (samba4Full).";
     };
 
     realm = mkOption {
-      type        = types.str;
-      default     = "KRG.LOCAL";
+      type = types.str;
+      default = "KRG.LOCAL";
       description = "Kerberos/AD realm (uppercase DNS domain), e.g. KRG.LOCAL.";
     };
 
     workgroup = mkOption {
-      type        = types.str;
-      default     = "KRG";
+      type = types.str;
+      default = "KRG";
       description = "NetBIOS domain (short) name, e.g. KRG.";
     };
 
     dnsBackend = mkOption {
-      type        = types.enum [ "SAMBA_INTERNAL" "BIND9_DLZ" ];
-      default     = "SAMBA_INTERNAL";
+      type = types.enum ["SAMBA_INTERNAL" "BIND9_DLZ"];
+      default = "SAMBA_INTERNAL";
       description = "DNS backend passed to `samba-tool domain provision`.";
     };
 
     dnsForwarder = mkOption {
-      type        = types.str;
-      default     = "1.1.1.1";
+      type = types.str;
+      default = "1.1.1.1";
       description = ''
         Upstream resolver the DC forwards non-AD DNS queries to. Set this as
         `dns forwarder = …` in smb.conf after provisioning (provision does not
@@ -71,8 +75,8 @@ in {
     };
 
     dnsFallback = mkOption {
-      type        = types.listOf types.str;
-      default     = [ "1.1.1.1" ];
+      type = types.listOf types.str;
+      default = ["1.1.1.1"];
       description = ''
         Secondary resolvers placed in /etc/resolv.conf after 127.0.0.1. This
         keeps the box online before the domain is provisioned (when 127.0.0.1:53
@@ -82,14 +86,14 @@ in {
     };
 
     openFirewall = mkOption {
-      type        = types.bool;
-      default     = true;
+      type = types.bool;
+      default = true;
       description = "Open the AD DC well-known ports via krg.firewall.";
     };
 
     openDynamicRpc = mkOption {
-      type        = types.bool;
-      default     = true;
+      type = types.bool;
+      default = true;
       description = ''
         Open the dynamic RPC high-port range (49152-65535). Required for domain
         join, MMC/RSAT management, and DC replication (DRSUAPI). Disable only if
@@ -99,22 +103,24 @@ in {
   };
 
   config = mkIf cfg.enable {
-    assertions = [{
-      assertion = cfg.dnsBackend == "SAMBA_INTERNAL";
-      message   = "krg.sambaAD: only SAMBA_INTERNAL is wired up so far; BIND9_DLZ needs a BIND9 + DLZ module first.";
-    }];
+    assertions = [
+      {
+        assertion = cfg.dnsBackend == "SAMBA_INTERNAL";
+        message = "krg.sambaAD: only SAMBA_INTERNAL is wired up so far; BIND9_DLZ needs a BIND9 + DLZ module first.";
+      }
+    ];
 
     # samba-tool, samba, smbclient, wbinfo, ldbsearch on the operator's PATH.
     # krb5 adds the Kerberos client tools (kinit/klist/kdestroy) — Samba ships
     # none, and the post-provision validation (kinit administrator@KRG.LOCAL,
     # see below) needs them. It reads the /etc/krb5.conf rendered above.
-    environment.systemPackages = [ cfg.package pkgs.krb5 ];
+    environment.systemPackages = [cfg.package pkgs.krb5];
 
     # Samba's internal DNS must own port 53 — get systemd-resolved out of the way
     # and resolve through the DC itself (with an upstream fallback pre-provision).
     services.resolved.enable = mkForce false;
-    networking.nameservers    = mkForce ([ "127.0.0.1" ] ++ cfg.dnsFallback);
-    networking.search         = [ (toLower cfg.realm) ];
+    networking.nameservers = mkForce (["127.0.0.1"] ++ cfg.dnsFallback);
+    networking.search = [(toLower cfg.realm)];
 
     # Deterministic Kerberos config (matches what provision would generate).
     environment.etc."krb5.conf".text = ''
@@ -133,22 +139,22 @@ in {
     # The combined AD DC daemon. Stays inactive (ConditionPathExists) until the
     # domain has been provisioned, so it never crash-loops on a fresh box.
     systemd.services.samba-ad-dc = {
-      description   = "Samba Active Directory Domain Controller";
-      documentation = [ "man:samba(8)" "https://wiki.samba.org/index.php/Setting_up_Samba_as_an_Active_Directory_Domain_Controller" ];
-      after         = [ "network-online.target" ];
-      wants         = [ "network-online.target" ];
-      wantedBy      = [ "multi-user.target" ];
+      description = "Samba Active Directory Domain Controller";
+      documentation = ["man:samba(8)" "https://wiki.samba.org/index.php/Setting_up_Samba_as_an_Active_Directory_Domain_Controller"];
+      after = ["network-online.target"];
+      wants = ["network-online.target"];
+      wantedBy = ["multi-user.target"];
       unitConfig.ConditionPathExists = "/var/lib/samba/private/sam.ldb";
       serviceConfig = {
-        Type             = "notify";
-        NotifyAccess     = "all";
-        ExecStart        = "${cfg.package}/sbin/samba --foreground --no-process-group";
-        ExecReload       = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
-        Restart          = "on-failure";
-        RestartSec       = "5s";
-        LimitNOFILE      = 16384;
+        Type = "notify";
+        NotifyAccess = "all";
+        ExecStart = "${cfg.package}/sbin/samba --foreground --no-process-group";
+        ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
+        Restart = "on-failure";
+        RestartSec = "5s";
+        LimitNOFILE = 16384;
         RuntimeDirectory = "samba";
-        TimeoutStartSec  = "60s";
+        TimeoutStartSec = "60s";
       };
     };
 
@@ -171,27 +177,30 @@ in {
         ++ trusted.ipsets.machines
         ++ (trusted.ipsets.ops or [])
       );
-      mk = port: { inherit port; sources = adSources; };
+      mk = port: {
+        inherit port;
+        sources = adSources;
+      };
     in {
       sourcedPorts = map mk [
-        53    # DNS
-        88    # Kerberos
-        135   # RPC endpoint mapper
-        139   # NetBIOS session
-        389   # LDAP
-        445   # SMB
-        464   # kpasswd
-        636   # LDAPS
-        3268  # Global Catalog
-        3269  # Global Catalog over SSL
+        53 # DNS
+        88 # Kerberos
+        135 # RPC endpoint mapper
+        139 # NetBIOS session
+        389 # LDAP
+        445 # SMB
+        464 # kpasswd
+        636 # LDAPS
+        3268 # Global Catalog
+        3269 # Global Catalog over SSL
       ];
       sourcedUDPPorts = map mk [
-        53    # DNS
-        88    # Kerberos
-        137   # NetBIOS name service
-        138   # NetBIOS datagram
-        389   # LDAP / CLDAP
-        464   # kpasswd
+        53 # DNS
+        88 # Kerberos
+        137 # NetBIOS name service
+        138 # NetBIOS datagram
+        389 # LDAP / CLDAP
+        464 # kpasswd
       ];
     });
 
@@ -200,26 +209,26 @@ in {
     # express ranges (listOf port can't); emit the rule directly here.
     # CROSS-REFERENCE: ansible/roles/proxmox_firewall/files/krg-ldap.fw —
     # keep these source lists aligned. Inert unless openDynamicRpc is set.
-    networking.firewall.extraInputRules =
-      mkIf (cfg.openFirewall && cfg.openDynamicRpc) (let
-        trusted = builtins.fromJSON (builtins.readFile ../networks/trusted.json);
-        adSources = map (e: e.cidr) (
-          trusted.ipsets.sealab
-          ++ trusted.ipsets.machines
-          ++ (trusted.ipsets.ops or [])
-        );
-        # Split by family — same colon-detection krg.firewall uses. If
-        # trusted.json grows v6 entries later, this stays correct (a
-        # hardcoded `ip saddr` against a v6 address would silently
-        # produce invalid nftables and drop the v6 restriction).
-        isV6 = src: lib.hasInfix ":" src;
-        v4 = lib.filter (s: !(isV6 s)) adSources;
-        v6 = lib.filter isV6 adSources;
-        mkRange = family: srcs:
-          lib.optionalString (srcs != []) ''
-            ${family} { ${lib.concatStringsSep ", " srcs} } tcp dport 49152-65535 accept
-          '';
-      in mkRange "ip saddr" v4 + mkRange "ip6 saddr" v6);
+    networking.firewall.extraInputRules = mkIf (cfg.openFirewall && cfg.openDynamicRpc) (let
+      trusted = builtins.fromJSON (builtins.readFile ../networks/trusted.json);
+      adSources = map (e: e.cidr) (
+        trusted.ipsets.sealab
+        ++ trusted.ipsets.machines
+        ++ (trusted.ipsets.ops or [])
+      );
+      # Split by family — same colon-detection krg.firewall uses. If
+      # trusted.json grows v6 entries later, this stays correct (a
+      # hardcoded `ip saddr` against a v6 address would silently
+      # produce invalid nftables and drop the v6 restriction).
+      isV6 = src: lib.hasInfix ":" src;
+      v4 = lib.filter (s: !(isV6 s)) adSources;
+      v6 = lib.filter isV6 adSources;
+      mkRange = family: srcs:
+        lib.optionalString (srcs != []) ''
+          ${family} { ${lib.concatStringsSep ", " srcs} } tcp dport 49152-65535 accept
+        '';
+    in
+      mkRange "ip saddr" v4 + mkRange "ip6 saddr" v6);
   };
 
   # ── One-time provisioning (run on the box, after the first deploy) ──────────

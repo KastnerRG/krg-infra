@@ -1,9 +1,13 @@
-{ config, lib, pkgs, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; let
   cfg = config.krg.docker;
 in {
-  imports = [ ./ad-group-sync.nix ];
+  imports = [./ad-group-sync.nix];
 
   options.krg.docker = {
     enable = mkEnableOption "KRG Docker CE configuration";
@@ -16,9 +20,9 @@ in {
     # these AD groups (getent → gpasswd -M). Login (krg.adClient.allowedGroups) gates
     # who may SSH in; this gates who may use Docker.
     accessGroups = mkOption {
-      type    = types.listOf types.str;
+      type = types.listOf types.str;
       default = [];
-      example = [ "Docker Users" ];
+      example = ["Docker Users"];
       description = ''
         AD groups whose members are bridged into the local `docker` group (Docker
         daemon access). Matched by name via getent (so the group must resolve through
@@ -29,18 +33,18 @@ in {
     };
 
     enableNvidiaRuntime = mkOption {
-      type        = types.bool;
-      default     = false;
+      type = types.bool;
+      default = false;
       description = "Register nvidia-container-runtime in the Docker daemon (for GPU nodes)";
     };
 
     metricsAddr = mkOption {
-      type    = types.str;
+      type = types.str;
       default = "0.0.0.0:9323";
     };
 
     defaultPublishAddress = mkOption {
-      type    = types.str;
+      type = types.str;
       default = "127.0.0.1";
       description = ''
         Default host address Docker binds published container ports to when a
@@ -76,10 +80,10 @@ in {
     # which point this permit is removed (26.05's default docker is not insecure).
     # NOTE: exact version string — if 25.11 ever moves docker off 28.5.2 this must
     # follow (or switch to nixpkgs.config.allowInsecurePredicate matching "docker").
-    nixpkgs.config.permittedInsecurePackages = [ "docker-28.5.2" ];
+    nixpkgs.config.permittedInsecurePackages = ["docker-28.5.2"];
 
     virtualisation.docker = {
-      enable      = true;
+      enable = true;
       enableOnBoot = true;
 
       daemon.settings = mkMerge [
@@ -90,9 +94,14 @@ in {
           # off the external interface unless a compose file explicitly opts in.
           "ip" = cfg.defaultPublishAddress;
           builder.gc = {
-            enabled            = true;
+            enabled = true;
             defaultKeepStorage = "512GB";
-            policy             = [{ keepStorage = "0"; filter = [ "unused-for=2160h" ]; }];
+            policy = [
+              {
+                keepStorage = "0";
+                filter = ["unused-for=2160h"];
+              }
+            ];
           };
         }
         (mkIf cfg.enableNvidiaRuntime {
