@@ -32,6 +32,10 @@ with lib; let
   # `ModuleNotFoundError: No module named 'cryptography'`. Add it back to
   # pythonPath; wrapPython then resolves cryptography's transitive closure too.
   # This forces a from-source samba rebuild (no binary-cache hit for the override).
+  # Drop this override once nixpkgs ships cryptography in samba's pythonPath.
+  # Fixed upstream in NixOS/nixpkgs#522031 (master, 2026-06-02) but NOT in
+  # nixos-25.11 or nixos-26.05 (missed the 26.05 branch) — needs a 26.05
+  # backport or nixos-26.11. Tracking: KastnerRG/krg-infra#173.
   sambaAdDc = pkgs.samba4Full.overrideAttrs (old: {
     pythonPath = (old.pythonPath or []) ++ [pkgs.python3Packages.cryptography];
   });
