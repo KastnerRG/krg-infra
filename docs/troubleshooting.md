@@ -167,6 +167,29 @@ warning; pool health also goes to Prometheus via the textfile collector
 
 ## Security agents (OEC: Qualys + Trellix)
 
+### `xagt.service` fails after a rebuild (`status=245`, flapping)
+**Symptom:** a `nixos-rebuild switch` fails with `the following units failed:
+xagt.service`; the unit is `activating (auto-restart)`, `ExecStart=/opt/fireeye/bin/xagt
+-M DAEMON` exited `status=245`, yet a `xagt -M DAEMON` is still alive in the cgroup.
+**Cause:** the vendor unit uses `KillMode=process`, so stopping xagt kills only the
+launcher and leaves the agent **daemon** running. When a rebuild restarts the unit,
+the fresh `xagt -M DAEMON` finds an instance already running and exits non-zero, and
+`Restart=always` flaps it — which `switch-to-configuration` reports as a failed unit,
+failing the deploy.
+**Fix (in tree):** `restartIfChanged = false` on `xagt` (and `qualys-cloud-agent`) —
+nixos-rebuild no longer bounces the self-managing EDR daemons; they still start on
+boot/first-enroll and still recover from real crashes via the unit's `Restart=always`.
+**Recovering a host already stuck in the flap** (one-time, break-glass — the live
+unit's own restart loop won't self-heal): stop the unit, kill any stray daemon, start
+one clean instance:
+```bash
+sudo systemctl stop xagt
+sudo pkill -f '/opt/fireeye/bin/xagt' || true
+sleep 2
+sudo systemctl start xagt
+systemctl is-active xagt   # expect: active
+```
+
 ### `oec-install` fails: `gzip: stdin: not in gzip format`
 **Symptom:** `oec-install.service` fails immediately at extraction with
 `gzip: stdin: not in gzip format` / `tar: Child returned status 1`, failing the
