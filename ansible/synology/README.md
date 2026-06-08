@@ -22,7 +22,7 @@ ansible/synology/
   group_vars/
     all.yml                  # shared lookups (keys/passwords/trusted nets) for THIS subtree
     synology.yml             # connection + DSM-specific vars (ansible_user, syno_path, ...)
-  roles/                     # 22 synology_* roles (baseline + storage + app/web + workload)
+  roles/                     # 23 synology_* roles (baseline + storage + app/web + workload)
     synology_base/           # composer
     synology_users/  synology_ssh/  synology_security/  synology_external_access/
     synology_dsm_system/  synology_dsm_web/  synology_dsm_updates/
@@ -32,6 +32,7 @@ ansible/synology/
     synology_hyper_backup/
     synology_certificate/    # DSM LE certs (issue + default-binding)
     synology_app_portal/     # AppPortal + service-specific cert binding
+    synology_sso/            # DSM web login via Authentik OIDC (default to SSO)
     synology_garage/         # workload: Garage S3 (replaces terraform — ADR 0007)
 ```
 
@@ -60,6 +61,8 @@ ansible-playbook playbook.yml --tags acls-recursive                 # post-AD-jo
 ansible-playbook playbook.yml -e ad_join_password='<pass>'          # AD domain join
 ansible-playbook playbook.yml -e @secrets-hb.yml                    # Hyper Backup secrets
 ansible-playbook playbook.yml -e @~/.config/krg/secrets-garage.yml  # Garage (rpc/admin/metrics tokens)
+ansible-playbook playbook.yml --tags=synology_sso \
+  -e dsm_sso_oidc_client_secret="$(bao kv get -field=client_secret secret/e4e-nas/dsm-sso-oidc)"  # DSM web SSO
 ```
 
 `ansible.cfg` here overrides the main one when invoked from this directory —
@@ -73,7 +76,7 @@ When the NAS is retired or moved off the lab:
 ```bash
 git rm -r ansible/synology/
 # Optional cleanup of the spec + terraform + docs (now orphaned):
-git rm -r spec/e4e-nas/{shares,acls,smb-globals,nfs-exports,services,security,notifications,dsm-web,dsm-system,app-portal,ssh,users,groups,ad,dsm-updates,security-advisor,external-access,quotas,snapshots,hyper-backup}.yml
+git rm -r spec/e4e-nas/{shares,acls,smb-globals,nfs-exports,services,security,notifications,dsm-web,dsm-system,app-portal,ssh,users,groups,ad,dsm-updates,security-advisor,external-access,quotas,snapshots,hyper-backup,certificates,sso,garage}.yml
 git rm -r terraform/e4e-nas/
 git rm docs/e4e-nas-dsm.md docs/adr/0006-no-oec-on-dsm.md
 ```
