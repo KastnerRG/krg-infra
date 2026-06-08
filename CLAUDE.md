@@ -242,7 +242,7 @@ The `.secrets/` directories are in `.gitignore`.
 The grafana/prometheus/loki compose services mount config from the working directory. Before starting the krg-prod stack, populate:
 - `/var/lib/krg/krg-prod/grafana/` — Grafana config
 - `/var/lib/krg/krg-prod/loki/loki-config.yaml` — Loki config
-- `/var/lib/krg/krg-prod/loki/promtail-config.yaml` — Promtail config (update to NixOS journal or `/var/log`)
+- `/var/lib/krg/krg-prod/loki/config.alloy` — Grafana Alloy log-shipper config (replaced Promtail, EOL 2026-03-02; tails `/var/log` + the systemd journal)
 - `/var/lib/krg/krg-prod/prometheus/prometheus.yml` — Prometheus scrape config (targets the renamed hosts; the dead `ansible_deploy_monitor` `:9000` job and the not-yet-provisioned `kastner-ml` targets are the remaining cleanups)
 - `/var/lib/krg/krg-prod/blackbox-exporter/blackbox.yml` — copy from `nix/docker-compose/krg-prod/blackbox-exporter/blackbox.yml`
 

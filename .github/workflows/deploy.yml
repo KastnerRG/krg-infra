@@ -43,7 +43,7 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Check out the commit that passed CI
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
@@ -52,7 +52,7 @@ jobs:
       # the other workflow finishes green it fires its own deploy run.
       - name: Gate on green CI (both workflows)
         id: gate
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { owner, repo } = context.repo;

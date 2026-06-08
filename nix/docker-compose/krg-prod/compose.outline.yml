@@ -1,8 +1,6 @@
 services:
   outline:
-    # TODO(pin): replace :latest with a verified release tag (e.g. 0.8x.y) before
-    # re-enabling — :latest defeats the reproducible-deploy goal everything else uses.
-    image: docker.getoutline.com/outlinewiki/outline:latest
+    image: docker.getoutline.com/outlinewiki/outline:1.8.1
     env_file:
       - ./outline/docker.env
       - ./.secrets/outline_secrets.env
@@ -22,7 +20,7 @@ services:
       - traefik_proxy
 
   outline_redis:
-    image: redis:8
+    image: redis:8.8
     env_file:
       - ./outline/docker.env
       - ./.secrets/outline_secrets.env
@@ -35,7 +33,7 @@ services:
       - outline
 
   outline_postgres:
-    image: postgres:18
+    image: postgres:18.4
     env_file:
       - ./outline/docker.env
       - ./.secrets/outline_secrets.env

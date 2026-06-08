@@ -17,9 +17,9 @@ jobs:
     name: pytest (python helpers + drift detector)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           # The DSM apply_*.py helpers run on DSM's Python 3.8; keep the floor there so
           # the tests catch any accidentally-newer syntax.

@@ -53,7 +53,7 @@ in {
     # Loki: separate read-only config files from writable data dir
     "d  /var/lib/krg/krg-prod/loki                          0750 1000 1000 -"
     "L  /var/lib/krg/krg-prod/loki/loki-config.yaml         - - - - ${composeDir}/loki/loki-config.yaml"
-    "L  /var/lib/krg/krg-prod/loki/promtail-config.yaml     - - - - ${composeDir}/loki/promtail-config.yaml"
+    "L  /var/lib/krg/krg-prod/loki/config.alloy             - - - - ${composeDir}/loki/config.alloy"
     "d  /var/lib/krg/krg-prod/loki/loki-data                0750 1000 1000 -"
 
     # Authentik postgres: config (read-only symlinks) + data (writable)
