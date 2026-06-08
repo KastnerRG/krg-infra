@@ -23,6 +23,16 @@
     monitoringPorts = [9100];
   };
 
+  # OEC (Qualys + Trellix). krg-deploy is EXCLUDED from the push deploy's
+  # stage+verify (deploy/deploy-nixos.sh — a self-rebuild would restart this
+  # runner mid-job), so it isn't staged the way the rest of the fleet is. Instead
+  # point the module at the credentialed archive the control node ALREADY holds
+  # (it's the OEC_INSTALLER deploy source): its nightly autoUpgrade rebuild then
+  # fires oec-install and enrolls with no extra staging. deploy-nixos.sh verifies
+  # this host's daemons LOCALLY at the end of each run.
+  krg.oecQualysTrellix.installerArchive =
+    "/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz";
+
   networking = {
     hostName = "krg-deploy";
     domain = "ucsd.edu";
@@ -177,7 +187,14 @@
         # the OpenBao AppRole creds are provisioned (graceful skip otherwise),
         # so provisioning them is the go-live switch. deploy-ansible.sh resolves
         # REPO_ROOT from its own path, so no cd is needed.
+        #
+        # SYNOLOGY_TAGS scopes the converge to the bring-up-validated roles only
+        # (keep in lockstep with deploy.yml): the full playbook would run every
+        # synology_* role and declaratively DELETE live config not in spec, but
+        # the full NAS spec isn't bring-up-reconciled yet (#165; SNMPv3 #151,
+        # mail OAuth #163). Widen as roles are reconciled; drop it once #165 closes.
         DEPLOY_SYNOLOGY=true \
+        SYNOLOGY_TAGS=synology_shares,synology_acls,synology_certificate,synology_app_portal,synology_garage,synology_sso \
           ${pkgs.bash}/bin/bash /var/lib/krg-admin/krg-infra/deploy/deploy-ansible.sh
       '';
     };

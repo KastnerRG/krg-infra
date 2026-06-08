@@ -29,6 +29,7 @@
     - { file: "{{ synology_ad_spec }}",     name: ad_spec }
   loop_control:
     label: "{{ item.name }}"
+  tags: [synology_acls]
 
 # --- Mode 1: share-level grants (always runs) ---------------------------------
 - name: Apply share-level ACL grants (synoshare --setuser; groups @-prefixed)
@@ -44,6 +45,7 @@
   changed_when: "'CHANGED' in acl_apply.stdout or 'WOULD-CHANGE' in acl_apply.stdout"
   failed_when: "acl_apply.rc != 0 or 'FAIL' in acl_apply.stdout"
   check_mode: false # run in --check too; apply_acls.py --check self-gates (read-only)
+  tags: [synology_acls]
 
 # --- Mode 1b: admin_groups → RW on every share in shares.yml (additive bridge) ---
 # The acls.yml `setuser` matrix above is authoritative per-share (omitting a
@@ -79,6 +81,7 @@
   when:
     - (ad_spec.ad.admin_groups | default([])) | length > 0
     - (shares_spec.shares | default([])) | length > 0
+  tags: [synology_acls]
 
 # --- Mode 2: recursive filesystem stamp (opt-in, --tags acls-recursive) -------
 # Walks <path>/** and re-applies the share-root ACL to every entry. The
