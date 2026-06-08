@@ -16,13 +16,13 @@ resource "grafana_sso_settings" "authentik" {
   provider_name = "generic_oauth"
 
   oauth2_settings {
-    name              = "Authentik"
-    client_id         = data.vault_kv_secret_v2.grafana_oidc.data["client_id"]
-    client_secret     = data.vault_kv_secret_v2.grafana_oidc.data["client_secret"]
-    auth_url          = "${var.authentik_url}/application/o/authorize/"
-    token_url         = "${var.authentik_url}/application/o/token/"
-    api_url           = "${var.authentik_url}/application/o/userinfo/"
-    scopes            = "openid email profile"
+    name          = "Authentik"
+    client_id     = data.vault_kv_secret_v2.grafana_oidc.data["client_id"]
+    client_secret = data.vault_kv_secret_v2.grafana_oidc.data["client_secret"]
+    auth_url      = "${var.authentik_url}/application/o/authorize/"
+    token_url     = "${var.authentik_url}/application/o/token/"
+    api_url       = "${var.authentik_url}/application/o/userinfo/"
+    scopes        = "openid email profile"
     # Domain Admins → GrafanaAdmin (server admin); everyone else → Viewer (org-wide,
     # no folder restrictions — folder/team RBAC needs Grafana Enterprise; tracked in #73).
     # allow_assign_grafana_admin MUST be true for the GrafanaAdmin branch to take effect;

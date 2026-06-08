@@ -183,7 +183,7 @@ flowchart TB
 
   subgraph wn["waiter — eno1np0 · 137.110.161.67/24 · gw 137.110.161.1"]
     direction TB
-    fw["nftables firewall (krg.firewall)<br/>+ fail2ban sshd jail (ignore: loopback, sealab)"]
+    fw["nftables firewall (krg.firewall)<br/>+ CrowdSec ssh-bf + CAPI blocklists<br/>(nftables bouncer; whitelist: ucsd, sealab, ops, machines)"]
     subgraph svcs["listening services"]
       direction LR
       ssh["sshd :22<br/>key-only · ed25519-only"]
@@ -214,7 +214,7 @@ flowchart TB
 
 | port | service | exposure | source |
 |---|---|---|---|
-| 22/tcp | SSH | **open to all** | any (key-only ed25519 + fail2ban) |
+| 22/tcp | SSH | **open to all** | any (key-only ed25519 + CrowdSec) |
 | 3389/tcp | XRDP | only when `krg.fpga.enable` (currently **off**) | UCSD nets (`rdpSources`) |
 | 9100/tcp | node-exporter | monitoring | `krg-prod` only |
 | 9290/tcp | ipmi-exporter | monitoring | `krg-prod` only |

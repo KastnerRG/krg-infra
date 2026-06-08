@@ -25,6 +25,7 @@ Secrets (per-job password/key) come via --secrets <JSON map> and are passed to
 create/update calls as DSM expects (best-known: `dest_password=` for rsync,
 `access_key_secret=` for s3 — flip when probing).
 """
+
 import argparse
 import json
 import subprocess
@@ -34,22 +35,23 @@ WEBAPI = "/usr/syno/bin/synowebapi"
 TASK_API = "SYNO.SDS.Backup.Client.Task"
 
 OUT_KEYS = {
-    "name":              "task_name",
-    "dest_type":         "dest_type",
-    "dest_host":         "dest_host",
-    "dest_path":         "dest_path",
-    "sources":           "source_shares",
-    "schedule_daily":    "schedule_time",
-    "retain":            "retention_count",
-    "encrypt":           "enable_encryption",
-    "enabled":           "enable_task",
+    "name": "task_name",
+    "dest_type": "dest_type",
+    "dest_host": "dest_host",
+    "dest_path": "dest_path",
+    "sources": "source_shares",
+    "schedule_daily": "schedule_time",
+    "retain": "retention_count",
+    "encrypt": "enable_encryption",
+    "enabled": "enable_task",
 }
 
 
 def _exec(api, *params):
     out = subprocess.run(
         [WEBAPI, "--exec", "api=" + api, *params],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     txt = out.stdout
     brace = txt.find("{")
@@ -80,15 +82,15 @@ def _args_from(data):
 def _flatten(job, defaults):
     """Spec entry (nested) -> flat DSM-field dict for comparison and SET."""
     out = {
-        OUT_KEYS["name"]:         job["name"],
-        OUT_KEYS["dest_type"]:    job.get("destination", {}).get("type"),
-        OUT_KEYS["dest_host"]:    job.get("destination", {}).get("host"),
-        OUT_KEYS["dest_path"]:    job.get("destination", {}).get("path"),
-        OUT_KEYS["sources"]:      sorted(job.get("sources", [])),
+        OUT_KEYS["name"]: job["name"],
+        OUT_KEYS["dest_type"]: job.get("destination", {}).get("type"),
+        OUT_KEYS["dest_host"]: job.get("destination", {}).get("host"),
+        OUT_KEYS["dest_path"]: job.get("destination", {}).get("path"),
+        OUT_KEYS["sources"]: sorted(job.get("sources", [])),
         OUT_KEYS["schedule_daily"]: job.get("schedule", {}).get("daily"),
-        OUT_KEYS["retain"]:       job.get("schedule", {}).get("retain_versions"),
-        OUT_KEYS["encrypt"]:      job.get("encrypt", defaults.get("encrypt", True)),
-        OUT_KEYS["enabled"]:      job.get("enabled", defaults.get("enabled", True)),
+        OUT_KEYS["retain"]: job.get("schedule", {}).get("retain_versions"),
+        OUT_KEYS["encrypt"]: job.get("encrypt", defaults.get("encrypt", True)),
+        OUT_KEYS["enabled"]: job.get("enabled", defaults.get("enabled", True)),
     }
     return out
 
@@ -102,8 +104,9 @@ def _normalize(live_entry):
 
 
 def _diff_one(desired, live):
-    return {k: {"current": live.get(k), "desired": v}
-            for k, v in desired.items() if live.get(k) != v}
+    return {
+        k: {"current": live.get(k), "desired": v} for k, v in desired.items() if live.get(k) != v
+    }
 
 
 def do_jobs(a):

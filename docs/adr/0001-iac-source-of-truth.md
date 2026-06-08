@@ -15,8 +15,9 @@ click-ops is how config silently drifts from intent.
 The **git repo is the single source of truth** for both hosts. There is **no
 "documented manual runbook" workflow** — a change made in the DSM UI (or by hand on
 the VM) is treated as **drift**: detected, alerted, and reconciled back to the repo,
-not blessed after the fact. The break-glass runbook (`docs/runbook.md` /
-`docs/e4e-nas-dsm.md`) exists **only** for recovery when automation can't run.
+not blessed after the fact. The break-glass runbook
+([`docs/e4e-nas-dsm.md`](../e4e-nas-dsm.md)) exists **only** for recovery when
+automation can't run.
 
 This is a deliberate, accepted trade: IaC is harder up front than a runbook. We are
 not redesigning around that difficulty.

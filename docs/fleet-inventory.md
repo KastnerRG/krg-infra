@@ -15,7 +15,9 @@ comments and per-host configs; this is the one table to update when they change.
 | **fabricant** | 137.110.161.98 | fabricant.ucsd.edu | Proxmox VE hypervisor; NFS server | Ansible (`proxmox`) | physical | — |
 | **waiter** | 137.110.161.67 | waiter.ucsd.edu | GPU/FPGA compute (`compute` profile) | NixOS flake | physical | — |
 | **krg-ldap** | 137.110.161.109 | krg-ldap.ucsd.edu | Samba AD DC, `KRG.LOCAL` (`directory`) | NixOS flake | VM on fabricant | 100 |
-| **krg-prod** | 137.110.161.106 | krg-prod.ucsd.edu | Lab-wide services (`server` profile) | NixOS flake | VM (hypervisor TBD) | TBD |
+| **krg-vault** | 137.110.161.123 | krg-vault.ucsd.edu | OpenBao secrets manager (`base`) | NixOS flake | VM on fabricant | 101 |
+| **krg-deploy** | 137.110.161.122 | krg-deploy.ucsd.edu | Ansible + OpenTofu control node; GitHub Actions deploy runner (`base`) | NixOS flake | VM on fabricant | 102 |
+| **krg-prod** | 137.110.161.106 | krg-prod.ucsd.edu | Lab-wide services (`server` profile) | NixOS flake | VM on fabricant | 103 |
 | **e4e-prod** | TBD | e4e-prod.ucsd.edu | E4E services (scaffold, `server`) | NixOS flake | VM (hypervisor TBD) | TBD |
 | **e4e-nas** | 132.239.17.124 | e4e-nas.ucsd.edu | Synology NAS (krg-prod storage) | (separate IaC effort) | appliance | — |
 | ~~krg-ad~~ | 137.110.161.107 | krg-ad.ucsd.edu | **OLD AD — being decommissioned** (breached) | — | — | — |
@@ -30,22 +32,24 @@ Other fixed addresses:
 | Site DNS fallbacks | 132.239.0.252, 8.8.8.8, 1.1.1.1 | host `networking.nameservers` (after the DC) |
 | Ops admin IPs (off-campus) | 97.252.106.89 (chris), 107.132.34.148 (sean) | `trusted.json` `ipsets.ops` |
 
-> krg-prod/e4e-prod don't pin a static IP in the flake (no `networking.interfaces.*`
-> address) — krg-prod's .106 comes from `trusted.json`; e4e-prod is an unplaced
-> scaffold. Fill `TBD` once they're deployed and their hypervisor/VMID are known.
+> e4e-prod is the only unplaced scaffold — it doesn't pin a static IP in the flake
+> (no `networking.interfaces.*` address) and has no assigned hypervisor/VMID yet.
+> Fill its `TBD`s once it's deployed. (krg-prod, krg-vault, and krg-deploy now pin
+> their static IPs in their host `default.nix`.)
 
 ## Trusted-network IPSets
 
 Defined once in [`trusted.json`](../nix/networks/trusted.json), consumed by both
-layers (nix `krg.firewall`, Ansible `proxmox_firewall` cluster.fw, fail2ban
-allow-lists). Summary:
+layers (nix `krg.firewall`, Ansible `proxmox_firewall` cluster.fw, CrowdSec
+whitelists). Summary:
 
 | IPSet | Contents | Used for |
 |---|---|---|
 | `public` | `0.0.0.0/1` + `128.0.0.0/1` (the whole internet) | compute SSH |
-| `sealab` | Sealab wifi `132.239.10.0/24`, e4e-nas, krg-prod, krg-ldap, old krg-ad | DC↔member SMB/RPC; fail2ban ignore |
+| `sealab` | Sealab wifi `132.239.10.0/24`, e4e-nas, krg-prod, krg-ldap, old krg-ad | DC↔member SMB/RPC; CrowdSec whitelist |
 | `ucsd` | `100.0.0.0/8`, `128.54.0.0/16`, `137.110.0.0/16`, + sealab hosts | service SSH, PVE UI, AD client ports |
 | `ops` | off-campus admin IPs (chris, sean) | SSH + PVE UI from off-campus |
+| `machines` | fleet domain members (waiter, krg-prod, krg-ldap, krg-deploy, krg-vault) | inter-host trust; CrowdSec whitelist; OpenBao `:8200` source |
 
 ## Monitoring map
 
@@ -91,3 +95,5 @@ flowchart LR
 > `:9000` (replaced by `system.autoUpgrade` — now connection-refused), and the
 > `kastner-ml.ucsd.edu` targets, which stay until that host is provisioned (out of
 > scope today). Blackbox probe targets (E4E/lab websites) track the new CNAMEs.
+> **krg-vault** and **krg-deploy** also expose node-exporter `:9100` (monitoring-host
+> only) but are not yet in the `node_exporter` scrape job — add them when convenient.

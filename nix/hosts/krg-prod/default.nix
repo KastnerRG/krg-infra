@@ -66,6 +66,14 @@ in {
     "d  /var/lib/krg/krg-prod/authentik/postgres/data       0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/authentik/media               0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/authentik/data                0750 1000 1000 -"
+    # App-tile icons: symlink the working dir → Nix store (docker follows it at
+    # mount time, like grafana/prometheus above). Pre-create data/media/public
+    # owned by the authentik uid so the read-only krg-icons bind mount
+    # (compose.authentik.yml) lands inside a dir authentik can still write its
+    # own media into. 2026.2 serves icons from /data/media/public/<name>.
+    "L  /var/lib/krg/krg-prod/authentik/media-icons         - - - - ${composeDir}/authentik/media-icons"
+    "d  /var/lib/krg/krg-prod/authentik/data/media          0750 1000 1000 -"
+    "d  /var/lib/krg/krg-prod/authentik/data/media/public   0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/authentik/certs               0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/authentik/custom-templates    0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/authentik/proxy-tmp           0750 root  root -"

@@ -40,6 +40,7 @@ oidc_authorization_endpoint + oidc_token_endpoint explicitly (it does NOT derive
 them from oidc_wellknown on an API set), but fetches jwks/userinfo from
 oidc_wellknown at runtime.
 """
+
 import argparse
 import json
 import os
@@ -84,28 +85,28 @@ def _bool(s):
 # OIDC discovery URL (issuer + /.well-known/openid-configuration) — the role
 # derives it from spec.issuer_url and passes it via --wellknown.
 OIDC_FIELDS = [
-    ("provider_name",          "oidc_name",                   str),
-    ("wellknown",              "oidc_wellknown",              str),
+    ("provider_name", "oidc_name", str),
+    ("wellknown", "oidc_wellknown", str),
     # DSM does NOT auto-derive these from oidc_wellknown on an API set (the wizard
     # fetches the discovery doc client-side and fills them in) — so we set them
     # explicitly, else DSM can't build the authorize redirect ("SSO not properly
     # configured"). jwks/userinfo ARE fetched from oidc_wellknown at runtime.
     ("authorization_endpoint", "oidc_authorization_endpoint", str),
-    ("token_endpoint",         "oidc_token_endpoint",         str),
-    ("client_id",              "oidc_client_id",              str),
-    ("redirect_uri",           "oidc_redirect_uri",           str),
-    ("scope",                  "oidc_scope",                  str),
-    ("account_attribute",      "oidc_user_claim",             str),
-    ("allow_local_user",       "oidc_allow_local_user",       _bool),
+    ("token_endpoint", "oidc_token_endpoint", str),
+    ("client_id", "oidc_client_id", str),
+    ("redirect_uri", "oidc_redirect_uri", str),
+    ("scope", "oidc_scope", str),
+    ("account_attribute", "oidc_user_claim", str),
+    ("allow_local_user", "oidc_allow_local_user", _bool),
 ]
 
 
 def _exec(api, version, method, *params):
     """Run synowebapi and parse its JSON (preamble on stderr; stdout is pure JSON)."""
     out = subprocess.run(
-        [WEBAPI, "--exec", "api=" + api, "version=" + version,
-         "method=" + method, *params],
-        capture_output=True, text=True,
+        [WEBAPI, "--exec", "api=" + api, "version=" + version, "method=" + method, *params],
+        capture_output=True,
+        text=True,
     )
     txt = out.stdout
     brace = txt.find("{")
@@ -156,12 +157,17 @@ def do_oidc(a):
 
     secret = os.environ.get(_SECRET_ENV_VAR, "")
     if not secret:
-        print("FAIL " + json.dumps({"reason": "OIDC enabled but secret env unset",
-                                    "vars": [_SECRET_ENV_VAR]}))
+        print(
+            "FAIL "
+            + json.dumps({"reason": "OIDC enabled but secret env unset", "vars": [_SECRET_ENV_VAR]})
+        )
         return 1
 
-    desired_oidc = {dsm: cast(v) for (flag, dsm, cast) in OIDC_FIELDS
-                    if (v := getattr(a, flag, None)) is not None}
+    desired_oidc = {
+        dsm: cast(v)
+        for (flag, dsm, cast) in OIDC_FIELDS
+        if (v := getattr(a, flag, None)) is not None
+    }
     desired_default = _bool(a.set_as_default)
 
     cur_oidc = _exec(OIDC_API, OIDC_API_VERSION, "get")["data"]
@@ -169,26 +175,35 @@ def do_oidc(a):
     cur_setting = _exec(SETTING_API, SETTING_API_VERSION, "get")["data"]
 
     # OIDC profile drift (visible fields + the silently-diffed secret).
-    oidc_drift = {k: {"current": cur_oidc.get(k), "desired": v}
-                  for k, v in desired_oidc.items() if cur_oidc.get(k) != v}
+    oidc_drift = {
+        k: {"current": cur_oidc.get(k), "desired": v}
+        for k, v in desired_oidc.items()
+        if cur_oidc.get(k) != v
+    }
     if cur_oidc.get(_SECRET_FIELD) != secret:
-        oidc_drift[_SECRET_FIELD] = "<changed>"      # value redacted, never printed
+        oidc_drift[_SECRET_FIELD] = "<changed>"  # value redacted, never printed
 
     # Activation drift — select OIDC + switch on. Without this DSM shows no login
     # button (the profile alone isn't enough). We only reach here when enabling.
     activate_drift = {}
     if cur_activate.get(SSO_PROFILE_FIELD) != ACTIVATE_PROFILE:
         activate_drift[SSO_PROFILE_FIELD] = {
-            "current": cur_activate.get(SSO_PROFILE_FIELD), "desired": ACTIVATE_PROFILE}
+            "current": cur_activate.get(SSO_PROFILE_FIELD),
+            "desired": ACTIVATE_PROFILE,
+        }
     if cur_activate.get(SSO_ENABLE_FIELD) is not True:
         activate_drift[SSO_ENABLE_FIELD] = {
-            "current": cur_activate.get(SSO_ENABLE_FIELD), "desired": True}
+            "current": cur_activate.get(SSO_ENABLE_FIELD),
+            "desired": True,
+        }
 
     # Default-login toggle drift (independent API).
     setting_drift = {}
     if cur_setting.get(DEFAULT_LOGIN_FIELD) != desired_default:
         setting_drift[DEFAULT_LOGIN_FIELD] = {
-            "current": cur_setting.get(DEFAULT_LOGIN_FIELD), "desired": desired_default}
+            "current": cur_setting.get(DEFAULT_LOGIN_FIELD),
+            "desired": desired_default,
+        }
 
     drift = dict(oidc_drift)
     drift.update(activate_drift)
@@ -198,20 +213,27 @@ def do_oidc(a):
         # Order: configure the profile, THEN activate (select+enable), THEN default.
         if oidc_drift:
             payload = dict(desired_oidc)
-            payload["profile"] = OIDC_PROFILE          # configure + activate
-            payload[_SECRET_FIELD] = secret            # write-only; never in drift
+            payload["profile"] = OIDC_PROFILE  # configure + activate
+            payload[_SECRET_FIELD] = secret  # write-only; never in drift
             r = _exec(OIDC_API, OIDC_API_VERSION, "set", *_args_from(payload))
             if not r.get("success"):
                 return r
         if activate_drift:
-            r = _exec(ACTIVATE_API, ACTIVATE_API_VERSION, "set",
-                      *_args_from({SSO_PROFILE_FIELD: ACTIVATE_PROFILE,
-                                   SSO_ENABLE_FIELD: True}))
+            r = _exec(
+                ACTIVATE_API,
+                ACTIVATE_API_VERSION,
+                "set",
+                *_args_from({SSO_PROFILE_FIELD: ACTIVATE_PROFILE, SSO_ENABLE_FIELD: True}),
+            )
             if not r.get("success"):
                 return r
         if setting_drift:
-            r = _exec(SETTING_API, SETTING_API_VERSION, "set",
-                      *_args_from({DEFAULT_LOGIN_FIELD: desired_default}))
+            r = _exec(
+                SETTING_API,
+                SETTING_API_VERSION,
+                "set",
+                *_args_from({DEFAULT_LOGIN_FIELD: desired_default}),
+            )
             if not r.get("success"):
                 return r
         return {"success": True}
@@ -220,12 +242,12 @@ def do_oidc(a):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Apply DSM OIDC SSO config via synowebapi.",
-                                 allow_abbrev=False)
+    ap = argparse.ArgumentParser(
+        description="Apply DSM OIDC SSO config via synowebapi.", allow_abbrev=False
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    o = sub.add_parser("oidc", help="DSM OIDC SSO (Authentik login)",
-                       allow_abbrev=False)
+    o = sub.add_parser("oidc", help="DSM OIDC SSO (Authentik login)", allow_abbrev=False)
     o.add_argument("--enable", default="true")
     for flag, _dsm, _cast in OIDC_FIELDS:
         o.add_argument("--" + flag.replace("_", "-"), dest=flag)

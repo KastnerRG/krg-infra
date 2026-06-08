@@ -1,4 +1,5 @@
 """Unit tests for apply_external_access.py — run with: pytest (no DSM needed)."""
+
 import os
 import sys
 
@@ -46,11 +47,17 @@ def test_upnp_check_mode_no_apply(monkeypatch, capsys):
 
 
 def test_ddns_drift_and_full_object_preservation(monkeypatch, capsys):
-    fake, captured = _factory({m.DDNS_API: {"get": {
-        "enabled": True,
-        "provider": "Synology",     # unmanaged — must round-trip
-        "hostname": "e4e-nas.synology.me",
-    }}})
+    fake, captured = _factory(
+        {
+            m.DDNS_API: {
+                "get": {
+                    "enabled": True,
+                    "provider": "Synology",  # unmanaged — must round-trip
+                    "hostname": "e4e-nas.synology.me",
+                }
+            }
+        }
+    )
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["ddns", "--enable", "false"])
     assert rc == 0
@@ -65,7 +72,7 @@ def test_ddns_drift_and_full_object_preservation(monkeypatch, capsys):
 
 def test_each_surface_targets_correct_api(monkeypatch, capsys):
     live = {
-        m.QC_API:   {"get": {"enabled": True}},
+        m.QC_API: {"get": {"enabled": True}},
         m.UPNP_API: {"get": {"enabled": True}},
         m.DDNS_API: {"get": {"enabled": True}},
     }
@@ -124,10 +131,12 @@ def test_other_get_failure_is_loud(monkeypatch, capsys):
     """A non-102 GET error (perm denied, unknown method, etc.) must FAIL even
     when desired=disabled — we can't assume absence == desired for arbitrary
     errors. Only err 102 has that semantics."""
+
     def fake(api, *params):
         if "method=get" in params:
             return {"success": False, "error": {"code": 401}}  # perm denied-ish
         return {"success": True}
+
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["upnp", "--enable", "false"])
     assert rc == 1
@@ -139,10 +148,12 @@ def test_other_get_failure_is_loud(monkeypatch, capsys):
 def test_success_but_no_data_key_fails_loudly(monkeypatch, capsys):
     """Protocol violation: success=true with no data dict. Must FAIL clearly
     instead of KeyError'ing on `resp['data']` (the original bug we fixed)."""
+
     def fake(api, *params):
         if "method=get" in params:
             return {"success": True}  # NO `data` key
         return {"success": True}
+
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["upnp", "--enable", "false"])
     assert rc == 1

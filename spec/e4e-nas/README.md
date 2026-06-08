@@ -31,10 +31,25 @@ already use — not `synology_api` in Terraform):
 | `services.yml`   | `synology_services`   | FTP/FTPS, AFP, SFTP, WebDAV, Rsync, **SNMP v3** |
 | `notifications.yml` | `synology_notifications` | mail (Gmail OAuth), SMS, push, CMS |
 | `app-portal.yml` | `synology_app_portal` | per-app portals, reverse-proxy, access control |
-| `garage.yml`     | `garage_config`       | buckets/keys/policies/quotas |
+| `certificates.yml` | `synology_certificate` | DSM Let's Encrypt certs (issue + default/binding) |
+| `sso.yml`        | `synology_sso`        | DSM web login via Authentik OIDC (default to SSO) |
+| `garage.yml`     | `synology_garage`     | Garage S3 deploy + buckets/keys/policies/quotas (ADR 0007) |
+
+Baseline + storage (composed by `synology_base` or the storage play):
+
+| File | Role that consumes it | Owns |
+|---|---|---|
+| `ssh.yml`             | `synology_ssh`                  | key-only SSH, no root, Telnet/SFTP off |
+| `external-access.yml` | `synology_external_access`      | QuickConnect / UPnP off |
+| `dsm-updates.yml`     | `synology_dsm_updates`          | hotfix-security auto-install policy |
+| `security-advisor.yml`| `synology_security_advisor`     | DSM-native vuln/config scan schedule |
+| `ad.yml`              | `synology_ad`                   | KRG.LOCAL domain join (winbind + idmap) |
+| `quotas.yml`          | `synology_quotas`               | per-share + per-user quotas |
+| `snapshots.yml`       | `synology_snapshot_replication` | per-share Btrfs snapshot retention |
+| `hyper-backup.yml`    | `synology_hyper_backup`         | off-box DR jobs |
 
 Terraform `terraform/e4e-nas/` stays for things the synology-community provider has
-first-class resources for: Container Manager (Garage container), packages, scheduler
+first-class resources for: packages (Container Manager), scheduler
 (`synology_core_event`), file provisioning, VMs.
 
 Seeded files came from the build sheet in
@@ -67,5 +82,6 @@ seeded the spec values above and surfaced these real drift items the spec will f
 5. **Per-share DSM flags** (recycle bin, visibility) — confirm exceptions vs the
    live box; `shares.yml defaults:` covers the common case.
 6. **Non-SMB service settings** (FTP off, AFP off, SNMPv3, NTP→KRG.LOCAL DC,
-   QuickConnect/UPnP off) are noted in `smb-globals.yml` but belong to the
-   `synology_base`/`synology_firewall` role vars when those are built.
+   QuickConnect/UPnP off) are now owned by the built roles —
+   `synology_services`, `synology_security` (firewall), and
+   `synology_external_access` — driven from their own spec files above.

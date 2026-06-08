@@ -35,6 +35,7 @@ handled by synology_acls's admin-grants subcommand (which reads admin_groups
 from spec/e4e-nas/ad.yml and additively grants `@KRG\\<group>` RW on every
 share in spec/e4e-nas/shares.yml).
 """
+
 import argparse
 import json
 import subprocess
@@ -54,11 +55,11 @@ DOMAIN_API = "SYNO.Core.Directory.Domain"
 # `idmap_type`, `idmap_uid`, etc.) was a best-guess that returned err 2618
 # on this DSM version. Re-discovered names:
 OUT_KEYS = {
-    "realm":          "realm",          # KRG.LOCAL (uppercase Kerberos realm)
-    "domain":         "domain_name",    # krg.local (lowercase AD DNS domain)
-    "dc_host":        "server_address",
-    "dc_ip":          "server_ip",
-    "ou":             "ou",
+    "realm": "realm",  # KRG.LOCAL (uppercase Kerberos realm)
+    "domain": "domain_name",  # krg.local (lowercase AD DNS domain)
+    "dc_host": "server_address",
+    "dc_ip": "server_ip",
+    "ou": "ou",
 }
 
 # idmap_mode / idmap_uid / idmap_gid / allowed_groups / admin_groups are
@@ -73,7 +74,8 @@ OUT_KEYS = {
 def _exec(api, *params):
     out = subprocess.run(
         [WEBAPI, "--exec", "api=" + api, *params],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     txt = out.stdout
     brace = txt.find("{")
@@ -144,11 +146,11 @@ def do_domain_config(a):
             raise SystemExit("%s must be a JSON list" % label)
 
     desired = {
-        OUT_KEYS["realm"]:   a.realm,
-        OUT_KEYS["domain"]:  a.domain,
+        OUT_KEYS["realm"]: a.realm,
+        OUT_KEYS["domain"]: a.domain,
         OUT_KEYS["dc_host"]: a.dc_host,
-        OUT_KEYS["dc_ip"]:   a.dc_ip,
-        OUT_KEYS["ou"]:      a.ou,
+        OUT_KEYS["dc_ip"]: a.dc_ip,
+        OUT_KEYS["ou"]: a.ou,
     }
 
     current = _exec(DOMAIN_API, "version=1", "method=get")["data"]
@@ -159,12 +161,16 @@ def do_domain_config(a):
         sys.stderr.write(
             "WARN: Directory.Domain config staging deferred — NAS not joined "
             "to a domain. Run `ansible-playbook ... -e ad_join_password='<pass>'` "
-            "to join (the join subcommand sends the full config bundle).\n")
+            "to join (the join subcommand sends the full config bundle).\n"
+        )
         print("OK no-change (deferred — not joined)")
         return 0
 
-    drift = {k: {"current": current.get(k), "desired": v}
-             for k, v in desired.items() if current.get(k) != v}
+    drift = {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if current.get(k) != v
+    }
 
     # Surface the deferred fields on every apply (not just no-drift) so it's
     # visible in the log. admin_groups is HANDLED — pushed by the synology_ad
@@ -176,7 +182,8 @@ def do_domain_config(a):
         "SYNO.Core.Directory.Domain.set). Spec values in spec/e4e-nas/ad.yml "
         "stay the source of truth; idmap tuning is gated on the Synology "
         "`syno` idmap backend (no webapi). admin_groups IS pushed via the "
-        "post-join synogroup --memberadd task in the role.\n")
+        "post-join synogroup --memberadd task in the role.\n"
+    )
 
     if not drift:
         print("OK no-change")
@@ -193,8 +200,8 @@ def do_domain_config(a):
     sys.stderr.write(
         "WARN: Directory.Domain config drift detected ({}) but SET requires "
         "creds (synowebapi `cannot get the paramter: username`). Re-run with "
-        "`-e ad_join_password='<pass>'` to push via the join path.\n"
-        .format(sorted(drift.keys())))
+        "`-e ad_join_password='<pass>'` to push via the join path.\n".format(sorted(drift.keys()))
+    )
     print("OK no-change (deferred — drift on creds-gated fields)")
     return 0
 
@@ -235,14 +242,14 @@ def do_join(a):
         print("FAIL " + json.dumps({"error": "join requires --join-password"}))
         return 1
     payload = {
-        "realm":          a.realm,
-        "domain_name":    a.domain,
+        "realm": a.realm,
+        "domain_name": a.domain,
         "server_address": a.dc_host,
-        "server_ip":      a.dc_ip,
-        "username":       a.join_user,   # DSM 7.3 expects `username`, not `user`
-        "password":       a.join_password,
-        "ou":             a.ou,
-        "enable_domain":  True,
+        "server_ip": a.dc_ip,
+        "username": a.join_user,  # DSM 7.3 expects `username`, not `user`
+        "password": a.join_password,
+        "ou": a.ou,
+        "enable_domain": True,
     }
     res = _exec(DOMAIN_API, "version=1", "method=set", *_args_from(payload))
     if res.get("success"):
@@ -275,8 +282,11 @@ def main(argv=None):
 
     j = sub.add_parser("join", help="One-shot AD join (needs creds)")
     j.add_argument("--realm", required=True)
-    j.add_argument("--domain", required=True,
-                   help="lowercase AD domain (e.g. krg.local) — DSM's domain_name field")
+    j.add_argument(
+        "--domain",
+        required=True,
+        help="lowercase AD domain (e.g. krg.local) — DSM's domain_name field",
+    )
     j.add_argument("--dc-host", dest="dc_host", required=True)
     j.add_argument("--dc-ip", dest="dc_ip", required=True)
     j.add_argument("--ou", required=True)

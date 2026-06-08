@@ -16,6 +16,7 @@ OUT_KEYS on first-apply drift):
   weekly   -> keep_weekly             (int)
   monthly  -> keep_monthly            (int)
 """
+
 import argparse
 import json
 import subprocess
@@ -26,9 +27,9 @@ SNAP_API = "SYNO.Core.Share.Snapshot"
 
 OUT_KEYS = {
     "enabled": "enable_snapshot",
-    "hourly":  "keep_hourly",
-    "daily":   "keep_daily",
-    "weekly":  "keep_weekly",
+    "hourly": "keep_hourly",
+    "daily": "keep_daily",
+    "weekly": "keep_weekly",
     "monthly": "keep_monthly",
 }
 
@@ -36,7 +37,8 @@ OUT_KEYS = {
 def _exec(api, *params):
     out = subprocess.run(
         [WEBAPI, "--exec", "api=" + api, *params],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     txt = out.stdout
     brace = txt.find("{")
@@ -112,19 +114,21 @@ def _result(drift, check, apply_fn):
 def do_share(a):
     desired = {
         OUT_KEYS["enabled"]: _bool(a.enabled),
-        OUT_KEYS["hourly"]:  int(a.hourly),
-        OUT_KEYS["daily"]:   int(a.daily),
-        OUT_KEYS["weekly"]:  int(a.weekly),
+        OUT_KEYS["hourly"]: int(a.hourly),
+        OUT_KEYS["daily"]: int(a.daily),
+        OUT_KEYS["weekly"]: int(a.weekly),
         OUT_KEYS["monthly"]: int(a.monthly),
     }
     current = _exec(SNAP_API, "version=1", "method=get", "name=" + a.share)["data"]
-    drift = {k: {"current": current.get(k), "desired": v}
-             for k, v in desired.items() if _coerce_like(v, current.get(k)) != v}
+    drift = {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if _coerce_like(v, current.get(k)) != v
+    }
 
     def apply():
         current.update(desired)
-        return _exec(SNAP_API, "version=1", "method=set",
-                     "name=" + a.share, *_args_from(current))
+        return _exec(SNAP_API, "version=1", "method=set", "name=" + a.share, *_args_from(current))
 
     return _result(drift, a.check, apply)
 

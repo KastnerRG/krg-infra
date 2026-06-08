@@ -29,6 +29,7 @@ on first-apply drift):
   telnet.enable     -> enable_telnet
   sftp.enable       -> enable_sftp
 """
+
 import argparse
 import json
 import os
@@ -50,8 +51,8 @@ SSHD_MAIN = "/etc/ssh/sshd_config"
 AD_AUTHKEYS_PATH = "/usr/local/bin/krg-ad-authkeys"
 
 OUT_KEYS = {
-    "ssh_enable":    "enable_ssh",
-    "ssh_port":      "ssh_port",
+    "ssh_enable": "enable_ssh",
+    "ssh_port": "ssh_port",
     "telnet_enable": "enable_telnet",
     # sftp_enable lives on SYNO.Core.FileServ.SFTP, NOT SYNO.Core.Terminal.
     # Pushing it via Terminal SET was a silent no-op, and the GET-diff saw
@@ -63,7 +64,8 @@ OUT_KEYS = {
 def _exec(api, *params):
     out = subprocess.run(
         [WEBAPI, "--exec", "api=" + api, *params],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     txt = out.stdout
     brace = txt.find("{")
@@ -113,18 +115,20 @@ def _result(drift, check, apply_fn):
 # --- terminal (SYNO.Core.Terminal, full-object) -----------------------------------
 def do_terminal(a):
     desired = {
-        OUT_KEYS["ssh_enable"]:    _bool(a.ssh_enable),
-        OUT_KEYS["ssh_port"]:      int(a.ssh_port),
+        OUT_KEYS["ssh_enable"]: _bool(a.ssh_enable),
+        OUT_KEYS["ssh_port"]: int(a.ssh_port),
         OUT_KEYS["telnet_enable"]: _bool(a.telnet_enable),
     }
     current = _exec(TERMINAL_API, "version=%d" % TERMINAL_VER, "method=get")["data"]
-    drift = {k: {"current": current.get(k), "desired": v}
-             for k, v in desired.items() if current.get(k) != v}
+    drift = {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if current.get(k) != v
+    }
 
     def apply():
         current.update(desired)
-        return _exec(TERMINAL_API, "version=%d" % TERMINAL_VER, "method=set",
-                     *_args_from(current))
+        return _exec(TERMINAL_API, "version=%d" % TERMINAL_VER, "method=set", *_args_from(current))
 
     return _result(drift, a.check, apply)
 
@@ -155,8 +159,10 @@ def _render_drop_in(allow_password, allow_root, allowed_algos):
     algos = ""
     if allowed_algos:
         # PubkeyAcceptedKeyTypes (NOT PubkeyAcceptedAlgorithms — see version note above).
-        algos = ("PubkeyAcceptedKeyTypes " + allowed_algos + "\n"
-                 "HostKeyAlgorithms " + allowed_algos + "\n")
+        algos = (
+            "PubkeyAcceptedKeyTypes " + allowed_algos + "\n"
+            "HostKeyAlgorithms " + allowed_algos + "\n"
+        )
     return SSHD_TEMPLATE.format(
         pw="yes" if allow_password else "no",
         root="yes" if allow_root else "no",
@@ -172,13 +178,14 @@ def _render_drop_in(allow_password, allow_root, allowed_algos):
 # PasswordAuthentication=yes further down. Idempotent via marker detection.
 INCLUDE_BEGIN_MARKER = "# --- BEGIN KRG-MANAGED Include (synology_ssh) ---"
 INCLUDE_END_MARKER = "# --- END KRG-MANAGED Include (synology_ssh) ---"
-INCLUDE_BLOCK = (INCLUDE_BEGIN_MARKER + "\n"
-                 "# DSM ships sshd_config without an `Include` directive, leaving the drop-in at\n"
-                 "# /etc/ssh/sshd_config.d/*.conf orphaned. Prepended at the top so first-wins\n"
-                 "# semantics give the drop-in's PasswordAuthentication=no priority over the\n"
-                 "# `PasswordAuthentication yes` line further down in this file.\n"
-                 "Include /etc/ssh/sshd_config.d/*.conf\n"
-                 + INCLUDE_END_MARKER + "\n\n")
+INCLUDE_BLOCK = (
+    INCLUDE_BEGIN_MARKER + "\n"
+    "# DSM ships sshd_config without an `Include` directive, leaving the drop-in at\n"
+    "# /etc/ssh/sshd_config.d/*.conf orphaned. Prepended at the top so first-wins\n"
+    "# semantics give the drop-in's PasswordAuthentication=no priority over the\n"
+    "# `PasswordAuthentication yes` line further down in this file.\n"
+    "Include /etc/ssh/sshd_config.d/*.conf\n" + INCLUDE_END_MARKER + "\n\n"
+)
 
 
 def _ensure_include_block(content):
@@ -227,9 +234,13 @@ def _atomic_write(path, content, mode):
     raises OSError on failure. Uses a sibling tempfile + os.replace so
     readers never see a half-written file."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", dir=os.path.dirname(path),
-                                     delete=False, prefix="." + os.path.basename(path) + ".",
-                                     suffix=".tmp") as tf:
+    with tempfile.NamedTemporaryFile(
+        "w",
+        dir=os.path.dirname(path),
+        delete=False,
+        prefix="." + os.path.basename(path) + ".",
+        suffix=".tmp",
+    ) as tf:
         tf.write(content)
         tmp = tf.name
     os.chmod(tmp, mode)
@@ -253,8 +264,8 @@ def _restore(path, old_content):
 # 0644 (sshd checks both are readable + not world-writable).
 _FILE_MODES = {
     AD_AUTHKEYS_PATH: 0o755,
-    SSHD_DROP_IN:     0o644,
-    SSHD_MAIN:        0o644,
+    SSHD_DROP_IN: 0o644,
+    SSHD_MAIN: 0o644,
 }
 
 
@@ -267,8 +278,9 @@ def do_sshd_drop_in(a):
     running daemon never reads a broken config. Restart sshd via systemctl
     only if anything actually changed and validation passed.
     """
-    desired_dropin = _render_drop_in(_bool(a.allow_password), _bool(a.allow_root),
-                                     a.allowed_algos or "")
+    desired_dropin = _render_drop_in(
+        _bool(a.allow_password), _bool(a.allow_root), a.allowed_algos or ""
+    )
     desired_helper = AD_AUTHKEYS_SCRIPT
     current_main = _read_existing(SSHD_MAIN) or ""
     desired_main = _ensure_include_block(current_main)
@@ -287,10 +299,14 @@ def do_sshd_drop_in(a):
         print("OK no-change")
         return 0
 
-    drift_summary = {p: {"exists": old is not None,
-                         "bytes_current": len(old) if old is not None else 0,
-                         "bytes_desired": len(new)}
-                     for p, old, new in plan}
+    drift_summary = {
+        p: {
+            "exists": old is not None,
+            "bytes_current": len(old) if old is not None else 0,
+            "bytes_desired": len(new),
+        }
+        for p, old, new in plan
+    }
     if a.check:
         print("WOULD-CHANGE " + json.dumps(drift_summary, sort_keys=True))
         return 0
@@ -317,8 +333,7 @@ def do_sshd_drop_in(a):
         # are forked from the master daemon — only new connections see the
         # restarted daemon. The drop-in has already been validated with
         # `sshd -t` above, so we know the config is parseable.
-        r = subprocess.run(["systemctl", "restart", "sshd"],
-                           capture_output=True, text=True)
+        r = subprocess.run(["systemctl", "restart", "sshd"], capture_output=True, text=True)
         if r.returncode != 0:
             print("FAIL " + json.dumps({"systemctl restart sshd": r.stderr.strip()[:400]}))
             return 1
@@ -331,7 +346,9 @@ def do_sshd_drop_in(a):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Apply DSM SSH/Terminal config via synowebapi + sshd drop-in.")
+    ap = argparse.ArgumentParser(
+        description="Apply DSM SSH/Terminal config via synowebapi + sshd drop-in."
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     t = sub.add_parser("terminal", help="DSM Terminal (ssh+port+telnet+sftp)")

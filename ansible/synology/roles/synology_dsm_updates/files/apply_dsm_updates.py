@@ -31,6 +31,7 @@ but no-op on the wire; tracked as follow-ups in the role README):
                              the spec field is preserved for forward-compat
                              but does nothing.
 """
+
 import argparse
 import json
 import subprocess
@@ -46,29 +47,28 @@ UPD_SETTING_VERSION = 2
 # that used `auto_update_type`/`enable_auto_update`/`upgrade_day` — none of
 # which exist on this DSM).
 OUT_KEYS = {
-    "enable":  "autoupdate_enable",
-    "policy":  "autoupdate_type",
+    "enable": "autoupdate_enable",
+    "policy": "autoupdate_type",
     # `day`/`hour`/`minute` live UNDER the nested `schedule` dict, not at top
     # level — see do_setting for the nested merge.
 }
 SCHED_KEYS = {
-    "day":    "week_day",
-    "hour":   "hour",
+    "day": "week_day",
+    "hour": "hour",
     "minute": "minute",
 }
 
 # Sun..Sat -> "0".."6" (Unix-cron convention; DSM stores week_day as a string-of-digit).
-DAY_MAP = {"Sun": "0", "Mon": "1", "Tue": "2", "Wed": "3",
-           "Thu": "4", "Fri": "5", "Sat": "6"}
+DAY_MAP = {"Sun": "0", "Mon": "1", "Tue": "2", "Wed": "3", "Thu": "4", "Fri": "5", "Sat": "6"}
 
 ERR_API_NOT_EXIST = 102
 
 
 def _exec(api, version, method, *params):
     out = subprocess.run(
-        [WEBAPI, "--exec", "api=" + api, "version=" + str(version),
-         "method=" + method, *params],
-        capture_output=True, text=True,
+        [WEBAPI, "--exec", "api=" + api, "version=" + str(version), "method=" + method, *params],
+        capture_output=True,
+        text=True,
     )
     txt = out.stdout
     brace = txt.find("{")
@@ -83,8 +83,9 @@ def _exec_get(api, version):
     if not resp.get("success", False):
         return None, (resp.get("error") or {}).get("code")
     if "data" not in resp:
-        raise RuntimeError("DSM API {} GET returned success but no `data` key: {}".format(
-            api, json.dumps(resp)))
+        raise RuntimeError(
+            "DSM API {} GET returned success but no `data` key: {}".format(api, json.dumps(resp))
+        )
     return resp["data"], None
 
 
@@ -151,8 +152,9 @@ def _result(drift, check, apply_fn):
 
 def do_setting(a):
     if a.day not in DAY_MAP:
-        raise SystemExit("--day must be one of: " + ", ".join(DAY_MAP) +
-                         " (got: " + str(a.day) + ")")
+        raise SystemExit(
+            "--day must be one of: " + ", ".join(DAY_MAP) + " (got: " + str(a.day) + ")"
+        )
 
     # `--notify-email` and `--update-channel` are accepted but NOT applied
     # (different / nonexistent DSM surfaces — see docstring). Kept on the CLI
@@ -165,20 +167,30 @@ def do_setting(a):
         OUT_KEYS["policy"]: a.policy,
     }
     desired_sched = {
-        SCHED_KEYS["day"]:    DAY_MAP[a.day],
-        SCHED_KEYS["hour"]:   int(a.hour),
+        SCHED_KEYS["day"]: DAY_MAP[a.day],
+        SCHED_KEYS["hour"]: int(a.hour),
         SCHED_KEYS["minute"]: int(a.minute),
     }
 
     current, err = _exec_get(UPD_SETTING_API, UPD_SETTING_VERSION)
     if err is not None:
-        note = ("API not present on this DSM model — update policy cannot be "
-                "managed via webapi here." if err == ERR_API_NOT_EXIST
-                else "see DSM error code table")
-        print("FAIL " + json.dumps({
-            "error": "GET failed", "api": UPD_SETTING_API,
-            "version": UPD_SETTING_VERSION, "code": err, "note": note,
-        }))
+        note = (
+            "API not present on this DSM model — update policy cannot be managed via webapi here."
+            if err == ERR_API_NOT_EXIST
+            else "see DSM error code table"
+        )
+        print(
+            "FAIL "
+            + json.dumps(
+                {
+                    "error": "GET failed",
+                    "api": UPD_SETTING_API,
+                    "version": UPD_SETTING_VERSION,
+                    "code": err,
+                    "note": note,
+                }
+            )
+        )
         return 1
 
     cur_sched = current.get("schedule") or {}
@@ -214,10 +226,18 @@ def main(argv=None):
     s.add_argument("--minute", required=True)
     # Accepted-but-deferred (see docstring); kept on the CLI so the role
     # contract stays stable while follow-ups land.
-    s.add_argument("--notify-email", dest="notify_email", required=True,
-                   help="bool (accepted, NOT applied — owned by synology_notifications)")
-    s.add_argument("--update-channel", dest="update_channel", default="stable",
-                   help="accepted, NOT applied — Upgrade.Server has no set on this DSM")
+    s.add_argument(
+        "--notify-email",
+        dest="notify_email",
+        required=True,
+        help="bool (accepted, NOT applied — owned by synology_notifications)",
+    )
+    s.add_argument(
+        "--update-channel",
+        dest="update_channel",
+        default="stable",
+        help="accepted, NOT applied — Upgrade.Server has no set on this DSM",
+    )
     s.add_argument("--check", action="store_true")
     s.set_defaults(func=do_setting)
     a = ap.parse_args(argv)

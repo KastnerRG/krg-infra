@@ -28,6 +28,7 @@ Subcommands:
   ntp               Reserved — SET path uncertain on this DSM (SYNO.Core.System.Conf
                     or a Region.NTP API not in the captured .libs).
 """
+
 import argparse
 import json
 import os
@@ -39,8 +40,7 @@ SYNOPKG = "/usr/syno/bin/synopkg"
 
 
 def _exec(api, *params):
-    out = subprocess.run([WEBAPI, "--exec", "api=" + api, *params],
-                         capture_output=True, text=True)
+    out = subprocess.run([WEBAPI, "--exec", "api=" + api, *params], capture_output=True, text=True)
     txt = out.stdout
     brace = txt.find("{")
     if brace < 0:
@@ -91,8 +91,11 @@ def _result(drift, check, apply_fn):
 
 def apply_full(api, version, desired, check):
     current = _exec(api, "version=%d" % version, "method=get")["data"]
-    drift = {k: {"current": current.get(k), "desired": v}
-             for k, v in desired.items() if current.get(k) != v}
+    drift = {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if current.get(k) != v
+    }
 
     def apply():
         current.update(desired)
@@ -114,8 +117,7 @@ def _pkg_is_on(name):
     Exit code semantics: 0 = on, non-zero = off / missing. Callers that need
     to disambiguate missing-vs-stopped should compose this with
     `_pkg_is_installed`."""
-    out = subprocess.run([SYNOPKG, "is_onoff", name],
-                         capture_output=True, text=True)
+    out = subprocess.run([SYNOPKG, "is_onoff", name], capture_output=True, text=True)
     return out.returncode == 0
 
 
@@ -149,8 +151,8 @@ def do_package_state(a):
     for p in missing:
         sys.stderr.write(
             "WARN: package %r is not installed (no /var/packages/%s) — "
-            "skipping. Install via terraform `synology_core_package` first.\n"
-            % (p, p))
+            "skipping. Install via terraform `synology_core_package` first.\n" % (p, p)
+        )
 
     if not drift:
         print("OK no-change")
@@ -163,8 +165,9 @@ def do_package_state(a):
         r = subprocess.run([SYNOPKG, "start", p], capture_output=True, text=True)
         # synopkg start exits 0 + emits a JSON status line; non-zero means real failure.
         if r.returncode != 0 or not _pkg_is_on(p):
-            failed.append({"package": p, "stderr": r.stderr.strip()[:200],
-                           "stdout": r.stdout.strip()[:200]})
+            failed.append(
+                {"package": p, "stderr": r.stderr.strip()[:200], "stdout": r.stdout.strip()[:200]}
+            )
     if failed:
         print("FAIL " + json.dumps(failed))
         return 1
@@ -194,16 +197,20 @@ def do_package_defaults(a):
         # Auth/session timeout, permission denied, API rename, etc. — surface
         # structured FAIL with exit code 1 instead of letting `["data"]` raise
         # KeyError + a traceback (which Ansible would re-wrap unhelpfully).
-        print("FAIL " + json.dumps({"reason": "SYNO.Core.Package.Setting GET failed",
-                                    "response": get_res}))
+        print(
+            "FAIL "
+            + json.dumps({"reason": "SYNO.Core.Package.Setting GET failed", "response": get_res})
+        )
         return 1
     current = get_res["data"]
-    drift = {k: {"current": current.get(k), "desired": v}
-             for k, v in desired.items() if current.get(k) != v}
+    drift = {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if current.get(k) != v
+    }
 
     def apply():
-        return _exec("SYNO.Core.Package.Setting", "version=1", "method=set",
-                     *_args_from(desired))
+        return _exec("SYNO.Core.Package.Setting", "version=1", "method=set", *_args_from(desired))
 
     return _result(drift, a.check, apply)
 
@@ -243,17 +250,26 @@ def main(argv=None):
     n.add_argument("--check", action="store_true")
     n.set_defaults(func=do_network)
 
-    p = sub.add_parser("package-defaults",
-                       help="Set Package Center default install volume (Terraform provider prerequisite)")
-    p.add_argument("--install-volume", dest="install_volume", required=True,
-                   help="Mount path, e.g. /volume1 — matches DSM's volume_list mount_point")
+    p = sub.add_parser(
+        "package-defaults",
+        help="Set Package Center default install volume (Terraform provider prerequisite)",
+    )
+    p.add_argument(
+        "--install-volume",
+        dest="install_volume",
+        required=True,
+        help="Mount path, e.g. /volume1 — matches DSM's volume_list mount_point",
+    )
     p.add_argument("--check", action="store_true")
     p.set_defaults(func=do_package_defaults)
 
-    s = sub.add_parser("package-state",
-                       help="Ensure named packages are started (workaround for upstream provider Run-field bug)")
-    s.add_argument("--packages", required=True,
-                   help='JSON array of package names, e.g. ["ContainerManager"]')
+    s = sub.add_parser(
+        "package-state",
+        help="Ensure named packages are started (workaround for upstream provider Run-field bug)",
+    )
+    s.add_argument(
+        "--packages", required=True, help='JSON array of package names, e.g. ["ContainerManager"]'
+    )
     s.add_argument("--check", action="store_true")
     s.set_defaults(func=do_package_state)
 

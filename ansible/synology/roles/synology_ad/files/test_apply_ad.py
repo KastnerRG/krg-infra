@@ -8,6 +8,7 @@ DSM 7.3 surface (validated 2026-06-01 on e4e-nas after the cable swap):
   - idmap_* / allowed_groups / admin_groups are NOT on this API surface
     (they live on winbind config / a separate API; deferred)
 """
+
 import json
 import os
 import sys
@@ -35,24 +36,27 @@ def _factory(live):
 # Joined-state GET shape DSM 7.3 returns. Note: no idmap/allowed_groups —
 # those aren't fields on this API (deferred in apply_ad.py).
 _JOINED_GET = {
-    "enable_domain":  True,
-    "realm":          "KRG.LOCAL",
-    "domain_name":    "krg.local",
+    "enable_domain": True,
+    "realm": "KRG.LOCAL",
+    "domain_name": "krg.local",
     "server_address": "krg-ldap.krg.local",
-    "server_ip":      "137.110.161.109",
-    "ou":             "OU=NAS,OU=Hosts,DC=krg,DC=local",
+    "server_ip": "137.110.161.109",
+    "ou": "OU=NAS,OU=Hosts,DC=krg,DC=local",
 }
 
 
 def _argv_domain_config(**overrides):
     base = {
-        "realm": "KRG.LOCAL", "domain": "krg.local",
-        "dc_host": "krg-ldap.krg.local", "dc_ip": "137.110.161.109",
+        "realm": "KRG.LOCAL",
+        "domain": "krg.local",
+        "dc_host": "krg-ldap.krg.local",
+        "dc_ip": "137.110.161.109",
         "ou": "OU=NAS,OU=Hosts,DC=krg,DC=local",
         # Below 5 are accepted but NOT pushed (deferred — no matching field
         # on Directory.Domain.set). Keep on argv so the role contract holds.
         "idmap_mode": "rid",
-        "idmap_uid_range": "10000-2000000", "idmap_gid_range": "10000-2000000",
+        "idmap_uid_range": "10000-2000000",
+        "idmap_gid_range": "10000-2000000",
         "allowed_groups": json.dumps(["Domain Admins"]),
         "admin_groups": json.dumps(["Domain Admins"]),
     }
@@ -135,8 +139,10 @@ def test_test_join_not_joined_via_enable_domain(monkeypatch, capsys):
 
 def test_test_join_exec_failure_is_not_joined(monkeypatch, capsys):
     """Network/permission error → NOT-JOINED (safer to retry join than skip)."""
+
     def raises(*_):
         raise RuntimeError("no API")
+
     monkeypatch.setattr(m, "_exec", raises)
     rc = m.main(["test-join"])
     assert rc == 0
@@ -146,10 +152,13 @@ def test_test_join_exec_failure_is_not_joined(monkeypatch, capsys):
 # --- join -------------------------------------------------------------------
 def _argv_join(**overrides):
     base = {
-        "realm": "KRG.LOCAL", "domain": "krg.local",
-        "dc_host": "krg-ldap.krg.local", "dc_ip": "137.110.161.109",
+        "realm": "KRG.LOCAL",
+        "domain": "krg.local",
+        "dc_host": "krg-ldap.krg.local",
+        "dc_ip": "137.110.161.109",
         "ou": "OU=NAS,OU=Hosts,DC=krg,DC=local",
-        "join_user": "Administrator", "join_password": "secret",
+        "join_user": "Administrator",
+        "join_password": "secret",
     }
     base.update(overrides)
     argv = ["join"]
@@ -197,5 +206,3 @@ def test_join_requires_password(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert out.startswith("FAIL") and "join requires --join-password" in out
     assert called == [], "join must not call synowebapi when password is empty"
-
-

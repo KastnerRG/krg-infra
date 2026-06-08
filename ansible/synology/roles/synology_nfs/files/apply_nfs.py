@@ -22,6 +22,7 @@ Python 3.8). Prints OK no-change / WOULD-CHANGE <json> / CHANGED <json> / FAIL <
 the role keys changed/failed off that. synowebapi (/usr/syno/bin) prints a
 `[Line N] Exec WebAPI:` preamble before its JSON, which we strip.
 """
+
 import argparse
 import json
 import subprocess
@@ -35,7 +36,8 @@ PRIV_API = "SYNO.Core.FileServ.NFS.SharePrivilege"
 def _exec(api, *params):
     out = subprocess.run(
         [WEBAPI, "--exec", "api=" + api, *params],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     txt = out.stdout
     brace = txt.find("{")
@@ -144,8 +146,13 @@ def do_share_rules(a):
     drift = {} if _norm(current) == _norm(desired) else {"current": current, "desired": desired}
 
     def apply():
-        return _exec(PRIV_API, "version=1", "method=save",
-                     "share_name=" + a.share, "rule=" + json.dumps(desired))
+        return _exec(
+            PRIV_API,
+            "version=1",
+            "method=save",
+            "share_name=" + a.share,
+            "rule=" + json.dumps(desired),
+        )
 
     return _result(drift, a.check, apply)
 

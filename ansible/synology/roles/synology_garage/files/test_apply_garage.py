@@ -4,6 +4,7 @@ The script's three subcommands shell out to (a) the filesystem and (b)
 `docker` / `garage` binaries. Tests monkeypatch `_run`, `_read`, and
 `_atomic_write` so nothing escapes the test process.
 """
+
 import json
 import os
 import subprocess  # noqa: F401  (referenced in monkeypatch targets)
@@ -19,22 +20,22 @@ import apply_garage as m  # noqa: E402
 def _render_args(**overrides):
     """Default arg-namespace for render-config; override per test."""
     base = {
-        "config_path":         "/volume1/docker/garage/garage.toml",
-        "db_engine":           "lmdb",
-        "replication_factor":  1,
-        "compression_level":   2,
-        "rpc_bind_addr":       "[::]:3901",
-        "rpc_public_addr":     "127.0.0.1:3901",
-        "s3_api_bind_addr":    "[::]:3900",
-        "s3_region":           "garage",
-        "s3_root_domain":      ".s3.e4e.ucsd.edu",
-        "s3_web_bind_addr":    "[::]:3902",
-        "s3_web_root_domain":  ".web.e4e.ucsd.edu",
-        "s3_web_index":        "index.html",
+        "config_path": "/volume1/docker/garage/garage.toml",
+        "db_engine": "lmdb",
+        "replication_factor": 1,
+        "compression_level": 2,
+        "rpc_bind_addr": "[::]:3901",
+        "rpc_public_addr": "127.0.0.1:3901",
+        "s3_api_bind_addr": "[::]:3900",
+        "s3_region": "garage",
+        "s3_root_domain": ".s3.e4e.ucsd.edu",
+        "s3_web_bind_addr": "[::]:3902",
+        "s3_web_root_domain": ".web.e4e.ucsd.edu",
+        "s3_web_index": "index.html",
         "admin_api_bind_addr": "[::]:3903",
-        "meta_dir":            "/volume2/s3-data/meta",
-        "data_dir":            "/volume2/s3-data/data",
-        "check":               False,
+        "meta_dir": "/volume2/s3-data/meta",
+        "data_dir": "/volume2/s3-data/data",
+        "check": False,
     }
     base.update(overrides)
     return type("A", (), base)()
@@ -49,17 +50,17 @@ def _set_secret_env(monkeypatch, rpc="a" * 64, admin="b" * 64, metrics="c" * 64)
 
 def _deploy_args(**overrides):
     base = {
-        "compose_path":    "/volume1/docker/garage/docker-compose.yml",
-        "container_name":  "garage",
-        "image":           "dxflrs/garage",
-        "image_tag":       "v1.1.0",
-        "network_mode":    "host",
-        "restart_policy":  "unless-stopped",
-        "meta_dir":        "/volume2/s3-data/meta",
-        "data_dir":        "/volume2/s3-data/data",
-        "config_path":     "/volume1/docker/garage/garage.toml",
-        "rust_log":        "garage=info",
-        "check":           False,
+        "compose_path": "/volume1/docker/garage/docker-compose.yml",
+        "container_name": "garage",
+        "image": "dxflrs/garage",
+        "image_tag": "v1.1.0",
+        "network_mode": "host",
+        "restart_policy": "unless-stopped",
+        "meta_dir": "/volume2/s3-data/meta",
+        "data_dir": "/volume2/s3-data/data",
+        "config_path": "/volume1/docker/garage/garage.toml",
+        "rust_log": "garage=info",
+        "check": False,
     }
     base.update(overrides)
     return type("A", (), base)()
@@ -68,9 +69,9 @@ def _deploy_args(**overrides):
 def _layout_args(**overrides):
     base = {
         "container_name": "garage",
-        "zone":           "dc1",
-        "capacity":       "5T",
-        "check":          False,
+        "zone": "dc1",
+        "capacity": "5T",
+        "check": False,
     }
     base.update(overrides)
     return type("A", (), base)()
@@ -78,21 +79,21 @@ def _layout_args(**overrides):
 
 def _render_ui_args(**overrides):
     base = {
-        "config_path":              "/volume1/docker/garage-ui/config.yaml",
-        "bind_host":                "127.0.0.1",
-        "port":                     "8080",
-        "public_hostname":          "s3-admin.e4e.ucsd.edu",
-        "public_url":               "https://s3-admin.e4e.ucsd.edu",
-        "garage_s3_port":           "3900",
-        "garage_admin_port":        "3903",
-        "garage_region":            "garage",
-        "oidc_provider_name":       "Authentik",
-        "oidc_client_id":           "garage-ui",
-        "oidc_issuer_url":          "https://auth.example.com/application/o/garage-ui/",
+        "config_path": "/volume1/docker/garage-ui/config.yaml",
+        "bind_host": "127.0.0.1",
+        "port": "8080",
+        "public_hostname": "s3-admin.e4e.ucsd.edu",
+        "public_url": "https://s3-admin.e4e.ucsd.edu",
+        "garage_s3_port": "3900",
+        "garage_admin_port": "3903",
+        "garage_region": "garage",
+        "oidc_provider_name": "Authentik",
+        "oidc_client_id": "garage-ui",
+        "oidc_issuer_url": "https://auth.example.com/application/o/garage-ui/",
         "oidc_role_attribute_path": "groups",
-        "oidc_scopes_json":         '["openid","email","profile","groups"]',
-        "oidc_admin_roles_json":    '["Garage Admins"]',
-        "check":                    False,
+        "oidc_scopes_json": '["openid","email","profile","groups"]',
+        "oidc_admin_roles_json": '["Garage Admins"]',
+        "check": False,
     }
     base.update(overrides)
     return type("A", (), base)()
@@ -100,13 +101,13 @@ def _render_ui_args(**overrides):
 
 def _deploy_ui_args(**overrides):
     base = {
-        "compose_path":   "/volume1/docker/garage-ui/docker-compose.yml",
+        "compose_path": "/volume1/docker/garage-ui/docker-compose.yml",
         "container_name": "garage-ui",
-        "image":          "noooste/garage-ui",
-        "image_tag":      "v0.6.1",
-        "config_path":    "/volume1/docker/garage-ui/config.yaml",
+        "image": "noooste/garage-ui",
+        "image_tag": "v0.6.1",
+        "config_path": "/volume1/docker/garage-ui/config.yaml",
         "config_changed": False,
-        "check":          False,
+        "check": False,
     }
     base.update(overrides)
     return type("A", (), base)()
@@ -131,8 +132,7 @@ def test_render_config_writes_when_missing(monkeypatch, capsys):
     _set_secret_env(monkeypatch)
     monkeypatch.setattr(m, "_read", lambda p: None)
     writes = []
-    monkeypatch.setattr(m, "_atomic_write",
-                        lambda p, c, mode: writes.append((p, c, mode)))
+    monkeypatch.setattr(m, "_atomic_write", lambda p, c, mode: writes.append((p, c, mode)))
 
     rc = m.do_render_config(_render_args())
     out = capsys.readouterr().out
@@ -165,7 +165,10 @@ def test_render_config_fails_clean_when_secret_env_unset(monkeypatch, capsys):
     assert rc == 1 and out.startswith("FAIL ")
     payload = json.loads(out.split(" ", 1)[1])
     assert set(payload["vars"]) == {
-        "GARAGE_RPC_SECRET", "GARAGE_ADMIN_TOKEN", "GARAGE_METRICS_TOKEN"}
+        "GARAGE_RPC_SECRET",
+        "GARAGE_ADMIN_TOKEN",
+        "GARAGE_METRICS_TOKEN",
+    }
 
 
 def test_render_config_no_change_on_identical(monkeypatch, capsys):
@@ -192,8 +195,7 @@ def test_render_config_no_change_on_identical(monkeypatch, capsys):
     existing = m.GARAGE_TOML_TEMPLATE % fields
     monkeypatch.setattr(m, "_read", lambda p: existing)
     writes = []
-    monkeypatch.setattr(m, "_atomic_write",
-                        lambda p, c, mode: writes.append((p, c, mode)))
+    monkeypatch.setattr(m, "_atomic_write", lambda p, c, mode: writes.append((p, c, mode)))
 
     rc = m.do_render_config(a)
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
@@ -204,8 +206,7 @@ def test_render_config_check_mode_doesnt_write(monkeypatch, capsys):
     _set_secret_env(monkeypatch)
     monkeypatch.setattr(m, "_read", lambda p: None)
     writes = []
-    monkeypatch.setattr(m, "_atomic_write",
-                        lambda p, c, mode: writes.append((p, c, mode)))
+    monkeypatch.setattr(m, "_atomic_write", lambda p, c, mode: writes.append((p, c, mode)))
 
     rc = m.do_render_config(_render_args(check=True))
     out = capsys.readouterr().out
@@ -213,12 +214,15 @@ def test_render_config_check_mode_doesnt_write(monkeypatch, capsys):
     assert writes == []
 
 
-@pytest.mark.parametrize("bad_secret", [
-    'abc"def',          # double-quote breaks the TOML basic-string literal
-    "abc\ndef",         # raw newline can't appear in a basic string
-    "abc\rdef",         # raw CR likewise
-    'multi"line\nbad',  # combo
-])
+@pytest.mark.parametrize(
+    "bad_secret",
+    [
+        'abc"def',  # double-quote breaks the TOML basic-string literal
+        "abc\ndef",  # raw newline can't appear in a basic string
+        "abc\rdef",  # raw CR likewise
+        'multi"line\nbad',  # combo
+    ],
+)
 def test_render_config_rejects_injection_chars_in_secret(monkeypatch, capsys, bad_secret):
     """Defense against TOML literal-break injection — `openssl rand -hex 32`
     can't produce these but validate at the bottleneck. Quote OR newline
@@ -247,15 +251,15 @@ def test_deploy_no_change(monkeypatch, capsys):
     # Build the desired compose, hand it back as the existing file content.
     a = _deploy_args()
     desired = m.COMPOSE_TEMPLATE % {
-        "container_name":  a.container_name,
-        "image":           a.image,
-        "image_tag":       a.image_tag,
-        "network_mode":    a.network_mode,
-        "restart_policy":  a.restart_policy,
-        "rust_log":        a.rust_log,
-        "meta_dir":        a.meta_dir,
-        "data_dir":        a.data_dir,
-        "config_path":     a.config_path,
+        "container_name": a.container_name,
+        "image": a.image,
+        "image_tag": a.image_tag,
+        "network_mode": a.network_mode,
+        "restart_policy": a.restart_policy,
+        "rust_log": a.rust_log,
+        "meta_dir": a.meta_dir,
+        "data_dir": a.data_dir,
+        "config_path": a.config_path,
     }
     monkeypatch.setattr(m, "_read", lambda p: desired)
     monkeypatch.setattr(m.os.path, "exists", lambda p: True)
@@ -269,30 +273,32 @@ def test_deploy_no_change(monkeypatch, capsys):
 def test_deploy_image_drift_triggers_compose_up(monkeypatch, capsys):
     a = _deploy_args(image_tag="v1.2.0")
     desired_compose = m.COMPOSE_TEMPLATE % {
-        "container_name":  a.container_name,
-        "image":           a.image,
-        "image_tag":       a.image_tag,
-        "network_mode":    a.network_mode,
-        "restart_policy":  a.restart_policy,
-        "rust_log":        a.rust_log,
-        "meta_dir":        a.meta_dir,
-        "data_dir":        a.data_dir,
-        "config_path":     a.config_path,
+        "container_name": a.container_name,
+        "image": a.image,
+        "image_tag": a.image_tag,
+        "network_mode": a.network_mode,
+        "restart_policy": a.restart_policy,
+        "rust_log": a.rust_log,
+        "meta_dir": a.meta_dir,
+        "data_dir": a.data_dir,
+        "config_path": a.config_path,
     }
     monkeypatch.setattr(m, "_read", lambda p: desired_compose)  # compose matches
     monkeypatch.setattr(m.os.path, "exists", lambda p: True)
     monkeypatch.setattr(m, "_container_running", lambda n: True)
-    monkeypatch.setattr(m, "_container_image", lambda n: "dxflrs/garage:v1.1.0")  # but image drifted
+    monkeypatch.setattr(
+        m, "_container_image", lambda n: "dxflrs/garage:v1.1.0"
+    )  # but image drifted
 
     writes = []
-    monkeypatch.setattr(m, "_atomic_write",
-                        lambda p, c, mode: writes.append((p, c, mode)))
+    monkeypatch.setattr(m, "_atomic_write", lambda p, c, mode: writes.append((p, c, mode)))
     monkeypatch.setattr(m.os, "makedirs", lambda p, exist_ok=False: None)
     runs = []
 
     def fake_run(*cmd, **kw):
         runs.append(cmd)
         return _RunResult(0, stdout="garage Recreated\n")
+
     monkeypatch.setattr(m, "_run", fake_run)
 
     rc = m.do_deploy(a)
@@ -341,13 +347,19 @@ def test_deploy_missing_garage_toml_reports_planned_change_in_check(monkeypatch,
 # --- layout -------------------------------------------------------------------
 def test_layout_no_change_when_version_already_assigned(monkeypatch, capsys):
     a = _layout_args()
-    outputs = iter([
-        _RunResult(0, stdout="==== HEALTHY NODES ====\nabc1234567890def NO ROLE 10.0.0.1\n"),
-        _RunResult(0, stdout="Current cluster layout version: 1\nID  Tags Zone Capacity\nabc1 ... dc1 5T\n"),
-    ])
+    outputs = iter(
+        [
+            _RunResult(0, stdout="==== HEALTHY NODES ====\nabc1234567890def NO ROLE 10.0.0.1\n"),
+            _RunResult(
+                0,
+                stdout="Current cluster layout version: 1\nID  Tags Zone Capacity\nabc1 ... dc1 5T\n",
+            ),
+        ]
+    )
 
     def fake_run(*cmd, **kw):
         return next(outputs)
+
     monkeypatch.setattr(m, "_run", fake_run)
 
     rc = m.do_layout(a)
@@ -360,18 +372,21 @@ def test_layout_assigns_when_version_zero(monkeypatch, capsys):
         "==== HEALTHY NODES ====\n"
         "abc1234567890def  NO ROLE ASSIGNED  10.0.0.1:3901  garage  HEALTHY\n"
     )
-    outputs = iter([
-        _RunResult(0, stdout=status_out),                                    # garage status (probe)
-        _RunResult(0, stdout="Current cluster layout version: 0\n"),         # garage layout show
-        _RunResult(0, stdout=status_out),                                    # garage status (for node id)
-        _RunResult(0, stdout="Role changes staged\n"),                       # garage layout assign
-        _RunResult(0, stdout="Layout version 1 applied\n"),                  # garage layout apply
-    ])
+    outputs = iter(
+        [
+            _RunResult(0, stdout=status_out),  # garage status (probe)
+            _RunResult(0, stdout="Current cluster layout version: 0\n"),  # garage layout show
+            _RunResult(0, stdout=status_out),  # garage status (for node id)
+            _RunResult(0, stdout="Role changes staged\n"),  # garage layout assign
+            _RunResult(0, stdout="Layout version 1 applied\n"),  # garage layout apply
+        ]
+    )
     calls = []
 
     def fake_run(*cmd, **kw):
         calls.append(cmd)
         return next(outputs)
+
     monkeypatch.setattr(m, "_run", fake_run)
 
     rc = m.do_layout(a)
@@ -396,21 +411,23 @@ def test_layout_truncates_full_64char_id(monkeypatch, capsys):
     a = _layout_args()
     full_id = "f" * 64
     status_out = (
-        "==== HEALTHY NODES ====\n"
-        f"{full_id}  NO ROLE ASSIGNED  10.0.0.1:3901  garage  HEALTHY\n"
+        f"==== HEALTHY NODES ====\n{full_id}  NO ROLE ASSIGNED  10.0.0.1:3901  garage  HEALTHY\n"
     )
-    outputs = iter([
-        _RunResult(0, stdout=status_out),                             # probe
-        _RunResult(0, stdout="Current cluster layout version: 0\n"),  # show
-        _RunResult(0, stdout=status_out),                             # node-id lookup
-        _RunResult(0, stdout="staged\n"),                             # assign
-        _RunResult(0, stdout="applied\n"),                            # apply
-    ])
+    outputs = iter(
+        [
+            _RunResult(0, stdout=status_out),  # probe
+            _RunResult(0, stdout="Current cluster layout version: 0\n"),  # show
+            _RunResult(0, stdout=status_out),  # node-id lookup
+            _RunResult(0, stdout="staged\n"),  # assign
+            _RunResult(0, stdout="applied\n"),  # apply
+        ]
+    )
     calls = []
 
     def fake_run(*cmd, **kw):
         calls.append(cmd)
         return next(outputs)
+
     monkeypatch.setattr(m, "_run", fake_run)
 
     rc = m.do_layout(a)
@@ -426,8 +443,7 @@ def test_layout_truncates_full_64char_id(monkeypatch, capsys):
 
 def test_layout_fails_clean_when_garage_not_responsive(monkeypatch, capsys):
     a = _layout_args()
-    monkeypatch.setattr(m, "_run",
-                        lambda *cmd, **kw: _RunResult(1, stderr="rpc dial err"))
+    monkeypatch.setattr(m, "_run", lambda *cmd, **kw: _RunResult(1, stderr="rpc dial err"))
 
     rc = m.do_layout(a)
     out = capsys.readouterr().out
@@ -440,8 +456,7 @@ def test_layout_check_reports_planned_when_container_down(monkeypatch, capsys):
     """In --check the container may not be up yet (preview on a fresh box).
     Must report WOULD-CHANGE rather than FAIL so dry-run is usable."""
     a = _layout_args(check=True)
-    monkeypatch.setattr(m, "_run",
-                        lambda *cmd, **kw: _RunResult(1, stderr="container not found"))
+    monkeypatch.setattr(m, "_run", lambda *cmd, **kw: _RunResult(1, stderr="container not found"))
 
     rc = m.do_layout(a)
     out = capsys.readouterr().out
@@ -457,8 +472,10 @@ def test_run_returns_structured_failure_when_binary_missing(monkeypatch):
     the miss — not raise FileNotFoundError. Without this guard, callers
     that don't catch the exception (do_deploy / do_layout) would surface
     as a Python traceback, bypassing the OK/.../FAIL contract."""
+
     def boom(*args, **kwargs):
         raise FileNotFoundError(2, "No such file or directory", "docker")
+
     monkeypatch.setattr(m.subprocess, "run", boom)
     r = m._run("docker", "ps")
     assert r.returncode == 127
@@ -468,25 +485,43 @@ def test_run_returns_structured_failure_when_binary_missing(monkeypatch):
 
 # --- argparse plumbing --------------------------------------------------------
 def test_main_dispatches_to_subcommand(monkeypatch, capsys):
-    monkeypatch.setattr(m, "do_render_config", lambda a: (print("OK no-change") or 0))
-    rc = m.main([
-        "render-config",
-        "--config-path", "/tmp/x.toml",
-        "--db-engine", "lmdb",
-        "--replication-factor", "1",
-        "--compression-level", "2",
-        "--rpc-bind-addr", "[::]:3901",
-        "--rpc-public-addr", "127.0.0.1:3901",
-        "--s3-api-bind-addr", "[::]:3900",
-        "--s3-region", "garage",
-        "--s3-root-domain", ".x",
-        "--s3-web-bind-addr", "[::]:3902",
-        "--s3-web-root-domain", ".y",
-        "--s3-web-index", "index.html",
-        "--admin-api-bind-addr", "[::]:3903",
-        # Secrets are read from env vars now, not argv — see do_render_config.
-        "--meta-dir", "/m", "--data-dir", "/d",
-    ])
+    monkeypatch.setattr(m, "do_render_config", lambda a: print("OK no-change") or 0)
+    rc = m.main(
+        [
+            "render-config",
+            "--config-path",
+            "/tmp/x.toml",
+            "--db-engine",
+            "lmdb",
+            "--replication-factor",
+            "1",
+            "--compression-level",
+            "2",
+            "--rpc-bind-addr",
+            "[::]:3901",
+            "--rpc-public-addr",
+            "127.0.0.1:3901",
+            "--s3-api-bind-addr",
+            "[::]:3900",
+            "--s3-region",
+            "garage",
+            "--s3-root-domain",
+            ".x",
+            "--s3-web-bind-addr",
+            "[::]:3902",
+            "--s3-web-root-domain",
+            ".y",
+            "--s3-web-index",
+            "index.html",
+            "--admin-api-bind-addr",
+            "[::]:3903",
+            # Secrets are read from env vars now, not argv — see do_render_config.
+            "--meta-dir",
+            "/m",
+            "--data-dir",
+            "/d",
+        ]
+    )
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
 
 
@@ -499,8 +534,9 @@ def test_render_ui_config_writes_when_missing(monkeypatch, capsys):
     monkeypatch.setattr(m.os.path, "exists", lambda p: False)
     monkeypatch.setattr(m, "_ensure_jwt_key", lambda p: "PEM-CONTENT")
     writes = []
-    monkeypatch.setattr(m, "_atomic_write",
-                        lambda p, c, mode, uid=0, gid=0: writes.append((p, c, mode, uid, gid)))
+    monkeypatch.setattr(
+        m, "_atomic_write", lambda p, c, mode, uid=0, gid=0: writes.append((p, c, mode, uid, gid))
+    )
 
     rc = m.do_render_ui_config(_render_ui_args())
     out = capsys.readouterr().out
@@ -551,22 +587,23 @@ def test_render_ui_config_check_mode_doesnt_write_or_genkey(monkeypatch, capsys)
     monkeypatch.setattr(m, "_read", lambda p: None)
     monkeypatch.setattr(m.os.path, "exists", lambda p: False)
     genkey_called = []
-    monkeypatch.setattr(m, "_ensure_jwt_key",
-                        lambda p: genkey_called.append(p) or "PEM")
+    monkeypatch.setattr(m, "_ensure_jwt_key", lambda p: genkey_called.append(p) or "PEM")
     writes = []
-    monkeypatch.setattr(m, "_atomic_write",
-                        lambda p, c, mode: writes.append((p, c, mode)))
+    monkeypatch.setattr(m, "_atomic_write", lambda p, c, mode: writes.append((p, c, mode)))
 
     rc = m.do_render_ui_config(_render_ui_args(check=True))
     out = capsys.readouterr().out
     assert rc == 0 and out.startswith("WOULD-CHANGE ")
-    assert writes == [] and genkey_called == []   # never side-effect in check mode
+    assert writes == [] and genkey_called == []  # never side-effect in check mode
 
 
-@pytest.mark.parametrize("field,bad", [
-    ("oidc_client_secret", '"'),
-    ("garage_admin_token", "\n"),
-])
+@pytest.mark.parametrize(
+    "field,bad",
+    [
+        ("oidc_client_secret", '"'),
+        ("garage_admin_token", "\n"),
+    ],
+)
 def test_render_ui_config_rejects_injection_chars(monkeypatch, capsys, field, bad):
     """Reject `"`, `\\n`, `\\r` in any YAML string field — defense in depth."""
     if field == "oidc_client_secret":
@@ -613,9 +650,9 @@ def test_deploy_ui_no_change(monkeypatch, capsys):
     a = _deploy_ui_args()
     desired_compose = m.GARAGE_UI_COMPOSE_TEMPLATE % {
         "container_name": a.container_name,
-        "image":          a.image,
-        "image_tag":      a.image_tag,
-        "config_path":    a.config_path,
+        "image": a.image,
+        "image_tag": a.image_tag,
+        "config_path": a.config_path,
     }
     monkeypatch.setattr(m, "_read", lambda p: desired_compose)
     monkeypatch.setattr(m.os.path, "exists", lambda p: True)
@@ -654,9 +691,9 @@ def test_deploy_ui_image_drift_triggers_compose_up(monkeypatch, capsys):
     a = _deploy_ui_args(image_tag="0.7.0")
     desired_compose = m.GARAGE_UI_COMPOSE_TEMPLATE % {
         "container_name": a.container_name,
-        "image":          a.image,
-        "image_tag":      a.image_tag,
-        "config_path":    a.config_path,
+        "image": a.image,
+        "image_tag": a.image_tag,
+        "config_path": a.config_path,
     }
     monkeypatch.setattr(m, "_read", lambda p: desired_compose)
     monkeypatch.setattr(m.os.path, "exists", lambda p: True)
@@ -669,6 +706,7 @@ def test_deploy_ui_image_drift_triggers_compose_up(monkeypatch, capsys):
     def fake_run(*cmd, **kw):
         runs.append(cmd)
         return _RunResult(0, stdout="garage-ui Recreated\n")
+
     monkeypatch.setattr(m, "_run", fake_run)
 
     rc = m.do_deploy_ui(a)
@@ -686,9 +724,9 @@ def test_deploy_ui_config_changed_restarts_container(monkeypatch, capsys):
     a = _deploy_ui_args(config_changed=True)
     desired_compose = m.GARAGE_UI_COMPOSE_TEMPLATE % {
         "container_name": a.container_name,
-        "image":          a.image,
-        "image_tag":      a.image_tag,
-        "config_path":    a.config_path,
+        "image": a.image,
+        "image_tag": a.image_tag,
+        "config_path": a.config_path,
     }
     monkeypatch.setattr(m, "_read", lambda p: desired_compose)
     monkeypatch.setattr(m.os.path, "exists", lambda p: True)
@@ -697,8 +735,11 @@ def test_deploy_ui_config_changed_restarts_container(monkeypatch, capsys):
     monkeypatch.setattr(m.os, "makedirs", lambda p, exist_ok=False: None)
     monkeypatch.setattr(m, "_atomic_write", lambda *a, **kw: None)
     runs = []
-    monkeypatch.setattr(m, "_run",
-                        lambda *cmd, **kw: runs.append(cmd) or _RunResult(0, stdout="garage-ui Restarted\n"))
+    monkeypatch.setattr(
+        m,
+        "_run",
+        lambda *cmd, **kw: runs.append(cmd) or _RunResult(0, stdout="garage-ui Restarted\n"),
+    )
 
     rc = m.do_deploy_ui(a)
     out = capsys.readouterr().out

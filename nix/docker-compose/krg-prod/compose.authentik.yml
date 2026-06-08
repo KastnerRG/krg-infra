@@ -49,6 +49,10 @@ services:
       - ./authentik/media:/media
       - ./authentik/data:/data
       - ./authentik/custom-templates:/templates
+      # App-tile icons, read-only from the Nix store. 2026.2 serves application
+      # icons from /data/media/public/<name>; meta_icon = "krg-icons/<file>" in
+      # terraform/authentik points here. See authentik/media-icons/README.md.
+      - ./authentik/media-icons:/data/media/public/krg-icons:ro
       - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - .secrets/authentik_admin_password.env
@@ -84,6 +88,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./authentik/media:/media
       - ./authentik/data:/data
+      - ./authentik/media-icons:/data/media/public/krg-icons:ro
       - ./authentik/certs:/certs
       - ./authentik/custom-templates:/templates
     env_file:

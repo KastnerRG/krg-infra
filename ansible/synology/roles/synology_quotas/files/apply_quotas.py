@@ -20,6 +20,7 @@ SAFETY: if the parser can't extract the current value, the script BAILS (treats
 parse-failure as drift but errors instead of guessing). Better a noisy FAIL than
 applying spec-drift over a misread current state.
 """
+
 import argparse
 import json
 import re
@@ -56,8 +57,9 @@ def _bool(s):
 #   "Quota: 500 GB"
 # or
 #   "No quota set"
-QUOTA_RE = re.compile(r"Quota[:\s]*([\d.]+)\s*(GB|GiB|MB|MiB|TB|TiB)?\s*(\(Hard\)|\(Soft\))?",
-                      re.IGNORECASE)
+QUOTA_RE = re.compile(
+    r"Quota[:\s]*([\d.]+)\s*(GB|GiB|MB|MiB|TB|TiB)?\s*(\(Hard\)|\(Soft\))?", re.IGNORECASE
+)
 
 
 def _parse_current(text):
@@ -85,12 +87,12 @@ def _parse_current(text):
     size, raw_unit, hard_tag = m.group(1), (m.group(2) or "").lower(), m.group(3)
     val = float(size)
 
-    DEFAULT_UNIT = "gb"   # treat bare numbers as decimal; flip to "gib" if DSM proves otherwise
+    DEFAULT_UNIT = "gb"  # treat bare numbers as decimal; flip to "gib" if DSM proves otherwise
     unit = raw_unit or DEFAULT_UNIT
 
     if unit in ("gb", "mb", "tb"):
         # Decimal -> bytes -> GiB.
-        decimal_bytes = {"mb": 10 ** 6, "gb": 10 ** 9, "tb": 10 ** 12}[unit]
+        decimal_bytes = {"mb": 10**6, "gb": 10**9, "tb": 10**12}[unit]
         val_gib = (val * decimal_bytes) / (1 << 30)
     else:
         # Binary -> GiB directly.
@@ -98,7 +100,7 @@ def _parse_current(text):
         val_gib = val * binary_scale
 
     val_gib_int = int(round(val_gib))
-    hard = (hard_tag is not None and "hard" in hard_tag.lower())
+    hard = hard_tag is not None and "hard" in hard_tag.lower()
     return (val_gib_int, hard)
 
 
@@ -125,25 +127,44 @@ def do_share(a):
     r = _run([SYNOQUOTA] + CMDS["share_get"] + [a.share])
     cur_size, cur_hard = _parse_current(r.stdout or r.stderr)
     if cur_size == "UNPARSEABLE":
-        print("FAIL " + json.dumps({"error": "could not parse current quota",
-                                    "share": a.share,
-                                    "stdout": (r.stdout or "")[:300]}))
+        print(
+            "FAIL "
+            + json.dumps(
+                {
+                    "error": "could not parse current quota",
+                    "share": a.share,
+                    "stdout": (r.stdout or "")[:300],
+                }
+            )
+        )
         return 1
 
     drift = {}
     if desired_size == 0 and cur_size is not None:
         drift = {"action": "clear", "current_gib": cur_size}
     elif desired_size != 0 and (cur_size != desired_size or cur_hard != desired_hard):
-        drift = {"current_gib": cur_size, "current_hard": cur_hard,
-                 "desired_gib": desired_size, "desired_hard": desired_hard}
+        drift = {
+            "current_gib": cur_size,
+            "current_hard": cur_hard,
+            "desired_gib": desired_size,
+            "desired_hard": desired_hard,
+        }
 
     def apply():
         if desired_size == 0:
             return _run([SYNOQUOTA] + CMDS["share_clear"] + [a.share]).returncode
         flag = "hard" if desired_hard else "soft"
-        cmd = [SYNOQUOTA] + CMDS["share_set"] + [
-            a.share, "--size", str(desired_size * GIB), "--type", flag,
-        ]
+        cmd = (
+            [SYNOQUOTA]
+            + CMDS["share_set"]
+            + [
+                a.share,
+                "--size",
+                str(desired_size * GIB),
+                "--type",
+                flag,
+            ]
+        )
         return _run(cmd).returncode
 
     return _result(drift, a.check, apply)
@@ -157,27 +178,50 @@ def do_user(a):
     r = _run([SYNOQUOTA] + CMDS["user_get"] + ["--user", a.user, "--volume", a.volume])
     cur_size, cur_hard = _parse_current(r.stdout or r.stderr)
     if cur_size == "UNPARSEABLE":
-        print("FAIL " + json.dumps({"error": "could not parse current quota",
-                                    "user": a.user, "volume": a.volume,
-                                    "stdout": (r.stdout or "")[:300]}))
+        print(
+            "FAIL "
+            + json.dumps(
+                {
+                    "error": "could not parse current quota",
+                    "user": a.user,
+                    "volume": a.volume,
+                    "stdout": (r.stdout or "")[:300],
+                }
+            )
+        )
         return 1
 
     drift = {}
     if desired_size == 0 and cur_size is not None:
         drift = {"action": "clear", "current_gib": cur_size}
     elif desired_size != 0 and (cur_size != desired_size or cur_hard != desired_hard):
-        drift = {"current_gib": cur_size, "current_hard": cur_hard,
-                 "desired_gib": desired_size, "desired_hard": desired_hard}
+        drift = {
+            "current_gib": cur_size,
+            "current_hard": cur_hard,
+            "desired_gib": desired_size,
+            "desired_hard": desired_hard,
+        }
 
     def apply():
         if desired_size == 0:
-            return _run([SYNOQUOTA] + CMDS["user_clear"] + [
-                "--user", a.user, "--volume", a.volume]).returncode
+            return _run(
+                [SYNOQUOTA] + CMDS["user_clear"] + ["--user", a.user, "--volume", a.volume]
+            ).returncode
         flag = "hard" if desired_hard else "soft"
-        cmd = [SYNOQUOTA] + CMDS["user_set"] + [
-            "--user", a.user, "--volume", a.volume,
-            "--size", str(desired_size * GIB), "--type", flag,
-        ]
+        cmd = (
+            [SYNOQUOTA]
+            + CMDS["user_set"]
+            + [
+                "--user",
+                a.user,
+                "--volume",
+                a.volume,
+                "--size",
+                str(desired_size * GIB),
+                "--type",
+                flag,
+            ]
+        )
         return _run(cmd).returncode
 
     return _result(drift, a.check, apply)
