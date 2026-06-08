@@ -95,13 +95,13 @@ resource "authentik_application" "mlflow" {
 # docs/vaultwarden-sso.md.
 
 resource "authentik_provider_oauth2" "vaultwarden" {
-  name               = "Provider for Vaultwarden"
-  client_id          = "vaultwarden"
-  authorization_flow = data.authentik_flow.default_authorization.id
-  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  name                  = "Provider for Vaultwarden"
+  client_id             = "vaultwarden"
+  authorization_flow    = data.authentik_flow.default_authorization.id
+  invalidation_flow     = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict", url = "https://vaultwarden.krg.ucsd.edu/identity/connect/oidc-signin" }]
   property_mappings = concat(local.std_scopes,
-    [authentik_property_mapping_provider_scope.groups.id])
+  [authentik_property_mapping_provider_scope.groups.id])
   # RS256 signing key — REQUIRED: Vaultwarden verifies the ID token against jwks_uri.
   # Without it Authentik falls back to HS256 + empty JWKS → "Invalid ID token" (the
   # same failure garage-ui hit).
