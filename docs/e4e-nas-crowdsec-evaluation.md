@@ -12,7 +12,8 @@ DSM-native security stack instead:
    for everything not covered by the explicit allow-list rules. Spec
    target now in `security.yml`; pushed via the IaC over the HTTP
    webapi path (Profile.set + Profile.Apply two-phase — see
-   `apply_security.py:do_firewall_profile` and `files/dsm_http.py`).
+   `apply_security.py:do_firewall_profile`; the `DSMSession` HTTP client
+   lives in `apply_security.py`, covered by `test_dsm_http.py`).
 
 Notably, **#3 actually delivers issue #74's "US is the floor" policy
 literally** — the NAS's protection model is in some ways stricter than
@@ -183,8 +184,9 @@ Captured before the cabled bring-up, on `e4e-nas-tmp`:
   **`Firewall.Profile.Apply.start/status/stop`** (two-phase commit to
   live nftables). No segfaults, no transport issues. This is what the
   DSM web UI uses, confirmed by HAR capture of an actual rule-edit
-  + Apply click. `ansible/synology/roles/synology_security/files/dsm_http.py`
-  is the stdlib client for that path.
+  + Apply click. The `DSMSession` stdlib HTTP client for that path lives in
+  `ansible/synology/roles/synology_security/files/apply_security.py`
+  (exercised by `test_dsm_http.py` in the same dir).
 - Rule schema (canonical, post-DSM-normalization): see the comment
   block at the top of [`spec/e4e-nas/security.yml`](../spec/e4e-nas/security.yml).
   Key fields: `enable`, `policy` (`allow`/`deny`/`drop`),

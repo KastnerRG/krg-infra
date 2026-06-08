@@ -4,7 +4,7 @@ Mocks the `_exec` subprocess boundary to drive the OK/WOULD-CHANGE/CHANGED/FAIL 
 and verifies the TLS profile name→integer mapping, the full-object overlay for Web.DSM,
 and that `--check` doesn't mutate.
 """
-import json
+
 import os
 import sys
 
@@ -16,22 +16,31 @@ def _live_web(hsts=False, avahi=True, ssdp=True, spdy=True, http_port=6020, http
     # Mirrors the real DSM v2 GET (capture 2026-05-28), with a couple of fields that
     # the role does NOT manage (max_connections_limit) to verify they're preserved.
     return {
-        "enable_hsts": hsts, "enable_avahi": avahi, "enable_ssdp": ssdp,
-        "enable_spdy": spdy, "enable_https": True, "enable_https_redirect": True,
-        "enable_server_header": False, "http_port": http_port, "https_port": https_port,
-        "main_app": "DSM", "fqdn": None,
-        "max_connections_limit": {"lower": 4096, "upper": 262140},   # nested, untouched
+        "enable_hsts": hsts,
+        "enable_avahi": avahi,
+        "enable_ssdp": ssdp,
+        "enable_spdy": spdy,
+        "enable_https": True,
+        "enable_https_redirect": True,
+        "enable_server_header": False,
+        "http_port": http_port,
+        "https_port": https_port,
+        "main_app": "DSM",
+        "fqdn": None,
+        "max_connections_limit": {"lower": 4096, "upper": 262140},  # nested, untouched
     }
 
 
 def _exec_factory(get_data, set_capture=None):
     """Build a fake _exec that returns canned GET data and records SET calls."""
+
     def fake(api, *params):
         if "method=get" in params:
             return {"data": dict(get_data), "success": True}
         if set_capture is not None:
             set_capture.append((api, params))
         return {"success": True}
+
     return fake
 
 
@@ -41,10 +50,9 @@ def test_bool_helper():
 
 
 def test_args_from_types():
-    args = m._args_from({"a": True, "b": False, "n": None, "i": 3,
-                         "nested": {"x": 1}})
+    args = m._args_from({"a": True, "b": False, "n": None, "i": 3, "nested": {"x": 1}})
     assert "a=true" in args and "b=false" in args and "i=3" in args
-    assert not any(x.startswith("n=") for x in args)        # null dropped
+    assert not any(x.startswith("n=") for x in args)  # null dropped
     assert any(x.startswith("nested=") and '"x"' in x for x in args)
 
 
@@ -69,8 +77,11 @@ def test_web_check_reports_drift_without_setting(monkeypatch, capsys):
 
 def test_web_apply_sends_full_object_overlay(monkeypatch, capsys):
     captured = []
-    monkeypatch.setattr(m, "_exec", _exec_factory(
-        _live_web(hsts=False, avahi=True, ssdp=True), set_capture=captured))
+    monkeypatch.setattr(
+        m,
+        "_exec",
+        _exec_factory(_live_web(hsts=False, avahi=True, ssdp=True), set_capture=captured),
+    )
     rc = m.main(["web", "--hsts", "true", "--avahi", "false", "--ssdp", "false"])
     out = capsys.readouterr().out
     assert rc == 0 and out.startswith("CHANGED")
@@ -81,7 +92,9 @@ def test_web_apply_sends_full_object_overlay(monkeypatch, capsys):
     assert "version=2" in params and "method=set" in params
     # managed fields overridden
     rest = set(params[2:])
-    assert "enable_hsts=true" in rest and "enable_avahi=false" in rest and "enable_ssdp=false" in rest
+    assert (
+        "enable_hsts=true" in rest and "enable_avahi=false" in rest and "enable_ssdp=false" in rest
+    )
     # unmanaged fields retained (full-object preserved)
     assert 'main_app="DSM"' in rest
 
@@ -91,6 +104,7 @@ def test_web_fail_on_unsuccessful_set(monkeypatch, capsys):
         if "method=get" in params:
             return {"data": _live_web(hsts=False), "success": True}
         return {"success": False, "error": {"code": 2001}}
+
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["web", "--hsts", "true"])
     assert rc == 1 and capsys.readouterr().out.startswith("FAIL")
@@ -107,7 +121,12 @@ def test_tls_check_reports_drift(monkeypatch, capsys):
     monkeypatch.setattr(m, "_exec", _exec_factory({"default-level": 2}))
     rc = m.main(["tls-profile", "--profile", "modern", "--check"])
     out = capsys.readouterr().out
-    assert rc == 0 and out.startswith("WOULD-CHANGE") and '"current": 2' in out and '"desired": 0' in out
+    assert (
+        rc == 0
+        and out.startswith("WOULD-CHANGE")
+        and '"current": 2' in out
+        and '"desired": 0' in out
+    )
 
 
 def test_tls_apply_sends_correct_level(monkeypatch, capsys):

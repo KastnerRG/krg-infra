@@ -72,6 +72,15 @@ a `:5000` host-forward + VNC + serial); `dsm-vm` renders `domains/dsm-vm.xml` an
 (DS3622xs+ / DSM 7.3, install from the staged `.pat`), run the DSM wizard, and snapshot
 the baseline.
 
+### Rig fixtures
+
+`rig-fixtures/` holds **throwaway** spec files (`shares.yml`, `acls.yml`,
+`groups.yml`, `users.yml`) used only on the rig to exercise the `synology_*`
+role code paths against DSM 7.3 — *without* touching the real
+`../spec/e4e-nas/`. Point a role at them with
+`-e nas_spec_dir=$PWD/test/rig-fixtures`. The rig has only `/volume1`, so the
+fixture share paths don't pre-exist and hit the fresh-create (`--add`) path.
+
 ### Pinned (in `dsm.nix` — bump deliberately)
 
 | Input | Pin |

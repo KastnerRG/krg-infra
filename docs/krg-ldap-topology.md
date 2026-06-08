@@ -72,7 +72,7 @@ flowchart TB
 
   subgraph vm["krg-ldap VM — ens18 · 137.110.161.109/24 · gw .1"]
     direction TB
-    gfw["in-guest nftables (krg.firewall) + fail2ban<br/>SSH 22 ← UCSD nets (serviceHost)"]
+    gfw["in-guest nftables (krg.firewall) + CrowdSec<br/>SSH 22 ← UCSD nets (serviceHost)"]
     samba["samba AD DC daemon (samba4Full)<br/>realm KRG.LOCAL · workgroup KRG<br/>SAMBA_INTERNAL DNS"]
     subgraph ports["AD DC ports (in-guest)"]
       direction LR

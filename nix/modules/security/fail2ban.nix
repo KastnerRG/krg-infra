@@ -48,9 +48,9 @@ in {
     services.fail2ban = {
       enable = true;
       extraPackages = [pkgs.ipset];
-      ignoreIP = cfg.ignoreIP;
+      inherit (cfg) ignoreIP;
 
-      bantime = cfg.bantime;
+      inherit (cfg) bantime;
       bantime-increment = {
         enable = cfg.bantimeIncrement;
         rndtime = "${toString cfg.bantimeRndtime}s";

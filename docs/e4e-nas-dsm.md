@@ -1,13 +1,13 @@
 # e4e-nas (Synology DSM) — break-glass / migration runbook
 
-`e4e-nas.ucsd.edu` (`132.239.17.124`, DSM web on `:6021`, admin `:6020`) is the
+`e4e-nas.ucsd.edu` (`132.239.17.124`, DSM HTTPS on `:6021`, HTTP `:6020`) is the
 lab's Synology NAS. Compute hosts mount its SMB shares (`nix/profiles/compute.nix`,
 cifs-utils); krg-prod's prometheus blackbox-probes it; it's a trusted host in
 [`../nix/networks/trusted.json`](../nix/networks/trusted.json).
 
 **Source of truth has moved to IaC.** Per ADR 0001 the DSM configuration lives
 in [`../spec/e4e-nas/*.yml`](../spec/e4e-nas) and is applied by the
-[`synology_*` Ansible roles](../ansible/roles) composed in
+[`synology_*` Ansible roles](../ansible/synology/roles) composed in
 [`../ansible/synology/playbook.yml`](../ansible/synology/playbook.yml). This
 runbook is now **only** the break-glass + one-time migration sheet — things
 that don't fit a programmatic surface (the DSM install wizard, hardware swap,
@@ -32,7 +32,7 @@ recovery without automation).
 ## Routine apply
 
 ```bash
-cd ansible
+# from the repo root
 ansible-playbook ansible/synology/playbook.yml --check --diff       # dry run
 ansible-playbook ansible/synology/playbook.yml                       # apply
 ansible-playbook ansible/synology/playbook.yml --tags export         # drift snapshot only
@@ -190,4 +190,5 @@ re-walk every share on routine applies.
 - Live captures (`synowebapi --exec ... method=get` output, `synoshare
   --list_acl`, etc.) live in `~/krg-captures/<host>/<date>/` — **off the
   public repo**.
-- Memory rule: see [`krg-infra-no-live-captures`](../).
+- Rule: live captures are research/discovery only — never commit them, and port
+  findings into `spec/` + the `synology_*` roles rather than keeping the raw dumps.

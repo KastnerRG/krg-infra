@@ -77,9 +77,12 @@ with lib; let
   # scratch-overflow / scratch-restore as stdlib-only Python. writePython3Bin gives a
   # build-time syntax + import check; flakeIgnore drops style-only lints (line length
   # etc.) — the scripts are the real source of truth in nix/modules/scratch/*.py.
+  # E203/W503 are the pycodestyle rules ruff/black deliberately violate (slice colon
+  # spacing `x[a :]`, line break before binary op), so they're ignored here too — the
+  # repo-wide ruff gate (ruff.toml) is what actually lints these files.
   pyArgs = {
     libraries = [];
-    flakeIgnore = ["E501" "E226" "W503" "W504"];
+    flakeIgnore = ["E203" "E501" "E226" "W503" "W504"];
   };
   scratchOverflow =
     pkgs.writers.writePython3Bin "scratch-overflow" pyArgs
@@ -88,12 +91,24 @@ with lib; let
     pkgs.writers.writePython3Bin "scratch-restore" pyArgs
     (builtins.readFile ./scratch/scratch-restore.py);
 
+  # How long the perms oneshot waits for the AD lab group to become resolvable
+  # before failing open. Covers the SSSD cold-cache warmup after a boot/auto-apply
+  # (typically seconds); generous enough to ride out a brief DC blip, bounded so a
+  # truly-down DC never wedges boot.
+  permsGroupResolveTimeout = 120;
+
   # --- ownership / isolation step (a post-mount oneshot) ----------------------
   # Runs AFTER the mount is active (RequiresMountsFor) and after sssd, so the AD lab
-  # group resolves. chmod 3770 the scratch root; chgrp to the lab group only if it
-  # resolves — TOLERANT so /scratch still comes up (root-owned, admin-only) before
-  # the AD join / group creation lands, then tightens on the next start. The group
-  # name has spaces ("Kastner Research Group"), so it's quoted.
+  # group resolves. chmod 3770 the scratch root; chgrp to the lab group once it
+  # resolves. SSSD reaching `active` does NOT mean AD groups resolve yet — at boot
+  # (and on the nightly auto-apply, which re-fires this unit via partOf) the SSSD
+  # cache can still be cold, so we POLL for the group rather than checking once: a
+  # single miss used to leave $mp root-owned until the next run, stripping the lab
+  # group on every nightly switch and locking every member out of the 3770 tree.
+  # The poll is BOUNDED (permsGroupResolveTimeout) so a genuinely-down DC (the
+  # krg-ldap SPOF) still fails open — /scratch comes up root-owned (admin-only) and
+  # re-tightens whenever this unit next runs. The group name has spaces
+  # ("Kastner Research Group"), so it's quoted.
   #
   # 3770 = setgid (new entries inherit the lab group) + STICKY. The sticky bit is what
   # makes per-user isolation hold at the root: the tree is group-writable so members
@@ -106,11 +121,19 @@ with lib; let
       # chgrp FIRST, chmod LAST: chgrp can clear the setgid bit, so applying 3770 after
       # it guarantees the final mode (incl. setgid+sticky) regardless.
       ${optionalString (proj.ownerGroup != null) ''
+        # Poll until the AD lab group resolves, bounded by a deadline so a down DC
+        # never blocks boot (fail open: leave $mp root-owned, re-tighten next run).
+        deadline=$(( $(${pkgs.coreutils}/bin/date +%s) + ${toString permsGroupResolveTimeout} ))
+        while ! ${pkgs.getent}/bin/getent group ${escapeShellArg proj.ownerGroup} >/dev/null 2>&1; do
+          if [ "$(${pkgs.coreutils}/bin/date +%s)" -ge "$deadline" ]; then
+            echo "krg.scratch[${name}]: group ${escapeShellArg proj.ownerGroup} still unresolvable after ${toString permsGroupResolveTimeout}s (AD join/group pending or DC down?) — $mp left root-owned (admin-only), will re-tighten when this unit next runs" >&2
+            break
+          fi
+          ${pkgs.coreutils}/bin/sleep 3
+        done
         if ${pkgs.getent}/bin/getent group ${escapeShellArg proj.ownerGroup} >/dev/null 2>&1; then
           ${pkgs.coreutils}/bin/chgrp ${escapeShellArg proj.ownerGroup} "$mp" || \
             echo "krg.scratch[${name}]: chgrp failed on $mp" >&2
-        else
-          echo "krg.scratch[${name}]: group ${escapeShellArg proj.ownerGroup} not resolvable yet (AD join/group pending?) — $mp left root-owned (admin-only), will apply on next start" >&2
         fi
       ''}
       ${pkgs.coreutils}/bin/chmod 3770 "$mp" || \

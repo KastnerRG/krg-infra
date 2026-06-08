@@ -11,6 +11,7 @@ SNMPv3 USM credentials (auth/priv password) are a separate bootstrap secret — 
 on the CLI here. enable_snmp_v3=true without a credential set is accepted by the API but
 no v3 user can authenticate until the credential is bootstrapped (DSM UI or a follow-up).
 """
+
 import argparse
 import json
 import subprocess
@@ -18,15 +19,14 @@ import sys
 
 WEBAPI = "/usr/syno/bin/synowebapi"
 APIS = {
-    "ftp":  ("SYNO.Core.FileServ.FTP",  1),
-    "afp":  ("SYNO.Core.FileServ.AFP",  1),
-    "snmp": ("SYNO.Core.SNMP",          1),
+    "ftp": ("SYNO.Core.FileServ.FTP", 1),
+    "afp": ("SYNO.Core.FileServ.AFP", 1),
+    "snmp": ("SYNO.Core.SNMP", 1),
 }
 
 
 def _exec(api, *params):
-    out = subprocess.run([WEBAPI, "--exec", "api=" + api, *params],
-                         capture_output=True, text=True)
+    out = subprocess.run([WEBAPI, "--exec", "api=" + api, *params], capture_output=True, text=True)
     txt = out.stdout
     brace = txt.find("{")
     if brace < 0:
@@ -75,8 +75,11 @@ def _result(drift, check, apply_fn):
 def apply_service(svc, desired, check):
     api, ver = APIS[svc]
     current = _exec(api, "version=%d" % ver, "method=get")["data"]
-    drift = {k: {"current": current.get(k), "desired": v}
-             for k, v in desired.items() if current.get(k) != v}
+    drift = {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if current.get(k) != v
+    }
 
     def apply():
         current.update(desired)
@@ -151,7 +154,8 @@ def do_snmp(a):
                 "WARN: snmp.enable_snmp_v3=true deferred — v3 USM credentials "
                 "(rouser + v3_auth_password + v3_priv_password) not supplied. "
                 "DSM would return err 2202 on the SET. Add the secrets to "
-                "secrets-syno.yml under `snmp_v3_*` and re-apply to converge.\n")
+                "secrets-syno.yml under `snmp_v3_*` and re-apply to converge.\n"
+            )
             # Will be pinned to current value by apply_service's GET/diff;
             # explicitly leaving enable_snmp_v3 in desired so the diff shows
             # current=false vs desired=true and pinning by overlay below.
@@ -180,7 +184,8 @@ def do_snmp(a):
                     "rejects daemon-enable with no protocol active "
                     "(v1v2=false, v3 deferred). Metadata (contact/location/"
                     "name) is ALSO deferred because DSM silently drops "
-                    "metadata changes when the daemon is off.\n")
+                    "metadata changes when the daemon is off.\n"
+                )
                 desired.clear()
             # Also don't push rouser (would be a v3-only field with no v3 enabled)
             # — fall through; we never add it in this branch.
@@ -218,14 +223,30 @@ def main(argv=None):
     s.add_argument("--rouser")
     # SNMPv3 USM credentials (Option B credential plumbing). Operator-side
     # secrets come from secrets-syno.yml; empty/absent triggers soft-defer.
-    s.add_argument("--v3-auth-protocol", dest="v3_auth_protocol", default=None,
-                   help="SHA|SHA224|SHA256|SHA384|SHA512|MD5 (default SHA)")
-    s.add_argument("--v3-auth-password", dest="v3_auth_password", default=None,
-                   help="USM auth password (>=8 chars; SNMPv3 requirement)")
-    s.add_argument("--v3-priv-protocol", dest="v3_priv_protocol", default=None,
-                   help="AES|AES192|AES256|DES (default AES)")
-    s.add_argument("--v3-priv-password", dest="v3_priv_password", default=None,
-                   help="USM priv password (>=8 chars; SNMPv3 requirement)")
+    s.add_argument(
+        "--v3-auth-protocol",
+        dest="v3_auth_protocol",
+        default=None,
+        help="SHA|SHA224|SHA256|SHA384|SHA512|MD5 (default SHA)",
+    )
+    s.add_argument(
+        "--v3-auth-password",
+        dest="v3_auth_password",
+        default=None,
+        help="USM auth password (>=8 chars; SNMPv3 requirement)",
+    )
+    s.add_argument(
+        "--v3-priv-protocol",
+        dest="v3_priv_protocol",
+        default=None,
+        help="AES|AES192|AES256|DES (default AES)",
+    )
+    s.add_argument(
+        "--v3-priv-password",
+        dest="v3_priv_password",
+        default=None,
+        help="USM priv password (>=8 chars; SNMPv3 requirement)",
+    )
     s.add_argument("--check", action="store_true")
     s.set_defaults(func=do_snmp)
 

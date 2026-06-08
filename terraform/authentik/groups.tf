@@ -16,7 +16,7 @@
 # source's `property_mappings_group` in ldap.tf. To grant superuser to another AD
 # group later, widen the CN check here rather than creating a local group.
 resource "authentik_property_mapping_source_ldap" "group_superuser" {
-  name = "krg: AD Domain Admins → Authentik superuser"
+  name       = "krg: AD Domain Admins → Authentik superuser"
   expression = <<-EOT
     # `ldap` holds the synced GROUP's attributes; `cn` may arrive as a list.
     cn = ldap.get("cn")

@@ -12,6 +12,7 @@ config (all full-object set; partial = err 2001):
 The nested smtp_auth / smtp_info objects on Mail.Conf are preserved via the GET → merge
 → SET pattern (managed flat fields are overlaid into the live object dict).
 """
+
 import argparse
 import json
 import subprocess
@@ -21,8 +22,7 @@ WEBAPI = "/usr/syno/bin/synowebapi"
 
 
 def _exec(api, *params):
-    out = subprocess.run([WEBAPI, "--exec", "api=" + api, *params],
-                         capture_output=True, text=True)
+    out = subprocess.run([WEBAPI, "--exec", "api=" + api, *params], capture_output=True, text=True)
     txt = out.stdout
     brace = txt.find("{")
     if brace < 0:
@@ -70,8 +70,11 @@ def _result(drift, check, apply_fn):
 
 def _diff(current, desired):
     """Top-level field diff (nested objects compared as dicts)."""
-    return {k: {"current": current.get(k), "desired": v}
-            for k, v in desired.items() if current.get(k) != v}
+    return {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if current.get(k) != v
+    }
 
 
 def apply_full(api, version, desired, check):
