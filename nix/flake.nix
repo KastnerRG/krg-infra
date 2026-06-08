@@ -45,55 +45,81 @@
       url = "github:Mic92/envfs/1.2.0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # Tree formatter. alejandra is the repo's chosen .nix formatter; treefmt-nix
+    # exposes it as `nix fmt` and, more importantly, as a `nix flake check` gate
+    # (checks.formatting below) so unformatted Nix fails CI. See KastnerRG/krg-infra#150.
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, ... }@inputs:
-  let
+  outputs = {
+    self,
+    nixpkgs,
+    treefmt-nix,
+    ...
+  } @ inputs: let
     system = "x86_64-linux";
+    pkgs = nixpkgs.legacyPackages.${system};
 
-    mkSystem = hostname: nixpkgs.lib.nixosSystem {
-      inherit system;
-      specialArgs = { inherit inputs; };
-      modules = [
-        { _module.args.self = self; }
-        ./hosts/${hostname}/default.nix
-      ];
+    # alejandra-only treefmt config; projectRootFile anchors it at nix/flake.nix.
+    treefmtEval = treefmt-nix.lib.evalModule pkgs {
+      projectRootFile = "flake.nix";
+      programs.alejandra.enable = true;
     };
+
+    mkSystem = hostname:
+      nixpkgs.lib.nixosSystem {
+        inherit system;
+        specialArgs = {inherit inputs;};
+        modules = [
+          {_module.args.self = self;}
+          ./hosts/${hostname}/default.nix
+        ];
+      };
   in {
+    # `nix fmt` → alejandra via treefmt.
+    formatter.${system} = treefmtEval.config.build.wrapper;
+
+    # `nix flake check` gate: fails on any unformatted .nix in the tree.
+    checks.${system}.formatting = treefmtEval.config.build.check self;
+
     nixosModules = {
-      base          = import ./profiles/base.nix;
-      docker        = import ./modules/docker.nix;
-      users         = import ./modules/users.nix;
-      zfs           = import ./modules/zfs.nix;
-      nix-ld        = import ./modules/nix-ld.nix;
-      impermanence  = import ./modules/impermanence.nix;
+      base = import ./profiles/base.nix;
+      docker = import ./modules/docker.nix;
+      users = import ./modules/users.nix;
+      zfs = import ./modules/zfs.nix;
+      nix-ld = import ./modules/nix-ld.nix;
+      impermanence = import ./modules/impermanence.nix;
 
-      compose-stack  = import ./modules/services/compose-stack.nix;
-      node-exporter  = import ./modules/services/node-exporter.nix;
-      ipmi-exporter  = import ./modules/services/ipmi-exporter.nix;
+      compose-stack = import ./modules/services/compose-stack.nix;
+      node-exporter = import ./modules/services/node-exporter.nix;
+      ipmi-exporter = import ./modules/services/ipmi-exporter.nix;
 
-      samba-ad      = import ./modules/samba-ad.nix;
-      ad-client     = import ./modules/sssd-ad-client.nix;
+      samba-ad = import ./modules/samba-ad.nix;
+      ad-client = import ./modules/sssd-ad-client.nix;
 
-      firewall           = import ./modules/security/firewall.nix;
-      crowdsec           = import ./modules/security/crowdsec.nix;
-      crowdsec-bouncer   = import ./modules/security/crowdsec-bouncer.nix;
-      fail2ban           = import ./modules/security/fail2ban.nix;
+      firewall = import ./modules/security/firewall.nix;
+      crowdsec = import ./modules/security/crowdsec.nix;
+      crowdsec-bouncer = import ./modules/security/crowdsec-bouncer.nix;
+      fail2ban = import ./modules/security/fail2ban.nix;
       oec-qualys-trellix = import ./modules/security/oec-qualys-trellix.nix;
 
       nvidia = import ./modules/hardware/nvidia.nix;
-      fpga   = import ./modules/hardware/fpga.nix;
+      fpga = import ./modules/hardware/fpga.nix;
 
       xrdp = import ./modules/desktop/xrdp.nix;
     };
 
     nixosConfigurations = {
-      krg-prod    = mkSystem "krg-prod";    # KRG lab-wide production (was "fabricant")
-      e4e-prod    = mkSystem "e4e-prod";    # E4E project-specific production
-      waiter      = mkSystem "waiter";
-      krg-ldap    = mkSystem "krg-ldap";
-      krg-vault   = mkSystem "krg-vault";   # OpenBao secrets manager
-      krg-deploy  = mkSystem "krg-deploy";  # Ansible control node + OpenTofu
+      krg-prod = mkSystem "krg-prod"; # KRG lab-wide production (was "fabricant")
+      e4e-prod = mkSystem "e4e-prod"; # E4E project-specific production
+      waiter = mkSystem "waiter";
+      krg-ldap = mkSystem "krg-ldap";
+      krg-vault = mkSystem "krg-vault"; # OpenBao secrets manager
+      krg-deploy = mkSystem "krg-deploy"; # Ansible control node + OpenTofu
     };
   };
 }

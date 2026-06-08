@@ -17,9 +17,13 @@
 # pins it to /var/lib/<account>), or it would depend on the NFS server being up —
 # defeating the point of a break-glass account. (That same off-/home home is also what
 # lets the login gate below keep the admin usable when the NFS server is down.)
-{ config, lib, pkgs, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; let
   cfg = config.krg.nfsHome;
 
   # PAM account check (pam_exec): deny login to any user whose home is UNDER the NFS
@@ -46,7 +50,7 @@ in {
     enable = mkEnableOption "mount /home from an NFS server (AD user homes)";
 
     server = mkOption {
-      type    = types.str;
+      type = types.str;
       example = "137.110.161.10";
       description = ''
         NFS server address. Prefer the IP for this foundational mount so it doesn't
@@ -56,29 +60,29 @@ in {
     };
 
     export = mkOption {
-      type    = types.str;
+      type = types.str;
       default = "/srv/nfs/home";
       description = "Server-side export path (fabricant nfs_server serves rpool/nfs/home here).";
     };
 
     mountPoint = mkOption {
-      type    = types.str;
+      type = types.str;
       default = "/home";
     };
 
     nfsVersion = mkOption {
-      type    = types.str;
+      type = types.str;
       default = "4.2";
     };
 
     extraOptions = mkOption {
-      type    = types.listOf types.str;
+      type = types.listOf types.str;
       default = [];
       description = "Extra mount options appended to the defaults.";
     };
 
     requireMountForLogin = mkOption {
-      type    = types.bool;
+      type = types.bool;
       default = true;
       description = ''
         Gate logins on the NFS home mount being active. A `nofail` mount means the box
@@ -93,8 +97,8 @@ in {
     };
 
     loginServices = mkOption {
-      type    = types.listOf types.str;
-      default = [ "sshd" "login" ];
+      type = types.listOf types.str;
+      default = ["sshd" "login"];
       description = "PAM services the login gate (requireMountForLogin) is added to.";
     };
   };
@@ -121,15 +125,17 @@ in {
         # If fabricant is down at boot, /home is left unmounted; the login gate
         # (requireMountForLogin) then denies AD logins until it is back, so nobody gets
         # an ephemeral home that a reboot would erase.
-        options = [
-          "nfsvers=${cfg.nfsVersion}"
-          "hard"
-          "noatime"
-          "nconnect=4"
-          "_netdev"
-          "nofail"
-          "x-systemd.mount-timeout=30s"
-        ] ++ cfg.extraOptions;
+        options =
+          [
+            "nfsvers=${cfg.nfsVersion}"
+            "hard"
+            "noatime"
+            "nconnect=4"
+            "_netdev"
+            "nofail"
+            "x-systemd.mount-timeout=30s"
+          ]
+          ++ cfg.extraOptions;
       };
     }
 
@@ -139,7 +145,7 @@ in {
           control = "required";
           modulePath = "${pkgs.pam}/lib/security/pam_exec.so";
           # `stdout` relays the script's message to the user being denied.
-          args = [ "stdout" "${homeMountGuard}" ];
+          args = ["stdout" "${homeMountGuard}"];
           # Run late in the account stack (after the user is otherwise validated); a
           # `required` failure denies access regardless of position.
           order = 12000;

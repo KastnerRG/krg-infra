@@ -183,20 +183,20 @@ in {
     # Pool health → Prometheus (textfile collector). Guarded on node-exporter
     # being on (it owns textfileDir); base.nix enables it on every host.
     systemd.services.zpool-health-textfile = mkIf (cfg.healthTextfile && config.krg.nodeExporter.enable) {
-      description   = "Write ZFS pool health to the node_exporter textfile dir";
-      after         = [ "zfs-import.target" ];
+      description = "Write ZFS pool health to the node_exporter textfile dir";
+      after = ["zfs-import.target"];
       serviceConfig = {
-        Type      = "oneshot";
+        Type = "oneshot";
         ExecStart = zpoolHealthScript;
       };
     };
     systemd.timers.zpool-health-textfile = mkIf (cfg.healthTextfile && config.krg.nodeExporter.enable) {
       description = "Periodic ZFS pool-health metric refresh";
-      wantedBy    = [ "timers.target" ];
+      wantedBy = ["timers.target"];
       timerConfig = {
-        OnBootSec         = "2min";
-        OnUnitActiveSec   = "5min";
-        Unit              = "zpool-health-textfile.service";
+        OnBootSec = "2min";
+        OnUnitActiveSec = "5min";
+        Unit = "zpool-health-textfile.service";
       };
     };
   };

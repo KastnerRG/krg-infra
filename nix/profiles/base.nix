@@ -2,9 +2,13 @@
 # hardening, auto-updates, sysctl, fail2ban, firewall) has a Proxmox/Debian
 # counterpart under ansible/roles/ (base, ssh_hardening, fail2ban, krg_admin).
 # When you change the baseline on either side, apply the equivalent to the other.
-{ config, lib, pkgs, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; let
   cfg = config.krg.base;
   # Shared trusted-network data — single source of truth, also consumed by the
   # Ansible layer (cluster.fw IPSets + group_vars). Edit nix/networks/trusted.json.
@@ -24,26 +28,26 @@ in {
     enable = mkEnableOption "KRG base system configuration";
 
     timezone = mkOption {
-      type    = types.str;
+      type = types.str;
       default = "America/Los_Angeles";
     };
 
     autoUpgrade = mkOption {
-      type        = types.bool;
-      default     = true;
+      type = types.bool;
+      default = true;
       description = "Enable automatic flake-based system upgrades (replaces unattended-upgrades)";
     };
 
     flakeUrl = mkOption {
-      type        = types.str;
+      type = types.str;
       # The flake lives in the nix/ subtree of the krg-infra monorepo.
-      default     = "github:KastnerRG/krg-infra?dir=nix";
+      default = "github:KastnerRG/krg-infra?dir=nix";
       description = "Flake URL used for auto-upgrades";
     };
 
     isVM = mkOption {
-      type        = types.bool;
-      default     = false;
+      type = types.bool;
+      default = false;
       description = ''
         Whether this host is a Proxmox/QEMU virtual machine. Enables the QEMU
         guest agent (graceful shutdown, IP reporting to the hypervisor). It does
@@ -54,8 +58,8 @@ in {
     };
 
     serviceHost = mkOption {
-      type        = types.bool;
-      default     = true;
+      type = types.bool;
+      default = true;
       description = ''
         Service host (vs compute): restrict in-guest SSH to the trusted UCSD nets
         (mirrors the Proxmox perimeter). **DEFAULT TRUE** — the base policy is
@@ -100,13 +104,12 @@ in {
       # one, and globally-open wins.
       openFirewall = false;
       settings = {
-        PasswordAuthentication        = false;
-        KbdInteractiveAuthentication  = false;
-        PermitRootLogin               = "no";
-        X11Forwarding                 = false;
+        PasswordAuthentication = false;
+        KbdInteractiveAuthentication = false;
+        PermitRootLogin = "no";
+        X11Forwarding = false;
         # Restrict pubkey auth to ed25519 only (rejects ssh-rsa/rsa-sha2-*).
-        PubkeyAcceptedAlgorithms =
-          "ssh-ed25519,ssh-ed25519-cert-v01@openssh.com,sk-ssh-ed25519@openssh.com,sk-ssh-ed25519-cert-v01@openssh.com";
+        PubkeyAcceptedAlgorithms = "ssh-ed25519,ssh-ed25519-cert-v01@openssh.com,sk-ssh-ed25519@openssh.com,sk-ssh-ed25519-cert-v01@openssh.com";
       };
     };
 
@@ -131,8 +134,9 @@ in {
     # quickly if CrowdSec misbehaves in prod. Remove the module entirely
     # once CrowdSec has cooked for a quarter.
     krg.fail2ban.enable = mkDefault false;
-    krg.fail2ban.ignoreIP = mkDefault
-      ([ "127.0.0.1/8" "::1" ] ++ map (e: e.cidr) trusted.ipsets.sealab);
+    krg.fail2ban.ignoreIP =
+      mkDefault
+      (["127.0.0.1/8" "::1"] ++ map (e: e.cidr) trusted.ipsets.sealab);
 
     # In-guest firewall (krg.firewall → nftables) on EVERY host, VMs included.
     # Defense-in-depth: this owns *which ports* a service exposes and gives
@@ -167,7 +171,7 @@ in {
     # crowdsecurity/geoip-enrich parser + a scenario branching on
     # evt.Enriched.IsoCode. Per-host disable: `krg.crowdsec.enable
     # = false` (e.g. for a host under maintenance).
-    krg.crowdsec.enable       = mkDefault true;
+    krg.crowdsec.enable = mkDefault true;
     krg.crowdsecBouncer.enable = mkDefault true;
 
     # Every host gets SSH reachable by default. With `serviceHost = true`
@@ -177,13 +181,14 @@ in {
     # 22 stays in allowedTCPPorts and is globally reachable — CrowdSec is
     # the gating layer there. Per-host configs only override to ADD ports
     # (e.g. server.nix adds 443) — they shouldn't need to re-declare 22.
-    krg.firewall.allowedTCPPorts = mkDefault [ 22 ];
+    krg.firewall.allowedTCPPorts = mkDefault [22];
 
     # Service hosts restrict in-guest SSH to the trusted nets (mirrors the Proxmox
     # perimeter); compute hosts keep SSH globally open behind CrowdSec.
     # ucsd (institutional) + ops (explicit off-campus admin) — not "ucsd" alone,
     # so remote admin IPs aren't silently folded into the campus set.
-    krg.firewall.sshSources = mkIf cfg.serviceHost
+    krg.firewall.sshSources =
+      mkIf cfg.serviceHost
       (map (e: e.cidr) (trusted.ipsets.ucsd ++ (trusted.ipsets.ops or [])));
 
     # If a host opens RDP (krg.firewall.allowRDP — compute boxes with the XRDP
@@ -205,13 +210,13 @@ in {
     # either set server/serverIp to null for SRV autodiscovery, or extend the
     # module to list both DCs (and pin both in /etc/hosts).
     krg.adClient = {
-      enable        = mkDefault true;
-      server        = mkDefault "krg-ldap.krg.local";
-      serverIp      = mkDefault "137.110.161.109";   # krg-ldap (pin so members resolve the DC)
-      allowedGroups = mkDefault [ "Domain Admins" ];
+      enable = mkDefault true;
+      server = mkDefault "krg-ldap.krg.local";
+      serverIp = mkDefault "137.110.161.109"; # krg-ldap (pin so members resolve the DC)
+      allowedGroups = mkDefault ["Domain Admins"];
       # Domain Admins get sudo (password-required) on every host; the local
       # break-glass admin (users/admin.nix) keeps its own NOPASSWD rule.
-      sudoGroups    = mkDefault [ "Domain Admins" ];
+      sudoGroups = mkDefault ["Domain Admins"];
       sshKeysFromAD = mkDefault true;
     };
 
@@ -235,7 +240,7 @@ in {
     # (or `nix flake update`), commit + push to main. CI builds it; the next 04:00
     # tick rolls it out to every host from the new pinned lock.
     system.autoUpgrade = mkIf cfg.autoUpgrade {
-      enable      = true;
+      enable = true;
       allowReboot = false;
       # Pin the flake ATTRIBUTE to this host's intended config name. Without the
       # explicit #${hostName}, nixos-rebuild infers the attribute from the host's
@@ -245,13 +250,13 @@ in {
       # signal. Pinning targets the intended config regardless of runtime hostname
       # and self-heals the name on the next switch. (krg-vault was stuck ~2.5 weeks
       # on a stale generation this way — no security patches, no key updates.)
-      flake       = "${cfg.flakeUrl}#${config.networking.hostName}";
-      dates       = "04:00";
+      flake = "${cfg.flakeUrl}#${config.networking.hostName}";
+      dates = "04:00";
     };
 
     nix.settings = {
-      experimental-features = [ "nix-command" "flakes" ];
-      auto-optimise-store   = true;   # dedup store paths (hardlink) on every build
+      experimental-features = ["nix-command" "flakes"];
+      auto-optimise-store = true; # dedup store paths (hardlink) on every build
     };
 
     # Automatic garbage collection (NixOS wiki: Storage optimization → Automation).
@@ -260,8 +265,8 @@ in {
     # grow without bound.
     nix.gc = {
       automatic = true;
-      dates     = "weekly";
-      options   = "--delete-older-than 30d";
+      dates = "weekly";
+      options = "--delete-older-than 30d";
     };
 
     nixpkgs.config.allowUnfree = true;

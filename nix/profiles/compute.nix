@@ -1,6 +1,11 @@
 # Waiter-style compute profile: GPU/CUDA, FPGA tools, XRDP desktop, research users.
 # Import this in a host's default.nix, then add host-specific compose stacks and users.
-{ config, lib, pkgs, ... }: {
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}: {
   imports = [
     ./base.nix
     ../modules/docker.nix
@@ -17,7 +22,7 @@
   ];
 
   krg.base = {
-    enable      = true;
+    enable = true;
     autoUpgrade = true;
     # Compute profile RELAXES the fleet-default strict-SSH policy.
     # base.nix sets `serviceHost = true` (sshSources = ucsd + ops only)
@@ -38,7 +43,7 @@
   };
 
   krg.docker = {
-    enable              = true;
+    enable = true;
     enableNvidiaRuntime = true;
     # Bridge the "Docker Users" AD group into the local `docker` group so lab members
     # can use the Docker daemon (the boot+timer AD-group sync from modules/docker.nix
@@ -49,26 +54,26 @@
     # docs/creating-a-user.md); break-glass krg-admin keeps Docker via
     # krg.users.defaultGroups. Service hosts (krg-prod/e4e-prod) deliberately do NOT
     # get this — it's a compute-profile grant, mirroring GPU Users.
-    accessGroups = [ "Docker Users" ];
+    accessGroups = ["Docker Users"];
   };
 
   krg.zfs = {
-    enable       = true;
-    autoScrub    = true;
+    enable = true;
+    autoScrub = true;
     autoSnapshot.enable = true;
   };
 
   # krg.fail2ban is OFF fleet-wide (superseded by CrowdSec — see base.nix).
 
   krg.nvidia = {
-    enable     = true;
+    enable = true;
     openDriver = true;
     # GPU device access (/dev/nvidia*, root:cuda 0770) is gated on the local `cuda`
     # group. AD users can't be put in a fixed-GID local group under idMapping, so a
     # dedicated AD group is bridged in (boot+timer sync — see nvidia.nix). This group
     # gates the GPU; krg.adClient.allowedGroups gates SSH login. The "GPU Users" AD
     # group must exist under CN=Users and have members (see docs/creating-a-user.md).
-    cudaAccessGroups = [ "GPU Users" ];
+    cudaAccessGroups = ["GPU Users"];
   };
 
   # FPGA/EDA tooling is OPT-IN, not a compute default: waiter does FPGA research,
@@ -90,7 +95,7 @@
 
   # rdp_users is intentionally NOT here — the xrdp module creates and adds it only
   # when XRDP is enabled (which tracks FPGA), so it's not blindly applied everywhere.
-  krg.users.defaultGroups = [ "docker" "cuda" ];
+  krg.users.defaultGroups = ["docker" "cuda"];
 
   # waiter is physical, so base.nix keeps the NixOS firewall enabled.
   # SSH (22) inherits from base.nix's `allowedTCPPorts = [22]` default;
@@ -103,11 +108,11 @@
   # chain doesn't catch it either. The DOCKER-USER follow-up is tracked
   # in CLAUDE.md; meanwhile 9400 is bound to 0.0.0.0 by intention.
   krg.firewall = {
-    allowRDP        = config.krg.xrdp.enable;  # 3389 only when the XRDP desktop is up
+    allowRDP = config.krg.xrdp.enable; # 3389 only when the XRDP desktop is up
     # node-exporter (9100), docker metrics (9323), prometheus client (9000),
     # IPMI exporter (9290). DCGM (9400) is contributed by the nvidia module
     # (krg.nvidia.dcgmExporter), coupled to the driver — not listed here.
-    monitoringPorts = [ 9100 9290 9323 9000 ];
+    monitoringPorts = [9100 9290 9323 9000];
   };
 
   # nix-ld allows running conda, MATLAB, and other dynamically-linked binaries
@@ -118,7 +123,7 @@
   programs.zsh.enable = true;
 
   # CIFS/SMB mount tooling (e.g. e4e-nas shares) — mirrors kastner-ml's cifs-utils.
-  environment.systemPackages = [ pkgs.cifs-utils ];
+  environment.systemPackages = [pkgs.cifs-utils];
 
   # Kerberos (`sec=krb5`) CIFS mounts need the kernel keyring upcall wired up, which
   # NixOS does NOT do out of the box — without this, `mount -t cifs -o sec=krb5`

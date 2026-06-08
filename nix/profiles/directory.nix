@@ -1,6 +1,6 @@
 # Directory-services profile: Samba Active Directory domain controller (LDAP/Kerberos/DNS).
 # Import this in a host's default.nix, then add host-specific networking.
-{ ... }: {
+{...}: {
   imports = [
     ./base.nix
     ../modules/users.nix
@@ -9,9 +9,9 @@
   ];
 
   krg.base = {
-    enable      = true;
+    enable = true;
     autoUpgrade = true;
-    serviceHost = true;   # restrict in-guest SSH to trusted UCSD nets
+    serviceHost = true; # restrict in-guest SSH to trusted UCSD nets
   };
 
   # Ingress for the directory role. The in-guest firewall is ON (base.nix runs it
@@ -23,14 +23,14 @@
   # 100.fw) is the additive outer layer.
   krg.firewall = {
     # node exporter (enabled in base.nix)
-    monitoringPorts = [ 9100 ];
+    monitoringPorts = [9100];
   };
 
   # AD domain controller role for KRG. Realm/workgroup match the new forest;
   # see the "One-time provisioning" notes in modules/samba-ad.nix before deploy.
   krg.sambaAD = {
-    enable    = true;
-    realm     = "KRG.LOCAL";
+    enable = true;
+    realm = "KRG.LOCAL";
     workgroup = "KRG";
   };
 

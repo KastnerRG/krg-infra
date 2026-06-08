@@ -67,9 +67,13 @@
 #   * krg.crowdsecBouncer.enable = true (applies decisions to nftables).
 #   * trusted.json (read directly here for the local whitelist — no
 #     option duplication; same source as krg.firewall.sshSources).
-{ config, lib, pkgs, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; let
   cfg = config.krg.crowdsec;
   trusted = builtins.fromJSON (builtins.readFile ../../networks/trusted.json);
 
@@ -83,15 +87,14 @@ let
   # — e.g. ucsd has 137.110.0.0/16 (CIDR) alongside 137.110.161.106
   # (bare host). Split here so the parser doesn't choke on a bare IP
   # under `cidr:` or silently drop it.
-  whitelistEntries =
-    map (e: e.cidr) (
-      (trusted.ipsets.ucsd or [])
-      ++ (trusted.ipsets.sealab or [])
-      ++ (trusted.ipsets.ops or [])
-      ++ (trusted.ipsets.machines or [])
-    );
+  whitelistEntries = map (e: e.cidr) (
+    (trusted.ipsets.ucsd or [])
+    ++ (trusted.ipsets.sealab or [])
+    ++ (trusted.ipsets.ops or [])
+    ++ (trusted.ipsets.machines or [])
+  );
   whitelistBareIPs = filter (e: !(hasInfix "/" e)) whitelistEntries;
-  whitelistCidrs   = filter (e:   hasInfix "/" e ) whitelistEntries;
+  whitelistCidrs = filter (e: hasInfix "/" e) whitelistEntries;
 in {
   options.krg.crowdsec = {
     enable = mkEnableOption ''
@@ -102,9 +105,9 @@ in {
     '';
 
     extraCollections = mkOption {
-      type        = types.listOf types.str;
-      default     = [];
-      example     = [ "crowdsecurity/traefik" ];
+      type = types.listOf types.str;
+      default = [];
+      example = ["crowdsecurity/traefik"];
       description = ''
         Additional CrowdSec hub collections to install on top of the
         fleet baseline (linux + sshd). Service hosts running Traefik
@@ -115,9 +118,9 @@ in {
     };
 
     extraAcquisitions = mkOption {
-      type        = types.listOf (types.attrsOf types.anything);
-      default     = [];
-      example     = lib.literalExpression ''
+      type = types.listOf (types.attrsOf types.anything);
+      default = [];
+      example = lib.literalExpression ''
         [{
           source = "file";
           filenames = [ "/var/log/traefik/access.log" ];
@@ -138,7 +141,7 @@ in {
 
   config = mkIf cfg.enable {
     services.crowdsec = {
-      enable           = true;
+      enable = true;
       # Keep the hub index fresh (daily cscli hub update) so new
       # community scenarios + blocklists land without a fleet redeploy.
       autoUpdateService = true;
@@ -150,7 +153,7 @@ in {
           #   * sshd  — ssh-bf, ssh-slow-bf, ssh-cve. Replaces fail2ban.
           # Each collection brings its required parsers + scenarios so
           # we don't have to list them piecemeal.
-          [ "crowdsecurity/linux" "crowdsecurity/sshd" ]
+          ["crowdsecurity/linux" "crowdsecurity/sshd"]
           ++ cfg.extraCollections;
 
         # No parsers listed: country enrichment (crowdsecurity/geoip-enrich)
@@ -166,13 +169,15 @@ in {
         # (every host runs sshd, every host runs systemd-journald).
         # Per-host extras (traefik access log, etc.) come from
         # `extraAcquisitions`.
-        acquisitions = [
-          {
-            source = "journalctl";
-            journalctl_filter = [ "_SYSTEMD_UNIT=sshd.service" ];
-            labels.type = "syslog";
-          }
-        ] ++ cfg.extraAcquisitions;
+        acquisitions =
+          [
+            {
+              source = "journalctl";
+              journalctl_filter = ["_SYSTEMD_UNIT=sshd.service"];
+              labels.type = "syslog";
+            }
+          ]
+          ++ cfg.extraAcquisitions;
 
         # s02-enrich whitelist: events from our trusted nets never
         # raise alerts, so they never produce decisions, so the bouncer
@@ -184,12 +189,14 @@ in {
         # autoUpgrade rebuild, never get caught in a community ban.
         parsers.s02Enrich = [
           {
-            name        = "krg/trusted-nets-whitelist";
+            name = "krg/trusted-nets-whitelist";
             description = "Skip alerts from ucsd + sealab + ops + machines (trusted.json)";
-            whitelist = {
-              reason = "trusted KRG network (ucsd/sealab/ops/machines)";
-            } // (lib.optionalAttrs (whitelistBareIPs != []) { ip   = whitelistBareIPs; })
-              // (lib.optionalAttrs (whitelistCidrs   != []) { cidr = whitelistCidrs;   });
+            whitelist =
+              {
+                reason = "trusted KRG network (ucsd/sealab/ops/machines)";
+              }
+              // (lib.optionalAttrs (whitelistBareIPs != []) {ip = whitelistBareIPs;})
+              // (lib.optionalAttrs (whitelistCidrs != []) {cidr = whitelistCidrs;});
           }
         ];
 
@@ -287,9 +294,9 @@ in {
     # `f` creates the file only if absent (never truncates), so a populated
     # creds file (post `capi register`) survives.
     systemd.tmpfiles.settings."10-crowdsec-seed-capi".${config.services.crowdsec.settings.capi.credentialsFile}.f = {
-      user  = config.services.crowdsec.user;
+      user = config.services.crowdsec.user;
       group = config.services.crowdsec.group;
-      mode  = "0600";
+      mode = "0600";
     };
   };
 }
