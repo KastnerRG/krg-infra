@@ -5,12 +5,12 @@
 # ── E4E NAS ───────────────────────────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "e4e_nas" {
-  name               = "Provider for E4E NAS"
-  client_id          = "e4e-nas"
-  authorization_flow = data.authentik_flow.default_authorization.id
-  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  name                  = "Provider for E4E NAS"
+  client_id             = "e4e-nas"
+  authorization_flow    = data.authentik_flow.default_authorization.id
+  invalidation_flow     = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict", url = "https://e4e-nas.ucsd.edu:6021" }]
-  property_mappings  = local.std_scopes
+  property_mappings     = local.std_scopes
   # RS256 signing key — DSM's SSO client verifies the ID token against jwks_uri.
   # Without a signing_key Authentik falls back to HS256 (symmetric) and serves an
   # empty JWKS, so DSM can't verify the token. Same fix as garage_ui (1f0875f).
@@ -26,6 +26,7 @@ resource "authentik_application" "e4e_nas" {
   protocol_provider = authentik_provider_oauth2.e4e_nas.id
   meta_launch_url   = "https://e4e-nas.ucsd.edu:6021"
   meta_description  = "E4E network-attached storage"
+  meta_icon         = "krg-icons/synology.svg"
 }
 
 # ── Garage UI (Noooste/garage-ui admin/data browser) ──────────────────────────
@@ -58,9 +59,9 @@ resource "authentik_provider_oauth2" "garage_ui" {
   authorization_flow = data.authentik_flow.default_authorization.id
   invalidation_flow  = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict",
-    url = "https://s3-admin.e4e.ucsd.edu/auth/oidc/callback" }]
+  url = "https://s3-admin.e4e.ucsd.edu/auth/oidc/callback" }]
   property_mappings = concat(local.std_scopes,
-    [authentik_property_mapping_provider_scope.groups.id])
+  [authentik_property_mapping_provider_scope.groups.id])
   # RS256 signing key — REQUIRED for OIDC clients that verify the ID token
   # against jwks_uri (garage-ui / go-oidc). Without it Authentik falls back to
   # HS256 (symmetric) + an empty JWKS → "Invalid ID token". Use Authentik's
@@ -77,18 +78,19 @@ resource "authentik_application" "garage_ui" {
   protocol_provider = authentik_provider_oauth2.garage_ui.id
   meta_launch_url   = "https://s3-admin.e4e.ucsd.edu"
   meta_description  = "Garage S3 bucket/key admin + object browser"
+  meta_icon         = "krg-icons/garage.svg"
 }
 
 # ── FishSense Workflows (Temporal) ────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "fishsense_workflows" {
-  name               = "Provider for FishSense Workflows"
-  client_id          = "fishsense-workflows"
-  authorization_flow = data.authentik_flow.default_authorization.id
-  invalidation_flow  = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://workflows.fishsense.e4e.ucsd.edu/auth/sso/callback" }]
-  property_mappings  = local.std_scopes
-  sub_mode           = "hashed_user_id"
+  name                   = "Provider for FishSense Workflows"
+  client_id              = "fishsense-workflows"
+  authorization_flow     = data.authentik_flow.default_authorization.id
+  invalidation_flow      = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://workflows.fishsense.e4e.ucsd.edu/auth/sso/callback" }]
+  property_mappings      = local.std_scopes
+  sub_mode               = "hashed_user_id"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
 }
@@ -105,13 +107,13 @@ resource "authentik_application" "fishsense_workflows" {
 # ── FishSense Analytics (Superset) ────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "fishsense_analytics" {
-  name               = "Provider for FishSense Analytics"
-  client_id          = "fishsense-analytics"
-  authorization_flow = data.authentik_flow.default_authorization.id
-  invalidation_flow  = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://analytics.fishsense.e4e.ucsd.edu/oauth-authorized/authentik" }]
-  property_mappings  = local.std_scopes
-  sub_mode           = "hashed_user_id"
+  name                   = "Provider for FishSense Analytics"
+  client_id              = "fishsense-analytics"
+  authorization_flow     = data.authentik_flow.default_authorization.id
+  invalidation_flow      = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://analytics.fishsense.e4e.ucsd.edu/oauth-authorized/authentik" }]
+  property_mappings      = local.std_scopes
+  sub_mode               = "hashed_user_id"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
 }
@@ -121,19 +123,20 @@ resource "authentik_application" "fishsense_analytics" {
   slug              = "fishsense-analytics"
   protocol_provider = authentik_provider_oauth2.fishsense_analytics.id
   meta_launch_url   = "https://analytics.fishsense.e4e.ucsd.edu"
+  meta_icon         = "krg-icons/apache-superset.svg"
   group             = "FishSense"
 }
 
 # ── FishSense OAuth (main site) ───────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "fishsense_oauth" {
-  name               = "Provider for FishSense OAuth"
-  client_id          = "fishsense-oauth"
-  authorization_flow = data.authentik_flow.default_authorization.id
-  invalidation_flow  = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://fishsense.e4e.ucsd.edu/api/auth/callback/authentik" }]
-  property_mappings  = local.std_scopes
-  sub_mode           = "hashed_user_id"
+  name                   = "Provider for FishSense OAuth"
+  client_id              = "fishsense-oauth"
+  authorization_flow     = data.authentik_flow.default_authorization.id
+  invalidation_flow      = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://fishsense.e4e.ucsd.edu/api/auth/callback/authentik" }]
+  property_mappings      = local.std_scopes
+  sub_mode               = "hashed_user_id"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
 }
@@ -186,11 +189,11 @@ resource "authentik_application" "qualcomm_docs" {
 # ── KRG Roster ────────────────────────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "e4e_roster" {
-  name               = "KRG Roster"
-  client_id          = "e4e-roster"
-  authorization_flow = data.authentik_flow.default_authorization.id
-  invalidation_flow  = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://roster.krg.ucsd.edu/auth/callback" }]
+  name                   = "KRG Roster"
+  client_id              = "e4e-roster"
+  authorization_flow     = data.authentik_flow.default_authorization.id
+  invalidation_flow      = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://roster.krg.ucsd.edu/auth/callback" }]
   property_mappings      = local.std_scopes
   sub_mode               = "hashed_user_id"
   access_token_validity  = "hours=1"
