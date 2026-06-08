@@ -113,8 +113,9 @@ papering over each bug with `lifecycle.ignore_changes`, operator-managed
 secret files, and post-apply manual `state rm`/`import` dances was not.
 
 Per the gate above: provider models the surface, but the surface failed the
-maturity test, so it moved to Ansible. The three `synology_filestation_folder`
-resources stayed on the OpenTofu side — they work, and the
+maturity test, so it moved to Ansible. The `synology_filestation_folder`
+resources (four today: `docker/garage`, `docker/garage-ui`, `s3-data/meta`,
+`s3-data/data`) stayed on the OpenTofu side — they work, and the
 FileStation-must-know-about-the-dir gotcha is a general DSM constraint that
 serves any future workload (a container project, a Hyper Backup task), not
 just Garage.

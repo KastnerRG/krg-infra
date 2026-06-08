@@ -2,6 +2,11 @@
 
 **Status:** Accepted · **Date:** 2026-05-22
 
+> **Amended by [ADR 0007](0007-dsm-config-ansible-not-terraform.md):** Garage's
+> *deployment mechanism* moved from the OpenTofu `synology_container_project`
+> resource to the `synology_garage` Ansible role. The on-NAS **placement**
+> decision recorded here is unchanged.
+
 ## Context
 
 Garage (ADR 0002) needs to live somewhere. The two candidates are the krg-prod
