@@ -1,4 +1,5 @@
 """Unit tests for apply_snapshots.py — run with: pytest (no DSM needed)."""
+
 import os
 import sys
 
@@ -20,13 +21,22 @@ def _factory(live):
 
 _DEFAULTS = {
     "enable_snapshot": True,
-    "keep_hourly": 4, "keep_daily": 7, "keep_weekly": 4, "keep_monthly": 12,
+    "keep_hourly": 4,
+    "keep_daily": 7,
+    "keep_weekly": 4,
+    "keep_monthly": 12,
 }
 
 
 def _argv_share(**overrides):
-    base = {"share": "maya", "enabled": "true",
-            "hourly": "4", "daily": "7", "weekly": "4", "monthly": "12"}
+    base = {
+        "share": "maya",
+        "enabled": "true",
+        "hourly": "4",
+        "daily": "7",
+        "weekly": "4",
+        "monthly": "12",
+    }
     base.update(overrides)
     argv = ["share"]
     for k, v in base.items():
@@ -43,7 +53,7 @@ def test_share_no_change(monkeypatch, capsys):
 
 def test_share_drift_apply(monkeypatch, capsys):
     live = dict(_DEFAULTS)
-    live["keep_daily"] = 1   # drift
+    live["keep_daily"] = 1  # drift
     fake, captured = _factory({m.SNAP_API: {"get": live}})
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(_argv_share())
@@ -81,7 +91,7 @@ def test_share_check_mode(monkeypatch, capsys):
 def test_share_preserves_unmanaged_keys(monkeypatch, capsys):
     live = dict(_DEFAULTS)
     live["keep_daily"] = 1
-    live["dsm_share_id"] = 42     # unmanaged
+    live["dsm_share_id"] = 42  # unmanaged
     fake, captured = _factory({m.SNAP_API: {"get": live}})
     monkeypatch.setattr(m, "_exec", fake)
     m.main(_argv_share())

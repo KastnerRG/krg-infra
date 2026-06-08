@@ -17,6 +17,7 @@ Each diff mirrors the field mapping of the matching synology_* apply helper.
 
 Exit: 0 = no drift, 1 = drift detected, 2 = error (missing/unparseable snapshot or spec).
 """
+
 import argparse
 import json
 import os
@@ -29,7 +30,15 @@ import yaml
 PROTO = {"SMB1": 1, "SMB2": 2, "SMB3": 3}  # mirrors apply_smb/apply_nfs
 
 # Shares DSM/packages auto-create; never hand-managed, so not "extra" drift (shares.yml).
-AUTO_SHARES = {"homes", "home", "NetBackup", "photo", "web", "surveillance", "ActiveBackupforBusiness"}
+AUTO_SHARES = {
+    "homes",
+    "home",
+    "NetBackup",
+    "photo",
+    "web",
+    "surveillance",
+    "ActiveBackupforBusiness",
+}
 
 
 # --- raw DSM output parsers (formats validated on the DSM 7.3 rig) --------------
@@ -90,8 +99,10 @@ def diff_shares(spec, snap):
     desired = {s["name"] for s in spec.get("shares", [])}
     live = set(parse_enum(snap.get("shares_raw", [])))
     out = [D("shares", n, "present", "absent") for n in sorted(desired - live)]
-    out += [D("shares", n, "absent (unmanaged)", "present")
-            for n in sorted(live - desired - AUTO_SHARES)]
+    out += [
+        D("shares", n, "absent (unmanaged)", "present")
+        for n in sorted(live - desired - AUTO_SHARES)
+    ]
     return out
 
 
@@ -111,11 +122,15 @@ def diff_smb(spec, snap):
 def diff_nfs(spec, snap):
     out = []
     n = spec.get("nfs", {})
-    gdesired = {"enable_nfs": bool(n.get("enable", True)),
-                "enable_nfs_v4": bool(n.get("nfsv4", True)),
-                "nfs_v4_domain": n.get("v4_domain", "")}
+    gdesired = {
+        "enable_nfs": bool(n.get("enable", True)),
+        "enable_nfs_v4": bool(n.get("nfsv4", True)),
+        "nfs_v4_domain": n.get("v4_domain", ""),
+    }
     glive = webapi_data(snap.get("nfs_global_raw", []))
-    out += [D("nfs", "global." + k, v, glive.get(k)) for k, v in gdesired.items() if glive.get(k) != v]
+    out += [
+        D("nfs", "global." + k, v, glive.get(k)) for k, v in gdesired.items() if glive.get(k) != v
+    ]
 
     live_rules = {r["share"]: webapi_data(r["load"])["rule"] for r in snap.get("nfs_rules_raw", [])}
     for exp in spec.get("exports", []):
@@ -128,8 +143,9 @@ def diff_nfs(spec, snap):
 
 def diff_acls(spec, snap):
     out = []
-    live_by_share = {a["share"]: parse_list_acl("\n".join(a["list_acl"]))
-                     for a in snap.get("share_acls", [])}
+    live_by_share = {
+        a["share"]: parse_list_acl("\n".join(a["list_acl"])) for a in snap.get("share_acls", [])
+    }
     for entry in spec.get("acls", []) or []:
         share = entry["share"]
         des = desired_tiers(entry.get("grants", []))
@@ -144,7 +160,13 @@ def diff_acls(spec, snap):
 RESOURCES = [
     ("shares", "shares.yml", "shares", diff_shares, lambda sp: bool(sp.get("shares"))),
     ("smb", "smb-globals.yml", "smb", diff_smb, lambda sp: bool(sp.get("smb"))),
-    ("nfs", "nfs-exports.yml", "nfs", diff_nfs, lambda sp: bool(sp.get("nfs") or sp.get("exports"))),
+    (
+        "nfs",
+        "nfs-exports.yml",
+        "nfs",
+        diff_nfs,
+        lambda sp: bool(sp.get("nfs") or sp.get("exports")),
+    ),
     ("acls", "acls.yml", "acls", diff_acls, lambda sp: bool(sp.get("acls"))),
 ]
 
@@ -190,8 +212,9 @@ def render_text(host, results, drifts):
     if drifts:
         lines.append("\ndrift detail (desired vs live):")
         for d in drifts:
-            lines.append("  [%s] %s: spec=%s live=%s"
-                         % (d["resource"], d["key"], d["desired"], d["live"]))
+            lines.append(
+                "  [%s] %s: spec=%s live=%s" % (d["resource"], d["key"], d["desired"], d["live"])
+            )
     else:
         lines.append("\nno drift.")
     return "\n".join(lines)
@@ -208,7 +231,9 @@ def render_prometheus(host, results, drifts):
     ]
     for name, _f, _s, _d, _w in RESOURCES:
         n = sum(1 for d in drifts if d["resource"] == name)
-        out.append('krg_synology_drift{host="%s",resource="%s"} %d' % (lbl(host), name, 1 if n else 0))
+        out.append(
+            'krg_synology_drift{host="%s",resource="%s"} %d' % (lbl(host), name, 1 if n else 0)
+        )
         out.append('krg_synology_drift_items{host="%s",resource="%s"} %d' % (lbl(host), name, n))
     out += [
         "# HELP krg_synology_drift_check_success Detector ran with all snapshots present+parsed.",
@@ -222,7 +247,9 @@ def render_prometheus(host, results, drifts):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Diff live Synology state (exporter snapshots) vs spec.")
+    ap = argparse.ArgumentParser(
+        description="Diff live Synology state (exporter snapshots) vs spec."
+    )
     ap.add_argument("--spec-dir", default="spec/e4e-nas")
     ap.add_argument("--snapshot-dir", required=True)
     ap.add_argument("--host", required=True)

@@ -14,6 +14,7 @@ HSTS, ACL ref) — `apps` subcommand is reserved; declarative sync semantics for
 existing-entries set are nontrivial and DSM-defined ids matter. Add when the rebuild
 scope requires it; meanwhile the spec's `portal_apps` is documentation.
 """
+
 import argparse
 import json
 import subprocess
@@ -23,8 +24,7 @@ WEBAPI = "/usr/syno/bin/synowebapi"
 
 
 def _exec(api, *params):
-    out = subprocess.run([WEBAPI, "--exec", "api=" + api, *params],
-                         capture_output=True, text=True)
+    out = subprocess.run([WEBAPI, "--exec", "api=" + api, *params], capture_output=True, text=True)
     txt = out.stdout
     brace = txt.find("{")
     if brace < 0:
@@ -77,8 +77,11 @@ def do_config(a):
 
     api = "SYNO.Core.AppPortal.Config"
     current = _exec(api, "version=1", "method=get")["data"]
-    drift = {k: {"current": current.get(k), "desired": v}
-             for k, v in desired.items() if current.get(k) != v}
+    drift = {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if current.get(k) != v
+    }
 
     def apply():
         current.update(desired)
@@ -106,7 +109,8 @@ def _covered(desired, live):
     showing perpetual "update"."""
     if isinstance(desired, dict):
         return isinstance(live, dict) and all(
-            k in live and _covered(v, live[k]) for k, v in desired.items())
+            k in live and _covered(v, live[k]) for k, v in desired.items()
+        )
     return desired == live
 
 
@@ -121,13 +125,19 @@ def _diff_lists(api, entries_key, desired_list, check):
     # Subset compare (not `!=`): DSM returns the live object with its assigned id
     # + defaulted fields the spec omits; only flag an update when a value the
     # spec DOES set differs. Otherwise every run would re-"update" forever.
-    updates = [(k, desired_by_id[k]) for k in (set(live_by_id) & set(desired_by_id))
-               if not _covered(desired_by_id[k], live_by_id[k])]
+    updates = [
+        (k, desired_by_id[k])
+        for k in (set(live_by_id) & set(desired_by_id))
+        if not _covered(desired_by_id[k], live_by_id[k])
+    ]
 
     drift = {}
-    if creates: drift["create"] = creates
-    if updates: drift["update"] = [{"id": k, "from": live_by_id[k], "to": d} for k, d in updates]
-    if deletes: drift["delete"] = deletes
+    if creates:
+        drift["create"] = creates
+    if updates:
+        drift["update"] = [{"id": k, "from": live_by_id[k], "to": d} for k, d in updates]
+    if deletes:
+        drift["delete"] = deletes
 
     def apply():
         # Return the first failed _exec result so _result() reports FAIL and
@@ -159,12 +169,20 @@ def _diff_lists(api, entries_key, desired_list, check):
             # Delete by the DSM-assigned UUID; fall back to alias/name (matches
             # the same _list_key the diff uses, so we don't send an empty key).
             uid = e.get("UUID") or e.get("id")
-            del_key = ({"UUID": uid} if uid is not None
-                       else {"alias": e["alias"]} if e.get("alias") is not None
-                       else {"name": e["name"]} if e.get("name") is not None
-                       else None)
+            del_key = (
+                {"UUID": uid}
+                if uid is not None
+                else {"alias": e["alias"]}
+                if e.get("alias") is not None
+                else {"name": e["name"]}
+                if e.get("name") is not None
+                else None
+            )
             if del_key is None:
-                return {"success": False, "error": {"reason": "delete: no UUID/alias/name", "entry": e}}
+                return {
+                    "success": False,
+                    "error": {"reason": "delete: no UUID/alias/name", "entry": e},
+                }
             r = _exec(api, "version=1", "method=delete", *_args_from(del_key))
             if not r.get("success"):
                 return r

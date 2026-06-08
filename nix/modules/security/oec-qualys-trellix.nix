@@ -76,7 +76,12 @@ with lib; let
     STAGE="$(mktemp -d)"
     trap 'rm -rf "$STAGE"' EXIT
     echo "oec-install: extracting $ARCHIVE"
-    tar -xzf "$ARCHIVE" -C "$STAGE"
+    # -xf (auto-detect), NOT -xzf: despite the .tgz name the vendor archive is a
+    # PLAIN (uncompressed) tar — forcing gzip fails with "not in gzip format".
+    # GNU tar -xf detects gzip/xz/plain transparently (decompressors are on PATH),
+    # so this also survives the vendor switching to real gzip later. The Ansible
+    # counterpart already auto-detects via ansible.builtin.unarchive.
+    tar -xf "$ARCHIVE" -C "$STAGE"
     SRC="$STAGE/trellixandqualys"
     [ -d "$SRC" ] || { echo "oec-install: unexpected archive layout" >&2; exit 1; }
 
@@ -234,6 +239,10 @@ in {
       wants = ["network-online.target"];
       wantedBy = ["multi-user.target"];
       unitConfig.ConditionPathExists = cfg.qualysBin;
+      # Don't let nixos-rebuild bounce a running agent (see xagt below for the
+      # full rationale). Qualys additionally restarts ITSELF during activation via
+      # qagent_restart.sh, so an unrelated rebuild has no business cycling it.
+      restartIfChanged = false;
       serviceConfig = {
         Type = "simple";
         Environment = agentEnv;
@@ -252,6 +261,16 @@ in {
       wants = ["network-online.target"];
       wantedBy = ["multi-user.target"];
       unitConfig.ConditionPathExists = "/var/lib/fireeye/xagt/main.db";
+      # Do NOT let nixos-rebuild restart a running xagt. The vendor unit uses
+      # KillMode=process, so a stop kills only the launcher and leaves the agent
+      # daemon alive; the fresh `xagt -M DAEMON` then finds an instance already
+      # running and exits non-zero (observed: status=245), and Restart=always
+      # flaps it — which makes `switch-to-configuration` see a failed unit and
+      # fails the whole deploy (run 27149686048, krg-ldap). xagt is a stateful,
+      # self-updating EDR agent that manages its own lifecycle (and recovers from
+      # real crashes via Restart=always at runtime), so it should NOT be cycled on
+      # unrelated config changes. It still starts normally on boot / first enroll.
+      restartIfChanged = false;
       serviceConfig = {
         Type = "simple";
         Environment = agentEnv;

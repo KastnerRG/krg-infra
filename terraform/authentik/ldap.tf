@@ -26,8 +26,8 @@ resource "authentik_source_ldap" "samba_ad" {
   additional_user_dn  = "CN=Users"
   additional_group_dn = "CN=Users"
 
-  user_object_filter      = "(objectClass=person)"
-  group_object_filter     = "(objectClass=group)"
+  user_object_filter  = "(objectClass=person)"
+  group_object_filter = "(objectClass=group)"
   # Resolve NESTED AD groups: read membership from the user's `memberOf` with
   # AD's LDAP_MATCHING_RULE_IN_CHAIN OID (transitive/recursive), instead of each
   # group's flat `member`. So a user in a child group (e.g. "E4E Admins" nested

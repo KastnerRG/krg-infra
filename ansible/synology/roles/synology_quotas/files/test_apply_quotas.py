@@ -1,4 +1,5 @@
 """Unit tests for apply_quotas.py — run with: pytest (no DSM needed)."""
+
 import os
 import sys
 
@@ -69,7 +70,7 @@ def test_share_drift_applies_set(monkeypatch, capsys):
     def fake_run(cmd):
         calls.append(cmd)
         if "--get-share" in cmd:
-            return _R("Quota: 200 GB (Soft)")    # drift on both size + hard
+            return _R("Quota: 200 GB (Soft)")  # drift on both size + hard
         return _R("", 0)
 
     monkeypatch.setattr(m, "_run", fake_run)
@@ -140,10 +141,19 @@ def test_user_drift_applies_set(monkeypatch, capsys):
         return _R("", 0)
 
     monkeypatch.setattr(m, "_run", fake_run)
-    rc = m.main([
-        "user", "--user", "alice", "--volume", "/volume1",
-        "--size-gib", "200", "--hard", "false",
-    ])
+    rc = m.main(
+        [
+            "user",
+            "--user",
+            "alice",
+            "--volume",
+            "/volume1",
+            "--size-gib",
+            "200",
+            "--hard",
+            "false",
+        ]
+    )
     assert rc == 0
     assert capsys.readouterr().out.startswith("CHANGED")
     set_call = next(c for c in calls if "--set" in c and "--user" in c)
@@ -161,9 +171,18 @@ def test_user_hard_change_only(monkeypatch, capsys):
         return _R("", 0)
 
     monkeypatch.setattr(m, "_run", fake_run)
-    rc = m.main([
-        "user", "--user", "alice", "--volume", "/volume1",
-        "--size-gib", "200", "--hard", "true",
-    ])
+    rc = m.main(
+        [
+            "user",
+            "--user",
+            "alice",
+            "--volume",
+            "/volume1",
+            "--size-gib",
+            "200",
+            "--hard",
+            "true",
+        ]
+    )
     assert rc == 0
     assert capsys.readouterr().out.startswith("CHANGED")

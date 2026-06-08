@@ -13,13 +13,6 @@
   # (ansible 100.fw); the hypervisor layer is additive, not a replacement.
   krg.base.isVM = true;
 
-  # Proxmox/QEMU VM — bootloader carried over from the installer config.
-  boot.loader.grub = {
-    enable = true;
-    device = "/dev/sda";
-    useOSProber = true;
-  };
-
   networking = {
     hostName = "krg-ldap";
     useDHCP = false;

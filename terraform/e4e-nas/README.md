@@ -22,12 +22,12 @@ provider (`synology-community/synology`) only exposes a *subset* of DSM:
 
 | Managed here (Terraform) | NOT in the provider — see the runbook |
 |---|---|
-| Container Manager projects (`synology_container_project`) † | AD/LDAP domain join |
-| Packages (`synology_core_package`) | Shared folders + ACLs |
-| Scheduled tasks (`synology_core_event`) | SMB/NFS service settings |
-| File/folder provisioning (`synology_filestation_*`) | Users / groups, firewall, SSH |
-| VMs (`synology_virtualization_*`) | DSM update + snapshot/backup schedules |
-| Generic `synology_api` escape hatch (any DSM Web API) | |
+| Packages — `synology_core_package` (Container Manager) **[active]** | AD/LDAP domain join |
+| File/folder provisioning — `synology_filestation_folder` **[active]** | Shared folders + ACLs |
+| Container Manager projects (`synology_container_project`) † — *moved to Ansible* | SMB/NFS service settings |
+| Scheduled tasks (`synology_core_event`) — *scaffolded/commented in `scheduler.tf`* | Users / groups, firewall, SSH |
+| VMs (`synology_virtualization_*`) — *not yet used* | DSM update + snapshot/backup schedules |
+| Generic `synology_api` escape hatch — *available, none defined yet* | |
 
 † `synology_container_project` is modeled by the provider on paper, but the
 implementation flunked the maturity test for Garage (3 distinct bugs in one

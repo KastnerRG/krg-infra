@@ -1,4 +1,5 @@
 """Unit tests for apply_ssh.py — run with: pytest (no DSM needed)."""
+
 import json
 import os
 import sys
@@ -21,15 +22,32 @@ def _factory(live):
 
 # --- terminal -----------------------------------------------------------------
 def test_terminal_no_change(monkeypatch, capsys):
-    fake, _ = _factory({m.TERMINAL_API: {"get": {
-        "enable_ssh": True, "ssh_port": 22,
-        "enable_telnet": False, "enable_sftp": False,
-    }}})
+    fake, _ = _factory(
+        {
+            m.TERMINAL_API: {
+                "get": {
+                    "enable_ssh": True,
+                    "ssh_port": 22,
+                    "enable_telnet": False,
+                    "enable_sftp": False,
+                }
+            }
+        }
+    )
     monkeypatch.setattr(m, "_exec", fake)
-    rc = m.main([
-        "terminal", "--ssh-enable", "true", "--ssh-port", "22",
-        "--telnet-enable", "false", "--sftp-enable", "false",
-    ])
+    rc = m.main(
+        [
+            "terminal",
+            "--ssh-enable",
+            "true",
+            "--ssh-port",
+            "22",
+            "--telnet-enable",
+            "false",
+            "--sftp-enable",
+            "false",
+        ]
+    )
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
 
 
@@ -39,68 +57,137 @@ def test_terminal_drift_disables_telnet(monkeypatch, capsys):
     accepts the arg for backward-compat with the role task, but the
     value is dropped — only enable_ssh / ssh_port / enable_telnet flow
     into the SET payload."""
-    fake, captured = _factory({m.TERMINAL_API: {"get": {
-        "enable_ssh": True, "ssh_port": 22, "enable_telnet": True,
-    }}})
+    fake, captured = _factory(
+        {
+            m.TERMINAL_API: {
+                "get": {
+                    "enable_ssh": True,
+                    "ssh_port": 22,
+                    "enable_telnet": True,
+                }
+            }
+        }
+    )
     monkeypatch.setattr(m, "_exec", fake)
-    rc = m.main([
-        "terminal", "--ssh-enable", "true", "--ssh-port", "22",
-        "--telnet-enable", "false", "--sftp-enable", "false",
-    ])
+    rc = m.main(
+        [
+            "terminal",
+            "--ssh-enable",
+            "true",
+            "--ssh-port",
+            "22",
+            "--telnet-enable",
+            "false",
+            "--sftp-enable",
+            "false",
+        ]
+    )
     assert rc == 0
     out = capsys.readouterr().out
     assert out.startswith("CHANGED")
-    set_call = next(p for a, p in captured
-                    if a == m.TERMINAL_API and "method=set" in p)
+    set_call = next(p for a, p in captured if a == m.TERMINAL_API and "method=set" in p)
     assert "enable_telnet=false" in set_call
     # v=3 is used (v=1 lacks ssh_port in the GET → spurious drift)
     assert "version=3" in set_call
     # SFTP must NOT be in the Terminal SET payload (wrong API entirely)
-    assert not any("enable_sftp" in arg for arg in set_call), \
+    assert not any("enable_sftp" in arg for arg in set_call), (
         "enable_sftp belongs on FileServ.SFTP, not Terminal: " + str(set_call)
+    )
 
 
 def test_terminal_check_mode_no_apply(monkeypatch, capsys):
-    fake, captured = _factory({m.TERMINAL_API: {"get": {
-        "enable_ssh": True, "ssh_port": 22,
-        "enable_telnet": True, "enable_sftp": True,
-    }}})
+    fake, captured = _factory(
+        {
+            m.TERMINAL_API: {
+                "get": {
+                    "enable_ssh": True,
+                    "ssh_port": 22,
+                    "enable_telnet": True,
+                    "enable_sftp": True,
+                }
+            }
+        }
+    )
     monkeypatch.setattr(m, "_exec", fake)
-    rc = m.main([
-        "terminal", "--ssh-enable", "true", "--ssh-port", "22",
-        "--telnet-enable", "false", "--sftp-enable", "false", "--check",
-    ])
+    rc = m.main(
+        [
+            "terminal",
+            "--ssh-enable",
+            "true",
+            "--ssh-port",
+            "22",
+            "--telnet-enable",
+            "false",
+            "--sftp-enable",
+            "false",
+            "--check",
+        ]
+    )
     assert rc == 0
     assert capsys.readouterr().out.startswith("WOULD-CHANGE")
     assert not any(a == m.TERMINAL_API and "method=set" in p for a, p in captured)
 
 
 def test_terminal_preserves_unmanaged_keys(monkeypatch, capsys):
-    fake, captured = _factory({m.TERMINAL_API: {"get": {
-        "enable_ssh": True, "ssh_port": 22,
-        "enable_telnet": True, "enable_sftp": False,
-        "snmp_unrelated_key": "preserve_me",
-    }}})
+    fake, captured = _factory(
+        {
+            m.TERMINAL_API: {
+                "get": {
+                    "enable_ssh": True,
+                    "ssh_port": 22,
+                    "enable_telnet": True,
+                    "enable_sftp": False,
+                    "snmp_unrelated_key": "preserve_me",
+                }
+            }
+        }
+    )
     monkeypatch.setattr(m, "_exec", fake)
-    m.main([
-        "terminal", "--ssh-enable", "true", "--ssh-port", "22",
-        "--telnet-enable", "false", "--sftp-enable", "false",
-    ])
+    m.main(
+        [
+            "terminal",
+            "--ssh-enable",
+            "true",
+            "--ssh-port",
+            "22",
+            "--telnet-enable",
+            "false",
+            "--sftp-enable",
+            "false",
+        ]
+    )
     capsys.readouterr()
     set_call = next(p for a, p in captured if a == m.TERMINAL_API)
     assert 'snmp_unrelated_key="preserve_me"' in set_call
 
 
 def test_terminal_port_change(monkeypatch, capsys):
-    fake, captured = _factory({m.TERMINAL_API: {"get": {
-        "enable_ssh": True, "ssh_port": 22,
-        "enable_telnet": False, "enable_sftp": False,
-    }}})
+    fake, captured = _factory(
+        {
+            m.TERMINAL_API: {
+                "get": {
+                    "enable_ssh": True,
+                    "ssh_port": 22,
+                    "enable_telnet": False,
+                    "enable_sftp": False,
+                }
+            }
+        }
+    )
     monkeypatch.setattr(m, "_exec", fake)
-    rc = m.main([
-        "terminal", "--ssh-enable", "true", "--ssh-port", "2222",
-        "--telnet-enable", "false", "--sftp-enable", "false",
-    ])
+    rc = m.main(
+        [
+            "terminal",
+            "--ssh-enable",
+            "true",
+            "--ssh-port",
+            "2222",
+            "--telnet-enable",
+            "false",
+            "--sftp-enable",
+            "false",
+        ]
+    )
     assert rc == 0
     out = capsys.readouterr().out
     assert out.startswith("CHANGED")
@@ -119,23 +206,29 @@ def _redirect_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(m, "AD_AUTHKEYS_PATH", str(helper))
     # The _FILE_MODES table is keyed on the production paths — re-key on tmp
     # paths so _atomic_write can still look up modes.
-    monkeypatch.setattr(m, "_FILE_MODES", {
-        str(helper): 0o755, str(dropin): 0o644, str(main): 0o644,
-    })
+    monkeypatch.setattr(
+        m,
+        "_FILE_MODES",
+        {
+            str(helper): 0o755,
+            str(dropin): 0o644,
+            str(main): 0o644,
+        },
+    )
     return dropin, main, helper
 
 
 def test_drop_in_render_disables_password_root():
-    out = m._render_drop_in(allow_password=False, allow_root=False,
-                            allowed_algos="ssh-ed25519")
+    out = m._render_drop_in(allow_password=False, allow_root=False, allowed_algos="ssh-ed25519")
     assert "PasswordAuthentication no" in out
     assert "PermitRootLogin no" in out
     # OpenSSH 8.2 (DSM 7.3) requires the OLD name PubkeyAcceptedKeyTypes —
     # PubkeyAcceptedAlgorithms is a hard parse error there (introduced in 8.5).
     # Regression guard: the wrong name made the entire drop-in unloadable.
     assert "PubkeyAcceptedKeyTypes ssh-ed25519" in out
-    assert "PubkeyAcceptedAlgorithms" not in out, \
+    assert "PubkeyAcceptedAlgorithms" not in out, (
         "8.2 cannot parse PubkeyAcceptedAlgorithms; use PubkeyAcceptedKeyTypes"
+    )
     assert "HostKeyAlgorithms ssh-ed25519" in out
     # AuthorizedKeysCommand wires sshd to the AD-keys helper (required for AD
     # users to log in without password since they have no home dir on DSM).
@@ -170,7 +263,7 @@ def test_ad_authkeys_helper_shape():
     injection (DSM passes sshd's %u unescaped)."""
     s = m.AD_AUTHKEYS_SCRIPT
     assert s.startswith("#!/bin/sh\n")
-    assert 'sAMAccountName=$USER' in s
+    assert "sAMAccountName=$USER" in s
     assert "net ads search" in s
     assert "sshPublicKey" in s
     # Character-class guard against LDAP / shell injection.
@@ -187,13 +280,24 @@ def test_drop_in_no_change(monkeypatch, capsys, tmp_path):
     main.write_text(m._ensure_include_block("PasswordAuthentication yes\n"))
     # No subprocess.run should be invoked when there's no change.
     runs = []
-    monkeypatch.setattr(m.subprocess, "run",
-                        lambda c, *_, **__: runs.append(c) or
-                        type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})())
-    rc = m.main([
-        "sshd-drop-in", "--allow-password", "false", "--allow-root", "false",
-        "--allowed-algos", "ssh-ed25519",
-    ])
+    monkeypatch.setattr(
+        m.subprocess,
+        "run",
+        lambda c, *_, **__: (
+            runs.append(c) or type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+        ),
+    )
+    rc = m.main(
+        [
+            "sshd-drop-in",
+            "--allow-password",
+            "false",
+            "--allow-root",
+            "false",
+            "--allowed-algos",
+            "ssh-ed25519",
+        ]
+    )
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
     assert runs == [], "no-change must skip sshd -t / systemctl restart"
 
@@ -201,17 +305,25 @@ def test_drop_in_no_change(monkeypatch, capsys, tmp_path):
 def test_drop_in_check_mode_no_write(monkeypatch, capsys, tmp_path):
     """--check: report drift across the three files, write nothing."""
     dropin, main, helper = _redirect_paths(monkeypatch, tmp_path)
-    rc = m.main([
-        "sshd-drop-in", "--allow-password", "false", "--allow-root", "false",
-        "--allowed-algos", "ssh-ed25519", "--check",
-    ])
+    rc = m.main(
+        [
+            "sshd-drop-in",
+            "--allow-password",
+            "false",
+            "--allow-root",
+            "false",
+            "--allowed-algos",
+            "ssh-ed25519",
+            "--check",
+        ]
+    )
     assert rc == 0
     out = capsys.readouterr().out
     assert out.startswith("WOULD-CHANGE")
     assert not dropin.exists() and not main.exists() and not helper.exists()
     # All three target paths must appear in the drift summary so the operator
     # sees the full surface.
-    payload = json.loads(out[len("WOULD-CHANGE "):])
+    payload = json.loads(out[len("WOULD-CHANGE ") :])
     assert str(dropin) in payload
     assert str(main) in payload
     assert str(helper) in payload
@@ -239,10 +351,17 @@ def test_drop_in_writes_validates_restarts(monkeypatch, capsys, tmp_path):
 
     monkeypatch.setattr(m.subprocess, "run", fake_run)
 
-    rc = m.main([
-        "sshd-drop-in", "--allow-password", "false", "--allow-root", "false",
-        "--allowed-algos", "ssh-ed25519",
-    ])
+    rc = m.main(
+        [
+            "sshd-drop-in",
+            "--allow-password",
+            "false",
+            "--allow-root",
+            "false",
+            "--allowed-algos",
+            "ssh-ed25519",
+        ]
+    )
     out = capsys.readouterr().out
     assert rc == 0 and out.startswith("CHANGED")
     # All three files landed.
@@ -250,8 +369,9 @@ def test_drop_in_writes_validates_restarts(monkeypatch, capsys, tmp_path):
     assert "AuthorizedKeysCommand " + str(helper) in dropin.read_text()
     assert helper.read_text().startswith("#!/bin/sh")
     assert main.read_text().startswith(m.INCLUDE_BEGIN_MARKER)
-    assert "PasswordAuthentication yes" in main.read_text(), \
+    assert "PasswordAuthentication yes" in main.read_text(), (
         "Original sshd_config content must be preserved verbatim after the Include block"
+    )
     # validation MUST come before restart; restart uses systemctl.
     sshd_idx = next(i for i, c in enumerate(runs) if c[0] == "sshd")
     restart_idx = next(i for i, c in enumerate(runs) if c[0] == "systemctl")
@@ -284,15 +404,21 @@ def test_drop_in_validation_failure_rolls_back_all(monkeypatch, capsys, tmp_path
 
     monkeypatch.setattr(m.subprocess, "run", fake_run)
 
-    rc = m.main([
-        "sshd-drop-in", "--allow-password", "false", "--allow-root", "false",
-        "--allowed-algos", "ssh-ed25519",
-    ])
+    rc = m.main(
+        [
+            "sshd-drop-in",
+            "--allow-password",
+            "false",
+            "--allow-root",
+            "false",
+            "--allowed-algos",
+            "ssh-ed25519",
+        ]
+    )
     assert rc == 1
     assert capsys.readouterr().out.startswith("FAIL")
     # Pre-existing files restored verbatim.
     assert dropin.read_text() == old_dropin
     assert main.read_text() == old_main
     # Helper had no prior content → must be removed.
-    assert not helper.exists(), \
-        "rollback must remove files that didn't exist pre-transaction"
+    assert not helper.exists(), "rollback must remove files that didn't exist pre-transaction"

@@ -131,8 +131,8 @@ in {
     boot.supportedFilesystems = ["zfs"];
 
     boot.zfs = {
-      devNodes = cfg.devNodes;
-      extraPools = cfg.extraPools;
+      inherit (cfg) devNodes;
+      inherit (cfg) extraPools;
 
       # No encryption on this deployment (physical security in a locked server
       # room was deemed sufficient). Explicitly off so boot never blocks waiting

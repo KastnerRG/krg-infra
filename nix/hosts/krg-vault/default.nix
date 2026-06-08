@@ -1,4 +1,4 @@
-{...}: let
+_: let
   trusted = builtins.fromJSON (builtins.readFile ../../networks/trusted.json);
 in {
   imports = [

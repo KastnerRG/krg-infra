@@ -18,6 +18,7 @@ OUT_KEYS on first-apply drift):
   enable                  -> enable_homes
   include_domain_users    -> enable_user_home_join_domain
 """
+
 import argparse
 import base64
 import binascii
@@ -43,15 +44,16 @@ DIRECTORY_DOMAIN_API = "SYNO.Core.Directory.Domain"
 # Full-object round-trip preserves the unmanaged keys (location, encryption,
 # etc.) so DSM's home-folder root + recycle-bin policy aren't reset.
 OUT_KEYS = {
-    "enable":                "enable",
-    "include_domain_users":  "enable_domain",
+    "enable": "enable",
+    "include_domain_users": "enable_domain",
 }
 
 
 def _exec(api, *params):
     out = subprocess.run(
         [WEBAPI, "--exec", "api=" + api, *params],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     txt = out.stdout
     brace = txt.find("{")
@@ -117,7 +119,7 @@ def _is_ad_joined():
 
 def do_home(a):
     desired = {
-        OUT_KEYS["enable"]:               _bool(a.enable),
+        OUT_KEYS["enable"]: _bool(a.enable),
         OUT_KEYS["include_domain_users"]: _bool(a.include_domain_users),
     }
     current = _exec(HOME_API, "version=1", "method=get")["data"]
@@ -140,12 +142,15 @@ def do_home(a):
         sys.stderr.write(
             "WARN: home_service.include_domain_users=true deferred — box is "
             "not yet AD-joined (DSM would return err 3103 on the set). "
-            "Pinning to current value: {}. Re-run after AD join to converge.\n"
-            .format(current_val))
+            "Pinning to current value: {}. Re-run after AD join to converge.\n".format(current_val)
+        )
         desired[domain_key] = current_val
 
-    drift = {k: {"current": current.get(k), "desired": v}
-             for k, v in desired.items() if current.get(k) != v}
+    drift = {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if current.get(k) != v
+    }
 
     if not drift:
         print("OK no-change")
@@ -162,8 +167,7 @@ def do_home(a):
     # surfacing it as a hard failure would break the playbook converge
     # for an issue the operator can't fix in this role).
     current.update(desired)
-    res = _exec(HOME_API, "version=1", "method=set",
-                "Input=" + json.dumps(current))
+    res = _exec(HOME_API, "version=1", "method=set", "Input=" + json.dumps(current))
     if not res.get("success"):
         print("FAIL " + json.dumps(res))
         return 1
@@ -177,12 +181,12 @@ def do_home(a):
             "every apply; converges once DSM accepts the field. Probe with "
             "`synowebapi --exec api=SYNO.Core.Directory.Domain version=1 "
             "method=update_start` (background DB rebuild) and inspect "
-            "synolog (home.cpp) for the underlying error.\n".format(dropped))
+            "synolog (home.cpp) for the underlying error.\n".format(dropped)
+        )
         # Report as no-change rather than CHANGED — DSM didn't actually
         # change anything, so reporting CHANGED would lie. The honest
         # answer is "tried, no effect, deferred."
-        print("OK no-change (deferred — DSM silently dropped {})".format(
-            sorted(dropped.keys())))
+        print("OK no-change (deferred — DSM silently dropped {})".format(sorted(dropped.keys())))
         return 0
     print("CHANGED " + json.dumps(drift, sort_keys=True))
     return 0
@@ -223,11 +227,15 @@ def do_authorized_keys(a):
     try:
         keys = json.loads(keys_str)
     except json.JSONDecodeError:
-        raise SystemExit("decoded --keys must be a JSON list of strings (got: "
-                         + (keys_str[:60] + "..." if len(keys_str) > 60 else keys_str) + ")")
+        raise SystemExit(
+            "decoded --keys must be a JSON list of strings (got: "
+            + (keys_str[:60] + "..." if len(keys_str) > 60 else keys_str)
+            + ")"
+        )
     if not isinstance(keys, list):
-        raise SystemExit("decoded --keys must be a JSON list of strings (got type "
-                         + type(keys).__name__ + ")")
+        raise SystemExit(
+            "decoded --keys must be a JSON list of strings (got type " + type(keys).__name__ + ")"
+        )
 
     desired = _normalize(keys)
     try:
@@ -277,9 +285,9 @@ def do_authorized_keys(a):
         os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
         os.chown(ssh_dir, pw.pw_uid, pw.pw_gid)
         os.chmod(ssh_dir, 0o700)
-        with tempfile.NamedTemporaryFile("w", dir=ssh_dir, delete=False,
-                                         prefix=".authorized_keys.",
-                                         suffix=".tmp") as tf:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=ssh_dir, delete=False, prefix=".authorized_keys.", suffix=".tmp"
+        ) as tf:
             tf.write(desired)
             tmp = tf.name
         os.chmod(tmp, 0o600)
@@ -310,8 +318,11 @@ def main(argv=None):
     # kept for unit-test + interactive operator use.
     k_keys = k.add_mutually_exclusive_group(required=True)
     k_keys.add_argument("--keys", help="JSON list of public-key strings (NOT shell-safe over ssh)")
-    k_keys.add_argument("--keys-b64", dest="keys_b64",
-                        help="base64-of-utf8 of the JSON list (shell-safe; preferred)")
+    k_keys.add_argument(
+        "--keys-b64",
+        dest="keys_b64",
+        help="base64-of-utf8 of the JSON list (shell-safe; preferred)",
+    )
     k.add_argument("--check", action="store_true")
     k.set_defaults(func=do_authorized_keys)
 

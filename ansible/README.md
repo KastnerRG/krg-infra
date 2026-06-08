@@ -33,23 +33,26 @@ ansible/
                               #   monitoring stack below (import_role, in order)
     krg_admin/                # break-glass krg-admin (sudo, key-only) — mirrors nix/users/admin.nix
     ssh_hardening/            # disable password auth, root key-only (the breach fix)
-    fail2ban/                 # sshd brute-force jail
+    crowdsec/                 # community CTI + local scenarios (replaces fail2ban as the active jail)
+    fail2ban/                 # sshd brute-force jail (SUPERSEDED by crowdsec; gated off fleet-wide)
     monitoring/               # node + ipmi exporters (systemd) — on every host
     oec_qualys_trellix/       # campus-mandated Qualys + Trellix (set oec_installer)
+    ad_client/                # SSSD AD client — every host joins KRG.LOCAL (key-only SSH, keys from AD)
     proxmox_firewall/         # PVE cluster.fw + per-guest <vmid>.fw + per-node host.fw (proxmox group)
     zfs_limits/               # quota/reservation on existing ZFS datasets (fabricant ONLY play)
     nfs_server/               # NFSv4 exports on ZFS datasets (fabricant ONLY play)
 ```
 
 Every host gets the baseline by applying a single role, `base`, which composes
-`krg_admin`, `ssh_hardening`, `fail2ban`, `monitoring`, and `oec_qualys_trellix`
-in a deliberate order (see `roles/base/tasks/main.yml`). `proxmox_firewall` is the
+`krg_admin`, `ssh_hardening`, `crowdsec` (+ the superseded `fail2ban`),
+`monitoring`, `oec_qualys_trellix`, and `ad_client` in a deliberate order (see
+`roles/base/tasks/main.yml`). `proxmox_firewall` is the
 one perimeter concern that stays a separate, `proxmox`-group-only play in
 `site.yml` (it's a hypervisor concern, not an all-hosts default).
 
 `zfs_limits` + `nfs_server` are a **`fabricant`-only** play (not the `proxmox`
 group). `nfs_server` carves a `<pool>/nfs` ZFS dataset and exports `home` +
-`scratch-krg` (waiter's autotier cold tier) over **NFSv4** (single tcp/2049); `zfs_limits` caps the *other* datasets (e.g. the
+`scratch-krg` (waiter's `/scratch` cold-overflow tier) over **NFSv4** (single tcp/2049); `zfs_limits` caps the *other* datasets (e.g. the
 VM disks) so user/NFS data wins pool contention. Pool, shares, clients, and quotas
 live in `inventory/host_vars/fabricant.yml`. The NFS port is opened in fabricant's
 **per-node `host.fw`** (host-scoped, via `proxmox_host_fw_rules`) — NOT cluster.fw,
@@ -60,6 +63,11 @@ datacenter `[OPTIONS]` — PVE warns and ignores them — so the deny stays a ru
 
 Admin SSH keys are **shared** with the NixOS layer — edit `nix/keys/admins.json`
 (read by both); do not duplicate keys here.
+
+> **Note:** `ansible/synology/` is a separate, self-contained subtree (its own
+> `ansible.cfg`/inventory/roles) that manages the Synology e4e-nas appliance — it
+> is **not** part of the Proxmox-host play here. See
+> [`ansible/synology/README.md`](synology/README.md).
 
 ## Before you run
 

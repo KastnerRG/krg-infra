@@ -1,0 +1,17 @@
+# statix (Nix anti-pattern lint) config. alejandra already gates *formatting*
+# via treefmt; statix adds semantic lints. We keep the bug-adjacent/readability
+# rules and drop the one pure-style rule that fights this repo's reality.
+#
+# repeated_keys ("prefer a = { b=...; c=...; } over a.b / a.c") is an opinion,
+# not a correctness rule — and it fires hardest on the nixos-generate-config
+# hardware-configuration.nix files (repeated boot.* keys), which regenerate, so
+# "fixing" them is drift. Disabled fleet-wide.
+disabled = ["repeated_keys"]
+
+# Generated / machine-authored files: hardware configs come from
+# nixos-generate-config; disko-config is a partition map. Don't lint either.
+nix_version = "2.4"
+ignore = [
+  "**/hardware-configuration.nix",
+  "**/disko-config.nix",
+]

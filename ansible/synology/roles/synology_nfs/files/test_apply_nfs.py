@@ -4,6 +4,7 @@ The subprocess boundary is `_exec` (synowebapi); we monkeypatch it to return can
 GET/load responses and capture set/save calls, then assert the OK/WOULD-CHANGE/CHANGED
 contract and the pure helpers.
 """
+
 import json
 import os
 import sys
@@ -11,10 +12,20 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 import apply_nfs as m  # noqa: E402
 
-RULE = {"client": "10.0.0.5", "privilege": "rw", "root_squash": "root",
-        "async": False, "insecure": False, "crossmnt": True,
-        "security_flavor": {"sys": True, "kerberos": False,
-                            "kerberos_integrity": False, "kerberos_privacy": False}}
+RULE = {
+    "client": "10.0.0.5",
+    "privilege": "rw",
+    "root_squash": "root",
+    "async": False,
+    "insecure": False,
+    "crossmnt": True,
+    "security_flavor": {
+        "sys": True,
+        "kerberos": False,
+        "kerberos_integrity": False,
+        "kerberos_privacy": False,
+    },
+}
 
 
 def test_bool():
@@ -22,16 +33,19 @@ def test_bool():
 
 
 def test_args_from_types():
-    args = m._args_from({"a": True, "b": False, "n": None, "i": 3,
-                         "lst": [1, 2], "obj": {"x": True}})
+    args = m._args_from(
+        {"a": True, "b": False, "n": None, "i": 3, "lst": [1, 2], "obj": {"x": True}}
+    )
     assert "a=true" in args and "b=false" in args and "i=3" in args
-    assert not any(x.startswith("n=") for x in args)            # null dropped
-    assert "lst=[1, 2]" in args                                 # list -> json
+    assert not any(x.startswith("n=") for x in args)  # null dropped
+    assert "lst=[1, 2]" in args  # list -> json
     assert any(x.startswith("obj=") and '"x"' in x for x in args)  # dict -> json
 
 
 def test_norm_order_insensitive():
-    assert m._norm([{"client": "b"}, {"client": "a"}]) == m._norm([{"client": "a"}, {"client": "b"}])
+    assert m._norm([{"client": "b"}, {"client": "a"}]) == m._norm(
+        [{"client": "a"}, {"client": "b"}]
+    )
 
 
 # --- global ---------------------------------------------------------------------
@@ -50,8 +64,14 @@ def test_global_apply_sends_full_object(monkeypatch, capsys):
 
     def fake(api, *p):
         if "method=get" in p:
-            return {"data": {"enable_nfs": False, "enable_nfs_v4": False,
-                             "nfs_v4_domain": "", "read_size": 8192}}
+            return {
+                "data": {
+                    "enable_nfs": False,
+                    "enable_nfs_v4": False,
+                    "nfs_v4_domain": "",
+                    "read_size": 8192,
+                }
+            }
         calls.append(p)
         return {"success": True}
 

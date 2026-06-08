@@ -38,9 +38,12 @@ DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-/var/lib/krg-admin/.ssh/id_ed25519}"
 # trust-on-first-use (accept-new). Never lower this just to unblock a routine run.
 hostkey="yes"
 [[ "${DEPLOY_SSH_ACCEPT_NEW:-false}" == "true" ]] && hostkey="accept-new"
-sshopts="-o StrictHostKeyChecking=${hostkey} -o BatchMode=yes -o ConnectTimeout=15"
-[[ -f "$DEPLOY_SSH_KEY" ]] && sshopts="-i ${DEPLOY_SSH_KEY} ${sshopts}"
-export NIX_SSHOPTS="${NIX_SSHOPTS:-$sshopts}"
+# An array (not a string) so each option is a distinct argv element — passed as
+# "${sshopts[@]}" to ssh/scp it never word-splits or globs. NIX_SSHOPTS, which
+# nixos-rebuild reads as a single space-separated string, gets the joined form.
+sshopts=(-o "StrictHostKeyChecking=${hostkey}" -o BatchMode=yes -o ConnectTimeout=15)
+[[ -f "$DEPLOY_SSH_KEY" ]] && sshopts=(-i "$DEPLOY_SSH_KEY" "${sshopts[@]}")
+export NIX_SSHOPTS="${NIX_SSHOPTS:-${sshopts[*]}}"
 
 # ── OEC (campus-mandated Qualys Cloud Agent + Trellix HX/xagt) ───────────────
 # These agents are mandatory on EVERY host. The credentialed installer archive
@@ -57,6 +60,16 @@ if [[ ! -r "$OEC_INSTALLER" ]]; then
   echo "       Stage it out-of-band (see deploy/README.md) — hosts cannot be hardened without it."
   exit 1
 fi
+# Sanity-check the archive HERE (it's a tar — plain or compressed; tar -tf
+# auto-detects) so a corrupt/truncated/wrong-format file fails fast on the
+# control node with a clear message, rather than surfacing as an opaque
+# oec-install failure mid-rebuild on the first host (which is how the gzip-vs-
+# plain-tar mismatch first bit us).
+if ! tar -tf "$OEC_INSTALLER" >/dev/null 2>&1; then
+  echo "FATAL: OEC installer is not a readable tar archive: $OEC_INSTALLER"
+  echo "       Re-stage the vendor archive (it is a tar — plain or gz; corrupt/truncated otherwise)."
+  exit 1
+fi
 
 # Push the OEC archive to <target> and install it root-owned 0600 at OEC_DEST.
 # scp lands it as krg-admin in /tmp, then sudo-installs into the root-owned
@@ -67,8 +80,11 @@ stage_oec() {
   local target="$1"
   # &&-chained (not two statements): called as `if ! stage_oec`, which suspends
   # set -e inside the function, so a failed scp must short-circuit explicitly.
-  scp $sshopts "$OEC_INSTALLER" "${target}:/tmp/oec-installer.tgz" \
-    && ssh $sshopts "$target" "
+  # OEC_DEST is a fixed in-script constant, so expanding it client-side (rather
+  # than on the remote) is intended — silence SC2029 for this command.
+  # shellcheck disable=SC2029
+  scp "${sshopts[@]}" "$OEC_INSTALLER" "${target}:/tmp/oec-installer.tgz" \
+    && ssh "${sshopts[@]}" "$target" "
         set -e
         sudo install -d -m 0700 -o root -g root /var/lib/krg/oec
         sudo install -m 0600 -o root -g root /tmp/oec-installer.tgz '${OEC_DEST}'
@@ -80,12 +96,12 @@ stage_oec() {
 # down fails the deploy (campus-mandated; no half-hardened fleet).
 verify_oec() {
   local target="$1" host="$2"
-  if ssh $sshopts "$target" 'systemctl is-active --quiet qualys-cloud-agent && systemctl is-active --quiet xagt'; then
+  if ssh "${sshopts[@]}" "$target" 'systemctl is-active --quiet qualys-cloud-agent && systemctl is-active --quiet xagt'; then
     echo "OK: ${host} — qualys-cloud-agent + xagt active"
     return 0
   fi
   echo "FAILED: ${host} — OEC security daemons not both active:"
-  ssh $sshopts "$target" 'systemctl is-active qualys-cloud-agent xagt; true' || true
+  ssh "${sshopts[@]}" "$target" 'systemctl is-active qualys-cloud-agent xagt; true' || true
   return 1
 }
 
