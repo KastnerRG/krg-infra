@@ -167,6 +167,18 @@ warning; pool health also goes to Prometheus via the textfile collector
 
 ## Security agents (OEC: Qualys + Trellix)
 
+### `oec-install` fails: `gzip: stdin: not in gzip format`
+**Symptom:** `oec-install.service` fails immediately at extraction with
+`gzip: stdin: not in gzip format` / `tar: Child returned status 1`, failing the
+`nixos-rebuild switch` (and the deploy).
+**Cause:** despite the `.tgz` name the vendor archive is a **plain (uncompressed)
+tar** — its first bytes are the `trellixandqualys/` tar header, not the gzip magic.
+`tar -xzf` forces gzip and rejects it.
+**Fix (in tree):** the module extracts with `tar -xf` (auto-detect), which handles
+plain tar / gzip / xz transparently; `deploy-nixos.sh` also sanity-checks the
+control-node archive with `tar -tf` before staging. If you re-roll the archive,
+either format is fine — just keep it a tar.
+
 ### `oec-install` doesn't enroll on NixOS
 **Symptom:** the OEC oneshot runs but Qualys/Trellix don't come up.
 **Cause:** the vendor archive ships **unpatched Ubuntu binaries** that assume an

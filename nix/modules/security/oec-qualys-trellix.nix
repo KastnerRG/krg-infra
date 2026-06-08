@@ -76,7 +76,12 @@ with lib; let
     STAGE="$(mktemp -d)"
     trap 'rm -rf "$STAGE"' EXIT
     echo "oec-install: extracting $ARCHIVE"
-    tar -xzf "$ARCHIVE" -C "$STAGE"
+    # -xf (auto-detect), NOT -xzf: despite the .tgz name the vendor archive is a
+    # PLAIN (uncompressed) tar — forcing gzip fails with "not in gzip format".
+    # GNU tar -xf detects gzip/xz/plain transparently (decompressors are on PATH),
+    # so this also survives the vendor switching to real gzip later. The Ansible
+    # counterpart already auto-detects via ansible.builtin.unarchive.
+    tar -xf "$ARCHIVE" -C "$STAGE"
     SRC="$STAGE/trellixandqualys"
     [ -d "$SRC" ] || { echo "oec-install: unexpected archive layout" >&2; exit 1; }
 
