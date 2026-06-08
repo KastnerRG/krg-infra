@@ -66,6 +66,18 @@ in {
   };
 
   config = mkIf cfg.enable {
+    # TEMPORARY: permit the (currently insecure-flagged) default docker so the
+    # nightly `nix flake update` can advance the lock — otherwise an insecure
+    # package aborts `nix flake check` and the lock bump (and every OTHER package
+    # update) never lands. This does NOT change which docker is built: the engine
+    # stays at the current 28.5.2, so deploying this is a no-op and won't restart
+    # the daemon (keeps running experiments alive). The real docker upgrade to
+    # 29.x happens during the planned outage via the nixos-26.05 bump (#168), at
+    # which point this permit is removed (26.05's default docker is not insecure).
+    # NOTE: exact version string — if 25.11 ever moves docker off 28.5.2 this must
+    # follow (or switch to nixpkgs.config.allowInsecurePredicate matching "docker").
+    nixpkgs.config.permittedInsecurePackages = [ "docker-28.5.2" ];
+
     virtualisation.docker = {
       enable      = true;
       enableOnBoot = true;
