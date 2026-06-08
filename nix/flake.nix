@@ -117,6 +117,7 @@
       krg-prod = mkSystem "krg-prod"; # KRG lab-wide production (was "fabricant")
       e4e-prod = mkSystem "e4e-prod"; # E4E project-specific production
       waiter = mkSystem "waiter";
+      kastner-ml = mkSystem "kastner-ml"; # E4E GPU compute box (RTX A6000)
       krg-ldap = mkSystem "krg-ldap";
       krg-vault = mkSystem "krg-vault"; # OpenBao secrets manager
       krg-deploy = mkSystem "krg-deploy"; # Ansible control node + OpenTofu
