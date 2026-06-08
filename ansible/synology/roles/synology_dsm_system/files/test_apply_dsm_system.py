@@ -1,4 +1,5 @@
 """Unit tests for apply_dsm_system.py — run with: pytest (no DSM needed)."""
+
 import os
 import sys
 
@@ -13,20 +14,40 @@ def _exec_factory(get_data, set_capture=None):
         if set_capture is not None:
             set_capture.append((api, params))
         return {"success": True}
+
     return fake
 
 
 def test_network_no_change(monkeypatch, capsys):
-    monkeypatch.setattr(m, "_exec", _exec_factory({
-        "server_name": "e4e-nas", "gateway": "132.239.17.1",
-        "dns_primary": "132.239.95.109", "dns_secondary": "1.1.1.1",
-        "dns_manual": True, "ipv4_first": False,
-    }))
-    rc = m.main(["network", "--hostname", "e4e-nas",
-                 "--gateway", "132.239.17.1",
-                 "--dns-primary", "132.239.95.109",
-                 "--dns-secondary", "1.1.1.1",
-                 "--dns-manual", "true"])
+    monkeypatch.setattr(
+        m,
+        "_exec",
+        _exec_factory(
+            {
+                "server_name": "e4e-nas",
+                "gateway": "132.239.17.1",
+                "dns_primary": "132.239.95.109",
+                "dns_secondary": "1.1.1.1",
+                "dns_manual": True,
+                "ipv4_first": False,
+            }
+        ),
+    )
+    rc = m.main(
+        [
+            "network",
+            "--hostname",
+            "e4e-nas",
+            "--gateway",
+            "132.239.17.1",
+            "--dns-primary",
+            "132.239.95.109",
+            "--dns-secondary",
+            "1.1.1.1",
+            "--dns-manual",
+            "true",
+        ]
+    )
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
 
 
@@ -36,18 +57,27 @@ def test_network_apply_hostname_drift(monkeypatch, capsys):
     became float `132.239` and DSM rejected with err 4302). Asserts
     JSON-quoted form `server_name="e4e-nas"` not bare `server_name=e4e-nas`."""
     captured = []
-    monkeypatch.setattr(m, "_exec", _exec_factory(
-        {"server_name": "e4e_nas", "gateway": "132.239.17.1",
-         "dns_primary": "132.239.95.109", "extra_unmanaged": "stays"},
-        set_capture=captured))
+    monkeypatch.setattr(
+        m,
+        "_exec",
+        _exec_factory(
+            {
+                "server_name": "e4e_nas",
+                "gateway": "132.239.17.1",
+                "dns_primary": "132.239.95.109",
+                "extra_unmanaged": "stays",
+            },
+            set_capture=captured,
+        ),
+    )
     rc = m.main(["network", "--hostname", "e4e-nas"])
     assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
     api, params = captured[0]
     assert api == "SYNO.Core.Network" and "version=2" in params
     rest = set(params[2:])
-    assert 'server_name="e4e-nas"' in rest                # JSON-quoted string
-    assert 'extra_unmanaged="stays"' in rest              # unmanaged preserved + JSON-quoted
-    assert 'gateway="132.239.17.1"' in rest               # unmanaged preserved + JSON-quoted
+    assert 'server_name="e4e-nas"' in rest  # JSON-quoted string
+    assert 'extra_unmanaged="stays"' in rest  # unmanaged preserved + JSON-quoted
+    assert 'gateway="132.239.17.1"' in rest  # unmanaged preserved + JSON-quoted
 
 
 def test_network_check_reports_drift(monkeypatch, capsys):
@@ -62,6 +92,7 @@ def test_network_fail(monkeypatch, capsys):
         if "method=get" in params:
             return {"data": {"server_name": "x"}, "success": True}
         return {"success": False, "error": {"code": 2001}}
+
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["network", "--hostname", "y"])
     assert rc == 1 and capsys.readouterr().out.startswith("FAIL")
@@ -97,7 +128,8 @@ def test_package_defaults_drift_writes_default_vol(monkeypatch, capsys):
     # MUST be `default_vol` — not default_install_vol, not volume, not vol
     assert 'default_vol="/volume1"' in params, (
         "param key must be `default_vol` (DSM 7.3 silently no-ops on alternatives); "
-        "got: " + str(params))
+        "got: " + str(params)
+    )
 
 
 def test_package_defaults_check_does_not_apply(monkeypatch, capsys):
@@ -114,6 +146,7 @@ def test_package_defaults_fail_propagates(monkeypatch, capsys):
         if "method=get" in params:
             return {"data": {}, "success": True}
         return {"success": False, "error": {"code": 4302}}
+
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["package-defaults", "--install-volume", "/volume1"])
     assert rc == 1 and capsys.readouterr().out.startswith("FAIL")
@@ -125,16 +158,19 @@ def test_package_defaults_get_failure_yields_structured_fail(monkeypatch, capsys
     structured FAIL line + exit 1 rather than raising KeyError on the
     missing `data` field. Regression guard against accidentally
     re-introducing the `["data"]` access without the success check."""
+
     def fake(api, *params):
         if "method=get" in params:
             return {"success": False, "error": {"code": 403, "errors": "permission denied"}}
         # SET path should never be reached if GET fails
         raise AssertionError("SET path called despite GET failure")
+
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["package-defaults", "--install-volume", "/volume1"])
     out = capsys.readouterr().out
     assert rc == 1 and out.startswith("FAIL ")
     import json as _j
+
     payload = _j.loads(out.split(" ", 1)[1])
     assert "GET failed" in payload["reason"]
     assert payload["response"]["success"] is False
@@ -157,6 +193,7 @@ def _synopkg_factory(on_state, start_results=None):
             returncode = 0
             stderr = ""
             stdout = ""
+
         r = R()
         if cmd[0] == m.SYNOPKG and cmd[1] == "is_onoff":
             pkg = cmd[2]
@@ -172,6 +209,7 @@ def _synopkg_factory(on_state, start_results=None):
                 r.returncode = 1
                 r.stderr = "synopkg start failed"
         return r
+
     return fake
 
 
@@ -202,11 +240,9 @@ def test_package_state_starts_only_stopped_packages(monkeypatch, capsys):
         calls.append(list(cmd))
         return base_fake(cmd, *args, **kwargs)
 
-    monkeypatch.setattr(m, "_pkg_is_installed",
-                        _fake_installed(["ContainerManager", "OtherPkg"]))
+    monkeypatch.setattr(m, "_pkg_is_installed", _fake_installed(["ContainerManager", "OtherPkg"]))
     monkeypatch.setattr(m.subprocess, "run", tracking_fake)
-    rc = m.main(["package-state", "--packages",
-                 _json.dumps(["ContainerManager", "OtherPkg"])])
+    rc = m.main(["package-state", "--packages", _json.dumps(["ContainerManager", "OtherPkg"])])
     out = capsys.readouterr().out
     assert rc == 0 and out.startswith("CHANGED")
     # Exactly ONE start call, on ContainerManager (the one that was off)
@@ -226,19 +262,20 @@ def test_package_state_check_does_not_start(monkeypatch, capsys):
 
     monkeypatch.setattr(m, "_pkg_is_installed", _fake_installed(["ContainerManager"]))
     monkeypatch.setattr(m.subprocess, "run", tracking_fake)
-    rc = m.main(["package-state", "--packages",
-                 _json.dumps(["ContainerManager"]), "--check"])
+    rc = m.main(["package-state", "--packages", _json.dumps(["ContainerManager"]), "--check"])
     assert rc == 0 and capsys.readouterr().out.startswith("WOULD-CHANGE")
-    assert not any(c[1] == "start" for c in calls if len(c) >= 2), \
+    assert not any(c[1] == "start" for c in calls if len(c) >= 2), (
         "--check must NEVER call synopkg start"
+    )
 
 
 def test_package_state_start_failure_returns_fail(monkeypatch, capsys):
     """synopkg start failure surfaces as FAIL, not silent pretend-success."""
     on = {"ContainerManager": False}
     monkeypatch.setattr(m, "_pkg_is_installed", _fake_installed(["ContainerManager"]))
-    monkeypatch.setattr(m.subprocess, "run",
-                        _synopkg_factory(on, start_results={"ContainerManager": False}))
+    monkeypatch.setattr(
+        m.subprocess, "run", _synopkg_factory(on, start_results={"ContainerManager": False})
+    )
     rc = m.main(["package-state", "--packages", _json.dumps(["ContainerManager"])])
     assert rc == 1 and capsys.readouterr().out.startswith("FAIL")
 
@@ -258,8 +295,7 @@ def test_package_state_skips_missing_packages_with_warning(monkeypatch, capsys):
     # Nothing installed → every desired package missing.
     monkeypatch.setattr(m, "_pkg_is_installed", _fake_installed([]))
     monkeypatch.setattr(m.subprocess, "run", tracking_fake)
-    rc = m.main(["package-state", "--packages",
-                 _json.dumps(["ContainerManager", "OtherPkg"])])
+    rc = m.main(["package-state", "--packages", _json.dumps(["ContainerManager", "OtherPkg"])])
     captured = capsys.readouterr()
     assert rc == 0
     assert "OK no-change" in captured.out
@@ -267,8 +303,9 @@ def test_package_state_skips_missing_packages_with_warning(monkeypatch, capsys):
     assert "ContainerManager" in captured.err and "OtherPkg" in captured.err
     assert "terraform" in captured.err.lower() or "/var/packages" in captured.err
     # Crucially, no `synopkg start` calls (we never try to start a non-existent pkg).
-    assert not any(len(c) >= 2 and c[1] == "start" for c in calls), \
+    assert not any(len(c) >= 2 and c[1] == "start" for c in calls), (
         "must NOT call synopkg start on a missing package"
+    )
 
 
 def test_package_state_mixed_missing_and_drifting(monkeypatch, capsys):
@@ -284,8 +321,9 @@ def test_package_state_mixed_missing_and_drifting(monkeypatch, capsys):
 
     monkeypatch.setattr(m, "_pkg_is_installed", _fake_installed(["ContainerManager"]))
     monkeypatch.setattr(m.subprocess, "run", tracking_fake)
-    rc = m.main(["package-state", "--packages",
-                 _json.dumps(["ContainerManager", "VirtualMachineManager"])])
+    rc = m.main(
+        ["package-state", "--packages", _json.dumps(["ContainerManager", "VirtualMachineManager"])]
+    )
     captured = capsys.readouterr()
     assert rc == 0 and captured.out.startswith("CHANGED")
     assert "VirtualMachineManager" in captured.err  # warned about the missing one
@@ -295,6 +333,7 @@ def test_package_state_mixed_missing_and_drifting(monkeypatch, capsys):
 
 def test_package_state_rejects_bad_json():
     import pytest as _pt
+
     with _pt.raises(SystemExit):
         m.main(["package-state", "--packages", '"not a list"'])
 
@@ -304,6 +343,7 @@ def test_package_state_rejects_malformed_json():
     message rather than letting json.JSONDecodeError surface as a Python
     traceback (which Ansible would re-wrap unhelpfully)."""
     import pytest as _pt
+
     with _pt.raises(SystemExit) as exc:
         m.main(["package-state", "--packages", "this-is-not-json{"])
     assert "valid JSON" in str(exc.value)

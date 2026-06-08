@@ -17,6 +17,7 @@ The live capture on e4e-nas (2026-05-28) showed `default-level: 2`, plausibly Ol
 If a rebuild apply shows the mapping flipped, flip TLS_LEVELS below and reapply —
 single source of truth. The role also exposes `--level <int>` to override directly.
 """
+
 import argparse
 import json
 import subprocess
@@ -32,7 +33,8 @@ def _exec(api, *params):
     """Run synowebapi and parse its JSON (preamble is on stderr; stdout is pure JSON)."""
     out = subprocess.run(
         [WEBAPI, "--exec", "api=" + api, *params],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     txt = out.stdout
     brace = txt.find("{")
@@ -83,10 +85,10 @@ def _result(drift, check, apply_fn):
 # --- web (SYNO.Core.Web.DSM, full-object) -----------------------------------------
 WEB_FIELDS = [
     # (flag-name-from-argparse, DSM field, value cast)
-    ("hsts",           "enable_hsts",            _bool),
-    ("avahi",          "enable_avahi",           _bool),
-    ("ssdp",           "enable_ssdp",            _bool),
-    ("http2",          "enable_spdy",            _bool),     # DSM calls HTTP/2 "SPDY"
+    ("hsts", "enable_hsts", _bool),
+    ("avahi", "enable_avahi", _bool),
+    ("ssdp", "enable_ssdp", _bool),
+    ("http2", "enable_spdy", _bool),  # DSM calls HTTP/2 "SPDY"
     # `enable_https` is NOT a real field on SYNO.Core.Web.DSM (validated
     # 2026-05-31 against e4e-nas: GET keys don't include it, only
     # enable_https_redirect). HTTPS itself is implicit — DSM listens on
@@ -94,19 +96,25 @@ WEB_FIELDS = [
     # `enable_https` made the SET silently drop the field AND the GET-diff
     # see current=null vs desired=true every run → false-positive CHANGED.
     # ("https", "enable_https", _bool),  -- dropped
-    ("https_redirect", "enable_https_redirect",  _bool),
-    ("server_header",  "enable_server_header",   _bool),
-    ("http_port",      "http_port",              int),
-    ("https_port",     "https_port",             int),
+    ("https_redirect", "enable_https_redirect", _bool),
+    ("server_header", "enable_server_header", _bool),
+    ("http_port", "http_port", int),
+    ("https_port", "https_port", int),
 ]
 
 
 def do_web(a):
-    desired = {dsm: cast(v) for (flag, dsm, cast) in WEB_FIELDS
-               if (v := getattr(a, flag, None)) is not None}
+    desired = {
+        dsm: cast(v)
+        for (flag, dsm, cast) in WEB_FIELDS
+        if (v := getattr(a, flag, None)) is not None
+    }
     current = _exec(DSM_API, "version=2", "method=get")["data"]
-    drift = {k: {"current": current.get(k), "desired": v}
-             for k, v in desired.items() if current.get(k) != v}
+    drift = {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if current.get(k) != v
+    }
 
     def apply():
         current.update(desired)
@@ -129,8 +137,9 @@ def do_tls(a):
 
     cur = _exec(TLS_API, "version=1", "method=get")["data"]
     cur_level = cur.get("default-level")
-    drift = ({} if cur_level == level
-             else {"default-level": {"current": cur_level, "desired": level}})
+    drift = (
+        {} if cur_level == level else {"default-level": {"current": cur_level, "desired": level}}
+    )
 
     def apply():
         return _exec(TLS_API, "version=1", "method=set", "default-level=" + str(level))
@@ -144,19 +153,20 @@ def main(argv=None):
     # match silently activate — argparse would otherwise match `--https` to
     # `--https-redirect` or `--https-port` and either silently consume the
     # next positional OR error "ambiguous option". Exact-match only.
-    ap = argparse.ArgumentParser(description="Apply DSM web settings via synowebapi.",
-                                 allow_abbrev=False)
+    ap = argparse.ArgumentParser(
+        description="Apply DSM web settings via synowebapi.", allow_abbrev=False
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    w = sub.add_parser("web", help="DSM web config (HSTS / HTTP2 / mDNS / SSDP / ports)",
-                       allow_abbrev=False)
+    w = sub.add_parser(
+        "web", help="DSM web config (HSTS / HTTP2 / mDNS / SSDP / ports)", allow_abbrev=False
+    )
     for flag, _dsm, _cast in WEB_FIELDS:
         w.add_argument("--" + flag.replace("_", "-"), dest=flag)
     w.add_argument("--check", action="store_true")
     w.set_defaults(func=do_web)
 
-    t = sub.add_parser("tls-profile", help="TLS compatibility profile",
-                       allow_abbrev=False)
+    t = sub.add_parser("tls-profile", help="TLS compatibility profile", allow_abbrev=False)
     t.add_argument("--profile", help="modern|intermediate|old (mapped via TLS_LEVELS)")
     t.add_argument("--level", help="raw integer override (rebuild-time sanity-check)")
     t.add_argument("--check", action="store_true")

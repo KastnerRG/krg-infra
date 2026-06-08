@@ -17,7 +17,7 @@
     group: www-data
     mode: "0640"
     unsafe_writes: true        # /etc/pve is the pmxcfs FUSE filesystem
-  notify: restart pve firewall
+  notify: Restart pve firewall
 
 - name: Install per-guest firewall configs
   ansible.builtin.copy:
@@ -30,7 +30,7 @@
   loop: "{{ proxmox_guests }}"
   loop_control:
     label: "{{ item.vmid }} ({{ item.name | default('') }})"
-  notify: restart pve firewall
+  notify: Restart pve firewall
 
 # Per-NODE host firewall (host-scoped rules, e.g. fabricant's NFS tcp/2049). Only
 # written when this node has rules — keeps host.fw off nodes that don't need it.
@@ -61,7 +61,8 @@
   when:
     - proxmox_host_fw_rules | length > 0
     - _krg_hostfw_cmp.rc != 0
-  notify: restart pve firewall
+  changed_when: true # only runs when cmp showed a diff, so the cp always changes host.fw
+  notify: Restart pve firewall
 
 # Emptying proxmox_host_fw_rules must REVOKE the rules, not leave a stale host.fw
 # with live ACCEPTs behind. Remove the file when this node has no host-scoped rules
@@ -71,4 +72,4 @@
     path: "/etc/pve/nodes/{{ proxmox_node_name }}/host.fw"
     state: absent              # plain unlink — no atomic temp-write, so no unsafe_writes needed
   when: proxmox_host_fw_rules | length == 0
-  notify: restart pve firewall
+  notify: Restart pve firewall

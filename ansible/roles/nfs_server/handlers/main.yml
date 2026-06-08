@@ -1,14 +1,14 @@
 # Defined in run order: daemon-reload (for the drop-in) must precede the restart.
-- name: reload systemd
+- name: Reload systemd
   ansible.builtin.systemd_service:
     daemon_reload: true
 
-- name: restart nfs server
+- name: Restart nfs server
   ansible.builtin.systemd_service:
     name: nfs-server
     state: restarted
 
 # Exports-only change: re-read /etc/exports.d without bouncing the daemon.
-- name: reexport nfs
+- name: Reexport nfs
   ansible.builtin.command: exportfs -ra
   changed_when: true

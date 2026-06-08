@@ -1,4 +1,4 @@
-- name: restart pve firewall
+- name: Restart pve firewall
   ansible.builtin.command:
     cmd: pve-firewall restart
   changed_when: true

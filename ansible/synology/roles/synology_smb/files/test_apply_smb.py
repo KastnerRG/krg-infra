@@ -4,6 +4,7 @@ The subprocess boundary is `get_settings`/`set_settings` (which call synowebapi)
 monkeypatch those to drive the OK/WOULD-CHANGE/CHANGED/FAIL contract the role keys off,
 and test the pure arg/type helpers directly.
 """
+
 import argparse
 import os
 import sys
@@ -17,17 +18,28 @@ def _boom(*a, **k):
 
 
 def _ns(**kw):
-    base = dict(min_protocol=None, max_protocol=None, enable=None,
-                server_signing=None, ntlmv1_auth=None, check=False)
+    base = dict(
+        min_protocol=None,
+        max_protocol=None,
+        enable=None,
+        server_signing=None,
+        ntlmv1_auth=None,
+        check=False,
+    )
     base.update(kw)
     return argparse.Namespace(**base)
 
 
 def _live(signing=0, minp=1, maxp=3):
     # mirrors a real version-3 GET (subset), incl. a null field set() must drop
-    return {"enable_samba": True, "enable_server_signing": signing,
-            "smb_min_protocol": minp, "smb_max_protocol": maxp,
-            "enable_adserver": None, "workgroup": "WORKGROUP"}
+    return {
+        "enable_samba": True,
+        "enable_server_signing": signing,
+        "smb_min_protocol": minp,
+        "smb_max_protocol": maxp,
+        "enable_adserver": None,
+        "workgroup": "WORKGROUP",
+    }
 
 
 def test_bool():
@@ -36,10 +48,22 @@ def test_bool():
 
 
 def test_desired_from_args_maps_names_and_types():
-    d = m.desired_from_args(_ns(min_protocol="SMB3", max_protocol="SMB3",
-                                 enable="true", server_signing="true", ntlmv1_auth="false"))
-    assert d == {"smb_min_protocol": 3, "smb_max_protocol": 3, "enable_samba": True,
-                 "enable_server_signing": 1, "enable_ntlmv1_auth": False}
+    d = m.desired_from_args(
+        _ns(
+            min_protocol="SMB3",
+            max_protocol="SMB3",
+            enable="true",
+            server_signing="true",
+            ntlmv1_auth="false",
+        )
+    )
+    assert d == {
+        "smb_min_protocol": 3,
+        "smb_max_protocol": 3,
+        "enable_samba": True,
+        "enable_server_signing": 1,
+        "enable_ntlmv1_auth": False,
+    }
 
 
 def test_desired_from_args_partial_only_given():

@@ -1,0 +1,32 @@
+name: Lint
+
+# Repo-wide lint gate: every layer (Nix, Python, OpenTofu, YAML, Ansible, shell).
+# Runs the SAME script developers run locally (scripts/lint.sh) so CI and local
+# never drift. Like build.yml/tests.yml this only *runs* the check — making it a
+# required status check is a branch-protection setting on KastnerRG/krg-infra.
+#
+# Formatting of .nix specifically is also gated by build.yml's `nix flake check`
+# (alejandra via treefmt); this job adds the semantic Nix linters (statix/deadnix)
+# and every non-Nix layer's formatter + linter.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: lint (all layers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@v16
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v9
+
+      # Every linter is fetched on demand via `nix run nixpkgs#<tool>`; no extra
+      # setup. First run warms the nix cache, later runs are fast.
+      - name: Lint everything
+        run: ./scripts/lint.sh

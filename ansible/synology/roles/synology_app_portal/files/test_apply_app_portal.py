@@ -1,4 +1,5 @@
 """Unit tests for apply_app_portal.py — run with: pytest (no DSM needed)."""
+
 import json
 import os
 import sys
@@ -51,13 +52,13 @@ def test_reverse_proxy_empty_lists(monkeypatch, capsys):
 def test_reverse_proxy_create_update_delete(monkeypatch, capsys):
     live = [
         {"id": 1, "alias": "keep_unchanged", "fqdn": "k.example", "https": True},
-        {"id": 2, "alias": "to_be_updated",  "fqdn": "u.example", "https": False},
-        {"id": 3, "alias": "to_be_deleted",  "fqdn": "d.example", "https": False},
+        {"id": 2, "alias": "to_be_updated", "fqdn": "u.example", "https": False},
+        {"id": 3, "alias": "to_be_deleted", "fqdn": "d.example", "https": False},
     ]
     desired = [
         {"id": 1, "alias": "keep_unchanged", "fqdn": "k.example", "https": True},
-        {"id": 2, "alias": "to_be_updated",  "fqdn": "u.example", "https": True},   # changed https
-        {"alias": "newly_added",             "fqdn": "n.example", "https": True},   # no id → create
+        {"id": 2, "alias": "to_be_updated", "fqdn": "u.example", "https": True},  # changed https
+        {"alias": "newly_added", "fqdn": "n.example", "https": True},  # no id → create
     ]
     fake, captured = _factory({"SYNO.Core.AppPortal.ReverseProxy": {"list": {"entries": live}}})
     monkeypatch.setattr(m, "_exec", fake)
@@ -82,7 +83,9 @@ def test_reverse_proxy_check_only(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0 and out.startswith("WOULD-CHANGE")
     # nothing should have been mutated (no create/update/delete captured)
-    method_calls = [p for _, p in captured if any(x.startswith("method=") and x != "method=list" for x in p)]
+    method_calls = [
+        p for _, p in captured if any(x.startswith("method=") and x != "method=list" for x in p)
+    ]
     assert method_calls == []
 
 
@@ -93,12 +96,19 @@ def test_reverse_proxy_check_only(monkeypatch, capsys):
 # garage-ui reverse-proxy entry shape (spec/e4e-nas/app-portal.yml).
 _GARAGE_UI_RP = {
     "description": "Garage UI",
-    "frontend": {"fqdn": "s3-admin.e4e.ucsd.edu", "port": 443, "protocol": 1,
-                 "https": {"hsts": True}},
+    "frontend": {
+        "fqdn": "s3-admin.e4e.ucsd.edu",
+        "port": 443,
+        "protocol": 1,
+        "https": {"hsts": True},
+    },
     "backend": {"fqdn": "127.0.0.1", "port": 8080, "protocol": 0},
-    "proxy_http_version": 1, "customize_headers": [],
-    "proxy_connect_timeout": 60, "proxy_read_timeout": 60,
-    "proxy_send_timeout": 60, "proxy_intercept_errors": False,
+    "proxy_http_version": 1,
+    "customize_headers": [],
+    "proxy_connect_timeout": 60,
+    "proxy_read_timeout": 60,
+    "proxy_send_timeout": 60,
+    "proxy_intercept_errors": False,
 }
 
 
@@ -112,7 +122,7 @@ def test_reverse_proxy_frontend_entry_is_created_not_dropped(monkeypatch, capsys
     assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
     create = next(p for _, p in captured if "method=create" in p)
     entry_param = next(t for t in create if t.startswith("entry="))
-    payload = json.loads(entry_param[len("entry="):])
+    payload = json.loads(entry_param[len("entry=") :])
     assert payload["frontend"]["fqdn"] == "s3-admin.e4e.ucsd.edu"
     assert payload["proxy_http_version"] == 1
     # fields are NOT flattened into separate params (that shape got err 4151)
@@ -122,7 +132,7 @@ def test_reverse_proxy_frontend_entry_is_created_not_dropped(monkeypatch, capsys
 def test_reverse_proxy_frontend_idempotent(monkeypatch, capsys):
     """Live = the spec entry plus DSM's assigned UUID (+ any defaulted fields);
     the spec is a subset → no-change, not a perpetual update."""
-    live_entry = dict(_GARAGE_UI_RP, UUID="315f4955-uuid")   # DSM-assigned UUID the spec lacks
+    live_entry = dict(_GARAGE_UI_RP, UUID="315f4955-uuid")  # DSM-assigned UUID the spec lacks
     fake, _ = _factory({"SYNO.Core.AppPortal.ReverseProxy": {"list": {"entries": [live_entry]}}})
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["reverse-proxy", "--entries", json.dumps([_GARAGE_UI_RP])])
@@ -132,15 +142,20 @@ def test_reverse_proxy_frontend_idempotent(monkeypatch, capsys):
 def test_reverse_proxy_frontend_update_injects_live_uuid(monkeypatch, capsys):
     """A changed nested field → update, with DSM's live UUID injected into the
     `entry=<json>` payload (the spec carries none)."""
-    live_entry = dict(_GARAGE_UI_RP, UUID="315f4955-uuid",
-                      backend={"fqdn": "127.0.0.1", "port": 9999, "protocol": 0})  # drifted port
-    fake, captured = _factory({"SYNO.Core.AppPortal.ReverseProxy": {"list": {"entries": [live_entry]}}})
+    live_entry = dict(
+        _GARAGE_UI_RP,
+        UUID="315f4955-uuid",
+        backend={"fqdn": "127.0.0.1", "port": 9999, "protocol": 0},
+    )  # drifted port
+    fake, captured = _factory(
+        {"SYNO.Core.AppPortal.ReverseProxy": {"list": {"entries": [live_entry]}}}
+    )
     monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["reverse-proxy", "--entries", json.dumps([_GARAGE_UI_RP])])
     assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
     upd = next(p for _, p in captured if "method=update" in p)
     entry_param = next(t for t in upd if t.startswith("entry="))
-    assert json.loads(entry_param[len("entry="):])["UUID"] == "315f4955-uuid"
+    assert json.loads(entry_param[len("entry=") :])["UUID"] == "315f4955-uuid"
 
 
 def test_access_control_uses_same_diff(monkeypatch, capsys):
@@ -180,7 +195,7 @@ def test_reverse_proxy_create_failure_reports_FAIL(monkeypatch, capsys):
 
 def test_reverse_proxy_update_failure_reports_FAIL(monkeypatch, capsys):
     live = [{"id": 5, "alias": "x", "fqdn": "a", "https": False}]
-    desired = [{"id": 5, "alias": "x", "fqdn": "a", "https": True}]   # update
+    desired = [{"id": 5, "alias": "x", "fqdn": "a", "https": True}]  # update
 
     def fake(api, *params):
         if "method=list" in params:
@@ -198,7 +213,7 @@ def test_reverse_proxy_update_failure_reports_FAIL(monkeypatch, capsys):
 # --- Low: delete-key fallback (alias / name when id missing) ----------------------
 def test_delete_falls_back_to_alias_when_no_id(monkeypatch, capsys):
     """An entry the role knows only by alias (no id from DSM) must still delete cleanly."""
-    live = [{"alias": "no_id_entry", "fqdn": "x.example", "https": False}]   # no id field
+    live = [{"alias": "no_id_entry", "fqdn": "x.example", "https": False}]  # no id field
 
     captured = []
 
@@ -209,7 +224,7 @@ def test_delete_falls_back_to_alias_when_no_id(monkeypatch, capsys):
         return {"success": True}
 
     monkeypatch.setattr(m, "_exec", fake)
-    rc = m.main(["reverse-proxy", "--entries", "[]"])   # desired empty → delete live
+    rc = m.main(["reverse-proxy", "--entries", "[]"])  # desired empty → delete live
     assert rc == 0
     out = capsys.readouterr().out
     assert out.startswith("CHANGED")
