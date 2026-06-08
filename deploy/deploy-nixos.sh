@@ -57,6 +57,16 @@ if [[ ! -r "$OEC_INSTALLER" ]]; then
   echo "       Stage it out-of-band (see deploy/README.md) — hosts cannot be hardened without it."
   exit 1
 fi
+# Sanity-check the archive HERE (it's a tar — plain or compressed; tar -tf
+# auto-detects) so a corrupt/truncated/wrong-format file fails fast on the
+# control node with a clear message, rather than surfacing as an opaque
+# oec-install failure mid-rebuild on the first host (which is how the gzip-vs-
+# plain-tar mismatch first bit us).
+if ! tar -tf "$OEC_INSTALLER" >/dev/null 2>&1; then
+  echo "FATAL: OEC installer is not a readable tar archive: $OEC_INSTALLER"
+  echo "       Re-stage the vendor archive (it is a tar — plain or gz; corrupt/truncated otherwise)."
+  exit 1
+fi
 
 # Push the OEC archive to <target> and install it root-owned 0600 at OEC_DEST.
 # scp lands it as krg-admin in /tmp, then sudo-installs into the root-owned
