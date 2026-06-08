@@ -122,6 +122,13 @@ jobs:
       # default, so without it a failed NixOS apply would NOT stop the Ansible (or
       # OpenTofu) stage. Combined with each script's own internal fail-fast, one
       # failed host/target halts the whole deploy.
+      # Stages the campus-mandated OEC (Qualys + Trellix) installer to each host and
+      # verifies both security daemons are active — the deploy FAILS if the archive
+      # is missing on the control node or any host's daemons aren't up (#22). The
+      # credentialed archive is staged out-of-band at
+      # /var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz (see
+      # deploy/README.md "OEC"); override with OEC_INSTALLER if elsewhere. Same
+      # gate applies to the Proxmox hosts in the Ansible step below.
       - name: Deploy NixOS hosts
         if: success() && steps.gate.outputs.ok == 'true'
         run: ./deploy/deploy-nixos.sh

@@ -31,45 +31,55 @@
 #       group membership for access, and — when sshKeysFromAD = true — the
 #       one-time OpenSSH-LPK schema extension plus the user's sshPublicKey.
 #   See ../../docs/creating-a-user.md for the exact commands.
-{ config, lib, pkgs, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; let
   cfg = config.krg.adClient;
   baseDN = concatMapStringsSep "," (c: "DC=${c}") (splitString "." cfg.domain);
   # memberOf filter for the named groups (default container CN=Users).
-  groupFilter = optionalString (cfg.allowedGroups != [ ])
+  groupFilter =
+    optionalString (cfg.allowedGroups != [])
     "(|${concatMapStringsSep "" (g: "(memberOf=CN=${g},CN=Users,${baseDN})") cfg.allowedGroups})";
-  effectiveFilter = if cfg.accessFilter != null then cfg.accessFilter else groupFilter;
+  effectiveFilter =
+    if cfg.accessFilter != null
+    then cfg.accessFilter
+    else groupFilter;
   # shell_fallback target: null means store-path bash, which (unlike /bin/bash)
   # always exists on NixOS — so a fallback never resolves to a missing path.
   effectiveShellFallback =
-    if cfg.shellFallback != null then cfg.shellFallback else "${pkgs.bashInteractive}/bin/bash";
+    if cfg.shellFallback != null
+    then cfg.shellFallback
+    else "${pkgs.bashInteractive}/bin/bash";
 in {
   options.krg.adClient = {
     enable = mkEnableOption "SSSD Active Directory client (log in as AD users)";
 
     realm = mkOption {
-      type        = types.str;
-      default     = "KRG.LOCAL";
+      type = types.str;
+      default = "KRG.LOCAL";
       description = "AD Kerberos realm (uppercase).";
     };
 
     domain = mkOption {
-      type        = types.str;
-      default     = "krg.local";
+      type = types.str;
+      default = "krg.local";
       description = "AD DNS domain (lowercase).";
     };
 
     server = mkOption {
-      type        = types.nullOr types.str;
-      default     = null;
+      type = types.nullOr types.str;
+      default = null;
       description = "Pin a specific DC as ad_server. Null = DNS SRV autodiscovery.";
     };
 
     serverIp = mkOption {
-      type        = types.nullOr types.str;
-      default     = null;
-      example      = "137.110.161.109";
+      type = types.nullOr types.str;
+      default = null;
+      example = "137.110.161.109";
       description = ''
         IP of `server`, pinned in /etc/hosts so a member host can resolve the DC
         without depending on it for DNS. Also lets this module render a usable
@@ -78,8 +88,8 @@ in {
     };
 
     isDomainController = mkOption {
-      type        = types.bool;
-      default     = false;
+      type = types.bool;
+      default = false;
       description = ''
         This host IS the DC (shares the box with samba-ad). Disables SSSD machine-
         account password rotation + dynamic DNS updates (the DC must not rotate its
@@ -89,9 +99,9 @@ in {
     };
 
     allowedGroups = mkOption {
-      type        = types.listOf types.str;
-      default     = [ ];
-      example     = [ "Domain Admins" ];
+      type = types.listOf types.str;
+      default = [];
+      example = ["Domain Admins"];
       description = ''
         Restrict login to members of these AD groups (matched by memberOf under
         CN=Users). Empty = any enabled domain account may log in. Built into
@@ -101,15 +111,15 @@ in {
     };
 
     accessFilter = mkOption {
-      type        = types.nullOr types.str;
-      default     = null;
+      type = types.nullOr types.str;
+      default = null;
       description = "Raw ad_access_filter; overrides allowedGroups when set.";
     };
 
     sudoGroups = mkOption {
-      type        = types.listOf types.str;
-      default     = [ ];
-      example     = [ "Domain Admins" ];
+      type = types.listOf types.str;
+      default = [];
+      example = ["Domain Admins"];
       description = ''
         AD groups whose members get sudo (PASSWORD required — AD users have a
         password, unlike the key-only break-glass admin which is NOPASSWD). Separate
@@ -120,8 +130,8 @@ in {
     };
 
     idMapping = mkOption {
-      type        = types.bool;
-      default     = true;
+      type = types.bool;
+      default = true;
       description = ''
         Auto-assign POSIX uid/gid algorithmically from each user's AD SID
         (ldap_id_mapping) — deterministic and identical across SSSD hosts, so no
@@ -132,8 +142,8 @@ in {
     };
 
     sshKeysFromAD = mkOption {
-      type        = types.bool;
-      default     = false;
+      type = types.bool;
+      default = false;
       description = ''
         Serve SSH authorized keys from AD via sss_ssh_authorizedkeys (keys stored
         in the sshPublicKey attribute). Requires extending the Samba AD schema with
@@ -142,8 +152,8 @@ in {
     };
 
     gpoAccessControl = mkOption {
-      type        = types.enum [ "disabled" "permissive" "enforcing" ];
-      default     = "disabled";
+      type = types.enum ["disabled" "permissive" "enforcing"];
+      default = "disabled";
       description = ''
         SSSD ad_gpo_access_control. SSSD's default (enforcing) fetches Group Policy
         from sysvol every login; against a Samba AD DC that errors and an error
@@ -154,9 +164,9 @@ in {
     };
 
     allowedShells = mkOption {
-      type        = types.listOf types.str;
-      default     = [ "*" ];
-      example     = [ "/run/current-system/sw/bin/bash" "/run/current-system/sw/bin/zsh" ];
+      type = types.listOf types.str;
+      default = ["*"];
+      example = ["/run/current-system/sw/bin/bash" "/run/current-system/sw/bin/zsh"];
       description = ''
         SSSD allowed_shells, evaluated per host: a user's AD loginShell is honoured
         only where that exact path is in /etc/shells on THIS host; if it is allowed
@@ -174,8 +184,8 @@ in {
     };
 
     shellFallback = mkOption {
-      type        = types.nullOr types.str;
-      default     = null;
+      type = types.nullOr types.str;
+      default = null;
       defaultText = literalExpression ''"''${pkgs.bashInteractive}/bin/bash"'';
       description = ''
         SSSD shell_fallback: the shell substituted when a user's shell is allowed
@@ -188,7 +198,7 @@ in {
 
   config = mkIf cfg.enable {
     services.sssd = {
-      enable                       = true;
+      enable = true;
       sshAuthorizedKeysIntegration = cfg.sshKeysFromAD;
       config = ''
         [sssd]
@@ -201,7 +211,7 @@ in {
         # NixOS has no /bin/bash — a login shell must be a real path (store bash)
         # or sshd rejects the account pre-auth: "shell /bin/bash does not exist".
         default_shell = ${pkgs.bashInteractive}/bin/bash
-        ${optionalString (cfg.allowedShells != [ ]) ''
+        ${optionalString (cfg.allowedShells != []) ''
           # Per-user AD loginShell, fail-safe across heterogeneous hosts. SSSD
           # honours a user's loginShell only where that path is in /etc/shells on
           # THIS host (so /run/current-system/sw/bin/zsh → zsh on a zsh host); a
@@ -226,7 +236,11 @@ in {
         ${optionalString (cfg.server != null) "ad_server = ${cfg.server}"}
         krb5_realm = ${cfg.realm}
         # uid/gid source: SID-derived id-mapping (automatic) vs RFC2307 attributes.
-        ldap_id_mapping = ${if cfg.idMapping then "True" else "False"}
+        ldap_id_mapping = ${
+          if cfg.idMapping
+          then "True"
+          else "False"
+        }
         use_fully_qualified_names = false
         cache_credentials = true
         krb5_store_password_if_offline = true
@@ -259,17 +273,17 @@ in {
     security.pam.services.sshd.sssdStrictAccess = true;
 
     # SSSD supplies identity, not the home directory — create it on first login.
-    security.pam.services.sshd.makeHomeDir  = true;
+    security.pam.services.sshd.makeHomeDir = true;
     security.pam.services.login.makeHomeDir = true;
 
     # Sudo for AD admin groups (PASSWORD required — distinct from the key-only
     # break-glass admin's NOPASSWD rule in users/admin.nix). Group names with spaces
     # like "Domain Admins" must be escaped for sudoers (%Domain\ Admins); NixOS's
     # security.sudo.extraRules would NOT escape them, so build the lines here.
-    security.sudo.extraConfig = mkIf (cfg.sudoGroups != [ ]) ''
+    security.sudo.extraConfig = mkIf (cfg.sudoGroups != []) ''
       # krg.adClient.sudoGroups — AD groups granted sudo (password required).
       ${concatMapStringsSep "\n"
-        (g: "%${builtins.replaceStrings [ " " ] [ "\\ " ] g} ALL=(ALL:ALL) ALL")
+        (g: "%${builtins.replaceStrings [" "] ["\\ "] g} ALL=(ALL:ALL) ALL")
         cfg.sudoGroups}
     '';
 
@@ -280,12 +294,13 @@ in {
     # cifs.upcall ticket for sec=krb5 mounts) survive past one ticket lifetime without a
     # re-`kinit`. Renewability itself comes from renew_lifetime in krb5.conf below.
     # See docs/kerberos-long-jobs.md.
-    environment.systemPackages = [ pkgs.krb5 pkgs.adcli pkgs.kstart ];
+    environment.systemPackages = [pkgs.krb5 pkgs.adcli pkgs.kstart];
 
     # Resolve the DC without depending on it for DNS (member hosts). On the DC this
     # is its own name→IP, harmless. mkDefault so a host can override.
-    networking.hosts = mkIf (cfg.server != null && cfg.serverIp != null)
-      { ${cfg.serverIp} = mkDefault [ cfg.server ]; };
+    networking.hosts =
+      mkIf (cfg.server != null && cfg.serverIp != null)
+      {${cfg.serverIp} = mkDefault [cfg.server];};
 
     # Every domain member uses the AD DC as its PRIMARY DNS by default. This is
     # required, not just tidy: SSSD's own (c-ares) resolver queries the servers in
@@ -298,8 +313,9 @@ in {
     # of a host's site fallback resolvers. NOT applied on the DC itself (it owns its
     # resolver via samba-ad.nix) nor when serverIp is null (SRV autodiscovery, which
     # then relies on DNS that already serves krg.local).
-    networking.nameservers = mkIf (!cfg.isDomainController && cfg.serverIp != null)
-      (mkBefore [ cfg.serverIp ]);
+    networking.nameservers =
+      mkIf (!cfg.isDomainController && cfg.serverIp != null)
+      (mkBefore [cfg.serverIp]);
 
     # krb5.conf for member hosts (the DC's samba-ad module renders its own at normal
     # priority, so mkDefault here yields on the DC and applies on members). KDC is
@@ -308,7 +324,11 @@ in {
       [libdefaults]
           default_realm = ${cfg.realm}
           dns_lookup_realm = false
-          dns_lookup_kdc = ${if cfg.server != null then "false" else "true"}
+          dns_lookup_kdc = ${
+        if cfg.server != null
+        then "false"
+        else "true"
+      }
           rdns = false
           # Renewable tickets for long-running jobs. The 10h ticket lifetime stays
           # (it's the revocation cadence — a leaked ccache dies in 10h), but with

@@ -98,8 +98,10 @@ nixos-rebuild switch --flake ./nix#waiter   --target-host krg-admin@137.110.161.
 # Update flake inputs (run inside nix/)
 cd nix && nix flake update          # or: nix flake update nixpkgs
 
-# Format .nix files
-alejandra nix    # or: nixfmt nix
+# Format .nix files (alejandra, via treefmt). This is the SAME formatter the
+# `nix flake check` gate enforces (checks.formatting), so always format before
+# committing — unformatted Nix fails CI.
+cd nix && nix fmt
 
 # --- Proxmox hosts (ansible/) ---
 cd ansible

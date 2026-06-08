@@ -67,9 +67,12 @@
 #     proxmox_firewall layer; consumed by the CrowdSec whitelist).
 #   * The fleet policy and the `ops` escape hatch for traveling staff
 #     is documented in docs/working-remotely.md.
-{ config, lib, ... }:
-with lib;
-let
+{
+  config,
+  lib,
+  ...
+}:
+with lib; let
   cfg = config.krg.firewall;
   # nftables uses different match keywords for v4 (`ip saddr`) vs v6
   # (`ip6 saddr`). Pick by colon presence — only v6 has colons.
@@ -87,27 +90,43 @@ let
 
   # Render a per-port rule for one protocol+family. Returns "" if the
   # source list is empty (don't emit a rule that matches nothing).
-  mkPortRule = { proto, family, port, sources }:
-    if sources == [] then ""
+  mkPortRule = {
+    proto,
+    family,
+    port,
+    sources,
+  }:
+    if sources == []
+    then ""
     else "${family} ${inlineSet sources} ${proto} dport ${toString port} accept\n";
 
   # Render both v4 and v6 rules for a sourcedPort entry. Splits sources
   # by family so each rule references a single-family set (nftables
   # requires this; `ip saddr` can't reference an ipv6 set).
-  mkSourcedRules = proto: { port, sources }:
-    let
-      v4 = filter (s: !(isV6 s)) sources;
-      v6 = filter isV6 sources;
-    in
-      mkPortRule { inherit proto port; family = "ip saddr";  sources = v4; }
-      + mkPortRule { inherit proto port; family = "ip6 saddr"; sources = v6; };
+  mkSourcedRules = proto: {
+    port,
+    sources,
+  }: let
+    v4 = filter (s: !(isV6 s)) sources;
+    v6 = filter isV6 sources;
+  in
+    mkPortRule {
+      inherit proto port;
+      family = "ip saddr";
+      sources = v4;
+    }
+    + mkPortRule {
+      inherit proto port;
+      family = "ip6 saddr";
+      sources = v6;
+    };
 in {
   options.krg.firewall = {
     enable = mkEnableOption "KRG firewall (replaces UFW)";
 
     allowedTCPPorts = mkOption {
-      type        = types.listOf types.port;
-      default     = [];
+      type = types.listOf types.port;
+      default = [];
       description = ''
         Ports the host wants reachable. Land in
         `networking.firewall.allowedTCPPorts` (globally open at the
@@ -145,9 +164,9 @@ in {
     };
 
     publicPorts = mkOption {
-      type        = types.listOf types.port;
-      default     = [];
-      example     = [ 80 ];
+      type = types.listOf types.port;
+      default = [];
+      example = [80];
       description = ''
         Ports that MUST be globally reachable — no source restriction.
         EXPLICIT opt-IN escape hatch for protocols where source
@@ -167,34 +186,34 @@ in {
     };
 
     allowedUDPPorts = mkOption {
-      type    = types.listOf types.port;
+      type = types.listOf types.port;
       default = [];
     };
 
     # Ports only reachable from the KRG Prometheus scraping host
     # (krg-prod; set via monitoringSourceIp below, sourced from trusted.json).
     monitoringPorts = mkOption {
-      type        = types.listOf types.port;
-      default     = [];
+      type = types.listOf types.port;
+      default = [];
       description = "Ports open only to monitoringSourceIp (Prometheus scraping)";
     };
 
     monitoringSourceIp = mkOption {
-      type    = types.str;
+      type = types.str;
       # Fallback only — base.nix sets this on every host from trusted.json's
       # monitoring_host (currently krg-prod). Kept in sync to avoid a stale value.
       default = "137.110.161.106";
     };
 
     allowRDP = mkOption {
-      type        = types.bool;
-      default     = false;
+      type = types.bool;
+      default = false;
       description = "Open port 3389 for XRDP (waiter compute nodes)";
     };
 
     rdpSources = mkOption {
-      type        = types.listOf types.str;
-      default     = [];
+      type = types.listOf types.str;
+      default = [];
       description = ''
         When allowRDP is set: if non-empty, 3389 is reachable ONLY from these
         CIDRs/IPs (source-restricted in-guest); if empty, 3389 is opened globally.
@@ -205,8 +224,8 @@ in {
     };
 
     sshSources = mkOption {
-      type        = types.listOf types.str;
-      default     = [];
+      type = types.listOf types.str;
+      default = [];
       description = ''
         If non-empty, SSH (port 22) is reachable ONLY from these CIDRs/IPs
         in-guest, instead of being globally open. Service hosts set this (mirrors
@@ -217,13 +236,13 @@ in {
     };
 
     sourcedPorts = mkOption {
-      type    = types.listOf (types.submodule {
+      type = types.listOf (types.submodule {
         options = {
-          port    = mkOption { type = types.port; };
-          sources = mkOption { type = types.listOf types.str; };
+          port = mkOption {type = types.port;};
+          sources = mkOption {type = types.listOf types.str;};
         };
       });
-      default     = [];
+      default = [];
       description = ''
         TCP ports reachable ONLY from specific source CIDRs/IPs in-guest.
         Use for services that should be internal-only (e.g. OpenBao API on
@@ -246,13 +265,13 @@ in {
     };
 
     sourcedUDPPorts = mkOption {
-      type    = types.listOf (types.submodule {
+      type = types.listOf (types.submodule {
         options = {
-          port    = mkOption { type = types.port; };
-          sources = mkOption { type = types.listOf types.str; };
+          port = mkOption {type = types.port;};
+          sources = mkOption {type = types.listOf types.str;};
         };
       });
-      default     = [];
+      default = [];
       description = ''
         UDP counterpart of `sourcedPorts`. Same shape, same dual-stack
         v4/v6 source handling. Used by samba-ad on krg-ldap to keep DNS,
@@ -266,24 +285,27 @@ in {
     # on nftables + the rules below; disabling it (e.g. VMs where the hypervisor
     # owns the firewall) explicitly turns the NixOS firewall OFF rather than
     # letting it fall back to its restrictive enabled-by-default state.
-    { networking.firewall.enable = cfg.enable; }
+    {networking.firewall.enable = cfg.enable;}
 
     (mkIf cfg.enable (let
       # Ports that already have a per-port restriction. Excluded from
       # the globally-open list (the stricter rule wins).
-      sshSourceCovered     = if cfg.sshSources != [] then [ 22 ] else [];
+      sshSourceCovered =
+        if cfg.sshSources != []
+        then [22]
+        else [];
       manualSourcedCovered = map (e: e.port) cfg.sourcedPorts;
       # RDP (3389) is source-restricted when allowRDP=true AND rdpSources
       # is non-empty (a per-source rule is emitted in extraInputRules).
       # If 3389 also appears in allowedTCPPorts, the globally-open rule
       # would shadow the per-source restriction — exclude it here.
-      rdpSourceCovered     = optional (cfg.allowRDP && cfg.rdpSources != []) 3389;
-      alreadyTighter       = sshSourceCovered ++ manualSourcedCovered ++ rdpSourceCovered;
+      rdpSourceCovered = optional (cfg.allowRDP && cfg.rdpSources != []) 3389;
+      alreadyTighter = sshSourceCovered ++ manualSourcedCovered ++ rdpSourceCovered;
 
       # UDP equivalent: ports in sourcedUDPPorts get per-source accept
       # rules in extraInputRules; if also in allowedUDPPorts, the
       # globally-open rule shadows them. Filter here.
-      udpSourcedCovered    = map (e: e.port) cfg.sourcedUDPPorts;
+      udpSourcedCovered = map (e: e.port) cfg.sourcedUDPPorts;
     in {
       # Disjointness assertions (closes #83 + extends for publicPorts).
       # A port belongs in ONE list — overlapping lists silently shadow
@@ -314,8 +336,10 @@ in {
           # publicPorts vs sourcedPorts: opposite intent (globally open vs
           # source-restricted). sourcedPorts emits accept rules; publicPorts
           # adds to the globally-open list. Globally-open wins. Pick one.
-          assertion = builtins.all
-            (p: !(elem p (map (e: e.port) cfg.sourcedPorts))) cfg.publicPorts;
+          assertion =
+            builtins.all
+            (p: !(elem p (map (e: e.port) cfg.sourcedPorts)))
+            cfg.publicPorts;
           message = ''
             krg.firewall: port(s) appear in BOTH publicPorts and sourcedPorts.
             Opposite intent — pick one:
@@ -332,7 +356,8 @@ in {
           # clean up the duplicate before the bug from #83 can resurface.
           assertion = let
             srcSet = map (e: e.port) cfg.sourcedPorts;
-          in builtins.all (p: !(elem p srcSet)) cfg.allowedTCPPorts;
+          in
+            builtins.all (p: !(elem p srcSet)) cfg.allowedTCPPorts;
           message = ''
             krg.firewall: port(s) appear in BOTH allowedTCPPorts AND
             sourcedPorts. The sourcedPorts (per-port-restricted) rule
@@ -352,7 +377,8 @@ in {
           # would silently shadow the restriction.
           assertion = let
             srcSet = map (e: e.port) cfg.sourcedUDPPorts;
-          in builtins.all (p: !(elem p srcSet)) cfg.allowedUDPPorts;
+          in
+            builtins.all (p: !(elem p srcSet)) cfg.allowedUDPPorts;
           message = ''
             krg.firewall: UDP port(s) appear in BOTH allowedUDPPorts AND
             sourcedUDPPorts. sourcedUDPPorts wins, so the allowedUDPPorts
@@ -433,14 +459,25 @@ in {
           # so the v4/v6 family is picked by colon-detection — a future
           # IPv6 monitoring host would otherwise produce invalid nftables
           # syntax (hardcoded `ip saddr` against an IPv6 address).
-          concatMapStrings (port:
-            mkSourcedRules "tcp" { inherit port; sources = [ cfg.monitoringSourceIp ]; }
-          ) cfg.monitoringPorts
+          concatMapStrings (
+            port:
+              mkSourcedRules "tcp" {
+                inherit port;
+                sources = [cfg.monitoringSourceIp];
+              }
+          )
+          cfg.monitoringPorts
           # SSH (22) from sshSources — one rule per family.
-          + mkSourcedRules "tcp" { port = 22; sources = cfg.sshSources; }
+          + mkSourcedRules "tcp" {
+            port = 22;
+            sources = cfg.sshSources;
+          }
           # RDP (3389) from rdpSources — one rule per family.
           + optionalString cfg.allowRDP
-              (mkSourcedRules "tcp" { port = 3389; sources = cfg.rdpSources; })
+          (mkSourcedRules "tcp" {
+            port = 3389;
+            sources = cfg.rdpSources;
+          })
           # sourcedPorts (TCP): operator-explicit per-port restrictions.
           + concatMapStrings (mkSourcedRules "tcp") cfg.sourcedPorts
           # sourcedUDPPorts: same shape, udp.
