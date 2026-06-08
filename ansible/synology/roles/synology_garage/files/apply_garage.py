@@ -34,6 +34,7 @@ render-config output deliberately omits the secret values from any
 WOULD-CHANGE/CHANGED payload (only emits `desired_sha256`, a fingerprint
 of the rendered config that lets operators confirm meaningful change).
 """
+
 import argparse
 import hashlib
 import json
@@ -49,9 +50,9 @@ import tempfile
 # prepend the install locations. Adding both v7.2+ (Container Manager) and
 # legacy (Docker package) targets so this works across DSM versions.
 _DSM_DOCKER_PATHS = (
-    "/usr/local/bin",                                  # symlink target on most DSM 7.x
-    "/var/packages/ContainerManager/target/usr/bin",   # DSM 7.2+ Container Manager
-    "/var/packages/Docker/target/usr/bin",             # legacy DSM ≤ 7.1 Docker package
+    "/usr/local/bin",  # symlink target on most DSM 7.x
+    "/var/packages/ContainerManager/target/usr/bin",  # DSM 7.2+ Container Manager
+    "/var/packages/Docker/target/usr/bin",  # legacy DSM ≤ 7.1 Docker package
 )
 os.environ["PATH"] = ":".join(_DSM_DOCKER_PATHS) + ":" + os.environ.get("PATH", "")
 
@@ -214,9 +215,14 @@ def _run(*cmd, **kw):
         return subprocess.run(list(cmd), capture_output=True, text=True, **kw)
     except FileNotFoundError as e:
         return subprocess.CompletedProcess(
-            args=list(cmd), returncode=127, stdout="",
-            stderr="binary not found on PATH: " + (cmd[0] if cmd else "<empty>") +
-                   " (" + str(e) + ")",
+            args=list(cmd),
+            returncode=127,
+            stdout="",
+            stderr="binary not found on PATH: "
+            + (cmd[0] if cmd else "<empty>")
+            + " ("
+            + str(e)
+            + ")",
         )
 
 
@@ -284,24 +290,23 @@ def do_render_config(a):
     # out of the ansible-side capture too).
     missing = [v for v in _SECRET_ENV_VARS if not os.environ.get(v)]
     if missing:
-        return _fail({"reason": "required secret env vars unset",
-                      "vars": missing})
+        return _fail({"reason": "required secret env vars unset", "vars": missing})
     fields = {
-        "db_engine":           a.db_engine,
-        "replication_factor":  int(a.replication_factor),
-        "compression_level":   int(a.compression_level),
-        "rpc_bind_addr":       a.rpc_bind_addr,
-        "rpc_public_addr":     a.rpc_public_addr,
-        "rpc_secret":          os.environ["GARAGE_RPC_SECRET"],
-        "s3_api_bind_addr":    a.s3_api_bind_addr,
-        "s3_region":           a.s3_region,
-        "s3_root_domain":      a.s3_root_domain,
-        "s3_web_bind_addr":    a.s3_web_bind_addr,
-        "s3_web_root_domain":  a.s3_web_root_domain,
-        "s3_web_index":        a.s3_web_index,
+        "db_engine": a.db_engine,
+        "replication_factor": int(a.replication_factor),
+        "compression_level": int(a.compression_level),
+        "rpc_bind_addr": a.rpc_bind_addr,
+        "rpc_public_addr": a.rpc_public_addr,
+        "rpc_secret": os.environ["GARAGE_RPC_SECRET"],
+        "s3_api_bind_addr": a.s3_api_bind_addr,
+        "s3_region": a.s3_region,
+        "s3_root_domain": a.s3_root_domain,
+        "s3_web_bind_addr": a.s3_web_bind_addr,
+        "s3_web_root_domain": a.s3_web_root_domain,
+        "s3_web_index": a.s3_web_index,
         "admin_api_bind_addr": a.admin_api_bind_addr,
-        "admin_token":         os.environ["GARAGE_ADMIN_TOKEN"],
-        "metrics_token":       os.environ["GARAGE_METRICS_TOKEN"],
+        "admin_token": os.environ["GARAGE_ADMIN_TOKEN"],
+        "metrics_token": os.environ["GARAGE_METRICS_TOKEN"],
     }
     # Reject any literal `"`, `\n`, or `\r` in a string field — these
     # would close the TOML basic-string literal early and inject content
@@ -310,8 +315,7 @@ def do_render_config(a):
     # no triple-quoted blocks.
     for k, v in fields.items():
         if isinstance(v, str) and ('"' in v or "\n" in v or "\r" in v):
-            return _fail({"reason": "field contains unescaped quote or newline",
-                          "field": k})
+            return _fail({"reason": "field contains unescaped quote or newline", "field": k})
 
     desired = GARAGE_TOML_TEMPLATE % fields
     desired_hash = _sha256(desired)
@@ -324,9 +328,9 @@ def do_render_config(a):
     # No secret values in the payload — only the fact that secrets-bearing
     # content changed. Keep no_log honest even if the operator forgot.
     payload = {
-        "config_path":     a.config_path,
-        "had_existing":    current is not None,
-        "desired_sha256":  desired_hash,
+        "config_path": a.config_path,
+        "had_existing": current is not None,
+        "desired_sha256": desired_hash,
     }
     if a.check:
         return _emit("would-change", payload, True)
@@ -352,15 +356,15 @@ def _container_image(name):
 
 def do_deploy(a):
     fields = {
-        "container_name":  a.container_name,
-        "image":           a.image,
-        "image_tag":       a.image_tag,
-        "network_mode":    a.network_mode,
-        "restart_policy":  a.restart_policy,
-        "rust_log":        a.rust_log,
-        "meta_dir":        a.meta_dir,
-        "data_dir":        a.data_dir,
-        "config_path":     a.config_path,
+        "container_name": a.container_name,
+        "image": a.image,
+        "image_tag": a.image_tag,
+        "network_mode": a.network_mode,
+        "restart_policy": a.restart_policy,
+        "rust_log": a.rust_log,
+        "meta_dir": a.meta_dir,
+        "data_dir": a.data_dir,
+        "config_path": a.config_path,
     }
     desired_compose = COMPOSE_TEMPLATE % fields
     current_compose = _read(a.compose_path)
@@ -372,28 +376,36 @@ def do_deploy(a):
     config_missing = not os.path.exists(a.config_path)
     if config_missing:
         if not a.check:
-            return _fail({"reason": "garage.toml missing — run render-config first",
-                          "config_path": a.config_path})
-        return _emit("would-change", {
-            "compose_path":   a.compose_path,
-            "config_missing": True,
-            "reason":         "render-config must run before deploy on apply",
-        }, True)
+            return _fail(
+                {
+                    "reason": "garage.toml missing — run render-config first",
+                    "config_path": a.config_path,
+                }
+            )
+        return _emit(
+            "would-change",
+            {
+                "compose_path": a.compose_path,
+                "config_missing": True,
+                "reason": "render-config must run before deploy on apply",
+            },
+            True,
+        )
 
     desired_image = "%s:%s" % (a.image, a.image_tag)
-    compose_drift = (current_compose != desired_compose)
+    compose_drift = current_compose != desired_compose
     current_image = _container_image(a.container_name)
-    image_drift = (current_image != desired_image)
+    image_drift = current_image != desired_image
     not_running = not _container_running(a.container_name)
 
     drift = compose_drift or image_drift or not_running
     payload = {
-        "compose_path":  a.compose_path,
+        "compose_path": a.compose_path,
         "compose_drift": compose_drift,
-        "image_drift":   image_drift,
+        "image_drift": image_drift,
         "image_current": current_image,
         "image_desired": desired_image,
-        "not_running":   not_running,
+        "not_running": not_running,
     }
     if not drift:
         return _emit("no-change", {}, a.check)
@@ -410,9 +422,14 @@ def do_deploy(a):
     # recreate the container on config / image / mount changes.
     r = _run("docker", "compose", "-f", a.compose_path, "up", "-d")
     if r.returncode != 0:
-        return _fail({"reason":  "docker compose up failed",
-                      "stdout":  r.stdout, "stderr": r.stderr,
-                      "payload": payload})
+        return _fail(
+            {
+                "reason": "docker compose up failed",
+                "stdout": r.stdout,
+                "stderr": r.stderr,
+                "payload": payload,
+            }
+        )
     payload["compose_out"] = r.stderr.strip() or r.stdout.strip()
     return _emit("changed", payload, False)
 
@@ -437,19 +454,29 @@ def do_layout(a):
     r = _garage(a.container_name, "status")
     if r.returncode != 0:
         if a.check:
-            return _emit("would-change", {
-                "reason":   "container not yet running — would assign layout once it's up",
-                "zone":     a.zone,
-                "capacity": a.capacity,
-            }, True)
-        return _fail({"reason":  "`garage status` failed — container not ready",
-                      "stdout":  r.stdout, "stderr": r.stderr})
+            return _emit(
+                "would-change",
+                {
+                    "reason": "container not yet running — would assign layout once it's up",
+                    "zone": a.zone,
+                    "capacity": a.capacity,
+                },
+                True,
+            )
+        return _fail(
+            {
+                "reason": "`garage status` failed — container not ready",
+                "stdout": r.stdout,
+                "stderr": r.stderr,
+            }
+        )
 
     # 2. Is a layout already defined? (version > 0 means yes.)
     r = _garage(a.container_name, "layout", "show")
     if r.returncode != 0:
-        return _fail({"reason":  "`garage layout show` failed",
-                      "stdout":  r.stdout, "stderr": r.stderr})
+        return _fail(
+            {"reason": "`garage layout show` failed", "stdout": r.stdout, "stderr": r.stderr}
+        )
     show = r.stdout
     m = _LAYOUT_VER_RE.search(show)
     version = int(m.group(1)) if m else 0
@@ -475,28 +502,38 @@ def do_layout(a):
             node_id = parts[0][:16]
             break
     if not node_id:
-        return _fail({"reason":  "couldn't parse node id from `garage status`",
-                      "stdout":  status})
+        return _fail({"reason": "couldn't parse node id from `garage status`", "stdout": status})
 
     payload = {
-        "node_id":  node_id,
-        "zone":     a.zone,
+        "node_id": node_id,
+        "zone": a.zone,
         "capacity": a.capacity,
-        "version":  1,
+        "version": 1,
     }
     if a.check:
         return _emit("would-change", payload, True)
 
     # 4. Assign + apply. layout apply --version <new_version>; first apply is 1.
-    r = _garage(a.container_name, "layout", "assign",
-                "-z", a.zone, "-c", a.capacity, node_id)
+    r = _garage(a.container_name, "layout", "assign", "-z", a.zone, "-c", a.capacity, node_id)
     if r.returncode != 0:
-        return _fail({"reason":  "`garage layout assign` failed",
-                      "stdout":  r.stdout, "stderr": r.stderr, "payload": payload})
+        return _fail(
+            {
+                "reason": "`garage layout assign` failed",
+                "stdout": r.stdout,
+                "stderr": r.stderr,
+                "payload": payload,
+            }
+        )
     r = _garage(a.container_name, "layout", "apply", "--version", "1")
     if r.returncode != 0:
-        return _fail({"reason":  "`garage layout apply` failed",
-                      "stdout":  r.stdout, "stderr": r.stderr, "payload": payload})
+        return _fail(
+            {
+                "reason": "`garage layout apply` failed",
+                "stdout": r.stdout,
+                "stderr": r.stderr,
+                "payload": payload,
+            }
+        )
     return _emit("changed", payload, False)
 
 
@@ -530,8 +567,7 @@ def _ensure_jwt_key(config_path):
         os.makedirs(os.path.dirname(key_path), exist_ok=True)
         r = _run("openssl", "genpkey", "-algorithm", "ED25519", "-out", key_path)
         if r.returncode != 0:
-            raise RuntimeError(
-                "openssl genpkey ED25519 failed: " + (r.stderr or r.stdout))
+            raise RuntimeError("openssl genpkey ED25519 failed: " + (r.stderr or r.stdout))
         os.chmod(key_path, 0o400)
         os.chown(key_path, 0, 0)
     with open(key_path, "r") as fh:
@@ -556,34 +592,31 @@ def do_render_ui_config(a):
     # cluster secrets: kept out of /proc/<pid>/cmdline and `ps`).
     oidc_client_secret = os.environ.get(_UI_SECRET_ENV_VAR, "")
     if not oidc_client_secret:
-        return _fail({"reason": "required secret env var unset",
-                      "vars": [_UI_SECRET_ENV_VAR]})
+        return _fail({"reason": "required secret env var unset", "vars": [_UI_SECRET_ENV_VAR]})
 
     # admin_token reuse: read from GARAGE_ADMIN_TOKEN env (already required
     # by render-config). Same secret, same source, no duplication.
     garage_admin_token = os.environ.get("GARAGE_ADMIN_TOKEN", "")
     if not garage_admin_token:
-        return _fail({"reason": "required secret env var unset",
-                      "vars": ["GARAGE_ADMIN_TOKEN"]})
+        return _fail({"reason": "required secret env var unset", "vars": ["GARAGE_ADMIN_TOKEN"]})
 
     str_fields = {
-        "bind_host":                a.bind_host,
-        "public_hostname":          a.public_hostname,
-        "public_url":               a.public_url,
-        "garage_region":            a.garage_region,
-        "garage_admin_token":       garage_admin_token,
-        "oidc_provider_name":       a.oidc_provider_name,
-        "oidc_client_id":           a.oidc_client_id,
-        "oidc_client_secret":       oidc_client_secret,
-        "oidc_issuer_url":          a.oidc_issuer_url,
+        "bind_host": a.bind_host,
+        "public_hostname": a.public_hostname,
+        "public_url": a.public_url,
+        "garage_region": a.garage_region,
+        "garage_admin_token": garage_admin_token,
+        "oidc_provider_name": a.oidc_provider_name,
+        "oidc_client_id": a.oidc_client_id,
+        "oidc_client_secret": oidc_client_secret,
+        "oidc_issuer_url": a.oidc_issuer_url,
         "oidc_role_attribute_path": a.oidc_role_attribute_path,
     }
     # Same TOML/YAML injection defense as the garage.toml render: reject
     # raw `"`, `\n`, `\r` in any string-typed field.
     for k, v in str_fields.items():
         if isinstance(v, str) and ('"' in v or "\n" in v or "\r" in v):
-            return _fail({"reason": "field contains unescaped quote or newline",
-                          "field": k})
+            return _fail({"reason": "field contains unescaped quote or newline", "field": k})
 
     scopes = json.loads(a.oidc_scopes_json)
     admin_roles = json.loads(a.oidc_admin_roles_json)
@@ -601,22 +634,22 @@ def do_render_ui_config(a):
         jwt_pem = _read(key_path).rstrip()
 
     fields = {
-        "bind_host":                a.bind_host,
-        "port":                     int(a.port),
-        "public_hostname":          a.public_hostname,
-        "public_url":               a.public_url,
-        "garage_s3_port":           int(a.garage_s3_port),
-        "garage_admin_port":        int(a.garage_admin_port),
-        "garage_region":            a.garage_region,
-        "garage_admin_token":       garage_admin_token,
-        "jwt_private_key":          jwt_pem.replace("\n", "\\n"),
-        "oidc_provider_name":       a.oidc_provider_name,
-        "oidc_client_id":           a.oidc_client_id,
-        "oidc_client_secret":       oidc_client_secret,
-        "oidc_issuer_url":          a.oidc_issuer_url,
+        "bind_host": a.bind_host,
+        "port": int(a.port),
+        "public_hostname": a.public_hostname,
+        "public_url": a.public_url,
+        "garage_s3_port": int(a.garage_s3_port),
+        "garage_admin_port": int(a.garage_admin_port),
+        "garage_region": a.garage_region,
+        "garage_admin_token": garage_admin_token,
+        "jwt_private_key": jwt_pem.replace("\n", "\\n"),
+        "oidc_provider_name": a.oidc_provider_name,
+        "oidc_client_id": a.oidc_client_id,
+        "oidc_client_secret": oidc_client_secret,
+        "oidc_issuer_url": a.oidc_issuer_url,
         "oidc_role_attribute_path": a.oidc_role_attribute_path,
-        "oidc_scopes_yaml":         _yaml_list_lines(scopes, 6),
-        "oidc_admin_roles_yaml":    _yaml_list_lines(admin_roles, 6),
+        "oidc_scopes_yaml": _yaml_list_lines(scopes, 6),
+        "oidc_admin_roles_yaml": _yaml_list_lines(admin_roles, 6),
     }
     desired = GARAGE_UI_CONFIG_TEMPLATE % fields
     desired_hash = _sha256(desired)
@@ -637,10 +670,10 @@ def do_render_ui_config(a):
         return _emit("no-change", {}, a.check)
 
     payload = {
-        "config_path":    a.config_path,
-        "jwt_key_path":   key_path,
-        "key_generated":  key_missing,
-        "had_existing":   current is not None,
+        "config_path": a.config_path,
+        "jwt_key_path": key_path,
+        "key_generated": key_missing,
+        "had_existing": current is not None,
         "desired_sha256": desired_hash,
     }
     if a.check:
@@ -658,9 +691,9 @@ def do_render_ui_config(a):
 def do_deploy_ui(a):
     fields = {
         "container_name": a.container_name,
-        "image":          a.image,
-        "image_tag":      a.image_tag,
-        "config_path":    a.config_path,
+        "image": a.image,
+        "image_tag": a.image_tag,
+        "config_path": a.config_path,
     }
     desired_compose = GARAGE_UI_COMPOSE_TEMPLATE % fields
     current_compose = _read(a.compose_path)
@@ -668,18 +701,26 @@ def do_deploy_ui(a):
     config_missing = not os.path.exists(a.config_path)
     if config_missing:
         if not a.check:
-            return _fail({"reason": "garage-ui config.yaml missing — run render-ui-config first",
-                          "config_path": a.config_path})
-        return _emit("would-change", {
-            "compose_path":   a.compose_path,
-            "config_missing": True,
-            "reason":         "render-ui-config must run before deploy-ui on apply",
-        }, True)
+            return _fail(
+                {
+                    "reason": "garage-ui config.yaml missing — run render-ui-config first",
+                    "config_path": a.config_path,
+                }
+            )
+        return _emit(
+            "would-change",
+            {
+                "compose_path": a.compose_path,
+                "config_missing": True,
+                "reason": "render-ui-config must run before deploy-ui on apply",
+            },
+            True,
+        )
 
     desired_image = "%s:%s" % (a.image, a.image_tag)
-    compose_drift = (current_compose != desired_compose)
+    compose_drift = current_compose != desired_compose
     current_image = _container_image(a.container_name)
-    image_drift = (current_image != desired_image)
+    image_drift = current_image != desired_image
     not_running = not _container_running(a.container_name)
     # config.yaml is a read-only bind mount that garage-ui parses ONCE at
     # startup. A plain `docker compose up -d` will NOT restart a running,
@@ -692,12 +733,12 @@ def do_deploy_ui(a):
     recreate = compose_drift or image_drift or not_running
     drift = recreate or config_changed
     payload = {
-        "compose_path":   a.compose_path,
-        "compose_drift":  compose_drift,
-        "image_drift":    image_drift,
-        "image_current":  current_image,
-        "image_desired":  desired_image,
-        "not_running":    not_running,
+        "compose_path": a.compose_path,
+        "compose_drift": compose_drift,
+        "image_drift": image_drift,
+        "image_current": current_image,
+        "image_desired": desired_image,
+        "not_running": not_running,
         "config_changed": config_changed,
     }
     if not drift:
@@ -719,9 +760,14 @@ def do_deploy_ui(a):
         r = _run("docker", "compose", "-f", a.compose_path, "restart")
         op = "restart"
     if r.returncode != 0:
-        return _fail({"reason":  "docker compose %s failed" % op,
-                      "stdout":  r.stdout, "stderr": r.stderr,
-                      "payload": payload})
+        return _fail(
+            {
+                "reason": "docker compose %s failed" % op,
+                "stdout": r.stdout,
+                "stderr": r.stderr,
+                "payload": payload,
+            }
+        )
     payload["compose_out"] = r.stderr.strip() or r.stdout.strip()
     return _emit("changed", payload, False)
 
@@ -750,16 +796,21 @@ def main(argv):
     rc.add_argument("--admin-api-bind-addr", required=True)
     # Secrets read from os.environ — NOT argv (avoids `ps`/`top` exposure).
     # See _SECRET_ENV_VARS + the render-config docstring at the top.
-    rc.add_argument("--meta-dir", required=True)   # accepted for tasks/main.yml symmetry; not used by template
+    rc.add_argument(
+        "--meta-dir", required=True
+    )  # accepted for tasks/main.yml symmetry; not used by template
     rc.add_argument("--data-dir", required=True)
     rc.add_argument("--check", action="store_true")
     rc.set_defaults(fn=do_render_config)
 
     dp = sub.add_parser("deploy")
-    dp.add_argument("--compose-path", required=True,
-                    help="Absolute on-disk path for docker-compose.yml "
-                         "(e.g. /volume2/docker/garage/docker-compose.yml). "
-                         "Driven from the spec — no implicit volume mapping.")
+    dp.add_argument(
+        "--compose-path",
+        required=True,
+        help="Absolute on-disk path for docker-compose.yml "
+        "(e.g. /volume2/docker/garage/docker-compose.yml). "
+        "Driven from the spec — no implicit volume mapping.",
+    )
     dp.add_argument("--container-name", required=True)
     dp.add_argument("--image", required=True)
     dp.add_argument("--image-tag", required=True)
@@ -784,9 +835,12 @@ def main(argv):
     ru.add_argument("--bind-host", required=True)
     ru.add_argument("--port", required=True)
     ru.add_argument("--public-hostname", required=True)
-    ru.add_argument("--public-url", required=True,
-                    help="Public root URL (e.g. https://s3-admin.e4e.ucsd.edu); "
-                         "becomes server.root_url + OIDC callback root")
+    ru.add_argument(
+        "--public-url",
+        required=True,
+        help="Public root URL (e.g. https://s3-admin.e4e.ucsd.edu); "
+        "becomes server.root_url + OIDC callback root",
+    )
     ru.add_argument("--garage-s3-port", required=True)
     ru.add_argument("--garage-admin-port", required=True)
     ru.add_argument("--garage-region", required=True)
@@ -795,10 +849,16 @@ def main(argv):
     # OIDC client_secret + admin_token come from env (NOT argv). See do_render_ui_config.
     ru.add_argument("--oidc-issuer-url", required=True)
     ru.add_argument("--oidc-role-attribute-path", required=True)
-    ru.add_argument("--oidc-scopes-json", required=True,
-                    help="JSON array of scope strings, e.g. [\"openid\",\"email\"]")
-    ru.add_argument("--oidc-admin-roles-json", required=True,
-                    help="JSON array of admin role strings (≥ 1 required)")
+    ru.add_argument(
+        "--oidc-scopes-json",
+        required=True,
+        help='JSON array of scope strings, e.g. ["openid","email"]',
+    )
+    ru.add_argument(
+        "--oidc-admin-roles-json",
+        required=True,
+        help="JSON array of admin role strings (≥ 1 required)",
+    )
     ru.add_argument("--check", action="store_true")
     ru.set_defaults(fn=do_render_ui_config)
 

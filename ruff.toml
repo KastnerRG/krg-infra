@@ -1,0 +1,20 @@
+# Repo-wide Python lint/format config. The Python here is correctness-critical
+# but researcher-maintainable (synology apply_*.py, scratch/*.py, drift/): keep
+# the rule set close to ruff defaults (pyflakes + a slice of pycodestyle) so the
+# gate catches real bugs, not style opinions that churn blame.
+#
+# py38 is the hard floor: the synology apply_*.py run on DSM's stock Python 3.8
+# (below ansible's module floor — see ansible/synology/). Anything that targets a
+# newer Python would generate fixes those scripts can't run.
+target-version = "py38"
+line-length = 100
+
+[format]
+# Default formatter (Black-compatible). `ruff format` is wired into treefmt, so
+# `nix fmt` formats Python repo-wide and `nix flake check` gates it.
+
+[lint]
+# Defaults are E4/E7/E9 (pycodestyle errors) + F (pyflakes). That's the
+# real-bug set: undefined names, unused imports/vars, syntax. No import sorting
+# or naming rules — those would reflow/rename across files other efforts touch.
+select = ["E4", "E7", "E9", "F"]

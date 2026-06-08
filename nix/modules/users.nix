@@ -89,13 +89,13 @@ in {
     users.users = mapAttrs (name: u:
       {
         isNormalUser = true;
-        description = u.description;
+        inherit (u) description;
         extraGroups = u.groups ++ cfg.defaultGroups;
         shell = pkgs.${u.shell} or pkgs.bash;
         openssh.authorizedKeys.keys = u.authorizedKeys;
-        hashedPassword = u.hashedPassword;
+        inherit (u) hashedPassword;
       }
-      // optionalAttrs (u.uid != null) {uid = u.uid;}
+      // optionalAttrs (u.uid != null) {inherit (u) uid;}
       // optionalAttrs (u.home != null) {
         inherit (u) home;
         createHome = true;

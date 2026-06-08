@@ -20,6 +20,7 @@ copy preserves each file's owner/group/mode.
 The krg.scratch overflow systemd timer invokes this; it is safe to run by hand,
 and --dry-run reports what it WOULD move without touching anything.
 """
+
 import argparse
 import hashlib
 import json
@@ -46,8 +47,8 @@ def die(msg, code=1):
 def pool_bytes(zpool, pool):
     """(size, alloc, free) in bytes for the pool, via `zpool list -Hp`."""
     r = subprocess.run(
-        [zpool, "list", "-Hp", "-o", "size,alloc,free", pool],
-        capture_output=True, text=True)
+        [zpool, "list", "-Hp", "-o", "size,alloc,free", pool], capture_output=True, text=True
+    )
     if r.returncode != 0:
         die(f"`zpool list {pool}` failed: {r.stderr.strip()}")
     try:
@@ -87,8 +88,8 @@ def copy_and_hash(src, dst):
                 if not buf:
                     break
                 mv = memoryview(buf)
-                while mv:                       # os.write may short-write; drain it
-                    mv = mv[os.write(dst_fd, mv):]
+                while mv:  # os.write may short-write; drain it
+                    mv = mv[os.write(dst_fd, mv) :]
                 h.update(buf)
                 n += len(buf)
         os.fsync(dst_fd)
@@ -103,8 +104,7 @@ def tmp_sibling(path, tag):
     os.replace is atomic). Fixed short prefix + random suffix, so it can't overflow
     NAME_MAX (255) the way `path + ".part"` would when path's basename is at the limit.
     """
-    return os.path.join(os.path.dirname(path) or ".",
-                        f".{tag}-{os.urandom(6).hex()}.tmp")
+    return os.path.join(os.path.dirname(path) or ".", f".{tag}-{os.urandom(6).hex()}.tmp")
 
 
 def fd_sha256(fd):
@@ -150,8 +150,10 @@ def open_manifest(state_dir):
     try:
         ds = os.lstat(state_dir)
         if stat.S_ISLNK(ds.st_mode) or not stat.S_ISDIR(ds.st_mode) or ds.st_uid != 0:
-            log(f"WARNING: {state_dir} is not a root-owned dir (symlink/planted?) — "
-                "skipping manifest this run")
+            log(
+                f"WARNING: {state_dir} is not a root-owned dir (symlink/planted?) — "
+                "skipping manifest this run"
+            )
             return None
         os.chmod(state_dir, 0o700)  # enforce root-only even if it pre-existed group-readable
     except FileNotFoundError:
@@ -161,8 +163,11 @@ def open_manifest(state_dir):
             log(f"WARNING: cannot create {state_dir}: {e} — skipping manifest")
             return None
     try:
-        fd = os.open(os.path.join(state_dir, "manifest.jsonl"),
-                     os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        fd = os.open(
+            os.path.join(state_dir, "manifest.jsonl"),
+            os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW,
+            0o600,
+        )
         return os.fdopen(fd, "a")
     except OSError as e:
         log(f"WARNING: cannot open manifest: {e} — skipping manifest")
@@ -235,8 +240,7 @@ def gather_candidates(scratch, min_atime, skip_dir_prefixes, skip_exact):
     cands = []
     for root, dirs, files in os.walk(scratch, topdown=True):
         # never descend into an excluded subtree (e.g. the state dir)
-        dirs[:] = [d for d in dirs if os.path.join(root, d) + os.sep
-                   not in skip_dir_prefixes]
+        dirs[:] = [d for d in dirs if os.path.join(root, d) + os.sep not in skip_dir_prefixes]
         for name in files:
             p = os.path.join(root, name)
             if p in skip_exact:
@@ -273,7 +277,7 @@ def archive_one(path, scratch, cold, manifest_fp, dry_run, reason="capacity"):
         st = os.stat(path)  # re-stat (TOCTOU): the walk may be stale
     except OSError:
         return 0
-    size = st.st_size           # logical size — for the manifest + human-facing logs
+    size = st.st_size  # logical size — for the manifest + human-facing logs
     # ALLOCATED bytes (st_blocks * 512) is what actually frees from the pool. Pool
     # fullness is measured by `zpool list` (physical), and with zstd compression the
     # logical size can differ a lot — so accounting toward the low-water target must
@@ -297,7 +301,7 @@ def archive_one(path, scratch, cold, manifest_fp, dry_run, reason="capacity"):
     try:
         makedirs_mirror(scratch, cold, rel)  # mirror source dir owner/mode into cold
         if os.path.lexists(part):
-            os.unlink(part)                  # clear any stale/planted temp (no follow)
+            os.unlink(part)  # clear any stale/planted temp (no follow)
         src_sha, nbytes, fd = copy_and_hash(path, part)
         try:
             if nbytes != size:
@@ -310,8 +314,8 @@ def archive_one(path, scratch, cold, manifest_fp, dry_run, reason="capacity"):
                 os.unlink(part)
                 log(f"skip {rel}: checksum mismatch after copy (NOT removed locally)")
                 return 0
-            os.fchown(fd, st.st_uid, st.st_gid)            # owner (root + no_root_squash)
-            os.fchmod(fd, stat.S_IMODE(st.st_mode))        # mode
+            os.fchown(fd, st.st_uid, st.st_gid)  # owner (root + no_root_squash)
+            os.fchmod(fd, stat.S_IMODE(st.st_mode))  # mode
             os.utime(fd, ns=(st.st_atime_ns, st.st_mtime_ns))
             os.fsync(fd)
             # ensure `part` still IS our fd's inode (not swapped) right before publish.
@@ -340,9 +344,12 @@ def archive_one(path, scratch, cold, manifest_fp, dry_run, reason="capacity"):
         st2 = os.stat(path)
     except OSError:
         st2 = None
-    changed = st2 is None or (
-        st2.st_ino, st2.st_size, st2.st_mtime_ns, st2.st_ctime_ns
-    ) != (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+    changed = st2 is None or (st2.st_ino, st2.st_size, st2.st_mtime_ns, st2.st_ctime_ns) != (
+        st.st_ino,
+        st.st_size,
+        st.st_mtime_ns,
+        st.st_ctime_ns,
+    )
     if changed:
         try:
             os.unlink(dest)
@@ -365,19 +372,26 @@ def archive_one(path, scratch, cold, manifest_fp, dry_run, reason="capacity"):
                 os.unlink(link_tmp)
         except OSError:
             pass
-        log(f"archived {rel} to NFS but FAILED to swap symlink: {e} "
-            f"(cold copy kept at {dest}; local file intact)")
+        log(
+            f"archived {rel} to NFS but FAILED to swap symlink: {e} "
+            f"(cold copy kept at {dest}; local file intact)"
+        )
         return 0
 
-    manifest_fp.write(json.dumps({
-        "ts": int(time.time()),
-        "reason": reason,
-        "path": path,
-        "dest": dest,
-        "size": size,
-        "sha256": src_sha,
-        "atime": int(st.st_atime),
-    }) + "\n")
+    manifest_fp.write(
+        json.dumps(
+            {
+                "ts": int(time.time()),
+                "reason": reason,
+                "path": path,
+                "dest": dest,
+                "size": size,
+                "sha256": src_sha,
+                "atime": int(st.st_atime),
+            }
+        )
+        + "\n"
+    )
     manifest_fp.flush()
     log(f"archived [{reason}] {rel} ({size} bytes) -> {dest}")
     return freed_bytes
@@ -405,14 +419,24 @@ def main():
     ap = argparse.ArgumentParser(description="Demote cold /scratch files to NFS.")
     ap.add_argument("--pool", required=True, help="ZFS pool to measure (e.g. scratchpool)")
     ap.add_argument("--scratch", required=True, help="scratch mountpoint (e.g. /scratch/krg)")
-    ap.add_argument("--cold", required=True, help="cold NFS mountpoint (e.g. /srv/scratch-cold/krg)")
+    ap.add_argument(
+        "--cold", required=True, help="cold NFS mountpoint (e.g. /srv/scratch-cold/krg)"
+    )
     ap.add_argument("--high", type=float, default=85.0, help="start moving above this pool %% full")
     ap.add_argument("--low", type=float, default=75.0, help="stop moving below this pool %% full")
-    ap.add_argument("--min-age-days", type=float, default=14.0,
-                    help="never move a file accessed within this many days (capacity sweep floor)")
-    ap.add_argument("--max-idle-days", type=float, default=0.0,
-                    help="TTL sweep: move ANY file not accessed in this many days, "
-                         "regardless of pool fullness. 0 = disabled.")
+    ap.add_argument(
+        "--min-age-days",
+        type=float,
+        default=14.0,
+        help="never move a file accessed within this many days (capacity sweep floor)",
+    )
+    ap.add_argument(
+        "--max-idle-days",
+        type=float,
+        default=0.0,
+        help="TTL sweep: move ANY file not accessed in this many days, "
+        "regardless of pool fullness. 0 = disabled.",
+    )
     ap.add_argument("--zpool", default="zpool", help="zpool binary (PATH by default)")
     ap.add_argument("--dry-run", action="store_true", help="report only; touch nothing")
     args = ap.parse_args()
@@ -432,8 +456,10 @@ def main():
     size, alloc, free = pool_bytes(args.zpool, args.pool)
     pct = capacity_pct(size, free)
     ttl_on = args.max_idle_days > 0
-    log(f"pool {args.pool}: {pct:.1f}% full (high={args.high} low={args.low}"
-        f"{f'; ttl={args.max_idle_days}d' if ttl_on else ''})")
+    log(
+        f"pool {args.pool}: {pct:.1f}% full (high={args.high} low={args.low}"
+        f"{f'; ttl={args.max_idle_days}d' if ttl_on else ''})"
+    )
     if pct < args.high and not ttl_on:
         log("below high-water mark and no TTL set; nothing to do")
         return 0
@@ -468,8 +494,9 @@ def main():
         if ttl_list:
             log(f"TTL sweep: {len(ttl_list)} file(s) idle > {args.max_idle_days}d")
             for _atime, _size, path in ttl_list:
-                got = archive_one(path, args.scratch, args.cold, manifest_fp,
-                                  args.dry_run, reason="ttl")
+                got = archive_one(
+                    path, args.scratch, args.cold, manifest_fp, args.dry_run, reason="ttl"
+                )
                 if got:
                     freed += got
                     moved += 1
@@ -486,32 +513,40 @@ def main():
         if pct >= args.high:
             target_free = size * (1.0 - args.low / 100.0)
             to_free = max(0, int(target_free - free))
-            log(f"capacity sweep: {pct:.1f}% full, need to free ~{to_free} bytes "
-                f"to reach {args.low}%")
+            log(
+                f"capacity sweep: {pct:.1f}% full, need to free ~{to_free} bytes "
+                f"to reach {args.low}%"
+            )
             cap_freed = 0
             for _atime, _size, path in cap_list:
                 if cap_freed >= to_free:
                     break
-                got = archive_one(path, args.scratch, args.cold, manifest_fp,
-                                  args.dry_run, reason="capacity")
+                got = archive_one(
+                    path, args.scratch, args.cold, manifest_fp, args.dry_run, reason="capacity"
+                )
                 if got:
                     cap_freed += got
                     freed += got
                     moved += 1
             if cap_freed < to_free:
-                log("capacity sweep moved every eligible file but is still above "
-                    f"{args.low}% (nothing left older than {args.min_age_days}d)")
+                log(
+                    "capacity sweep moved every eligible file but is still above "
+                    f"{args.low}% (nothing left older than {args.min_age_days}d)"
+                )
     finally:
         manifest_fp.close()
 
     if not args.dry_run and moved:
         write_note(args.scratch, args.cold)
         size, alloc, free = pool_bytes(args.zpool, args.pool)
-        log(f"done: moved {moved} files, freed ~{freed} bytes; "
-            f"pool now {capacity_pct(size, free):.1f}% full")
+        log(
+            f"done: moved {moved} files, freed ~{freed} bytes; "
+            f"pool now {capacity_pct(size, free):.1f}% full"
+        )
     else:
-        log(f"done: {'would free' if args.dry_run else 'freed'} ~{freed} bytes "
-            f"across {moved} files")
+        log(
+            f"done: {'would free' if args.dry_run else 'freed'} ~{freed} bytes across {moved} files"
+        )
     return 0
 
 

@@ -98,7 +98,7 @@
   loop_control:
     label: "zfs-auto-snapshot-{{ item.label }}.service"
   when: zfs_auto_snapshot_enabled
-  notify: reload systemd
+  notify: Reload systemd
 
 - name: Install zfs-auto-snapshot timer units (one per cadence)
   ansible.builtin.template:
@@ -111,7 +111,7 @@
   loop_control:
     label: "zfs-auto-snapshot-{{ item.label }}.timer"
   when: zfs_auto_snapshot_enabled
-  notify: reload systemd
+  notify: Reload systemd
 
 # Only the TIMERS are enabled (the services are oneshots the timers pull in). A
 # changed unit is picked up by daemon_reload below; daemon-reload also re-arms timers,
@@ -153,7 +153,7 @@
   loop_control:
     label: "zfs-auto-snapshot-{{ item.0.label }}.{{ item.1 }}"
   when: not zfs_auto_snapshot_enabled
-  notify: reload systemd
+  notify: Reload systemd
 
 # --- NFS server config -----------------------------------------------------
 - name: Configure NFS protocol versions (v4-only by default)
@@ -163,7 +163,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify: restart nfs server
+  notify: Restart nfs server
 
 - name: Set NFSv4 idmap domain
   community.general.ini_file:
@@ -172,7 +172,7 @@
     option: Domain
     value: "{{ nfs_idmap_domain }}"
     mode: "0644"
-  notify: restart nfs server
+  notify: Restart nfs server
 
 # Durable boot-mount guarantee. The export datasets MUST be mounted before
 # nfs-server's `exportfs` reads /etc/exports.d (loading the kernel export table), else
@@ -191,8 +191,8 @@
     group: root
     mode: "0644"
   notify:
-    - reload systemd
-    - restart nfs server
+    - Reload systemd
+    - Restart nfs server
 
 - name: Ensure nfs-server systemd drop-in dir exists
   ansible.builtin.file:
@@ -217,8 +217,8 @@
       Requires=krg-nfs-premount.service
       After=krg-nfs-premount.service
   notify:
-    - reload systemd
-    - restart nfs server
+    - Reload systemd
+    - Restart nfs server
 
 # /etc/exports.d isn't always shipped by the package (this PVE host had it absent),
 # and `template` won't create a missing parent — make sure it exists first.
@@ -237,7 +237,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify: reexport nfs
+  notify: Reexport nfs
 
 - name: Enable + start nfs-server
   ansible.builtin.systemd_service:

@@ -1,0 +1,18 @@
+# ansible-lint config. Applies to BOTH ansible trees: ansible/ (Proxmox hosts)
+# and the self-contained ansible/synology/ subtree. CI runs ansible-lint once in
+# each (each has its own ansible.cfg / roles_path, so roles only resolve in-tree).
+#
+# YAML style is delegated to .yamllint (ansible-lint embeds yamllint and reads
+# that file), so the yaml[...] rules here match the standalone yamllint gate.
+
+exclude_paths:
+  - .ansible/                    # collections/roles fetched at runtime
+  - ansible/synology/.ansible/
+
+skip_list:
+  # var-naming[no-role-prefix] wants every role variable prefixed with the role
+  # name (foo -> synology_users_foo). That's ~339 sites across role logic,
+  # templates and defaults — a pure-style mass rename with zero correctness
+  # value that would churn blame across files the synology bring-up is actively
+  # touching. Deferred as its own effort; everything else IS enforced.
+  - var-naming[no-role-prefix]

@@ -30,6 +30,7 @@ land — see role README):
                              (the email channel is owned by synology_notifications;
                              SA hooks into that channel — no SA-side toggle)
 """
+
 import argparse
 import json
 import subprocess
@@ -42,15 +43,14 @@ SA_CONF_API = "SYNO.Core.SecurityScan.Conf"
 # (original `.Main`/`enable`/`schedule_day` guess from `.lib` filename was wrong;
 # real namespace is `.Conf` and real keys are `enableSchedule`/`weekday`/etc.).
 OUT_KEYS = {
-    "enable":  "enableSchedule",
-    "day":     "weekday",
-    "hour":    "hour",
-    "minute":  "minute",
+    "enable": "enableSchedule",
+    "day": "weekday",
+    "hour": "hour",
+    "minute": "minute",
 }
 
 # Sun..Sat -> "0".."6" (Unix-cron convention; DSM stores weekday as a string-of-digit).
-DAY_MAP = {"Sun": "0", "Mon": "1", "Tue": "2", "Wed": "3",
-           "Thu": "4", "Fri": "5", "Sat": "6"}
+DAY_MAP = {"Sun": "0", "Mon": "1", "Tue": "2", "Wed": "3", "Thu": "4", "Fri": "5", "Sat": "6"}
 
 # `Conf get` returns these keys inside `data` but `Conf set` rejects them —
 # strip before SET. Only `success` qualifies; `scheduleTaskId` LOOKS internal
@@ -68,7 +68,8 @@ def _exec(api, *params):
     """Run synowebapi; preamble on stderr, JSON on stdout."""
     out = subprocess.run(
         [WEBAPI, "--exec", "api=" + api, *params],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     txt = out.stdout
     brace = txt.find("{")
@@ -86,8 +87,9 @@ def _exec_get(api):
     if not resp.get("success", False):
         return None, (resp.get("error") or {}).get("code")
     if "data" not in resp:
-        raise RuntimeError("DSM API {} GET returned success but no `data` key: {}".format(
-            api, json.dumps(resp)))
+        raise RuntimeError(
+            "DSM API {} GET returned success but no `data` key: {}".format(api, json.dumps(resp))
+        )
     return resp["data"], None
 
 
@@ -156,8 +158,9 @@ def _result(drift, check, apply_fn):
 
 def do_main(a):
     if a.day not in DAY_MAP:
-        raise SystemExit("--day must be one of: " + ", ".join(DAY_MAP) +
-                         " (got: " + str(a.day) + ")")
+        raise SystemExit(
+            "--day must be one of: " + ", ".join(DAY_MAP) + " (got: " + str(a.day) + ")"
+        )
     # --categories and --notify-email are accepted but NOT applied (different
     # DSM surfaces; see module docstring). Validate them so a typo still fails
     # loudly, but don't push them on the wire here.
@@ -165,34 +168,47 @@ def do_main(a):
         try:
             cats = json.loads(a.categories)
             if not isinstance(cats, list):
-                raise SystemExit("--categories must be a JSON list (got type " +
-                                 type(cats).__name__ + ")")
+                raise SystemExit(
+                    "--categories must be a JSON list (got type " + type(cats).__name__ + ")"
+                )
         except json.JSONDecodeError as e:
             raise SystemExit("--categories must be valid JSON: " + str(e))
 
     desired = {
         OUT_KEYS["enable"]: _bool(a.enable),
-        OUT_KEYS["day"]:    DAY_MAP[a.day],
-        OUT_KEYS["hour"]:   int(a.hour),
+        OUT_KEYS["day"]: DAY_MAP[a.day],
+        OUT_KEYS["hour"]: int(a.hour),
         OUT_KEYS["minute"]: int(a.minute),
     }
 
     current, err = _exec_get(SA_CONF_API)
     if err is not None:
-        note = ("API not present on this DSM model — Security Advisor "
-                "scheduling cannot be managed via webapi here."
-                if err == ERR_API_NOT_EXIST else "see DSM error code table")
-        print("FAIL " + json.dumps({
-            "error": "GET failed", "api": SA_CONF_API,
-            "code": err, "note": note,
-        }))
+        note = (
+            "API not present on this DSM model — Security Advisor "
+            "scheduling cannot be managed via webapi here."
+            if err == ERR_API_NOT_EXIST
+            else "see DSM error code table"
+        )
+        print(
+            "FAIL "
+            + json.dumps(
+                {
+                    "error": "GET failed",
+                    "api": SA_CONF_API,
+                    "code": err,
+                    "note": note,
+                }
+            )
+        )
         return 1
 
     set_payload = {k: v for k, v in current.items() if k not in READ_ONLY_KEYS}
 
-    drift = {k: {"current": set_payload.get(k), "desired": v}
-             for k, v in desired.items()
-             if _coerce_like(v, set_payload.get(k)) != v}
+    drift = {
+        k: {"current": set_payload.get(k), "desired": v}
+        for k, v in desired.items()
+        if _coerce_like(v, set_payload.get(k)) != v
+    }
 
     def apply():
         # SecurityScan.Conf SET requires its params wrapped in an `Input`
@@ -201,8 +217,7 @@ def do_main(a):
         # payload is the unmodified GET response). All other DSM SETs in
         # this repo take flat params; only this one needs the envelope.
         set_payload.update(desired)
-        return _exec(SA_CONF_API, "version=1", "method=set",
-                     "Input=" + json.dumps(set_payload))
+        return _exec(SA_CONF_API, "version=1", "method=set", "Input=" + json.dumps(set_payload))
 
     return _result(drift, a.check, apply)
 
@@ -217,10 +232,17 @@ def main(argv=None):
     s.add_argument("--minute", required=True, type=int)
     # Accepted-but-deferred (see docstring); kept on the CLI so the role
     # contract stays stable while the per-surface impls are tracked.
-    s.add_argument("--categories", required=True,
-                   help="JSON list of strings (accepted, NOT applied — needs group_set probe)")
-    s.add_argument("--notify-email", dest="notify_email", required=True,
-                   help="bool (accepted, NOT applied — owned by synology_notifications)")
+    s.add_argument(
+        "--categories",
+        required=True,
+        help="JSON list of strings (accepted, NOT applied — needs group_set probe)",
+    )
+    s.add_argument(
+        "--notify-email",
+        dest="notify_email",
+        required=True,
+        help="bool (accepted, NOT applied — owned by synology_notifications)",
+    )
     s.add_argument("--check", action="store_true")
     s.set_defaults(func=do_main)
     a = ap.parse_args(argv)

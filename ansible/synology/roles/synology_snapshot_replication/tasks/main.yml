@@ -59,9 +59,9 @@
     _sched: "{{ _override.schedule | default({}) }}"
     _defs: "{{ snap_spec.defaults }}"
     _enabled: "{{ _override.enabled | default(_defs.enabled | default(true)) }}"
-    _hourly:  "{{ _sched.hourly  | default(_defs.schedule.hourly  | default(4))  }}"
-    _daily:   "{{ _sched.daily   | default(_defs.schedule.daily   | default(7))  }}"
-    _weekly:  "{{ _sched.weekly  | default(_defs.schedule.weekly  | default(4))  }}"
+    _hourly: "{{ _sched.hourly | default(_defs.schedule.hourly | default(4)) }}"
+    _daily: "{{ _sched.daily | default(_defs.schedule.daily | default(7)) }}"
+    _weekly: "{{ _sched.weekly | default(_defs.schedule.weekly | default(4)) }}"
     _monthly: "{{ _sched.monthly | default(_defs.schedule.monthly | default(12)) }}"
   ansible.builtin.script: >-
     apply_snapshots.py share

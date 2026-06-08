@@ -1,4 +1,5 @@
 """Unit tests for apply_hyper_backup.py — run with: pytest (no DSM needed)."""
+
 import json
 import os
 import sys
@@ -32,8 +33,11 @@ _DEFAULTS = json.dumps({"encrypt": True, "enabled": True})
 def _job(name="critical-shares-offbox", **over):
     base = {
         "name": name,
-        "destination": {"type": "rsync", "host": "krg-prod.ucsd.edu",
-                        "path": "/var/backup/e4e-nas/hyperbackup"},
+        "destination": {
+            "type": "rsync",
+            "host": "krg-prod.ucsd.edu",
+            "path": "/var/backup/e4e-nas/hyperbackup",
+        },
         "sources": ["admin", "programmatics"],
         "schedule": {"daily": "03:00", "retain_versions": 30},
         "encrypt": True,
@@ -63,8 +67,9 @@ def _live(name="critical-shares-offbox", id_=7, **over):
 def test_no_change(monkeypatch, capsys):
     fake, _ = _factory([_live()])
     monkeypatch.setattr(m, "_exec", fake)
-    rc = m.main(["jobs", "--desired", json.dumps([_job()]),
-                 "--defaults", _DEFAULTS, "--secrets", _SECRETS])
+    rc = m.main(
+        ["jobs", "--desired", json.dumps([_job()]), "--defaults", _DEFAULTS, "--secrets", _SECRETS]
+    )
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
 
 
@@ -78,22 +83,29 @@ def test_empty_lists(monkeypatch, capsys):
 def test_create_update_delete(monkeypatch, capsys):
     live = [
         _live(name="critical-shares-offbox", id_=1),
-        _live(name="old-task", id_=2),                  # to be deleted
+        _live(name="old-task", id_=2),  # to be deleted
     ]
     desired = [
-        _job(name="critical-shares-offbox",
-             sources=["admin", "programmatics", "label_studio"]),  # update (sources changed)
-        _job(name="brand-new"),                          # create
+        _job(
+            name="critical-shares-offbox", sources=["admin", "programmatics", "label_studio"]
+        ),  # update (sources changed)
+        _job(name="brand-new"),  # create
     ]
     secrets = json.dumps({"critical-shares-offbox": "x", "brand-new": "y"})
     fake, captured = _factory(live)
     monkeypatch.setattr(m, "_exec", fake)
-    rc = m.main(["jobs", "--desired", json.dumps(desired),
-                 "--defaults", _DEFAULTS, "--secrets", secrets])
+    rc = m.main(
+        ["jobs", "--desired", json.dumps(desired), "--defaults", _DEFAULTS, "--secrets", secrets]
+    )
     assert rc == 0
     out = capsys.readouterr().out
     assert out.startswith("CHANGED")
-    methods = {p.replace("method=", "") for _, params in captured for p in params if p.startswith("method=")}
+    methods = {
+        p.replace("method=", "")
+        for _, params in captured
+        for p in params
+        if p.startswith("method=")
+    }
     assert "create" in methods
     assert "update" in methods
     assert "delete" in methods
@@ -104,13 +116,26 @@ def test_check_mode_no_apply(monkeypatch, capsys):
     desired = [_job(sources=["admin", "programmatics", "label_studio"])]
     fake, captured = _factory(live)
     monkeypatch.setattr(m, "_exec", fake)
-    rc = m.main(["jobs", "--desired", json.dumps(desired),
-                 "--defaults", _DEFAULTS, "--secrets", _SECRETS, "--check"])
+    rc = m.main(
+        [
+            "jobs",
+            "--desired",
+            json.dumps(desired),
+            "--defaults",
+            _DEFAULTS,
+            "--secrets",
+            _SECRETS,
+            "--check",
+        ]
+    )
     assert rc == 0
     assert capsys.readouterr().out.startswith("WOULD-CHANGE")
     # No mutating calls captured (list method goes through the get-path)
-    assert not any("method=create" in p or "method=update" in p or "method=delete" in p
-                   for _, params in captured for p in params)
+    assert not any(
+        "method=create" in p or "method=update" in p or "method=delete" in p
+        for _, params in captured
+        for p in params
+    )
 
 
 def test_encrypted_without_secret_is_skipped(monkeypatch, capsys):
@@ -118,10 +143,17 @@ def test_encrypted_without_secret_is_skipped(monkeypatch, capsys):
     already warns; helper itself defensively skips so apply is safe)."""
     fake, captured = _factory([])
     monkeypatch.setattr(m, "_exec", fake)
-    rc = m.main(["jobs",
-                 "--desired", json.dumps([_job(encrypt=True)]),
-                 "--defaults", _DEFAULTS,
-                 "--secrets", "{}"])
+    rc = m.main(
+        [
+            "jobs",
+            "--desired",
+            json.dumps([_job(encrypt=True)]),
+            "--defaults",
+            _DEFAULTS,
+            "--secrets",
+            "{}",
+        ]
+    )
     assert rc == 0
     assert "OK no-change" in capsys.readouterr().out
 
@@ -131,6 +163,7 @@ def test_sources_order_invariant(monkeypatch, capsys):
     desired = [_job(sources=["admin", "programmatics"])]
     fake, _ = _factory(live)
     monkeypatch.setattr(m, "_exec", fake)
-    rc = m.main(["jobs", "--desired", json.dumps(desired),
-                 "--defaults", _DEFAULTS, "--secrets", _SECRETS])
+    rc = m.main(
+        ["jobs", "--desired", json.dumps(desired), "--defaults", _DEFAULTS, "--secrets", _SECRETS]
+    )
     assert rc == 0 and "OK no-change" in capsys.readouterr().out

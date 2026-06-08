@@ -15,6 +15,7 @@ NAS had QuickConnect + UPnP on per runbook §3). Flip OUT_KEYS on first-apply dr
   upnp.enable         -> enabled    (UPnP)
   ddns.enable         -> enabled    (DDNS)
 """
+
 import argparse
 import json
 import subprocess
@@ -26,7 +27,7 @@ UPNP_API = "SYNO.Core.Network.Router.UPnP"
 DDNS_API = "SYNO.Core.ExternalAccess.DDNS"
 
 OUT_KEYS = {
-    "qc_enable":   "enabled",
+    "qc_enable": "enabled",
     "upnp_enable": "enabled",
     "ddns_enable": "enabled",
 }
@@ -35,7 +36,8 @@ OUT_KEYS = {
 def _exec(api, *params):
     out = subprocess.run(
         [WEBAPI, "--exec", "api=" + api, *params],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     txt = out.stdout
     brace = txt.find("{")
@@ -59,12 +61,12 @@ def _exec_get(api):
     """
     resp = _exec(api, "version=1", "method=get")
     if not resp.get("success", False):
-        err = (resp.get("error") or {})
+        err = resp.get("error") or {}
         return None, err.get("code")
     if "data" not in resp:
         raise RuntimeError(
-            "DSM API {} GET returned success but no `data` key: {}".format(
-                api, json.dumps(resp)))
+            "DSM API {} GET returned success but no `data` key: {}".format(api, json.dumps(resp))
+        )
     return resp["data"], None
 
 
@@ -125,15 +127,27 @@ def _toggle(api, key, enable, check):
         if err_code == ERR_API_NOT_EXIST and not desired_bool:
             print("OK no-change")
             return 0
-        print("FAIL " + json.dumps({
-            "error": "DSM GET failed", "api": api, "code": err_code,
-            "note": ("desired=enabled but API is not present on this DSM model"
-                     if err_code == ERR_API_NOT_EXIST and desired_bool else
-                     "see DSM error code table"),
-        }))
+        print(
+            "FAIL "
+            + json.dumps(
+                {
+                    "error": "DSM GET failed",
+                    "api": api,
+                    "code": err_code,
+                    "note": (
+                        "desired=enabled but API is not present on this DSM model"
+                        if err_code == ERR_API_NOT_EXIST and desired_bool
+                        else "see DSM error code table"
+                    ),
+                }
+            )
+        )
         return 1
-    drift = {k: {"current": current.get(k), "desired": v}
-             for k, v in desired.items() if current.get(k) != v}
+    drift = {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if current.get(k) != v
+    }
 
     def apply():
         current.update(desired)
@@ -155,11 +169,11 @@ def do_ddns(a):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Apply DSM External Access (QC/UPnP/DDNS) via synowebapi.")
+    ap = argparse.ArgumentParser(
+        description="Apply DSM External Access (QC/UPnP/DDNS) via synowebapi."
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name, fn in (("quickconnect", do_quickconnect),
-                     ("upnp", do_upnp),
-                     ("ddns", do_ddns)):
+    for name, fn in (("quickconnect", do_quickconnect), ("upnp", do_upnp), ("ddns", do_ddns)):
         p = sub.add_parser(name)
         p.add_argument("--enable", required=True)
         p.add_argument("--check", action="store_true")

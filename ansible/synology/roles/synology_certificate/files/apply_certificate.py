@@ -47,6 +47,7 @@ field names match what DSM itself sends through Chrome DevTools network traces):
   old_id, id}` entries — one per (service, subscriber) tuple being migrated.
   Used by bind-services to move existing bindings off the factory cert.
 """
+
 import argparse
 import json
 import subprocess
@@ -63,8 +64,7 @@ LE_API = "SYNO.Core.Certificate.LetsEncrypt"
 # helpers
 # ---------------------------------------------------------------------------
 def _exec(api, *params):
-    out = subprocess.run([WEBAPI, "--exec", "api=" + api, *params],
-                         capture_output=True, text=True)
+    out = subprocess.run([WEBAPI, "--exec", "api=" + api, *params], capture_output=True, text=True)
     txt = out.stdout
     brace = txt.find("{")
     if brace < 0:
@@ -100,7 +100,8 @@ def _find_by_domain(certs, domain):
         ids = [c.get("id") for c in matches]
         raise RuntimeError(
             "multiple certs share common_name=%r (ids=%r) — clean up via DSM "
-            "UI before re-applying" % (domain, ids))
+            "UI before re-applying" % (domain, ids)
+        )
     return matches[0] if matches else None
 
 
@@ -158,8 +159,7 @@ def do_letsencrypt_create(a):
 
     sans = json.loads(a.sans_json or "[]")
     if not isinstance(sans, list) or not all(isinstance(s, str) for s in sans):
-        return _fail({"reason": "--sans-json must be a JSON array of strings",
-                      "got": a.sans_json})
+        return _fail({"reason": "--sans-json must be a JSON array of strings", "got": a.sans_json})
 
     # DSM encodes a multi-domain (SAN) LE cert as ONE semicolon-joined
     # `domain_name` with the CN first — there is no `SAN_list` param (captured
@@ -179,20 +179,30 @@ def do_letsencrypt_create(a):
         buffer = timedelta(days=int(a.renewal_buffer_days))
         if existing.get("desc") != domain_list:
             # SAN set differs from spec (or cert wasn't role-managed) → re-issue.
-            payload = dict(payload_base, reason="cert SAN set differs from spec",
-                           current_desc=existing.get("desc"), desired=domain_list)
+            payload = dict(
+                payload_base,
+                reason="cert SAN set differs from spec",
+                current_desc=existing.get("desc"),
+                desired=domain_list,
+            )
         elif valid_till is None:
             # Couldn't parse — defensive re-issue. Don't no-op on an
             # unknown-expiry cert; safer to push a fresh one.
-            payload = dict(payload_base, reason="cert exists but valid_till unparseable",
-                           valid_till_raw=existing.get("valid_till"))
+            payload = dict(
+                payload_base,
+                reason="cert exists but valid_till unparseable",
+                valid_till_raw=existing.get("valid_till"),
+            )
         elif valid_till - _now_utc() > buffer:
             # SANs match AND plenty of life left — DSM's auto-renew handles it.
             return _emit("no-change", {}, a.check)
         else:
-            payload = dict(payload_base, reason="cert exists but expiring within buffer",
-                           valid_till=valid_till.isoformat(),
-                           buffer_days=int(a.renewal_buffer_days))
+            payload = dict(
+                payload_base,
+                reason="cert exists but expiring within buffer",
+                valid_till=valid_till.isoformat(),
+                buffer_days=int(a.renewal_buffer_days),
+            )
     else:
         payload = dict(payload_base, reason="no cert for domain")
 
@@ -202,15 +212,15 @@ def do_letsencrypt_create(a):
     # `desc` = `domain_name` = the semicolon-joined CN+SANs (see above). For a
     # single-domain cert (no sans) this is just the CN, unchanged from before.
     le_params = [
-        "version=1", "method=create",
+        "version=1",
+        "method=create",
         "desc=" + json.dumps(domain_list),
         "domain_name=" + json.dumps(domain_list),
         "email=" + json.dumps(a.email),
     ]
     r = _exec(LE_API, *le_params)
     if not r.get("success"):
-        return _fail({"reason": "%s.create failed" % LE_API,
-                      "response": r, "payload": payload})
+        return _fail({"reason": "%s.create failed" % LE_API, "response": r, "payload": payload})
     return _emit("changed", payload, False)
 
 
@@ -237,12 +247,17 @@ def do_set_default(a):
         #   expected dry-run shape — report WOULD-CHANGE (the planned
         #   binding after the planned issuance).
         if a.check:
-            return _emit("would-change", {
-                "domain": a.domain,
-                "reason": "letsencrypt-create would issue the cert; set-default would then bind it",
-            }, True)
-        return _fail({"reason": "no cert for domain — run letsencrypt-create first",
-                      "domain": a.domain})
+            return _emit(
+                "would-change",
+                {
+                    "domain": a.domain,
+                    "reason": "letsencrypt-create would issue the cert; set-default would then bind it",
+                },
+                True,
+            )
+        return _fail(
+            {"reason": "no cert for domain — run letsencrypt-create first", "domain": a.domain}
+        )
 
     if existing.get("is_default") is True:
         return _emit("no-change", {}, a.check)
@@ -260,14 +275,21 @@ def do_set_default(a):
     # display description (conventionally the domain); the wizard always
     # passes it alongside the id.
     r = _exec(
-        CRT_API, "version=1", "method=set",
+        CRT_API,
+        "version=1",
+        "method=set",
         "as_default=true",
         "desc=" + json.dumps(a.domain),
         "id=" + json.dumps(existing.get("id")),
     )
     if not r.get("success"):
-        return _fail({"reason": "%s.set (as_default=true) failed" % CRT_API,
-                      "response": r, "payload": payload})
+        return _fail(
+            {
+                "reason": "%s.set (as_default=true) failed" % CRT_API,
+                "response": r,
+                "payload": payload,
+            }
+        )
     return _emit("changed", payload, False)
 
 
@@ -301,8 +323,7 @@ def do_bind_services(a):
     the current binding, and submit the diff."""
     bindings = json.loads(a.bindings_json)
     if not isinstance(bindings, list):
-        return _fail({"reason": "--bindings-json must be a JSON array",
-                      "got": a.bindings_json})
+        return _fail({"reason": "--bindings-json must be a JSON array", "got": a.bindings_json})
 
     certs = _list_certs()
     if certs is None:
@@ -316,12 +337,17 @@ def do_bind_services(a):
         # bind-services can only act on a cert that exists. Same check-mode
         # vs apply-mode split as set-default.
         if a.check:
-            return _emit("would-change", {
-                "domain": a.domain,
-                "reason": "letsencrypt-create would issue the cert; bind-services would then bind it",
-            }, True)
-        return _fail({"reason": "no cert for domain — run letsencrypt-create first",
-                      "domain": a.domain})
+            return _emit(
+                "would-change",
+                {
+                    "domain": a.domain,
+                    "reason": "letsencrypt-create would issue the cert; bind-services would then bind it",
+                },
+                True,
+            )
+        return _fail(
+            {"reason": "no cert for domain — run letsencrypt-create first", "domain": a.domain}
+        )
 
     target_id = target["id"]
 
@@ -338,8 +364,9 @@ def do_bind_services(a):
     skipped_missing = []
     for b in bindings:
         if not isinstance(b, dict) or "service" not in b or "subscriber" not in b:
-            return _fail({"reason": "each binding must have `service` and `subscriber`",
-                          "binding": b})
+            return _fail(
+                {"reason": "each binding must have `service` and `subscriber`", "binding": b}
+            )
         key = (b["service"], b["subscriber"])
         cur = current.get(key)
         if cur is None:
@@ -348,8 +375,8 @@ def do_bind_services(a):
             skipped_missing.append(b)
             sys.stderr.write(
                 "WARN: service=%r subscriber=%r not present on any cert "
-                "(DSM service not installed?) — skipping.\n"
-                % (b["service"], b["subscriber"]))
+                "(DSM service not installed?) — skipping.\n" % (b["service"], b["subscriber"])
+            )
             continue
         if cur["cert_id"] == target_id:
             continue  # already bound to target — no-op
@@ -357,17 +384,19 @@ def do_bind_services(a):
         # Trim to the keys the wizard sends, in the order it sends them.
         # (Extra keys like display_name_i18n / multiple_cert / user_setable
         # are derived; not required on the wire.)
-        settings_to_set.append({
-            "service": {
-                "display_name": svc_obj.get("display_name", ""),
-                "isPkg":        bool(svc_obj.get("isPkg", False)),
-                "owner":        svc_obj.get("owner", ""),
-                "service":      svc_obj["service"],
-                "subscriber":   svc_obj["subscriber"],
-            },
-            "old_id": cur["cert_id"],
-            "id":     target_id,
-        })
+        settings_to_set.append(
+            {
+                "service": {
+                    "display_name": svc_obj.get("display_name", ""),
+                    "isPkg": bool(svc_obj.get("isPkg", False)),
+                    "owner": svc_obj.get("owner", ""),
+                    "service": svc_obj["service"],
+                    "subscriber": svc_obj["subscriber"],
+                },
+                "old_id": cur["cert_id"],
+                "id": target_id,
+            }
+        )
 
     if not settings_to_set:
         # Everything's either already bound or missing-and-skipped. Either
@@ -375,20 +404,18 @@ def do_bind_services(a):
         return _emit("no-change", {"skipped_missing": skipped_missing}, a.check)
 
     payload = {
-        "domain":          a.domain,
-        "target_cert_id":  target_id,
+        "domain": a.domain,
+        "target_cert_id": target_id,
         "bindings_to_set": len(settings_to_set),
-        "services":        [s["service"]["service"] for s in settings_to_set],
+        "services": [s["service"]["service"] for s in settings_to_set],
         "skipped_missing": skipped_missing,
     }
     if a.check:
         return _emit("would-change", payload, True)
 
-    r = _exec(SERVICE_API, "version=1", "method=set",
-              "settings=" + json.dumps(settings_to_set))
+    r = _exec(SERVICE_API, "version=1", "method=set", "settings=" + json.dumps(settings_to_set))
     if not r.get("success"):
-        return _fail({"reason": "%s.set failed" % SERVICE_API,
-                      "response": r, "payload": payload})
+        return _fail({"reason": "%s.set failed" % SERVICE_API, "response": r, "payload": payload})
     payload["restart_httpd"] = r.get("data", {}).get("restart_httpd", False)
     return _emit("changed", payload, False)
 
@@ -405,13 +432,15 @@ def do_list(a):
     trimmed = []
     for c in certs:
         subj = c.get("subject", {}) or {}
-        trimmed.append({
-            "id":          c.get("id"),
-            "desc":        c.get("desc", ""),
-            "common_name": subj.get("common_name"),
-            "is_default":  bool(c.get("is_default", False)),
-            "valid_till":  c.get("valid_till", ""),
-        })
+        trimmed.append(
+            {
+                "id": c.get("id"),
+                "desc": c.get("desc", ""),
+                "common_name": subj.get("common_name"),
+                "is_default": bool(c.get("is_default", False)),
+                "valid_till": c.get("valid_till", ""),
+            }
+        )
     print(json.dumps(trimmed, sort_keys=True, indent=2))
     return 0
 
@@ -427,12 +456,17 @@ def main(argv):
     le = sub.add_parser("letsencrypt-create")
     le.add_argument("--domain", required=True)
     le.add_argument("--email", required=True)
-    le.add_argument("--sans-json", default="[]",
-                    help='JSON array of SANs (e.g. \'["a.example","b.example"]\'); '
-                         'empty list = single-domain cert')
-    le.add_argument("--renewal-buffer-days", required=True,
-                    help="Re-issue if cert expires within this many days, "
-                         "regardless of existence")
+    le.add_argument(
+        "--sans-json",
+        default="[]",
+        help='JSON array of SANs (e.g. \'["a.example","b.example"]\'); '
+        "empty list = single-domain cert",
+    )
+    le.add_argument(
+        "--renewal-buffer-days",
+        required=True,
+        help="Re-issue if cert expires within this many days, regardless of existence",
+    )
     le.add_argument("--check", action="store_true")
     le.set_defaults(fn=do_letsencrypt_create)
 
@@ -443,8 +477,9 @@ def main(argv):
 
     bs = sub.add_parser("bind-services")
     bs.add_argument("--domain", required=True)
-    bs.add_argument("--bindings-json", required=True,
-                    help="JSON array of {service, subscriber} dicts")
+    bs.add_argument(
+        "--bindings-json", required=True, help="JSON array of {service, subscriber} dicts"
+    )
     bs.add_argument("--check", action="store_true")
     bs.set_defaults(fn=do_bind_services)
 

@@ -18,7 +18,7 @@
       break-glass for the physical/IPMI console only, not SSH). Set the keys in
       nix/keys/admins.json.
 
-- name: Ensure {{ krg_admin_user }} exists (sudo; break-glass console password, else key-only)
+- name: Ensure break-glass admin exists (sudo; console password, else key-only) — {{ krg_admin_user }}
   ansible.builtin.user:
     name: "{{ krg_admin_user }}"
     comment: "{{ krg_admin_comment }}"
@@ -33,7 +33,7 @@
     password_lock: "{{ (krg_admin_password_hash | length) == 0 }}"
     state: present
 
-- name: Authorize {{ krg_admin_user }} SSH keys
+- name: Authorize SSH keys for {{ krg_admin_user }}
   ansible.posix.authorized_key:
     user: "{{ krg_admin_user }}"
     key: "{{ item }}"

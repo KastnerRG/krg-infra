@@ -1,0 +1,3 @@
+# ansible-lint embeds yamllint and reads the .yamllint at this project root
+# (ansible/). Inherit the repo-wide rules so the two agree.
+extends: ../.yamllint

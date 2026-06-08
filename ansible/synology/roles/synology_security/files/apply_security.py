@@ -22,6 +22,7 @@ Read-only diagnostics (no SET; safe to run any time):
                   set_type=geoip. Used by the role to give operators a visible
                   snapshot until the rule-push API is implemented.
 """
+
 import argparse
 import http.cookiejar
 import json
@@ -66,8 +67,7 @@ class DSMError(Exception):
 class DSMSession(object):
     """HTTP webapi session — context-manage to ensure logout on exit."""
 
-    def __init__(self, host="localhost", port=6021, account="e4e-admin",
-                 password=None, timeout=30):
+    def __init__(self, host="localhost", port=6021, account="e4e-admin", password=None, timeout=30):
         if not password:
             raise ValueError("password is required")
         self.base = "https://%s:%d/webapi/entry.cgi" % (host, port)
@@ -106,34 +106,42 @@ class DSMSession(object):
             with self._opener.open(req, timeout=self.timeout) as resp:
                 body = resp.read()
         except urllib.error.HTTPError as e:
-            raise DSMError("HTTP %d on %s" % (e.code, params.get("api", "?")),
-                           code=e.code, payload=e.read()[:300])
+            raise DSMError(
+                "HTTP %d on %s" % (e.code, params.get("api", "?")),
+                code=e.code,
+                payload=e.read()[:300],
+            )
         try:
             return json.loads(body)
         except ValueError:
-            raise DSMError("non-JSON response on %s" % params.get("api", "?"),
-                           payload=body[:300])
+            raise DSMError("non-JSON response on %s" % params.get("api", "?"), payload=body[:300])
 
     @staticmethod
     def _check(resp, what):
         if not resp.get("success"):
             err = resp.get("error", {})
-            raise DSMError("%s failed (code=%s)" % (what, err.get("code")),
-                           code=err.get("code"), payload=resp)
+            raise DSMError(
+                "%s failed (code=%s)" % (what, err.get("code")), code=err.get("code"), payload=resp
+            )
         return resp.get("data", {})
 
     def login(self):
-        resp = self._post({
-            "api": "SYNO.API.Auth", "version": "7", "method": "login",
-            "account": self.account, "passwd": self._password,
-            "session": "FileStation", "format": "cookie",
-            "enable_syno_token": "yes",
-        })
+        resp = self._post(
+            {
+                "api": "SYNO.API.Auth",
+                "version": "7",
+                "method": "login",
+                "account": self.account,
+                "passwd": self._password,
+                "session": "FileStation",
+                "format": "cookie",
+                "enable_syno_token": "yes",
+            }
+        )
         data = self._check(resp, "login")
         self.token = data.get("synotoken")
         if not self.token:
-            raise DSMError("login succeeded but no SynoToken returned",
-                           payload=data)
+            raise DSMError("login succeeded but no SynoToken returned", payload=data)
         return data
 
     def logout(self):
@@ -159,9 +167,14 @@ class DSMSession(object):
         return self._post(form)
 
     def profile_get(self, name):
-        return self._check(self.call(
-            "SYNO.Core.Security.Firewall.Profile", "get", name=name,
-        ), "Profile.get(%s)" % name)
+        return self._check(
+            self.call(
+                "SYNO.Core.Security.Firewall.Profile",
+                "get",
+                name=name,
+            ),
+            "Profile.get(%s)" % name,
+        )
 
     def profile_set(self, profile, applying=False):
         """Save profile (write to /usr/syno/etc/firewall.d/*.json). Not live until profile_apply()."""
@@ -180,26 +193,33 @@ class DSMSession(object):
         `profile_applying=False` matches the UI's call — True errors 117 on
         DSM 7.x. The flag is a context hint, not a do-it toggle.
         """
-        started = self._check(self.call(
-            "SYNO.Core.Security.Firewall.Profile.Apply", "start",
-            name=name, profile_applying=False,
-        ), "Profile.Apply.start")
+        started = self._check(
+            self.call(
+                "SYNO.Core.Security.Firewall.Profile.Apply",
+                "start",
+                name=name,
+                profile_applying=False,
+            ),
+            "Profile.Apply.start",
+        )
         task_id = started.get("task_id")
         if not task_id:
-            raise DSMError("Profile.Apply.start returned no task_id",
-                           payload=started)
+            raise DSMError("Profile.Apply.start returned no task_id", payload=started)
         try:
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
-                status = self._check(self.call(
-                    "SYNO.Core.Security.Firewall.Profile.Apply", "status",
-                    task_id=task_id,
-                ), "Profile.Apply.status")
+                status = self._check(
+                    self.call(
+                        "SYNO.Core.Security.Firewall.Profile.Apply",
+                        "status",
+                        task_id=task_id,
+                    ),
+                    "Profile.Apply.status",
+                )
                 if status.get("finish"):
                     return status
                 time.sleep(poll_interval)
-            raise DSMError("Profile.Apply timed out after %ds (task=%s)"
-                           % (timeout, task_id))
+            raise DSMError("Profile.Apply timed out after %ds (task=%s)" % (timeout, task_id))
         finally:
             try:
                 self.call("SYNO.Core.Security.Firewall.Profile.Apply", "stop")
@@ -208,8 +228,7 @@ class DSMSession(object):
 
 
 def _exec(api, *params):
-    out = subprocess.run([WEBAPI, "--exec", "api=" + api, *params],
-                         capture_output=True, text=True)
+    out = subprocess.run([WEBAPI, "--exec", "api=" + api, *params], capture_output=True, text=True)
     txt = out.stdout
     brace = txt.find("{")
     if brace < 0:
@@ -257,8 +276,11 @@ def _result(drift, check, apply_fn):
 
 def apply_full_object(api, version, desired, check):
     current = _exec(api, "version=%d" % version, "method=get")["data"]
-    drift = {k: {"current": current.get(k), "desired": v}
-             for k, v in desired.items() if current.get(k) != v}
+    drift = {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if current.get(k) != v
+    }
 
     def apply():
         current.update(desired)
@@ -340,8 +362,7 @@ def do_probe_geoip(a):
                                 with set_type=geoip across adapters).
       GEOIP-UNKNOWN <reason>  — couldn't read; operator should check DSM logs.
     """
-    out = {"countries_available": None, "firewall": None, "per_adapter": [],
-           "geoip_rule_count": 0}
+    out = {"countries_available": None, "firewall": None, "per_adapter": [], "geoip_rule_count": 0}
     try:
         listing = _exec("SYNO.Core.Security.Firewall.Geoip", "version=1", "method=list")
         if listing.get("success"):
@@ -349,18 +370,24 @@ def do_probe_geoip(a):
         fw = _exec("SYNO.Core.Security.Firewall", "version=1", "method=get")
         if fw.get("success"):
             out["firewall"] = fw.get("data", {})
-        adapters = _exec("SYNO.Core.Security.Firewall.Adapter",
-                         "version=1", "method=list")
+        adapters = _exec("SYNO.Core.Security.Firewall.Adapter", "version=1", "method=list")
         names = adapters.get("data", {}).get("adapter_names", []) if adapters.get("success") else []
         for name in names:
-            rl = _exec("SYNO.Core.Security.Firewall.Rules", "version=1",
-                       "method=load", "adapter=\"%s\"" % name)
+            rl = _exec(
+                "SYNO.Core.Security.Firewall.Rules",
+                "version=1",
+                "method=load",
+                'adapter="%s"' % name,
+            )
             d = rl.get("data", {}) if rl.get("success") else {}
             rules = d.get("rules") or []
-            out["per_adapter"].append({
-                "adapter": name, "policy": d.get("policy"),
-                "total": d.get("total", 0),
-            })
+            out["per_adapter"].append(
+                {
+                    "adapter": name,
+                    "policy": d.get("policy"),
+                    "total": d.get("total", 0),
+                }
+            )
             out["geoip_rule_count"] += sum(
                 1 for r in rules if isinstance(r, dict) and r.get("set_type") == "geoip"
             )
@@ -394,8 +421,7 @@ def do_firewall_profile(a):
         return 1
     password = a.password or os.environ.get("DSM_PASSWORD") or ""
     if not password:
-        print("FAIL no password supplied (pass --password on argv or set "
-              "DSM_PASSWORD env)")
+        print("FAIL no password supplied (pass --password on argv or set DSM_PASSWORD env)")
         return 1
 
     try:
@@ -408,8 +434,11 @@ def do_firewall_profile(a):
                 target[adapter] = block
 
             # Per-adapter drift — only on adapters we manage
-            drift = {ad: {"current": current.get(ad), "desired": target[ad]}
-                     for ad in desired_adapters if current.get(ad) != target[ad]}
+            drift = {
+                ad: {"current": current.get(ad), "desired": target[ad]}
+                for ad in desired_adapters
+                if current.get(ad) != target[ad]
+            }
 
             if not drift:
                 print("OK no-change")
@@ -421,19 +450,22 @@ def do_firewall_profile(a):
             # anywhere in the merged profile, we'd lock ourselves out. Refuse.
             # An allow rule anywhere (global OR per-adapter) is sufficient —
             # global rules apply across all interfaces.
-            drop_adapters = [ad for ad in desired_adapters
-                             if (target.get(ad) or {}).get("policy") == "drop"]
+            drop_adapters = [
+                ad for ad in desired_adapters if (target.get(ad) or {}).get("policy") == "drop"
+            ]
             if drop_adapters:
                 allow_anywhere = any(
                     isinstance(r, dict) and r.get("policy") == "allow"
-                    for ad in target if ad != "name"
+                    for ad in target
+                    if ad != "name"
                     for r in (target[ad].get("rules") or [])
                 )
                 if not allow_anywhere:
-                    print("FAIL anti-lockout: target has default-drop on %s "
-                          "with no allow rules anywhere. Refusing to push "
-                          "(would block SSH). Add at least one allow rule."
-                          % drop_adapters)
+                    print(
+                        "FAIL anti-lockout: target has default-drop on %s "
+                        "with no allow rules anywhere. Refusing to push "
+                        "(would block SSH). Add at least one allow rule." % drop_adapters
+                    )
                     return 1
 
             if a.check:
@@ -468,8 +500,9 @@ RULE_KEYS = ("rules", "rule_list", "fw_rules")
 
 def do_probe_profile(a):
     try:
-        res = _exec("SYNO.Core.Security.Firewall.Profile", "version=1",
-                    "method=get", "name=" + a.profile)
+        res = _exec(
+            "SYNO.Core.Security.Firewall.Profile", "version=1", "method=get", "name=" + a.profile
+        )
     except RuntimeError as e:
         print("PROFILE-UNKNOWN " + json.dumps({"error": str(e)[:200]}))
         return 0
@@ -514,34 +547,47 @@ def main(argv=None):
     ab.add_argument("--check", action="store_true")
     ab.set_defaults(func=do_autoblock)
 
-    pp = sub.add_parser("probe-profile",
-                        help="Read-only: report whether the named firewall profile has any rules.")
+    pp = sub.add_parser(
+        "probe-profile", help="Read-only: report whether the named firewall profile has any rules."
+    )
     pp.add_argument("--profile", required=True)
     pp.set_defaults(func=do_probe_profile)
 
-    fp = sub.add_parser("firewall-profile",
-                        help="Push per-adapter rules to a DSM firewall profile via the "
-                             "HTTP webapi (Profile.set + Profile.Apply two-phase). "
-                             "Unmanaged adapters are preserved. Reads DSM_PASSWORD from env.")
+    fp = sub.add_parser(
+        "firewall-profile",
+        help="Push per-adapter rules to a DSM firewall profile via the "
+        "HTTP webapi (Profile.set + Profile.Apply two-phase). "
+        "Unmanaged adapters are preserved. Reads DSM_PASSWORD from env.",
+    )
     fp.add_argument("--account", default="e4e-admin")
-    fp.add_argument("--password", default=None,
-                    help="DSM password. Falls back to DSM_PASSWORD env if "
-                         "omitted. Use `no_log: true` on the Ansible task.")
+    fp.add_argument(
+        "--password",
+        default=None,
+        help="DSM password. Falls back to DSM_PASSWORD env if "
+        "omitted. Use `no_log: true` on the Ansible task.",
+    )
     fp.add_argument("--profile-name", dest="profile_name", default="default")
-    fp.add_argument("--desired", required=True,
-                    help="JSON object: {adapter: {policy, rules: [...]}}. "
-                         "Only listed adapters are managed.")
-    fp.add_argument("--apply", action="store_true",
-                    help="After Profile.set, also Profile.Apply (commit to "
-                         "live nftables). Without this, the profile is saved "
-                         "to disk but not activated.")
+    fp.add_argument(
+        "--desired",
+        required=True,
+        help="JSON object: {adapter: {policy, rules: [...]}}. Only listed adapters are managed.",
+    )
+    fp.add_argument(
+        "--apply",
+        action="store_true",
+        help="After Profile.set, also Profile.Apply (commit to "
+        "live nftables). Without this, the profile is saved "
+        "to disk but not activated.",
+    )
     fp.add_argument("--check", action="store_true")
     fp.set_defaults(func=do_firewall_profile)
 
-    pg = sub.add_parser("probe-geoip",
-                        help="Read-only: surface DSM geoip-related state "
-                             "(countries listable, firewall enable/profile, "
-                             "per-adapter rule policies, count of geoip rules).")
+    pg = sub.add_parser(
+        "probe-geoip",
+        help="Read-only: surface DSM geoip-related state "
+        "(countries listable, firewall enable/profile, "
+        "per-adapter rule policies, count of geoip rules).",
+    )
     pg.set_defaults(func=do_probe_geoip)
 
     a = ap.parse_args(argv)
