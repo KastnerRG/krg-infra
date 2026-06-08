@@ -30,8 +30,7 @@
   # (it's the OEC_INSTALLER deploy source): its nightly autoUpgrade rebuild then
   # fires oec-install and enrolls with no extra staging. deploy-nixos.sh verifies
   # this host's daemons LOCALLY at the end of each run.
-  krg.oecQualysTrellix.installerArchive =
-    "/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz";
+  krg.oecQualysTrellix.installerArchive = "/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz";
 
   networking = {
     hostName = "krg-deploy";

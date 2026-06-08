@@ -80,7 +80,7 @@ in {
     # which point this permit is removed (26.05's default docker is not insecure).
     # NOTE: exact version string — if 25.11 ever moves docker off 28.5.2 this must
     # follow (or switch to nixpkgs.config.allowInsecurePredicate matching "docker").
-    nixpkgs.config.permittedInsecurePackages = [ "docker-28.5.2" ];
+    nixpkgs.config.permittedInsecurePackages = ["docker-28.5.2"];
 
     virtualisation.docker = {
       enable = true;
