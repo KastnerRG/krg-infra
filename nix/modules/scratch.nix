@@ -77,9 +77,12 @@ with lib; let
   # scratch-overflow / scratch-restore as stdlib-only Python. writePython3Bin gives a
   # build-time syntax + import check; flakeIgnore drops style-only lints (line length
   # etc.) — the scripts are the real source of truth in nix/modules/scratch/*.py.
+  # E203/W503 are the pycodestyle rules ruff/black deliberately violate (slice colon
+  # spacing `x[a :]`, line break before binary op), so they're ignored here too — the
+  # repo-wide ruff gate (ruff.toml) is what actually lints these files.
   pyArgs = {
     libraries = [];
-    flakeIgnore = ["E501" "E226" "W503" "W504"];
+    flakeIgnore = ["E203" "E501" "E226" "W503" "W504"];
   };
   scratchOverflow =
     pkgs.writers.writePython3Bin "scratch-overflow" pyArgs
