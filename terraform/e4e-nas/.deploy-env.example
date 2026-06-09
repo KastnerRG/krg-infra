@@ -1,0 +1,26 @@
+# Copy to terraform/e4e-nas/.deploy-env (gitignored) on krg-deploy and fill in.
+# Sourced by deploy/deploy-tofu.sh (set -a) right before `tofu apply`. The
+# PRESENCE of .deploy-env flips this target from "skip" to "apply".
+#
+# NOTE: this target also reads terraform.tfvars (see terraform.tfvars.example) if
+# present, but the CD path keys on .deploy-env — so for an unattended apply on
+# krg-deploy you must supply the creds HERE (as TF_VAR_*), not only in tfvars.
+#
+#   cp .deploy-env.example .deploy-env   # then edit; never commit .deploy-env
+
+# Dedicated DSM administrators-group API account — NOT the built-in 'admin'.
+TF_VAR_dsm_user="e4e-automation"
+
+# Password for dsm_user. Canonical source is OpenBao (#75 / secret/e4e-nas/users);
+# until that lands it is operator-managed — pull it into the env rather than
+# hardcoding, e.g.:
+#   TF_VAR_dsm_password="$(yq -r '.synology_user_passwords."e4e-automation"' ~/.config/krg/secrets-syno.yml)"
+TF_VAR_dsm_password="replace-with-dsm-api-account-password"
+
+# DSM TOTP secret — ONLY if e4e-automation has 2FA enabled. Base32 shared secret
+# (length 16-32), NOT the 6-digit code, NOT the otpauth:// URI. Leave commented
+# when 2FA is off (providers.tf passes null through).
+# TF_VAR_dsm_otp_secret="JBSWY3DPEHPK3PXP..."
+
+# Optional — defaults to https://e4e-nas.ucsd.edu:6021 (variables.tf):
+# TF_VAR_dsm_host="https://e4e-nas.ucsd.edu:6021"

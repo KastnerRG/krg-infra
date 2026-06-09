@@ -1,0 +1,18 @@
+# Copy to terraform/openbao/.deploy-env (gitignored) on krg-deploy and fill in.
+# Sourced by deploy/deploy-tofu.sh (set -a) right before `tofu apply`, so every
+# line is a plain `KEY=value` export. The PRESENCE of .deploy-env is what flips
+# this target from "skip" to "apply" — so do not create it until OpenBao on
+# krg-vault is up and you have a bootstrap token.
+#
+#   cp .deploy-env.example .deploy-env   # then edit; never commit .deploy-env
+
+# Bootstrap token for the OpenBao server on krg-vault. This target PROVISIONS the
+# KV mount + AppRoles + policies, so it needs a privileged token (root or an
+# admin token with sudo on sys/, auth/, and the secret/ mount). It is the only
+# target that can't read its own creds from OpenBao (it's building OpenBao's
+# structure) — supply it here.
+VAULT_TOKEN="s.replace-with-openbao-root-or-admin-token"
+
+# Optional — defaults to https://krg-vault.ucsd.edu:8200 (variables.tf). Uncomment
+# to override.
+# TF_VAR_vault_addr="https://krg-vault.ucsd.edu:8200"

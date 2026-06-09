@@ -151,12 +151,17 @@ jobs:
           SYNOLOGY_TAGS: "synology_shares,synology_acls,synology_certificate,synology_app_portal,synology_garage,synology_sso"
         run: ./deploy/deploy-ansible.sh
 
-      # OpenTofu layer — DEFERRED to a second step (state backend, encryption
-      # passphrase, and per-target .deploy-env creds still to be wired). The
-      # deploy/deploy-tofu.sh script is in place and dormant; re-enable here once
-      # those are sorted.
-      # - name: Apply OpenTofu layer
-      #   if: success() && steps.gate.outputs.ok == 'true'
-      #   env:
-      #     TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
-      #   run: ./deploy/deploy-tofu.sh
+      # OpenTofu layer. State is local on krg-deploy (ADR 0005) + encrypted with
+      # the TOFU_STATE_PASSPHRASE Actions secret. Like the Ansible synology leg,
+      # this is INERT until creds land: deploy-tofu.sh SKIPS any target without a
+      # terraform/<target>/.deploy-env (operator-provisioned, gitignored), and
+      # HARD-FAILS a credentialed target if the passphrase is unset rather than
+      # writing plaintext state. So this is safe to run on every deploy — it does
+      # nothing until an operator deliberately wires a target's .deploy-env AND the
+      # TOFU_STATE_PASSPHRASE secret. See deploy/README.md and each target's
+      # terraform/<target>/.deploy-env.example.
+      - name: Apply OpenTofu layer
+        if: success() && steps.gate.outputs.ok == 'true'
+        env:
+          TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
+        run: ./deploy/deploy-tofu.sh

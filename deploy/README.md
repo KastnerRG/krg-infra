@@ -18,7 +18,7 @@ push to main
    ▼
 deploy/deploy-nixos.sh   nixos-rebuild switch --target-host (each host builds itself)
 deploy/deploy-ansible.sh ansible-playbook site.yml  (Synology opt-in)
-deploy/deploy-tofu.sh    tofu apply per target  (DEFERRED — step commented out in deploy.yml)
+deploy/deploy-tofu.sh    tofu apply per target  (active; inert until a target's .deploy-env lands)
 ```
 
 The runner itself is declarative — `services.github-runners.krg-deploy` in
@@ -33,7 +33,7 @@ uses).
 |---|---|---|
 | `deploy-nixos.sh` | krg-vault, krg-ldap, krg-prod, waiter | `--build-host = --target-host` so each host builds its own closure (krg-deploy only evaluates). **krg-deploy itself is excluded** from the rebuild — it runs the job; it stays current via nightly `autoUpgrade` (and self-verifies OEC locally — see *OEC* below). **e4e-prod is omitted** until the host is provisioned. **Stages the OEC installer to each host before the switch and verifies both security daemons are active afterwards** (see *OEC* below). |
 | `deploy-ansible.sh` | `ansible/playbooks/site.yml` (Proxmox) | Synology is **opt-in** (`DEPLOY_SYNOLOGY=true`, off by default) — its declarative sync deletes, and bring-up has gates (see [docs/e4e-nas-dsm.md](../docs/e4e-nas-dsm.md)). Galaxy collections (`ansible/requirements.yml`) must be **provisioned on the control node** (not installed per-run — matches the nightly `ansible-apply`); deterministic/Nix-managed collections tracked in #129. **Passes `oec_installer` so the Proxmox hosts enroll + verify the OEC daemons too** (see *OEC* below). |
-| `deploy-tofu.sh` | each `terraform/<target>/` with a `.deploy-env` | **Deferred** — the step is commented out in `deploy.yml`. Script is in place and dormant. State persists under `TOFU_STATE_ROOT` (CI checkout is ephemeral); encrypted when `TOFU_STATE_PASSPHRASE` is set. |
+| `deploy-tofu.sh` | each `terraform/<target>/` with a `.deploy-env` | **Active but inert until creds land.** Targets without a `.deploy-env` (operator-provisioned, gitignored — see each target's `.deploy-env.example`) are **skipped**; a credentialed target with no `TOFU_STATE_PASSPHRASE` **hard-fails** rather than writing plaintext state (ADR 0005). State persists under `TOFU_STATE_ROOT` (CI checkout is ephemeral), always encrypted with the passphrase. Apply order (`TOFU_TARGETS`): `openbao` first (it provisions the AppRoles the others authenticate with), then `authentik`, `grafana`, `e4e-nas`. |
 
 The scripts run by hand on krg-deploy too (they only need the deploy toolchain + the
 secrets below) — `./deploy/deploy-nixos.sh`, etc.
@@ -78,8 +78,14 @@ tracked in [#181](https://github.com/KastnerRG/krg-infra/issues/181).
   `ansible.cfg host_key_checking=True`), so this must be provisioned out-of-band. For
   first-time bring-up only, set `DEPLOY_SSH_ACCEPT_NEW=true` to trust-on-first-use.
 - `terraform/<target>/.deploy-env` — sourced per target to export `VAULT_TOKEN`,
-  `TF_VAR_*`, etc. Targets without it are **skipped** (safe to land before creds exist).
-- `TOFU_STATE_PASSPHRASE` — repo Actions secret; encrypts OpenTofu state.
+  `TF_VAR_*`, etc. Targets without it are **skipped** (safe to land before creds
+  exist). Each target ships a `.deploy-env.example` documenting exactly what it
+  must export — `cp .deploy-env.example .deploy-env` on krg-deploy and fill in.
+- `TOFU_STATE_PASSPHRASE` — repo Actions secret; encrypts OpenTofu state. Now
+  **required before any credentialed target applies** — a target with a
+  `.deploy-env` but no passphrase hard-fails (ADR 0005: state holds live secrets,
+  must not be written in the clear). Set it with
+  `gh secret set TOFU_STATE_PASSPHRASE` once, before wiring the first `.deploy-env`.
 - `/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz` — the
   campus-mandated **OEC** (Qualys + Trellix) vendor archive, holding live enrollment
   creds (gitignored). Both deploy scripts **fail if it's absent** (`OEC_INSTALLER`
