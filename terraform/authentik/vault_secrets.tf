@@ -51,6 +51,19 @@ resource "vault_kv_secret_v2" "roster_oidc" {
   })
 }
 
+# Vaultwarden — Authentik mints this client secret (brand new). Consumed by the
+# compose service as SSO_CLIENT_SECRET (populated into
+# /var/lib/krg/krg-prod/.secrets/vaultwarden.env; see docs/vaultwarden-sso.md).
+resource "vault_kv_secret_v2" "vaultwarden_oidc" {
+  mount = "secret"
+  name  = "krg-prod/vaultwarden-oidc"
+  data_json = jsonencode({
+    client_id     = authentik_provider_oauth2.vaultwarden.client_id
+    client_secret = authentik_provider_oauth2.vaultwarden.client_secret
+    issuer_url    = "${var.authentik_url}/application/o/vaultwarden/"
+  })
+}
+
 # garage-ui — the ONLY garage secret tofu generates (Authentik mints it; brand
 # new, so writing it is pure creation, not a rotation of a live value). Path is
 # secret/e4e-nas/* (not krg-prod/*) because the consumer is the NAS. The garage

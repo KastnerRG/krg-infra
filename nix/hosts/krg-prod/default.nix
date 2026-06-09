@@ -42,26 +42,30 @@ in {
     # working dir where compose.yml can find them by name.
     "L+ /var/lib/krg/krg-prod/compose.authentik.yml    - - - - ${composeDir}/compose.authentik.yml"
     "L+ /var/lib/krg/krg-prod/compose.grafana.yml      - - - - ${composeDir}/compose.grafana.yml"
+    "L+ /var/lib/krg/krg-prod/compose.vaultwarden.yml  - - - - ${composeDir}/compose.vaultwarden.yml"
     "L+ /var/lib/krg/krg-prod/compose.outline.yml      - - - - ${composeDir}/compose.outline.yml"
     "L+ /var/lib/krg/krg-prod/compose.mlflow.yml       - - - - ${composeDir}/compose.mlflow.yml"
 
     # Read-only config dirs: symlink from working dir → Nix store.
     # Docker bind-mount follows symlinks so ./prometheus resolves to the store path.
-    "L /var/lib/krg/krg-prod/prometheus          - - - - ${composeDir}/prometheus"
-    "L /var/lib/krg/krg-prod/blackbox-exporter   - - - - ${composeDir}/blackbox-exporter"
-    "L /var/lib/krg/krg-prod/grafana             - - - - ${composeDir}/grafana"
+    # Use L+ (not L): plain L only creates a missing symlink and will NOT repoint an
+    # existing one, so on later deploys the link would stay stuck at an OLD store path
+    # and config/icon changes would never reach the host. L+ replaces it every switch.
+    "L+ /var/lib/krg/krg-prod/prometheus          - - - - ${composeDir}/prometheus"
+    "L+ /var/lib/krg/krg-prod/blackbox-exporter   - - - - ${composeDir}/blackbox-exporter"
+    "L+ /var/lib/krg/krg-prod/grafana             - - - - ${composeDir}/grafana"
 
     # Loki: separate read-only config files from writable data dir
     "d  /var/lib/krg/krg-prod/loki                          0750 1000 1000 -"
-    "L  /var/lib/krg/krg-prod/loki/loki-config.yaml         - - - - ${composeDir}/loki/loki-config.yaml"
-    "L  /var/lib/krg/krg-prod/loki/promtail-config.yaml     - - - - ${composeDir}/loki/promtail-config.yaml"
+    "L+ /var/lib/krg/krg-prod/loki/loki-config.yaml         - - - - ${composeDir}/loki/loki-config.yaml"
+    "L+ /var/lib/krg/krg-prod/loki/promtail-config.yaml     - - - - ${composeDir}/loki/promtail-config.yaml"
     "d  /var/lib/krg/krg-prod/loki/loki-data                0750 1000 1000 -"
 
     # Authentik postgres: config (read-only symlinks) + data (writable)
     "d  /var/lib/krg/krg-prod/authentik                     0750 root   docker -"
     "d  /var/lib/krg/krg-prod/authentik/postgres            0750 root   docker -"
-    "L  /var/lib/krg/krg-prod/authentik/postgres/config     - - - - ${composeDir}/authentik/postgres/config"
-    "L  /var/lib/krg/krg-prod/authentik/postgres/scripts    - - - - ${composeDir}/authentik/postgres/scripts"
+    "L+ /var/lib/krg/krg-prod/authentik/postgres/config     - - - - ${composeDir}/authentik/postgres/config"
+    "L+ /var/lib/krg/krg-prod/authentik/postgres/scripts    - - - - ${composeDir}/authentik/postgres/scripts"
     "d  /var/lib/krg/krg-prod/authentik/postgres/data       0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/authentik/media               0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/authentik/data                0750 1000 1000 -"
@@ -70,7 +74,7 @@ in {
     # owned by the authentik uid so the read-only krg-icons bind mount
     # (compose.authentik.yml) lands inside a dir authentik can still write its
     # own media into. 2026.2 serves icons from /data/media/public/<name>.
-    "L  /var/lib/krg/krg-prod/authentik/media-icons         - - - - ${composeDir}/authentik/media-icons"
+    "L+ /var/lib/krg/krg-prod/authentik/media-icons         - - - - ${composeDir}/authentik/media-icons"
     "d  /var/lib/krg/krg-prod/authentik/data/media          0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/authentik/data/media/public   0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/authentik/certs               0750 1000 1000 -"
@@ -79,17 +83,21 @@ in {
 
     # Outline: docker.env is read-only; data dirs are writable
     "d  /var/lib/krg/krg-prod/outline                       0750 root   docker -"
-    "L  /var/lib/krg/krg-prod/outline/docker.env            - - - - ${composeDir}/outline/docker.env"
+    "L+ /var/lib/krg/krg-prod/outline/docker.env            - - - - ${composeDir}/outline/docker.env"
     "d  /var/lib/krg/krg-prod/outline/outline_data          0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/outline/postgres              0750 1000 1000 -"
 
     # MLflow: working dir for postgres data volumes; config/Dockerfile is in the Nix store
     "d  /var/lib/krg/krg-prod/mlflow                        0750 root   docker -"
-    "L  /var/lib/krg/krg-prod/mlflow/config                 - - - - ${composeDir}/mlflow/config"
+    "L+ /var/lib/krg/krg-prod/mlflow/config                 - - - - ${composeDir}/mlflow/config"
 
     # Grafana, Prometheus data (writable)
     "d  /var/lib/krg/krg-prod/grafana-storage               0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/prometheus-data               0750 1000 1000 -"
+
+    # Vaultwarden: SQLite datastore (writable; owned by the container's uid 1000)
+    "d  /var/lib/krg/krg-prod/vaultwarden                   0750 1000 1000 -"
+    "d  /var/lib/krg/krg-prod/vaultwarden/data              0750 1000 1000 -"
 
     # Traefik TLS certificate storage
     "d  /var/lib/krg/krg-prod/traefik-data                  0750 root docker -"
@@ -112,6 +120,9 @@ in {
   #   gf_admin_password.txt
   #   outline_secrets.env               (SECRET_KEY, UTILS_SECRET, OIDC_CLIENT_SECRET, DATABASE_URL, ...)
   #   mlflow.env                        (POSTGRES_PASSWORD, OIDC_* vars)
+  #   vaultwarden.env                   (ADMIN_TOKEN=<argon2 hash>, SSO_CLIENT_SECRET=<from OpenBao>)
+  #     ADMIN_TOKEN:      vaultwarden hash   (or argon2 a strong password) — gates /admin
+  #     SSO_CLIENT_SECRET: bao kv get -field=client_secret secret/krg-prod/vaultwarden-oidc
   #
   # Also create /var/lib/krg/krg-prod/.env with:
   #   USER_ID=<UID of the account that owns the working directory>
