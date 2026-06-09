@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       hosts:
-        description: "Space-separated subset to reboot (blank = all reachable hosts)"
+        description: "Comma-separated hostnames to reboot (blank = all reachable hosts)"
         required: false
         default: ""
 
@@ -35,4 +35,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Reboot fleet
-        run: ./deploy/reboot-fleet.sh ${{ github.event.inputs.hosts }}
+        # Pass the input via env (not interpolated into the command line) so it
+        # can't break out of the argument — the script splits it on commas/spaces.
+        env:
+          HOSTS: ${{ github.event.inputs.hosts }}
+        run: ./deploy/reboot-fleet.sh "$HOSTS"

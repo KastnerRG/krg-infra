@@ -55,15 +55,22 @@ declare -A REBOOT_CMD_OVERRIDE=(
 # NAS goes last (slowest to reboot, least coupled to the others' reachability).
 ORDER=(krg-vault krg-ldap krg-prod waiter e4e-nas)
 
-# Optional positional args restrict the run to a subset (e.g. `reboot-fleet.sh waiter`).
+# Optional args restrict the run to a subset, given as a comma- and/or
+# space-separated list of HOSTNAMES (e.g. `reboot-fleet.sh waiter,krg-prod` or
+# `reboot-fleet.sh waiter krg-prod`). Empty tokens are ignored, so an unset
+# workflow input passed through as one blank arg falls back to the full fleet.
 if [[ $# -gt 0 ]]; then
-  for h in "$@"; do
+  IFS=', ' read -r -a requested <<<"$*"
+  selected=()
+  for h in "${requested[@]}"; do
+    [[ -z "$h" ]] && continue
     if [[ -z "${ADDR[$h]:-}" ]]; then
       echo "FATAL: unknown host '$h' (known: ${!ADDR[*]})"
       exit 1
     fi
+    selected+=("$h")
   done
-  ORDER=("$@")
+  [[ ${#selected[@]} -gt 0 ]] && ORDER=("${selected[@]}")
 fi
 
 DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-/var/lib/krg-admin/.ssh/id_ed25519}"

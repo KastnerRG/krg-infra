@@ -59,8 +59,9 @@ It's **`workflow_dispatch`-only** (a reboot is never an automatic consequence of
 commit) and shares the `deploy-fleet` concurrency group so it can't overlap a deploy.
 It reboots each host sequentially — issuing the reboot, then confirming the box came
 back by watching the kernel `boot_id` change — and is **fail-fast**: if a host
-doesn't return, the rest are left alone. An optional input restricts it to a subset
-(e.g. `waiter`). Targets the provisioned NixOS hosts (mirrors `deploy-nixos.sh`) plus
+doesn't return, the rest are left alone. An optional comma-separated `hosts` input
+restricts it to a subset (e.g. `waiter,krg-prod`). Targets the provisioned NixOS
+hosts (mirrors `deploy-nixos.sh`) plus
 the **e4e-nas** Synology appliance. **`krg-deploy` and `fabricant` are excluded for
 now** (the runner can't reboot itself; the hypervisor would drop every guest) —
 tracked in [#181](https://github.com/KastnerRG/krg-infra/issues/181).
