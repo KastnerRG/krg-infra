@@ -29,7 +29,9 @@ See also: [`ansible/synology/roles/synology_garage/README.md`](../ansible/synolo
 
 ```bash
 cd terraform/openbao
-# terraform/openbao/.deploy-env exports VAULT_TOKEN (admin) + TF_VAR_*
+# export VAULT_TOKEN (a privileged/admin token) + TF_VAR_* in your shell first —
+# openbao bootstraps OpenBao's own auth, so it can't use the krg-deploy AppRole.
+# (Equivalent via the deploy script: TOFU_TARGETS=openbao TOFU_OPENBAO_TOKEN=… ./deploy/deploy-tofu.sh)
 tofu init && tofu apply
 ```
 
@@ -43,7 +45,8 @@ This creates/updates the `krg-deploy` AppRole policy that grants
 
 ```bash
 cd terraform/authentik
-# .deploy-env exports TF_VAR_authentik_token, VAULT_TOKEN, TF_VAR_ldap_bind_password
+# export TF_VAR_authentik_token, VAULT_TOKEN, TF_VAR_ldap_bind_password in your
+# shell (or run deploy/deploy-tofu.sh, which reads them from OpenBao via AppRole)
 tofu init && tofu apply
 #   targeted alternative:
 #   tofu apply \

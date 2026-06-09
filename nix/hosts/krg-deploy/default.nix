@@ -130,7 +130,8 @@
   #       via `bao write -f auth/approle/role/krg-deploy/secret-id` (krg-deploy's
   #       own policy can mint these). The read capability is in terraform/openbao.
   # The deploy sources per-layer secrets at run time (see deploy/*.sh):
-  #   tofu   — terraform/<target>/.deploy-env + the TOFU_STATE_PASSPHRASE secret.
+  #   tofu   — krg-deploy AppRole login → bao kv get per target (+ the
+  #            TOFU_STATE_PASSPHRASE Actions secret for state encryption).
   #   ansible (synology) — krg-deploy AppRole login → bao kv get → extra_vars.
   services.github-runners.krg-deploy = {
     enable = true;
@@ -164,9 +165,10 @@
     # whole FS is read-only bar a few allow-listed paths), so without this the
     # script's `mkdir tofu-state` fails with EROFS. Grant write access to JUST that
     # one dir (pre-created by the tmpfiles rule below — ReadWritePaths entries must
-    # exist at unit start). The per-target .deploy-env creds under
-    # /var/lib/krg-admin/.secrets/tofu/ need NO override: ProtectSystem=strict
-    # still permits READS, same as the Ansible leg's OpenBao creds in .secrets/.
+    # exist at unit start). deploy-tofu.sh reads its per-target creds from OpenBao
+    # (AppRole), so there's no secrets dir to grant — and the AppRole role/secret
+    # id files in /var/lib/krg-admin/.secrets/ are READS, which ProtectSystem=strict
+    # already permits (same as the Ansible leg).
     serviceOverrides.ReadWritePaths = ["/var/lib/krg-admin/tofu-state"];
   };
 
