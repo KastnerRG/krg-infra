@@ -105,8 +105,11 @@ resource "authentik_provider_oauth2" "vaultwarden" {
   # RS256 signing key — REQUIRED: Vaultwarden verifies the ID token against jwks_uri.
   # Without it Authentik falls back to HS256 + empty JWKS → "Invalid ID token" (the
   # same failure garage-ui hit).
-  signing_key            = data.authentik_certificate_key_pair.default.id
-  sub_mode               = "user_email"
+  signing_key = data.authentik_certificate_key_pair.default.id
+  # Stable, opaque subject — do NOT key identity on the email. Emails are
+  # admin-managed and can change; tying `sub` to the email would orphan or
+  # collide a user's vault if it's ever edited.
+  sub_mode               = "hashed_user_id"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
 }

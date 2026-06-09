@@ -128,7 +128,17 @@ is the **exact** Authentik app issuer (trailing slash, no
 - **SSO ≠ no master password.** OIDC federates the *login identity*; the vault stays
   E2E-encrypted under each user's master password (no Key Connector). First SSO
   login still establishes a master password.
-- Onboarding is **invite-only** (`SIGNUPS_ALLOWED=false`). To allow open SSO
-  self-registration for any Authentik-authenticated AD user, set it to `true`.
+- **Signups are SSO-only.** `SIGNUPS_ALLOWED=false` blocks regular
+  email+master-password registration, but the SSO flow still auto-creates accounts
+  on first login (upstream 1.36), so accounts come **only via Authentik**. The real
+  gate on *who* may sign up is the Authentik application policy — bind it to an AD
+  group; Vaultwarden does not enforce it.
+- **Email verification is relaxed.** Authentik doesn't assert `email_verified` for
+  AD-synced users, so `SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION=true`. Safe because
+  member emails are admin-entered (known-good), not self-asserted. Issue #185 tracks
+  verifying emails at Authentik and dropping this.
+- **Stable subject.** The provider uses `sub_mode = "hashed_user_id"` (not the
+  email) so identity doesn't ride on a mutable, admin-managed email — changing an
+  email won't orphan or collide a user's vault.
 - Prometheus already probes `https://vaultwarden.krg.ucsd.edu/` — no scrape change.
 - DNS CNAME for `vaultwarden.krg` is published at the DNS layer (not this repo).

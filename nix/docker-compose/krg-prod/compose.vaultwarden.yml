@@ -9,10 +9,11 @@ services:
       # <DOMAIN>/identity/connect/oidc-signin (registered in the Authentik provider).
       - DOMAIN=https://vaultwarden.krg.ucsd.edu
 
-      # Onboarding is invite-only: an admin invites the user (to an Organization
-      # via /admin or the org UI), which creates their account; they then log in
-      # via SSO. Flip to true only if you want open SSO self-registration for any
-      # Authentik-authenticated (AD) user.
+      # Signups are restricted to SSO: SIGNUPS_ALLOWED=false blocks regular
+      # email+master-password registration, but the SSO flow still auto-creates
+      # accounts on first login (upstream 1.36 behavior). So new accounts come
+      # ONLY via Authentik. WHO may sign up is gated by the Authentik application
+      # policy (bind it to an AD group), not by Vaultwarden.
       - SIGNUPS_ALLOWED=false
 
       # ── Authentik OIDC SSO (login federation only — vaults stay E2E-encrypted
@@ -25,6 +26,11 @@ services:
       # Phase 1: standard identity scopes. Phase 2 (gated on upstream group→org
       # sync) adds "groups" here so AD groups drive collection access.
       - SSO_SCOPES=email profile
+      # Authentik does not assert email_verified for our AD-synced users, and
+      # Vaultwarden refuses login without it. Member emails are admin-entered
+      # (known-good), so we treat them as authoritative and accept the unknown
+      # status. Tracked by issue #185 to verify emails at Authentik and drop this.
+      - SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION=true
       # SSO_ONLY left unset → email + master-password login still works as a
       # break-glass path alongside SSO.
     env_file:
