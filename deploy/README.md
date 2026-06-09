@@ -50,6 +50,21 @@ doesn't push on to the rest), and each workflow stage gates the next (`success()
 …`), so a failed NixOS apply skips the Ansible (and OpenTofu) stage rather than
 deploying on top of a half-broken fleet.
 
+## Rebooting the fleet (manual)
+
+`reboot-fleet.sh` + the **Reboot fleet** workflow
+([`.github/workflows/reboot-fleet.yml`](../.github/workflows/reboot-fleet.yml)) are a
+push-button reboot, run on the same krg-deploy runner with the same fleet identity.
+It's **`workflow_dispatch`-only** (a reboot is never an automatic consequence of a
+commit) and shares the `deploy-fleet` concurrency group so it can't overlap a deploy.
+It reboots each host sequentially — issuing the reboot, then confirming the box came
+back by watching the kernel `boot_id` change — and is **fail-fast**: if a host
+doesn't return, the rest are left alone. An optional input restricts it to a subset
+(e.g. `waiter`). Targets the provisioned NixOS hosts (mirrors `deploy-nixos.sh`) plus
+the **e4e-nas** Synology appliance. **`krg-deploy` and `fabricant` are excluded for
+now** (the runner can't reboot itself; the hypervisor would drop every guest) —
+tracked in [#181](https://github.com/KastnerRG/krg-infra/issues/181).
+
 ## Secrets (NOT in git — operator-provisioned)
 
 - `/var/lib/krg-admin/.secrets/github-runner-token` — runner registration token / PAT
