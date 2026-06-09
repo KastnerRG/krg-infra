@@ -56,6 +56,42 @@ and secrets. A NAS `apply` must not be able to touch Vault's state.
   '
   ```
 
+  `deploy/deploy-tofu.sh` assembles this block for you from
+  `TOFU_STATE_PASSPHRASE` and **hard-fails** rather than writing plaintext state
+  if a credentialed target runs without it (ADR 0005).
+
+### Generating, storing, and rotating `TOFU_STATE_PASSPHRASE`
+
+The passphrase is **generated once, not retrieved** — any high-entropy string
+works (PBKDF2 derives the AES key from it); the only constraint is **no newline**.
+
+1. **Generate + store durably FIRST.** If it is ever lost the encrypted state is
+   **unrecoverable** (no reset — you would `tofu import` every resource back).
+   Stash it in the lab password manager (`vaultwarden.krg.ucsd.edu`), not in
+   OpenBao — OpenBao is itself a tofu target, so keeping the state key outside it
+   avoids a recovery circular-dependency.
+
+   ```bash
+   openssl rand -base64 48     # store the output as krg-infra / TOFU_STATE_PASSPHRASE
+   ```
+
+2. **Set the repo Actions secret** (what `deploy.yml` injects):
+
+   ```bash
+   gh secret set TOFU_STATE_PASSPHRASE --repo KastnerRG/krg-infra
+   ```
+
+3. **Mirror it on krg-deploy** for hand-runs of `deploy/deploy-tofu.sh` — it must
+   be the **same value** the Actions secret holds, or CI and local applies produce
+   two incompatibly-encrypted states. Export it in krg-admin's environment there.
+
+**Rotating** is a re-encrypt cycle, not a swap: set the new passphrase as a
+`key_provider` alongside the old one with `state { method = ... fallback { ... } }`
+so OpenTofu can decrypt with the old key and re-write with the new on the next
+`apply`, then drop the fallback once every target's state has been rewritten.
+Generate once and leave it — rotation is deliberately more involved than `gh
+secret set`.
+
 ## Shared source of truth
 
 Targets read the same shared JSON the other layers do (don't duplicate values):

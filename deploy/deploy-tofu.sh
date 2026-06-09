@@ -11,7 +11,12 @@
 # STATE is local on krg-deploy (ADR 0005) and MUST persist across runs — the CI
 # checkout is ephemeral, so state lives under TOFU_STATE_ROOT, not in the workdir
 # (a fresh checkout would otherwise have empty state and try to recreate/destroy
-# everything). State is encrypted when TOFU_STATE_PASSPHRASE is set (terraform/README).
+# everything). State is ALWAYS encrypted via TOFU_STATE_PASSPHRASE — ADR 0005
+# mandates state encryption, and the state holds live secrets (VAULT_TOKEN, the
+# DSM password, OIDC client secrets). A target that is about to apply (its
+# .deploy-env exists) but has NO passphrase is a HARD failure, not a silent
+# plaintext write — see the per-target guard below. Skip-targets never reach it,
+# so this script is still safe to land before any creds OR the passphrase exist.
 set -euo pipefail
 
 # OpenTofu state + provider cache (and any tooling temp files) hold secrets — make
@@ -59,6 +64,19 @@ for t in "${TARGETS[@]}"; do
   if [[ ! -f "$envf" ]]; then
     echo "skip ${t}: no ${envf} (creds not wired) — not applying"
     continue
+  fi
+
+  # Fail-closed on encryption: we are about to apply a REAL target, so its state
+  # WILL hold secrets. ADR 0005 mandates encrypted state — refuse to write it in
+  # the clear. (The top-level block above only exports TF_ENCRYPTION when the
+  # passphrase is set; this turns "silently unencrypted" into a hard stop, but
+  # only once a credentialed target actually runs — skips above never get here.)
+  if [[ -z "${TOFU_STATE_PASSPHRASE:-}" ]]; then
+    echo "ERROR: ${t} has creds (${envf}) but TOFU_STATE_PASSPHRASE is unset" >&2
+    echo "       — refusing to write UNENCRYPTED state (ADR 0005). Set the" >&2
+    echo "       TOFU_STATE_PASSPHRASE Actions secret (or export it for a local" >&2
+    echo "       run) before applying this target." >&2
+    exit 2
   fi
 
   state_dir="${STATE_ROOT}/${t}"
