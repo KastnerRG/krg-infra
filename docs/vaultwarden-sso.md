@@ -140,5 +140,16 @@ is the **exact** Authentik app issuer (trailing slash, no
 - **Stable subject.** The provider uses `sub_mode = "hashed_user_id"` (not the
   email) so identity doesn't ride on a mutable, admin-managed email — changing an
   email won't orphan or collide a user's vault.
+- **Login UX — skip the "SSO identifier" page.** Bitwarden's web vault prompts for
+  an org SSO identifier before redirecting to the IdP; Vaultwarden has one global
+  OIDC provider, so that identifier is a fixed dummy
+  (`00000000-01DC-01DC-01DC-000000000000`). The Authentik application's
+  `meta_launch_url` is set to the deep-link
+  `https://vaultwarden.krg.ucsd.edu/#/sso?identifier=00000000-01DC-01DC-01DC-000000000000`,
+  so launching from the Authentik dashboard (or bookmarking that URL) skips the
+  identifier page. `SSO_ONLY` is deliberately **left off** — forcing SSO would drop
+  master-password login, chaining vault availability to Authentik (bad for a
+  password manager during an IdP outage). A residual redundant email-entry step may
+  remain until an upstream web-client fix (dani-garcia/vaultwarden#7207).
 - Prometheus already probes `https://vaultwarden.krg.ucsd.edu/` — no scrape change.
 - DNS CNAME for `vaultwarden.krg` is published at the DNS layer (not this repo).

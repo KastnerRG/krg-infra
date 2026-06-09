@@ -118,9 +118,13 @@ resource "authentik_application" "vaultwarden" {
   name              = "Vaultwarden"
   slug              = "vaultwarden"
   protocol_provider = authentik_provider_oauth2.vaultwarden.id
-  meta_launch_url   = "https://vaultwarden.krg.ucsd.edu"
-  meta_description  = "KRG lab password manager"
-  group             = "KRG"
+  # Deep-link into Vaultwarden's SSO start with the (fixed dummy) org identifier
+  # pre-filled, so launching from the Authentik dashboard skips the Bitwarden
+  # "enter SSO identifier" page. Vaultwarden has one global OIDC provider, so the
+  # identifier is a constant for everyone. See docs/vaultwarden-sso.md.
+  meta_launch_url  = "https://vaultwarden.krg.ucsd.edu/#/sso?identifier=00000000-01DC-01DC-01DC-000000000000"
+  meta_description = "KRG lab password manager"
+  group            = "KRG"
 }
 
 # ── Proxmox ────────────────────────────────────────────────────────────────────
