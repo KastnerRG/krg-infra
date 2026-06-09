@@ -1,0 +1,42 @@
+name: Reboot fleet
+
+# MANUAL ONLY. Reboots every reachable NixOS host in the flake plus the e4e-nas
+# Synology appliance, from the self-hosted runner on krg-deploy (the control node
+# — same identity the deploy workflow uses). There is no push/schedule trigger: a
+# reboot is an explicit, operator-initiated action, never an automatic consequence
+# of a commit.
+#
+# Excluded for now (tracked in #181): krg-deploy (it runs this job)
+# and fabricant (the Proxmox hypervisor — rebooting it drops every guest). See
+# deploy/reboot-fleet.sh.
+on:
+  workflow_dispatch:
+    inputs:
+      hosts:
+        description: "Comma-separated hostnames to reboot (blank = all reachable hosts)"
+        required: false
+        default: ""
+
+# Never overlap with a deploy or another reboot — one control node, one fleet
+# action at a time. Don't cancel an in-flight run; a half-finished reboot is worse.
+concurrency:
+  group: deploy-fleet
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reboot:
+    name: Reboot hosts
+    runs-on: [self-hosted, krg-deploy]
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Reboot fleet
+        # Pass the input via env (not interpolated into the command line) so it
+        # can't break out of the argument — the script splits it on commas/spaces.
+        env:
+          HOSTS: ${{ github.event.inputs.hosts }}
+        run: ./deploy/reboot-fleet.sh "$HOSTS"
