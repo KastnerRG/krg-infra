@@ -18,7 +18,7 @@ push to main
    ▼
 deploy/deploy-nixos.sh   nixos-rebuild switch --target-host (each host builds itself)
 deploy/deploy-ansible.sh ansible-playbook site.yml  (Synology opt-in)
-deploy/deploy-tofu.sh    tofu apply per target  (active; inert until a target's .deploy-env lands)
+deploy/deploy-tofu.sh    tofu apply per target  (active; creds from OpenBao, opt-in via TOFU_TARGETS)
 ```
 
 The runner itself is declarative — `services.github-runners.krg-deploy` in
@@ -33,7 +33,7 @@ uses).
 |---|---|---|
 | `deploy-nixos.sh` | krg-vault, krg-ldap, krg-prod, waiter | `--build-host = --target-host` so each host builds its own closure (krg-deploy only evaluates). **krg-deploy itself is excluded** from the rebuild — it runs the job; it stays current via nightly `autoUpgrade` (and self-verifies OEC locally — see *OEC* below). **e4e-prod is omitted** until the host is provisioned. **Stages the OEC installer to each host before the switch and verifies both security daemons are active afterwards** (see *OEC* below). |
 | `deploy-ansible.sh` | `ansible/playbooks/site.yml` (Proxmox) | Synology is **opt-in** (`DEPLOY_SYNOLOGY=true`, off by default) — its declarative sync deletes, and bring-up has gates (see [docs/e4e-nas-dsm.md](../docs/e4e-nas-dsm.md)). Galaxy collections (`ansible/requirements.yml`) must be **provisioned on the control node** (not installed per-run — matches the nightly `ansible-apply`); deterministic/Nix-managed collections tracked in #129. **Passes `oec_installer` so the Proxmox hosts enroll + verify the OEC daemons too** (see *OEC* below). |
-| `deploy-tofu.sh` | each `terraform/<target>/` with a `.deploy-env` | **Active but inert until creds land.** Targets without a `.deploy-env` (operator-provisioned, gitignored — see each target's `.deploy-env.example`) are **skipped**; a credentialed target with no `TOFU_STATE_PASSPHRASE` **hard-fails** rather than writing plaintext state (ADR 0005). State persists under `TOFU_STATE_ROOT` (CI checkout is ephemeral), always encrypted with the passphrase. Apply order (`TOFU_TARGETS`): `openbao` first (it provisions the AppRoles the others authenticate with), then `authentik`, `grafana`, `e4e-nas`. |
+| `deploy-tofu.sh` | the targets named in `TOFU_TARGETS` | **Active; creds from OpenBao, no secrets on disk.** krg-deploy logs into OpenBao with its AppRole (the same `openbao-role-id`/`openbao-secret-id` the Ansible leg uses) and reads each target's creds from KV at apply time (paths below). **Opt-in:** only targets listed in `TOFU_TARGETS` apply (empty by default — like `SYNOLOGY_TAGS` scopes the synology converge); a listed target whose KV secret isn't seeded **skips** with a notice. A ready target with no `TOFU_STATE_PASSPHRASE` **hard-fails** rather than writing plaintext state (ADR 0005). State persists under `TOFU_STATE_ROOT` (CI checkout is ephemeral), always encrypted. **`openbao` is special** — it provisions OpenBao's own auth, so it can't use that AppRole; apply it manually with a privileged `TOFU_OPENBAO_TOKEN` (see below). |
 
 The scripts run by hand on krg-deploy too (they only need the deploy toolchain + the
 secrets below) — `./deploy/deploy-nixos.sh`, etc.
@@ -77,15 +77,14 @@ tracked in [#181](https://github.com/KastnerRG/krg-infra/issues/181).
   **strict** by default (NixOS via `StrictHostKeyChecking=yes`, Ansible via
   `ansible.cfg host_key_checking=True`), so this must be provisioned out-of-band. For
   first-time bring-up only, set `DEPLOY_SSH_ACCEPT_NEW=true` to trust-on-first-use.
-- `terraform/<target>/.deploy-env` — sourced per target to export `VAULT_TOKEN`,
-  `TF_VAR_*`, etc. Targets without it are **skipped** (safe to land before creds
-  exist). Each target ships a `.deploy-env.example` documenting exactly what it
-  must export — `cp .deploy-env.example .deploy-env` on krg-deploy and fill in.
-- `TOFU_STATE_PASSPHRASE` — repo Actions secret; encrypts OpenTofu state. Now
-  **required before any credentialed target applies** — a target with a
-  `.deploy-env` but no passphrase hard-fails (ADR 0005: state holds live secrets,
-  must not be written in the clear). Set it with
-  `gh secret set TOFU_STATE_PASSPHRASE` once, before wiring the first `.deploy-env`.
+- `/var/lib/krg-admin/.secrets/openbao-role-id` + `openbao-secret-id` — krg-deploy's
+  OpenBao AppRole, **shared with the Ansible leg** (already provisioned for it). The
+  tofu leg reuses it: no tofu-specific secret files. Every target's creds are read
+  from OpenBao KV at apply time (see *OpenTofu* below for the paths).
+- `TOFU_STATE_PASSPHRASE` — repo Actions secret; encrypts OpenTofu state.
+  **Required before any target applies** — a ready target with no passphrase
+  hard-fails (ADR 0005: state holds live secrets, must not be written in the clear).
+  Set it once with `gh secret set TOFU_STATE_PASSPHRASE`.
 - `/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz` — the
   campus-mandated **OEC** (Qualys + Trellix) vendor archive, holding live enrollment
   creds (gitignored). Both deploy scripts **fail if it's absent** (`OEC_INSTALLER`
@@ -120,10 +119,43 @@ them as a hard gate rather than best-effort:
   too — that's the intended forcing function, but expect the first push after staging
   the archive to surface any remaining per-host nix-ld/library gaps.
 
+## OpenTofu — creds from OpenBao (no secrets on disk)
+
+`deploy-tofu.sh` reuses the **same OpenBao AppRole as the Ansible leg**
+(`openbao-role-id` / `openbao-secret-id` in `.secrets/`) — there is no
+tofu-specific secrets file. It logs in, exports `VAULT_ADDR`/`VAULT_TOKEN`, and
+reads each target's creds from KV at apply time. Seed these once with `bao kv put`
+(part of the OpenBao secrets epic, [#112](https://github.com/KastnerRG/krg-infra/issues/112)):
+
+| Target | KV path → field | Used as |
+|---|---|---|
+| `grafana` | *(none — reads `secret/krg-prod/grafana-admin` + `grafana-oidc` in-config via the vault provider)* | `VAULT_TOKEN` only |
+| `authentik` | `secret/krg-deploy/authentik-admin-token` → `token` | `TF_VAR_authentik_token` |
+| `authentik` | `secret/krg-deploy/authentik-bind` → `password` | `TF_VAR_ldap_bind_password` |
+| `e4e-nas` | `secret/e4e-nas/users` → `<dsm_user>` (default `e4e-automation`) | `TF_VAR_dsm_password` |
+| `e4e-nas` | `secret/e4e-nas/dsm-otp` → `secret` *(optional)* | `TF_VAR_dsm_otp_secret` |
+
+The krg-deploy AppRole policy already grants read on `secret/krg-deploy/*` and
+`secret/e4e-nas/*` (`terraform/openbao/main.tf`). **Policy gaps owned by the
+OpenBao/Authentik effort (#79/#81), not this leg:** `grafana` reads — and
+`authentik` writes back — under `secret/krg-prod/*`, which the AppRole policy does
+**not** yet cover; those two targets won't fully apply until the policy is widened.
+`e4e-nas` works against the current policy today.
+
+**`openbao` target** provisions OpenBao's own mount/auth/policies, so it can't
+authenticate with the AppRole it's creating. Apply it manually with a privileged
+token (root or an admin token), not via the push-CD:
+
+```bash
+TOFU_TARGETS=openbao TOFU_OPENBAO_TOKEN="<privileged token>" \
+  TOFU_STATE_PASSPHRASE="<same as the Actions secret>" ./deploy/deploy-tofu.sh
+```
+
 ## Tunables (env)
 
 `DEPLOY_ADMIN` (`krg-admin`) · `DEPLOY_SSH_KEY` · `DEPLOY_SSH_ACCEPT_NEW` (`false`) ·
 `DEPLOY_SYNOLOGY` (`false`) · `OEC_INSTALLER`
 (`/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz`) ·
-`TOFU_TARGETS` (`openbao authentik grafana e4e-nas`) ·
-`TOFU_STATE_ROOT` (`/var/lib/krg-admin/tofu-state`).
+`TOFU_TARGETS` (empty — explicit opt-in) · `TOFU_OPENBAO_TOKEN` (openbao bootstrap) ·
+`TOFU_STATE_ROOT` (`/var/lib/krg-admin/tofu-state`) · `VAULT_ADDR`
+(`https://krg-vault.ucsd.edu:8200`) · `OPENBAO_ROLE_ID_FILE` / `OPENBAO_SECRET_ID_FILE`.

@@ -152,16 +152,17 @@ jobs:
         run: ./deploy/deploy-ansible.sh
 
       # OpenTofu layer. State is local on krg-deploy (ADR 0005) + encrypted with
-      # the TOFU_STATE_PASSPHRASE Actions secret. Like the Ansible synology leg,
-      # this is INERT until creds land: deploy-tofu.sh SKIPS any target without a
-      # terraform/<target>/.deploy-env (operator-provisioned, gitignored), and
-      # HARD-FAILS a credentialed target if the passphrase is unset rather than
-      # writing plaintext state. So this is safe to run on every deploy — it does
-      # nothing until an operator deliberately wires a target's .deploy-env AND the
-      # TOFU_STATE_PASSPHRASE secret. See deploy/README.md and each target's
-      # terraform/<target>/.deploy-env.example.
+      # the TOFU_STATE_PASSPHRASE Actions secret. Creds come from OpenBao (krg-deploy
+      # AppRole) — no secrets on disk. WHICH targets apply is the explicit opt-in
+      # below (like SYNOLOGY_TAGS scopes the synology converge): TOFU_TARGETS is
+      # empty, so this is INERT until a target is listed AND its KV secret is seeded
+      # (an unseeded listed target skips with a notice). openbao is NOT listed here —
+      # it needs a privileged bootstrap token and is applied manually (see
+      # deploy/deploy-tofu.sh header). Widen this as each target's service + KV
+      # secret come online. See deploy/README.md "OpenTofu".
       - name: Apply OpenTofu layer
         if: success() && steps.gate.outputs.ok == 'true'
         env:
           TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
+          TOFU_TARGETS: "" # e.g. "authentik grafana e4e-nas" as each comes online
         run: ./deploy/deploy-tofu.sh
