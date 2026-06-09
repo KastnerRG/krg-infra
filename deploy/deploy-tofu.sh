@@ -2,11 +2,14 @@
 # Apply the OpenTofu layer from the control node (krg-deploy) — one root module
 # per target, applied in dependency order.
 #
-# SECRETS stay OUT of git. A target applies ONLY if terraform/<target>/.deploy-env
-# exists (gitignored, operator/OpenBao-provided); it is sourced to export whatever
-# that target needs (VAULT_TOKEN, TF_VAR_*, …). Targets without it are skipped with
-# a notice — so this script is safe to land before any creds are wired, and it does
-# not hardcode the openbao/authentik secret plumbing owned by the parallel effort.
+# SECRETS stay OUT of git AND out of the checkout. A target applies ONLY if its
+# deploy-env exists — canonically <ENV_ROOT>/<target>.deploy-env in the persistent
+# secrets dir (the CD checkout is ephemeral; see ENV_ROOT below), with an in-tree
+# terraform/<target>/.deploy-env honored as a fallback for hand-runs. It is sourced
+# to export whatever that target needs (VAULT_TOKEN, TF_VAR_*, …). Targets without
+# it are skipped with a notice — so this script is safe to land before any creds
+# are wired, and it does not hardcode the openbao/authentik secret plumbing owned
+# by the parallel effort.
 #
 # STATE is local on krg-deploy (ADR 0005) and MUST persist across runs — the CI
 # checkout is ephemeral, so state lives under TOFU_STATE_ROOT, not in the workdir
@@ -26,6 +29,15 @@ umask 077
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TF_DIR="${REPO_ROOT}/terraform"
 STATE_ROOT="${TOFU_STATE_ROOT:-/var/lib/krg-admin/tofu-state}"
+
+# Per-target creds live OUTSIDE the checkout. The CD path runs on the GitHub
+# runner, whose checkout (/run/github-runner/.../_work) is re-cloned every run —
+# an in-tree terraform/<target>/.deploy-env would not survive it (and isn't where
+# the other deploy secrets live). So the canonical home is the persistent secrets
+# dir alongside github-runner-token + the OEC archive: one flat file per target,
+# <ENV_ROOT>/<target>.deploy-env. The in-tree path is still honored as a fallback
+# for hand-runs from a working copy.
+ENV_ROOT="${TOFU_DEPLOY_ENV_ROOT:-/var/lib/krg-admin/.secrets/tofu}"
 
 # Apply order: openbao first (it provisions the AppRoles the others authenticate
 # with), then the config targets. Override with TOFU_TARGETS="a b c".
@@ -56,13 +68,21 @@ fi
 # failure, and does not stop the run.)
 for t in "${TARGETS[@]}"; do
   dir="${TF_DIR}/${t}"
-  envf="${dir}/.deploy-env"
   if [[ ! -d "$dir" ]]; then
     echo "skip ${t}: no terraform/${t}/ target"
     continue
   fi
-  if [[ ! -f "$envf" ]]; then
-    echo "skip ${t}: no ${envf} (creds not wired) — not applying"
+  # Prefer the persistent secrets dir; fall back to an in-tree .deploy-env (handy
+  # for local hand-runs). The PRESENCE of either is what flips a target from skip
+  # to apply.
+  envf=""
+  if [[ -f "${ENV_ROOT}/${t}.deploy-env" ]]; then
+    envf="${ENV_ROOT}/${t}.deploy-env"
+  elif [[ -f "${dir}/.deploy-env" ]]; then
+    envf="${dir}/.deploy-env"
+  fi
+  if [[ -z "$envf" ]]; then
+    echo "skip ${t}: no ${ENV_ROOT}/${t}.deploy-env (creds not wired) — not applying"
     continue
   fi
 

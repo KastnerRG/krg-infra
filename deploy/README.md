@@ -77,10 +77,15 @@ tracked in [#181](https://github.com/KastnerRG/krg-infra/issues/181).
   **strict** by default (NixOS via `StrictHostKeyChecking=yes`, Ansible via
   `ansible.cfg host_key_checking=True`), so this must be provisioned out-of-band. For
   first-time bring-up only, set `DEPLOY_SSH_ACCEPT_NEW=true` to trust-on-first-use.
-- `terraform/<target>/.deploy-env` — sourced per target to export `VAULT_TOKEN`,
-  `TF_VAR_*`, etc. Targets without it are **skipped** (safe to land before creds
-  exist). Each target ships a `.deploy-env.example` documenting exactly what it
-  must export — `cp .deploy-env.example .deploy-env` on krg-deploy and fill in.
+- `/var/lib/krg-admin/.secrets/tofu/<target>.deploy-env` — sourced per target to
+  export `VAULT_TOKEN`, `TF_VAR_*`, etc. Lives in the **persistent secrets dir**,
+  not the repo: the CD checkout (`/run/github-runner/.../_work`) is re-cloned every
+  run, so an in-tree copy wouldn't survive. Targets without it are **skipped**
+  (safe to land before creds exist). Each target ships a `.deploy-env.example`
+  documenting exactly what it must export — install it with
+  `install -m600 terraform/<target>/.deploy-env.example /var/lib/krg-admin/.secrets/tofu/<target>.deploy-env`
+  on krg-deploy and fill in. (Override the dir with `TOFU_DEPLOY_ENV_ROOT`; an
+  in-tree `terraform/<target>/.deploy-env` is still honored as a hand-run fallback.)
 - `TOFU_STATE_PASSPHRASE` — repo Actions secret; encrypts OpenTofu state. Now
   **required before any credentialed target applies** — a target with a
   `.deploy-env` but no passphrase hard-fails (ADR 0005: state holds live secrets,
@@ -126,4 +131,5 @@ them as a hard gate rather than best-effort:
 `DEPLOY_SYNOLOGY` (`false`) · `OEC_INSTALLER`
 (`/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz`) ·
 `TOFU_TARGETS` (`openbao authentik grafana e4e-nas`) ·
-`TOFU_STATE_ROOT` (`/var/lib/krg-admin/tofu-state`).
+`TOFU_STATE_ROOT` (`/var/lib/krg-admin/tofu-state`) ·
+`TOFU_DEPLOY_ENV_ROOT` (`/var/lib/krg-admin/.secrets/tofu`).

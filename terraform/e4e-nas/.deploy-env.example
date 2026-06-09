@@ -1,12 +1,17 @@
-# Copy to terraform/e4e-nas/.deploy-env (gitignored) on krg-deploy and fill in.
-# Sourced by deploy/deploy-tofu.sh (set -a) right before `tofu apply`. The
-# PRESENCE of .deploy-env flips this target from "skip" to "apply".
+# Install on krg-deploy as /var/lib/krg-admin/.secrets/tofu/e4e-nas.deploy-env —
+# the persistent secrets dir, NOT the repo (the CD checkout is re-cloned each run).
+# Sourced by deploy/deploy-tofu.sh (set -a) right before `tofu apply`. The PRESENCE
+# of that file flips this target from "skip" to "apply".
 #
 # NOTE: this target also reads terraform.tfvars (see terraform.tfvars.example) if
-# present, but the CD path keys on .deploy-env — so for an unattended apply on
+# present, but the CD path keys on the deploy-env — so for an unattended apply on
 # krg-deploy you must supply the creds HERE (as TF_VAR_*), not only in tfvars.
 #
-#   cp .deploy-env.example .deploy-env   # then edit; never commit .deploy-env
+#   mkdir -p /var/lib/krg-admin/.secrets/tofu
+#   install -m600 terraform/e4e-nas/.deploy-env.example \
+#     /var/lib/krg-admin/.secrets/tofu/e4e-nas.deploy-env   # then edit
+#
+# (An in-tree terraform/e4e-nas/.deploy-env still works as a fallback for hand-runs.)
 
 # Dedicated DSM administrators-group API account — NOT the built-in 'admin'.
 TF_VAR_dsm_user="e4e-automation"

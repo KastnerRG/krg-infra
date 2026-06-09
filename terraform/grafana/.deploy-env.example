@@ -1,9 +1,14 @@
-# Copy to terraform/grafana/.deploy-env (gitignored) on krg-deploy and fill in.
-# Sourced by deploy/deploy-tofu.sh (set -a) right before `tofu apply`. The
-# PRESENCE of .deploy-env flips this target from "skip" to "apply" — don't create
-# it until Grafana (compose stack on krg-prod) is reachable.
+# Install on krg-deploy as /var/lib/krg-admin/.secrets/tofu/grafana.deploy-env —
+# the persistent secrets dir, NOT the repo (the CD checkout is re-cloned each run).
+# Sourced by deploy/deploy-tofu.sh (set -a) right before `tofu apply`. The PRESENCE
+# of that file flips this target from "skip" to "apply" — don't create it until
+# Grafana (compose stack on krg-prod) is reachable.
 #
-#   cp .deploy-env.example .deploy-env   # then edit; never commit .deploy-env
+#   mkdir -p /var/lib/krg-admin/.secrets/tofu
+#   install -m600 terraform/grafana/.deploy-env.example \
+#     /var/lib/krg-admin/.secrets/tofu/grafana.deploy-env   # then edit
+#
+# (An in-tree terraform/grafana/.deploy-env still works as a fallback for hand-runs.)
 
 # OpenBao token is the ONLY secret this target needs: the Grafana admin password
 # (providers.tf) and the Authentik OIDC client_id/secret (sso.tf) are both READ

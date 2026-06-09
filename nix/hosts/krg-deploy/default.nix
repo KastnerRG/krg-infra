@@ -158,7 +158,24 @@
       gawk
       coreutils
     ];
+    # OpenTofu state must persist across runner jobs (the work dir is ephemeral)
+    # and deploy/deploy-tofu.sh writes it under /var/lib/krg-admin/tofu-state. The
+    # runner unit is ProtectSystem=strict (the nixpkgs github-runner default — the
+    # whole FS is read-only bar a few allow-listed paths), so without this the
+    # script's `mkdir tofu-state` fails with EROFS. Grant write access to JUST that
+    # one dir (pre-created by the tmpfiles rule below — ReadWritePaths entries must
+    # exist at unit start). The per-target .deploy-env creds under
+    # /var/lib/krg-admin/.secrets/tofu/ need NO override: ProtectSystem=strict
+    # still permits READS, same as the Ansible leg's OpenBao creds in .secrets/.
+    serviceOverrides.ReadWritePaths = ["/var/lib/krg-admin/tofu-state"];
   };
+
+  # Pre-create the OpenTofu state dir (owner-only — it holds encrypted state) so
+  # the runner's ReadWritePaths entry above exists at unit start. krg-admin's
+  # primary group is `users` (isNormalUser default).
+  systemd.tmpfiles.rules = [
+    "d /var/lib/krg-admin/tofu-state 0700 krg-admin users - -"
+  ];
 
   # Periodic Ansible apply — mirrors NixOS autoUpgrade on the Ansible layer.
   # Pulls main and runs deploy/deploy-ansible.sh nightly (Proxmox site.yml + the

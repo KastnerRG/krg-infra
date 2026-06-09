@@ -1,10 +1,15 @@
-# Copy to terraform/openbao/.deploy-env (gitignored) on krg-deploy and fill in.
+# Install on krg-deploy as /var/lib/krg-admin/.secrets/tofu/openbao.deploy-env —
+# the persistent secrets dir, NOT the repo (the CD checkout is re-cloned each run).
 # Sourced by deploy/deploy-tofu.sh (set -a) right before `tofu apply`, so every
-# line is a plain `KEY=value` export. The PRESENCE of .deploy-env is what flips
-# this target from "skip" to "apply" — so do not create it until OpenBao on
-# krg-vault is up and you have a bootstrap token.
+# line is a plain `KEY=value` export. The PRESENCE of that file is what flips this
+# target from "skip" to "apply" — so do not create it until OpenBao on krg-vault
+# is up and you have a bootstrap token.
 #
-#   cp .deploy-env.example .deploy-env   # then edit; never commit .deploy-env
+#   mkdir -p /var/lib/krg-admin/.secrets/tofu
+#   install -m600 terraform/openbao/.deploy-env.example \
+#     /var/lib/krg-admin/.secrets/tofu/openbao.deploy-env   # then edit
+#
+# (An in-tree terraform/openbao/.deploy-env still works as a fallback for hand-runs.)
 
 # Bootstrap token for the OpenBao server on krg-vault. This target PROVISIONS the
 # KV mount + AppRoles + policies, so it needs a privileged token (root or an

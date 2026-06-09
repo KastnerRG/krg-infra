@@ -1,10 +1,15 @@
-# Copy to terraform/authentik/.deploy-env (gitignored) on krg-deploy and fill in.
-# Sourced by deploy/deploy-tofu.sh (set -a) right before `tofu apply`. The
-# PRESENCE of .deploy-env flips this target from "skip" to "apply" — don't create
-# it until Authentik (compose stack on krg-prod) is reachable and you have an
-# admin API token + the AD bind password.
+# Install on krg-deploy as /var/lib/krg-admin/.secrets/tofu/authentik.deploy-env —
+# the persistent secrets dir, NOT the repo (the CD checkout is re-cloned each run).
+# Sourced by deploy/deploy-tofu.sh (set -a) right before `tofu apply`. The PRESENCE
+# of that file flips this target from "skip" to "apply" — don't create it until
+# Authentik (compose stack on krg-prod) is reachable and you have an admin API
+# token + the AD bind password.
 #
-#   cp .deploy-env.example .deploy-env   # then edit; never commit .deploy-env
+#   mkdir -p /var/lib/krg-admin/.secrets/tofu
+#   install -m600 terraform/authentik/.deploy-env.example \
+#     /var/lib/krg-admin/.secrets/tofu/authentik.deploy-env   # then edit
+#
+# (An in-tree terraform/authentik/.deploy-env still works as a fallback for hand-runs.)
 
 # OpenBao token — this target READS no inputs from OpenBao but WRITES the
 # generated OIDC client secrets back into it (vault_secrets.tf, roster_secrets.tf),
