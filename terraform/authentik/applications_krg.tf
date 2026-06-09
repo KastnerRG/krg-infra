@@ -124,6 +124,7 @@ resource "authentik_application" "vaultwarden" {
   # identifier is a constant for everyone. See docs/vaultwarden-sso.md.
   meta_launch_url  = "https://vaultwarden.krg.ucsd.edu/#/sso?identifier=00000000-01DC-01DC-01DC-000000000000"
   meta_description = "KRG lab password manager"
+  meta_icon        = "krg-icons/vaultwarden.svg"
   group            = "KRG"
 }
 

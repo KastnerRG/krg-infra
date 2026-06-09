@@ -36,6 +36,7 @@ owner — used here only to label first-party links to those services).
 | `synology.svg`        | E4E NAS (Synology)   | `synology`               |
 | `garage.svg`          | Garage UI            | `garage`                 |
 | `apache-superset.svg` | FishSense Analytics  | `apache-superset`        |
+| `vaultwarden.svg`     | Vaultwarden          | `vaultwarden`            |
 
 Not yet iconed (no clean off-the-shelf logo in dashboard-icons — follow-up):
 FishSense Workflows (Temporal), FishSense (main), FishSense Orchestrator,
