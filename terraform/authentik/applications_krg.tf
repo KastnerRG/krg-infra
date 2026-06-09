@@ -94,14 +94,39 @@ resource "authentik_application" "mlflow" {
 # once upstream Vaultwarden supports it) needs no Authentik change. See
 # docs/vaultwarden-sso.md.
 
+# Custom email scope: Authentik's managed email scope reports email_verified=false
+# for AD/LDAP-synced users (it never verified the address), and Vaultwarden refuses
+# SSO login unless email_verified is true. Our member emails are admin-entered
+# (known-good), so assert verified here. Issue #185 tracks doing real email
+# verification at Authentik and dropping this (and the compose
+# SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION flag, which only covers a *missing* claim,
+# not an explicit false — which is why it didn't fix this).
+resource "authentik_property_mapping_provider_scope" "vaultwarden_email" {
+  name        = "OIDC Scope — email (verified, Vaultwarden)"
+  scope_name  = "email"
+  description = "Standard email claim, asserting email_verified=true (admin-entered AD emails)."
+  expression  = <<-EOT
+    return {
+      "email": request.user.email,
+      "email_verified": True,
+    }
+  EOT
+}
+
 resource "authentik_provider_oauth2" "vaultwarden" {
   name                  = "Provider for Vaultwarden"
   client_id             = "vaultwarden"
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict", url = "https://vaultwarden.krg.ucsd.edu/identity/connect/oidc-signin" }]
-  property_mappings = concat(local.std_scopes,
-  [authentik_property_mapping_provider_scope.groups.id])
+  # Like std_scopes, but swaps the managed email scope for vaultwarden_email
+  # (asserts email_verified=true) + adds the AD-sourced groups scope.
+  property_mappings = [
+    data.authentik_property_mapping_provider_scope.openid.id,
+    authentik_property_mapping_provider_scope.vaultwarden_email.id,
+    data.authentik_property_mapping_provider_scope.profile.id,
+    authentik_property_mapping_provider_scope.groups.id,
+  ]
   # RS256 signing key — REQUIRED: Vaultwarden verifies the ID token against jwks_uri.
   # Without it Authentik falls back to HS256 + empty JWKS → "Invalid ID token" (the
   # same failure garage-ui hit).

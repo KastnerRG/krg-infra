@@ -133,10 +133,14 @@ is the **exact** Authentik app issuer (trailing slash, no
   on first login (upstream 1.36), so accounts come **only via Authentik**. The real
   gate on *who* may sign up is the Authentik application policy — bind it to an AD
   group; Vaultwarden does not enforce it.
-- **Email verification is relaxed.** Authentik doesn't assert `email_verified` for
-  AD-synced users, so `SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION=true`. Safe because
-  member emails are admin-entered (known-good), not self-asserted. Issue #185 tracks
-  verifying emails at Authentik and dropping this.
+- **Email verification.** Authentik's managed email scope reports
+  `email_verified: false` for AD/LDAP-synced users (it never verified the address),
+  and Vaultwarden refuses login on `email_verified != true`. The compose flag
+  `SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION=true` does **not** fix this — it only allows
+  a *missing* claim, not an explicit `false`. The actual fix is the custom
+  `vaultwarden_email` OIDC scope in `terraform/authentik` that asserts
+  `email_verified: true` (safe: member emails are admin-entered, known-good). Issue
+  #185 tracks doing real email verification at Authentik and dropping both.
 - **Stable subject.** The provider uses `sub_mode = "hashed_user_id"` (not the
   email) so identity doesn't ride on a mutable, admin-managed email — changing an
   email won't orphan or collide a user's vault.
