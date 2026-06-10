@@ -187,7 +187,7 @@ flowchart TB
     subgraph svcs["listening services"]
       direction LR
       ssh["sshd :22<br/>key-only · ed25519-only"]
-      rdp["xrdp :3389<br/>(only if FPGA/XRDP on — currently OFF)"]
+      rdp["gnome-remote-desktop :3389<br/>(only if FPGA/RDP desktop on — currently OFF)"]
       m_node["node-exporter :9100"]
       m_ipmi["ipmi-exporter :9290"]
       m_dkr["docker metrics :9323"]

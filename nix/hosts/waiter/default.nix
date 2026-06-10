@@ -59,6 +59,12 @@
   krg.nfsHome = {
     enable = true;
     server = "137.110.161.98"; # fabricant (the hypervisor serving rpool/nfs)
+    # RDP logins now arrive through GDM (PAM service `gdm-password`), so the
+    # fail-closed home-mount gate must cover them too — otherwise an RDP user
+    # logging in while the NFS /home is down would get an ephemeral home on the
+    # rolled-back root that's wiped on reboot (the data-loss this gate prevents
+    # for SSH). The old xrdp path never hooked this; closing the gap here.
+    loginServices = ["sshd" "login" "gdm-password"];
   };
 
   # scratchpool (HDD data + NVMe special/cache) holds the /scratch dataset, imported
@@ -108,6 +114,8 @@
       # mounts /home so it resolves. A real ~/scratch is never clobbered.
       perUser.enable = true;
       perUser.homeLink = "scratch";
+      # Create /scratch/krg/<user> for RDP-via-GDM logins too (default [sshd login]).
+      perUser.loginServices = ["sshd" "login" "gdm-password"];
       overflow = {
         enable = true;
         # fabricant hypervisor IP, same server as krg.nfsHome — pinned by IP so it
@@ -141,6 +149,8 @@
   krg.localCache = {
     enable = true;
     perUser.enable = true;
+    # Create /local/<user> + IDE-server symlinks for RDP-via-GDM logins too.
+    perUser.loginServices = ["sshd" "login" "gdm-password"];
   };
 
   # Swap = zram (no on-disk swap; ZFS swap zvols are deadlock-prone under memory

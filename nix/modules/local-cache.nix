@@ -191,7 +191,7 @@ in {
           loginServices = mkOption {
             type = types.listOf types.str;
             default = ["sshd" "login"];
-            description = "PAM services the per-user/symlink session hook is added to (add `xrdp` if the desktop is enabled).";
+            description = "PAM services the per-user/symlink session hook is added to (add `gdm-password` when the GNOME RDP desktop is enabled).";
           };
         };
       };

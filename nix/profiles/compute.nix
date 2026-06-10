@@ -15,7 +15,7 @@
     ../modules/services/ipmi-exporter.nix
     ../modules/hardware/nvidia.nix
     ../modules/hardware/fpga.nix
-    ../modules/desktop/xrdp.nix
+    ../modules/desktop/gnome-remote.nix
     ../modules/nix-ld.nix
     ../users/admin.nix
     # Lab users come from Samba AD; only the local break-glass admin stays.
@@ -79,9 +79,10 @@
   # FPGA/EDA tooling is OPT-IN, not a compute default: waiter does FPGA research,
   # but kml-class ML boxes don't use it. A host that needs it sets enable = true.
   krg.fpga.enable = lib.mkDefault false;
-  # The XRDP/XFCE desktop exists only to host the FPGA GUI tools (Vivado/Vitis/
-  # Questa), so it tracks FPGA: a headless compute box (FPGA off) gets no desktop.
-  krg.xrdp.enable = true;
+  # The GNOME (Wayland) RDP desktop exists only to host the FPGA GUI tools
+  # (Vivado/Vitis/Questa), so it tracks FPGA: a headless compute box (FPGA off)
+  # gets no desktop.
+  krg.remoteDesktop.enable = true;
 
   # Native IPMI exporter systemd service (from waiter monitoring.yaml)
   krg.ipmiExporter.enable = true;
@@ -93,8 +94,9 @@
   # Qualys + Trellix are enabled for all machines in base.nix.
   # The installer archive is wired up in hosts/waiter/default.nix.
 
-  # rdp_users is intentionally NOT here — the xrdp module creates and adds it only
-  # when XRDP is enabled (which tracks FPGA), so it's not blindly applied everywhere.
+  # rdp_users is intentionally NOT here — the remote-desktop module creates and adds
+  # it only when the desktop is enabled (which tracks FPGA), so it's not blindly
+  # applied everywhere.
   krg.users.defaultGroups = ["docker" "cuda"];
 
   # waiter is physical, so base.nix keeps the NixOS firewall enabled.
@@ -108,7 +110,7 @@
   # chain doesn't catch it either. The DOCKER-USER follow-up is tracked
   # in CLAUDE.md; meanwhile 9400 is bound to 0.0.0.0 by intention.
   krg.firewall = {
-    allowRDP = config.krg.xrdp.enable; # 3389 only when the XRDP desktop is up
+    allowRDP = config.krg.remoteDesktop.enable; # 3389 only when the RDP desktop is up
     # node-exporter (9100), docker metrics (9323), prometheus client (9000),
     # IPMI exporter (9290). DCGM (9400) is contributed by the nvidia module
     # (krg.nvidia.dcgmExporter), coupled to the driver — not listed here.
