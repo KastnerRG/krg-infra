@@ -111,6 +111,11 @@
   # in CLAUDE.md; meanwhile 9400 is bound to 0.0.0.0 by intention.
   krg.firewall = {
     allowRDP = config.krg.remoteDesktop.enable; # 3389 only when the RDP desktop is up
+    # Users never RDP to a compute box directly — access is through the Guacamole
+    # gateway (clientless browser + Authentik SSO) on krg-prod. So 3389 is reachable
+    # ONLY from krg-prod (137.110.161.106); no VPN/tunnel/public RDP exposure. Inert
+    # on compute hosts without the desktop (allowRDP=false there).
+    rdpSources = ["137.110.161.106"];
     # node-exporter (9100), docker metrics (9323), prometheus client (9000),
     # IPMI exporter (9290). DCGM (9400) is contributed by the nvidia module
     # (krg.nvidia.dcgmExporter), coupled to the driver — not listed here.

@@ -12,21 +12,25 @@ the old xrdp gave us). Module: `nix/modules/desktop/gnome-remote.nix`
 > session and needs a logged-in session (no headless). gnome-remote-desktop's
 > system mode is the only mature multi-user *Wayland* RDP path on NixOS today.
 
-## ⚠️ Access over the internet — tunnel, don't expose 3389
-waiter has a public IP and RDP/3389 is heavily attacked. **Do not rely on exposing
-3389 to the open internet.** Prefer an SSH tunnel (key-only SSH is already
-enforced) or WireGuard:
+## Access model: through Guacamole, not direct RDP
+Users **never** RDP to a compute box directly. Access is via **Apache Guacamole**
+(clientless, browser-based) running on **krg-prod**, behind Traefik + Authentik SSO
+— so login is the lab's normal SSO, in a web browser, no RDP client and no VPN
+needed. Guacamole proxies the connection to the compute box's RDP.
 
-```bash
-# On the client: forward local 3389 to waiter over SSH, then RDP to localhost.
-ssh -N -L 3389:localhost:3389 <user>@137.110.161.67
-# then point your RDP client at localhost:3389
-```
+Accordingly, the compute firewall restricts **3389 to krg-prod only**
+(`krg.firewall.rdpSources = ["137.110.161.106"]` in `profiles/compute.nix`):
+waiter's RDP is reachable from the Guacamole gateway and nowhere else — not the
+public internet, not the VPN, not other campus hosts. The single ingress is the
+SSO-gated web app.
 
-`krg.firewall.allowRDP` opens TCP 3389 only when the desktop is enabled; keep it
-restricted to trusted sources (or closed, tunnel-only). Performance: RDP is fine
-for desktop/IDE work, **laggy for heavy 3D** (Vivado/Vitis rendering) at internet
-latency — X11 vs Wayland makes no difference on the wire.
+> The Guacamole gateway service itself (guacd + webapp + DB + Authentik OIDC, a
+> compose stack on krg-prod) is tracked separately — see the deployment notes /
+> tracking issue. This module + firewall rule are the compute-side half: a desktop
+> that only Guacamole can reach.
+
+Performance: RDP is fine for desktop/IDE work, **laggy for heavy 3D**
+(Vivado/Vitis rendering); X11 vs Wayland makes no difference on the wire.
 
 ## One-time bring-up (maintenance window) — NEEDS ON-BOX VALIDATION
 The NixOS module only exposes `enable`; the TLS cert + `grdctl --system enable`
