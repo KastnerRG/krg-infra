@@ -153,6 +153,60 @@ resource "authentik_application" "vaultwarden" {
   group            = "KRG"
 }
 
+# ── Guacamole ────────────────────────────────────────────────────────────────────
+# Remote-desktop / SSH gateway at remote.krg.ucsd.edu. Two gates (defense-in-depth):
+#   INNER — this OIDC provider (Guacamole's native OpenID Connect, implicit flow).
+#   OUTER — the guacamole_gate proxy provider below (forward-auth on the outpost),
+#           so no unauthenticated request reaches Guacamole's Tomcat.
+# Guacamole's Postgres DB holds the connection inventory + per-user authz.
+
+resource "authentik_provider_oauth2" "guacamole" {
+  name                  = "Provider for Guacamole"
+  client_id             = "guacamole"
+  authorization_flow    = data.authentik_flow.default_authorization.id
+  invalidation_flow     = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://remote.krg.ucsd.edu/" }]
+  property_mappings     = local.std_scopes
+  # RS256 signing key — REQUIRED: Guacamole verifies the ID token against the JWKS
+  # endpoint (openid-jwks-endpoint). Without it Authentik falls back to HS256 + an
+  # empty JWKS → "Invalid ID token" (the failure vaultwarden/garage-ui hit).
+  signing_key            = data.authentik_certificate_key_pair.default.id
+  sub_mode               = "user_email"
+  access_token_validity  = "minutes=60"
+  refresh_token_validity = "days=30"
+}
+
+resource "authentik_application" "guacamole" {
+  name = "Guacamole"
+  # slug is load-bearing: the issuer/jwks env vars in compose.guacamole.yml embed
+  # /application/o/guacamole/.
+  slug              = "guacamole"
+  protocol_provider = authentik_provider_oauth2.guacamole.id
+  meta_launch_url   = "https://remote.krg.ucsd.edu"
+  meta_description  = "Remote desktop / SSH gateway"
+  # meta_icon = "krg-icons/guacamole.svg"  # add an svg to authentik/media-icons/ to enable
+  group = "KRG"
+}
+
+# OUTER forward-auth gate. A SEPARATE Authentik application from the OIDC one above
+# (the proxy provider backs the gate; access policy binds to this application). No
+# meta_launch_url → kept out of the user library so there aren't two "Guacamole"
+# tiles. Registered on the proxy outpost in outpost.tf; the `authentik` Traefik
+# middleware (compose.authentik.yml) enforces it on the guacamole router.
+resource "authentik_provider_proxy" "guacamole_gate" {
+  name               = "Forward-auth gate for Guacamole"
+  authorization_flow = data.authentik_flow.default_authorization.id
+  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  external_host      = "https://remote.krg.ucsd.edu"
+  mode               = "forward_single"
+}
+
+resource "authentik_application" "guacamole_gate" {
+  name              = "Guacamole (gateway)"
+  slug              = "guacamole-gate"
+  protocol_provider = authentik_provider_proxy.guacamole_gate.id
+}
+
 # ── Proxmox ────────────────────────────────────────────────────────────────────
 # Commented out — Proxmox auth is currently managed via Ansible/PVE realm config.
 # Uncomment when ready to bring SSO login to the PVE web UI under IaC.

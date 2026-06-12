@@ -4,9 +4,14 @@
   # relative symlinks and config bind-mounts below all point into the same
   # store derivation.
   composeDir = ../../docker-compose/krg-prod;
+  # Guacamole is its OWN standalone stack (not include'd into the krg-prod
+  # compose project) so its dependency on the OpenBao-rendered DB secret fails
+  # closed for Guacamole alone — a bao outage must not take down the rest.
+  guacamoleDir = ../../docker-compose/guacamole;
 in {
   imports = [
     ../../profiles/server.nix
+    ../../modules/services/vault-agent.nix
     ./hardware-configuration.nix
   ];
 
@@ -104,6 +109,13 @@ in {
     "d  /var/lib/krg/krg-prod/traefik-data/letsencrypt      0750 root docker -"
 
     "d  /var/lib/krg/e4e-roster                             0750 root docker -"
+
+    # Guacamole (standalone stack). The compose-stack module creates the working
+    # dir + .secrets/; here we just symlink the committed DB schema into it so the
+    # postgres init mount (./initdb) resolves to the Nix store. Postgres data is a
+    # docker-managed named volume (no uid juggling). The DB secret is rendered to
+    # /run by krg.vaultAgent, not a .secrets/ file.
+    "L+ /var/lib/krg/guacamole/initdb                       - - - - ${guacamoleDir}/initdb"
   ];
 
   environment.systemPackages = with pkgs; [openbao];
@@ -127,6 +139,10 @@ in {
   # Also create /var/lib/krg/krg-prod/.env with:
   #   USER_ID=<UID of the account that owns the working directory>
   #   GROUP_ID=<GID of the account that owns the working directory>
+  #
+  # Guacamole (separate stack) takes NO .secrets/ file — its Postgres password is
+  # rendered from OpenBao to /run by krg.vaultAgent (below). The only on-box secret
+  # is the AppRole secret-id under /var/lib/krg/openbao-agent/ (see that block).
   krg.composeStacks.krg-prod = {
     description = "KRG production (lab-wide) stack — Traefik + Authentik + Grafana + services";
     composeFiles = ["${composeDir}/compose.yml"];
@@ -148,6 +164,46 @@ in {
     composeFiles = ["/var/lib/krg/e4e-roster/docker-compose.yml"];
     workingDirectory = "/var/lib/krg/e4e-roster";
     networks = ["traefik_proxy"];
+  };
+
+  # Guacamole — remote-desktop gateway at remote.krg.ucsd.edu. Standalone stack
+  # (own systemd service) so the OpenBao dependency is scoped to Guacamole alone.
+  # after/requires openbao-agent: the DB password is rendered to /run BEFORE this
+  # starts, and the stack fails closed if bao is sealed/unreachable. The `authentik`
+  # forward-auth middleware (krg-prod stack) + Guacamole's own OIDC are the two gates.
+  krg.composeStacks.guacamole = {
+    description = "Apache Guacamole — remote-desktop gateway (guacd + webapp + postgres)";
+    composeFiles = ["${guacamoleDir}/compose.guacamole.yml"];
+    workingDirectory = "/var/lib/krg/guacamole";
+    networks = ["traefik_proxy"];
+    after = ["openbao-agent.service"];
+    requires = ["openbao-agent.service"];
+  };
+
+  # OpenBao Agent: render Guacamole's Postgres password from bao to tmpfs. This is
+  # the repo's first bao-rendered secret (the vault-agent keystone). Bootstrap (the
+  # ONE on-box secret) — minted by the krg-deploy AppRole, root-only 0400:
+  #   /var/lib/krg/openbao-agent/role-id     (non-secret; from `tofu output krg_prod_role_id`)
+  #   /var/lib/krg/openbao-agent/secret-id   (secret; `bao write -f auth/approle/role/krg-prod/secret-id`)
+  # secret/krg-prod/guacamole {db_password} is generated + stored by
+  # terraform/authentik/guacamole_secrets.tf. krg-prod's policy already reads
+  # secret/data/krg-prod/* (terraform/openbao/main.tf).
+  krg.vaultAgent = {
+    enable = true;
+    renders = [
+      {
+        destination = "/run/krg/guacamole/guacamole.env";
+        perms = "0640";
+        # Same value under both names: POSTGRESQL_PASSWORD (webapp JDBC) and
+        # POSTGRES_PASSWORD (postgres container). Both services share this env_file.
+        contents = ''
+          {{- with secret "secret/data/krg-prod/guacamole" }}
+          POSTGRESQL_PASSWORD={{ .Data.data.db_password }}
+          POSTGRES_PASSWORD={{ .Data.data.db_password }}
+          {{- end }}
+        '';
+      }
+    ];
   };
 
   # Provide the OEC installer archive path once the file is available locally.

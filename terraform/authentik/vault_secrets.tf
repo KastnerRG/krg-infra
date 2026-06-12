@@ -96,5 +96,19 @@ resource "vault_kv_secret_v2" "dsm_sso_oidc" {
   })
 }
 
+# Guacamole — stored for record/consistency. Guacamole's OIDC uses the IMPLICIT
+# flow and does NOT consume a client_secret (only client_id + the public
+# authorization/jwks/issuer endpoints), so nothing reads client_secret here; the
+# value Guacamole actually needs (the Postgres password) is in guacamole_secrets.tf.
+resource "vault_kv_secret_v2" "guacamole_oidc" {
+  mount = "secret"
+  name  = "krg-prod/guacamole-oidc"
+  data_json = jsonencode({
+    client_id     = authentik_provider_oauth2.guacamole.client_id
+    client_secret = authentik_provider_oauth2.guacamole.client_secret
+    issuer_url    = "${var.authentik_url}/application/o/guacamole/"
+  })
+}
+
 # outpost token: retrieved manually from Admin → Outposts → View token after apply.
 # Store with: bao kv put secret/krg-prod/authentik-outpost-token token=<value>
