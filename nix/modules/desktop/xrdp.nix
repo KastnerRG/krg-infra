@@ -30,7 +30,7 @@ in {
   config = mkIf cfg.enable {
     services.xrdp = {
       enable = true;
-      defaultWindowManager = "${pkgs.xfce.xfce4-session}/bin/xfce4-session";
+      defaultWindowManager = "${pkgs.xfce4-session}/bin/xfce4-session";
       # Firewall is managed by krg.firewall (allowRDP = true opens 3389)
       openFirewall = false;
     };
@@ -41,7 +41,7 @@ in {
     };
 
     environment.systemPackages = with pkgs; [
-      xfce.xfce4-session
+      xfce4-session
       xfce.xfwm4
       xfce.xfce4-panel
       xfce.xfdesktop # <--- This handles the wallpaper
