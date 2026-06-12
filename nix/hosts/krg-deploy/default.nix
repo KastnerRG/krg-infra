@@ -130,7 +130,8 @@
   #       via `bao write -f auth/approle/role/krg-deploy/secret-id` (krg-deploy's
   #       own policy can mint these). The read capability is in terraform/openbao.
   # The deploy sources per-layer secrets at run time (see deploy/*.sh):
-  #   tofu   — terraform/<target>/.deploy-env + the TOFU_STATE_PASSPHRASE secret.
+  #   tofu   — krg-deploy AppRole login → bao kv get per target (+ the
+  #            TOFU_STATE_PASSPHRASE Actions secret for state encryption).
   #   ansible (synology) — krg-deploy AppRole login → bao kv get → extra_vars.
   services.github-runners.krg-deploy = {
     enable = true;
@@ -158,7 +159,25 @@
       gawk
       coreutils
     ];
+    # OpenTofu state must persist across runner jobs (the work dir is ephemeral)
+    # and deploy/deploy-tofu.sh writes it under /var/lib/krg-admin/tofu-state. The
+    # runner unit is ProtectSystem=strict (the nixpkgs github-runner default — the
+    # whole FS is read-only bar a few allow-listed paths), so without this the
+    # script's `mkdir tofu-state` fails with EROFS. Grant write access to JUST that
+    # one dir (pre-created by the tmpfiles rule below — ReadWritePaths entries must
+    # exist at unit start). deploy-tofu.sh reads its per-target creds from OpenBao
+    # (AppRole), so there's no secrets dir to grant — and the AppRole role/secret
+    # id files in /var/lib/krg-admin/.secrets/ are READS, which ProtectSystem=strict
+    # already permits (same as the Ansible leg).
+    serviceOverrides.ReadWritePaths = ["/var/lib/krg-admin/tofu-state"];
   };
+
+  # Pre-create the OpenTofu state dir (owner-only — it holds encrypted state) so
+  # the runner's ReadWritePaths entry above exists at unit start. krg-admin's
+  # primary group is `users` (isNormalUser default).
+  systemd.tmpfiles.rules = [
+    "d /var/lib/krg-admin/tofu-state 0700 krg-admin users - -"
+  ];
 
   # Periodic Ansible apply — mirrors NixOS autoUpgrade on the Ansible layer.
   # Pulls main and runs deploy/deploy-ansible.sh nightly (Proxmox site.yml + the

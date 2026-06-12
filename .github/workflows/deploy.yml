@@ -151,12 +151,18 @@ jobs:
           SYNOLOGY_TAGS: "synology_shares,synology_acls,synology_certificate,synology_app_portal,synology_garage,synology_sso"
         run: ./deploy/deploy-ansible.sh
 
-      # OpenTofu layer — DEFERRED to a second step (state backend, encryption
-      # passphrase, and per-target .deploy-env creds still to be wired). The
-      # deploy/deploy-tofu.sh script is in place and dormant; re-enable here once
-      # those are sorted.
-      # - name: Apply OpenTofu layer
-      #   if: success() && steps.gate.outputs.ok == 'true'
-      #   env:
-      #     TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
-      #   run: ./deploy/deploy-tofu.sh
+      # OpenTofu layer. State is local on krg-deploy (ADR 0005) + encrypted with
+      # the TOFU_STATE_PASSPHRASE Actions secret. Creds come from OpenBao (krg-deploy
+      # AppRole) — no secrets on disk. WHICH targets apply is the explicit opt-in
+      # below (like SYNOLOGY_TAGS scopes the synology converge): TOFU_TARGETS is
+      # empty, so this is INERT until a target is listed AND its KV secret is seeded
+      # (an unseeded listed target skips with a notice). openbao is NOT listed here —
+      # it needs a privileged bootstrap token and is applied manually (see
+      # deploy/deploy-tofu.sh header). Widen this as each target's service + KV
+      # secret come online. See deploy/README.md "OpenTofu".
+      - name: Apply OpenTofu layer
+        if: success() && steps.gate.outputs.ok == 'true'
+        env:
+          TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
+          TOFU_TARGETS: "" # e.g. "authentik grafana e4e-nas" as each comes online
+        run: ./deploy/deploy-tofu.sh

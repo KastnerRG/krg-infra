@@ -1,0 +1,56 @@
+services:
+  vaultwarden:
+    image: vaultwarden/server:1.36.0
+    container_name: vaultwarden
+    user: '1000'
+    restart: unless-stopped
+    environment:
+      # Public URL — the OIDC callback is auto-derived from DOMAIN as
+      # <DOMAIN>/identity/connect/oidc-signin (registered in the Authentik provider).
+      - DOMAIN=https://vaultwarden.krg.ucsd.edu
+
+      # Signups are restricted to SSO: SIGNUPS_ALLOWED=false blocks regular
+      # email+master-password registration, but the SSO flow still auto-creates
+      # accounts on first login (upstream 1.36 behavior). So new accounts come
+      # ONLY via Authentik. WHO may sign up is gated by the Authentik application
+      # policy (bind it to an AD group), not by Vaultwarden.
+      - SIGNUPS_ALLOWED=false
+
+      # ── Authentik OIDC SSO (login federation only — vaults stay E2E-encrypted
+      #    under each user's master password; first SSO login sets it) ──────────
+      - SSO_ENABLED=true
+      # Exact issuer for the Authentik application (trailing slash, NO
+      # /.well-known/openid-configuration). Slug "vaultwarden" set in Terraform.
+      - SSO_AUTHORITY=https://auth.krg.ucsd.edu/application/o/vaultwarden/
+      - SSO_CLIENT_ID=vaultwarden
+      # Phase 1: standard identity scopes. Phase 2 (gated on upstream group→org
+      # sync) adds "groups" here so AD groups drive collection access.
+      - SSO_SCOPES=email profile
+      # Authentik does not assert email_verified for our AD-synced users, and
+      # Vaultwarden refuses login without it. Member emails are admin-entered
+      # (known-good), so we treat them as authoritative and accept the unknown
+      # status. Tracked by issue #185 to verify emails at Authentik and drop this.
+      - SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION=true
+      # SSO_ONLY left unset → email + master-password login still works as a
+      # break-glass path alongside SSO.
+    env_file:
+      # ADMIN_TOKEN (argon2 hash; gates /admin) + SSO_CLIENT_SECRET (from OpenBao
+      # secret/krg-prod/vaultwarden-oidc). See nix/hosts/krg-prod/default.nix.
+      - .secrets/vaultwarden.env
+    volumes:
+      # SQLite datastore: db.sqlite3 + attachments/ + sends/ + rsa_key* + config.json.
+      # Backup = copy this dir (or the /admin backup button) — no pg_dump.
+      - ./vaultwarden/data:/data:rw
+    networks:
+      - traefik_proxy
+      - default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vaultwarden.rule=Host(`vaultwarden.krg.ucsd.edu`)"
+      - "traefik.http.routers.vaultwarden.entrypoints=websecure"
+      - "traefik.http.routers.vaultwarden.tls.certresolver=letsencrypt"
+      - "traefik.http.services.vaultwarden.loadbalancer.server.port=80"
+
+networks:
+  traefik_proxy:
+    external: true

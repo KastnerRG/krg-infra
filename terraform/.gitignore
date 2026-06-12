@@ -8,7 +8,9 @@
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
-# Per-target deploy secrets sourced by deploy/deploy-tofu.sh (VAULT_TOKEN, TF_VAR_*).
+# deploy/deploy-tofu.sh sources target creds from OpenBao (AppRole), not from
+# files — but keep this ignore as a backstop so a stray local hand-run env file
+# can never be committed.
 .deploy-env
 # Operator-rendered config files that may carry secrets (historically
 # garage.toml — rpc_secret / admin_token / metrics_token). The Ansible

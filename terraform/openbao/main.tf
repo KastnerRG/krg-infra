@@ -63,6 +63,22 @@ resource "vault_policy" "krg_deploy" {
       capabilities = ["read"]
     }
 
+    # Read the Grafana secrets the terraform/grafana target consumes. krg-deploy
+    # runs that target via deploy/deploy-tofu.sh (AppRole login): providers.tf
+    # reads grafana-admin (admin password → provider auth) and sso.tf reads
+    # grafana-oidc (client_id/secret). Scoped to these two paths, NOT all of
+    # secret/krg-prod/* — the deploy runner shouldn't be able to read every
+    # production secret (#187). The authentik WRITE-back side of #187 stays
+    # deferred (bigger blast radius / needs a design decision). NOTE: grafana-oidc
+    # is produced by the authentik target, so grafana fully applies only once
+    # that's seeded.
+    path "secret/data/krg-prod/grafana-admin" {
+      capabilities = ["read"]
+    }
+    path "secret/data/krg-prod/grafana-oidc" {
+      capabilities = ["read"]
+    }
+
     # Generate secret_ids for other roles so OpenTofu can bootstrap them
     path "auth/approle/role/+/secret-id" {
       capabilities = ["create", "update"]
