@@ -172,6 +172,18 @@
     serviceOverrides.ReadWritePaths = ["/var/lib/krg-admin/tofu-state"];
   };
 
+  # Don't let a `nixos-rebuild switch` bounce the runner. Its --work dir is the
+  # service's RuntimeDirectory (/run/github-runner/krg-deploy), and
+  # RuntimeDirectoryPreserve is unset — so a restart WIPES the work dir. A switch
+  # that restarts the runner mid-job destroys that job's checkout, failing it with
+  # `working directory /run/github-runner/krg-deploy/<repo>/<repo>: No such file or
+  # directory` (run 27435194176). deploy-nixos.sh already excludes krg-deploy for
+  # exactly this reason, but the nightly autoUpgrade + manual switches don't — this
+  # closes that gap. Same approach as docker (restartIfChanged=false) and the OEC
+  # agents: the runner restarts only on reboot or an explicit `systemctl restart`,
+  # picking up a new runner version then rather than mid-deploy.
+  systemd.services.github-runner-krg-deploy.restartIfChanged = false;
+
   # Pre-create the OpenTofu state dir (owner-only — it holds encrypted state) so
   # the runner's ReadWritePaths entry above exists at unit start. krg-admin's
   # primary group is `users` (isNormalUser default).
