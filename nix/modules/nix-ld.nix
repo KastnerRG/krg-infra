@@ -60,22 +60,22 @@ in {
           vulkan-loader
 
           # --- X11 (Vivado/Vitis/MATLAB pull in a lot of these) ---
-          xorg.libX11
-          xorg.libXext
-          xorg.libXrender
-          xorg.libXi
-          xorg.libXrandr
-          xorg.libXcursor
-          xorg.libXfixes
-          xorg.libXt
-          xorg.libXtst
-          xorg.libXScrnSaver
-          xorg.libXcomposite
-          xorg.libXdamage
-          xorg.libxcb
-          xorg.libXft
-          xorg.libSM
-          xorg.libICE
+          libx11
+          libxext
+          libxrender
+          libxi
+          libxrandr
+          libxcursor
+          libxfixes
+          libxt
+          libxtst
+          libxscrnsaver
+          libxcomposite
+          libxdamage
+          libxcb
+          libxft
+          libsm
+          libice
 
           # --- Wayland ---
           wayland
