@@ -19,12 +19,16 @@ jobs:
   lint:
     name: lint (all layers)
     runs-on: ubuntu-latest
+    # FlakeHub Cache authenticates via the GitHub OIDC token — needs id-token.
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@v16
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - uses: DeterminateSystems/flakehub-cache-action@v9
 
       # Every linter is fetched on demand via `nix run nixpkgs#<tool>`; no extra
       # setup. First run warms the nix cache, later runs are fast.

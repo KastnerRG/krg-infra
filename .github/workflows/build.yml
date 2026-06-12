@@ -20,6 +20,10 @@ jobs:
   check:
     name: nix flake check
     runs-on: ubuntu-latest
+    # FlakeHub Cache authenticates via the GitHub OIDC token — needs id-token.
+    permissions:
+      id-token: write
+      contents: read
     # Expose the list of hosts so the build matrix is derived from the flake
     # itself — adding a nixosConfiguration auto-adds its build job, no second
     # place to keep in sync (this is how krg-vault/krg-deploy got missed before).
@@ -30,7 +34,7 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@v16
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - uses: DeterminateSystems/flakehub-cache-action@v9
 
       - name: Check flake
         run: nix flake check ./nix --all-systems
@@ -46,12 +50,16 @@ jobs:
   # The matrix is the flake's nixosConfigurations (from the check job), so EVERY
   # host builds — and each is its own job, so they run in parallel (wall-clock ≈
   # the slowest single host, not the sum). Uses GitHub Actions cache (via
-  # magic-nix-cache) so subsequent runs only rebuild what changed. First run will
+  # FlakeHub Cache) so subsequent runs only rebuild what changed. First run will
   # be slow due to NVIDIA/CUDA downloads.
   build:
     name: Build ${{ matrix.host }}
     runs-on: ubuntu-latest
     needs: check
+    # FlakeHub Cache authenticates via the GitHub OIDC token — needs id-token.
+    permissions:
+      id-token: write
+      contents: read
     strategy:
       matrix:
         host: ${{ fromJSON(needs.check.outputs.hosts) }}
@@ -75,7 +83,7 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@v16
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - uses: DeterminateSystems/flakehub-cache-action@v9
 
       - name: Build ${{ matrix.host }}
         run: |

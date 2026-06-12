@@ -29,8 +29,10 @@ concurrency:
   cancel-in-progress: false
 
 # Direct push to main needs write; the checkout token carries it.
+# id-token: write lets FlakeHub Cache authenticate via the GitHub OIDC token.
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   flake-update:
@@ -41,7 +43,7 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@v16
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - uses: DeterminateSystems/flakehub-cache-action@v9
 
       # `nix flake update` runs from the flake dir (nix/). In modern Nix a positional
       # arg is an INPUT name, not a path, so `nix flake update ./nix` would fail —
