@@ -43,7 +43,7 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@v16
 
-      - uses: DeterminateSystems/flakehub-cache-action@v9
+      - uses: DeterminateSystems/flakehub-cache-action@v3
 
       # `nix flake update` runs from the flake dir (nix/). In modern Nix a positional
       # arg is an INPUT name, not a path, so `nix flake update ./nix` would fail —
