@@ -130,7 +130,7 @@ krg-infra/
       ad-group-sync.nix            # generic AD-group → local-group bridge (krg.adGroupSync) — re-derives a fixed-GID local group's members from one+ AD groups via a oneshot+10-min timer. Consumed by nvidia.nix (cudaAccessGroups → GPU device group) and docker.nix (accessGroups → docker daemon group)
       security/{fail2ban,firewall,oec-qualys-trellix}.nix   # firewall is the single switch
       services/{compose-stack,node-exporter,ipmi-exporter}.nix
-      hardware/{nvidia,fpga}.nix   desktop/xrdp.nix
+      hardware/{nvidia,fpga}.nix   desktop/gnome-remote.nix
     profiles/
       base.nix                     # every host: SSH hardening, auto-upgrade, OEC + fail2ban + node-exporter + in-guest firewall; isVM enables qemu-guest-agent
       server.nix                   # krg-prod / e4e-prod role (docker, compose, ipmi exporter)
