@@ -135,9 +135,16 @@ in {
       wantedBy = ["multi-user.target"];
       after = ["network-online.target"];
       wants = ["network-online.target"];
+      # `bao` resolves a CLI token-helper home dir at startup; with no HOME set it
+      # shells out to `sh` to expand `~`, which fails in the unit's minimal PATH
+      # ("exec: sh: not found") before it ever authenticates. Give it an ephemeral
+      # HOME so it skips the shell-out, and put a shell on PATH as belt-and-suspenders.
+      environment.HOME = "/run/openbao-agent";
+      path = [pkgs.bash];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
+        RuntimeDirectory = "openbao-agent";
         # Recreate render-destination parent dirs (on /run tmpfs, wiped each boot).
         ExecStartPre = pkgs.writeShellScript "openbao-agent-mkdirs" (
           concatMapStringsSep "\n" (d: "${pkgs.coreutils}/bin/install -d -m 0750 ${escapeShellArg d}") destDirs
