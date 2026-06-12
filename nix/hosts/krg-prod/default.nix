@@ -84,7 +84,12 @@ in {
     "d  /var/lib/krg/krg-prod/authentik/data/media/public   0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/authentik/certs               0750 1000 1000 -"
     "d  /var/lib/krg/krg-prod/authentik/custom-templates    0750 1000 1000 -"
-    "d  /var/lib/krg/krg-prod/authentik/proxy-tmp           0750 root  root -"
+    # authentik_proxy runs as uid 1000 and writes its filesystem session backend
+    # here (TMPDIR=/data/tmp). Must be 1000:1000 like the other authentik dirs —
+    # left root:root, the proxy can't write it ("path is not writable" → "failed to
+    # setup application" → forward-auth returns "no app for hostname"). Latent until
+    # the outpost first started (it had been crash-looping on a missing token).
+    "d  /var/lib/krg/krg-prod/authentik/proxy-tmp           0750 1000  1000 -"
 
     # Outline: docker.env is read-only; data dirs are writable
     "d  /var/lib/krg/krg-prod/outline                       0750 root   docker -"
