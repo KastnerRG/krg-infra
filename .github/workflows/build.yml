@@ -26,7 +26,7 @@ jobs:
     outputs:
       hosts: ${{ steps.hosts.outputs.hosts }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: DeterminateSystems/nix-installer-action@v16
 
@@ -58,7 +58,7 @@ jobs:
       fail-fast: false
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Free up disk space — NixOS + NVIDIA + CUDA closure is large (~8–12 GB).
       # Without this the runner's default ~14 GB fills up.
