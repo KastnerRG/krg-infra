@@ -123,6 +123,13 @@ in {
   };
 
   config = mkIf cfg.enable {
+    # Create the AppRole credential dir (root-only). nix owns the DIR + perms;
+    # the operator drops role-id/secret-id in (the secret-id is a live credential,
+    # minted out-of-band by the krg-deploy role — never nix-managed content).
+    systemd.tmpfiles.rules =
+      map (d: "d ${d} 0700 root root -")
+      (unique [(builtins.dirOf cfg.roleIdFile) (builtins.dirOf cfg.secretIdFile)]);
+
     systemd.services.openbao-agent = {
       description = "OpenBao Agent — render secrets from krg-vault to tmpfs";
       wantedBy = ["multi-user.target"];
