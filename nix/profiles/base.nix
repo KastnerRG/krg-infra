@@ -254,6 +254,20 @@ in {
       dates = "04:00";
     };
 
+    # No host in this fleet should EVER suspend/hibernate — they are servers, VMs, and
+    # a compute box. GNOME's gnome-settings-daemon (pulled in by the RDP desktop on
+    # compute hosts) idle-suspends on AC by default, and the GDM greeter suspended
+    # waiter on idle (2026-06-12), halting all running compute. Refuse sleep at the
+    # systemd-sleep layer — the gatekeeper EVERY suspend request goes through, whether
+    # from the greeter or a logged-in session — so it cannot happen regardless of
+    # desktop power settings.
+    systemd.sleep.settings.Sleep = {
+      AllowSuspend = false;
+      AllowHibernation = false;
+      AllowHybridSleep = false;
+      AllowSuspendThenHibernate = false;
+    };
+
     nix.settings = {
       experimental-features = ["nix-command" "flakes"];
       auto-optimise-store = true; # dedup store paths (hardlink) on every build
