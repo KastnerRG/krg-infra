@@ -109,5 +109,18 @@ in {
         RestartSec = "5s";
       };
     };
+
+    # nixos-26.05 flipped the upstream register oneshot to DynamicUser=true with a
+    # StateDirectory that INCLUDES `crowdsec`. Under DynamicUser, systemd relocates
+    # /var/lib/crowdsec → /var/lib/private/crowdsec — the exact relocation
+    # crowdsec.nix documents as fatal: the agent (static User=crowdsec) and cscli
+    # then can't find their state, and activation dies with
+    # `open /etc/crowdsec/config.yaml: no such file or directory` (deploy
+    # 27426691863, krg-vault). Force the static user back so its StateDirectory
+    # creates /var/lib/crowdsec as a real, crowdsec-owned dir (no /var/lib/private),
+    # shared with the agent — restoring the pre-26.05 behaviour. Drop once upstream
+    # stops putting `crowdsec` in the register's DynamicUser StateDirectory.
+    systemd.services.crowdsec-firewall-bouncer-register.serviceConfig.DynamicUser =
+      lib.mkForce false;
   };
 }
