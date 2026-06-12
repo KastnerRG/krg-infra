@@ -306,10 +306,25 @@ in {
     #     like upstream's own stateDir rule.
     # `f` creates the file only if absent (never truncates), so a populated
     # creds file (post `capi register`) survives.
-    systemd.tmpfiles.settings."10-crowdsec-seed-capi".${config.services.crowdsec.settings.capi.credentialsFile}.f = {
-      user = config.services.crowdsec.user;
-      group = config.services.crowdsec.group;
-      mode = "0600";
+    #
+    # SELF-CONTAIN the parent dir. On a FRESH /var/lib/crowdsec (a brand-new host,
+    # or a clean-slate recovery) the bare `f` did NOT land — its parent
+    # /var/lib/crowdsec/state didn't exist yet when tmpfiles ran, so the empty creds
+    # file was never created and cscli died on a missing online_api_credentials.yaml
+    # (krg-vault 26.05 bring-up, 2026-06-12). The earlier "works on a fresh host"
+    # claim only held because the state dir happened to persist from a prior deploy.
+    # Add a `d` for the parent in the SAME settings block — tmpfiles creates a
+    # directory before the file it contains — so the seed no longer depends on
+    # upstream's stateDir rule having run first.
+    systemd.tmpfiles.settings."10-crowdsec-seed-capi" = let
+      credFile = config.services.crowdsec.settings.capi.credentialsFile;
+      owner = {
+        user = config.services.crowdsec.user;
+        group = config.services.crowdsec.group;
+      };
+    in {
+      ${builtins.dirOf credFile}.d = owner // {mode = "0700";};
+      ${credFile}.f = owner // {mode = "0600";};
     };
   };
 }
