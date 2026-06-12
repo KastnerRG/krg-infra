@@ -195,6 +195,9 @@ resource "authentik_provider_oauth2" "e4e_roster" {
   invalidation_flow      = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://roster.krg.ucsd.edu/auth/callback" }]
   property_mappings      = local.std_scopes
+  # RS256 signing key — without this Authentik uses HS256 + empty JWKS, which
+  # broke after the 2026.2→2026.5 upgrade (same fix as guacamole/vaultwarden).
+  signing_key            = data.authentik_certificate_key_pair.default.id
   sub_mode               = "hashed_user_id"
   access_token_validity  = "hours=1"
   refresh_token_validity = "days=30"
