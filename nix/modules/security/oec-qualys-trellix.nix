@@ -130,7 +130,18 @@ with lib; let
     # succeeded. The oec-install service is gated on its ABSENCE, so a failed
     # run (e.g. enrollment error) re-runs on the next rebuild; remove it to
     # force a reinstall.
-    touch /var/lib/krg/oec/.installed
+    #
+    # It lives IN the payload (/var/lib/fireeye, beside xagt/main.db) ON PURPOSE.
+    # On an impermanence host the payload dirs are /persist binds, so the marker
+    # and the binaries it vouches for share ONE fate. The old location
+    # (/var/lib/krg/oec) is persisted independently of the payload: a root-rollback
+    # that wiped /opt/fireeye + /usr/local/qualys left that marker behind, so
+    # oec-install kept skipping and both daemons stayed dead-but-"installed". A
+    # marker co-located with the payload is wiped together with it, so the agents
+    # get reinstalled on the next boot. Sweep the legacy marker so a host that
+    # carried it re-converges cleanly.
+    rm -f /var/lib/krg/oec/.installed
+    touch /var/lib/fireeye/.oec-installed
     echo "oec-install: done"
   '';
 in {
@@ -223,7 +234,12 @@ in {
       # the vendor scripts run (also orders correctly on the switch that first
       # enables envfs).
       unitConfig.RequiresMountsFor = ["/bin" "/usr/bin"];
-      unitConfig.ConditionPathExists = [cfg.installerArchive "!/var/lib/krg/oec/.installed"];
+      # Gate on the marker that lives WITH the payload (/var/lib/fireeye), NOT the
+      # independently-persisted /var/lib/krg/oec. After an impermanence root wipe of
+      # the agent binaries, the co-located marker is gone too, so this re-runs and
+      # reinstalls instead of trusting a stale "installed" flag. See the sentinel in
+      # oec-install above.
+      unitConfig.ConditionPathExists = [cfg.installerArchive "!/var/lib/fireeye/.oec-installed"];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
