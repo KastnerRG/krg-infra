@@ -74,7 +74,7 @@ in {
     # docs/remote-desktop.md. (`enabled-extensions`/`favorite-apps` are whole-list
     # keys — a user setting their own replaces ours, which is the intended
     # "their preference wins" behaviour.)
-    services.xserver.desktopManager.gnome.extraGSettingsOverrides = ''
+    services.desktopManager.gnome.extraGSettingsOverrides = ''
       [org.gnome.shell]
       enabled-extensions=${gsList extensionUuids}
       favorite-apps=${gsList cfg.favoriteApps}
@@ -85,7 +85,7 @@ in {
       [org.gnome.desktop.interface]
       color-scheme='prefer-dark'
     '';
-    services.xserver.desktopManager.gnome.extraGSettingsOverridePackages = [
+    services.desktopManager.gnome.extraGSettingsOverridePackages = [
       pkgs.gnome-shell # org.gnome.shell schema
       pkgs.gsettings-desktop-schemas # org.gnome.desktop.* schemas
     ];
