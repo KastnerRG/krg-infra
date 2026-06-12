@@ -110,7 +110,7 @@
       nvidia = import ./modules/hardware/nvidia.nix;
       fpga = import ./modules/hardware/fpga.nix;
 
-      remote-desktop = import ./modules/desktop/gnome-remote.nix;
+      xrdp = import ./modules/desktop/xrdp.nix;
     };
 
     nixosConfigurations = {

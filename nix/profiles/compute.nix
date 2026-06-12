@@ -15,7 +15,7 @@
     ../modules/services/ipmi-exporter.nix
     ../modules/hardware/nvidia.nix
     ../modules/hardware/fpga.nix
-    ../modules/desktop/gnome-remote.nix
+    ../modules/desktop/xrdp.nix
     ../modules/nix-ld.nix
     ../users/admin.nix
     # Lab users come from Samba AD; only the local break-glass admin stays.
@@ -79,10 +79,10 @@
   # FPGA/EDA tooling is OPT-IN, not a compute default: waiter does FPGA research,
   # but kml-class ML boxes don't use it. A host that needs it sets enable = true.
   krg.fpga.enable = lib.mkDefault false;
-  # The GNOME (Wayland) RDP desktop exists only to host the FPGA GUI tools
+  # The XRDP/XFCE desktop exists only to host the FPGA GUI tools
   # (Vivado/Vitis/Questa), so it tracks FPGA: a headless compute box (FPGA off)
   # gets no desktop.
-  krg.remoteDesktop.enable = true;
+  krg.xrdp.enable = true;
 
   # Native IPMI exporter systemd service (from waiter monitoring.yaml)
   krg.ipmiExporter.enable = true;
@@ -94,7 +94,7 @@
   # Qualys + Trellix are enabled for all machines in base.nix.
   # The installer archive is wired up in hosts/waiter/default.nix.
 
-  # rdp_users is intentionally NOT here — the remote-desktop module creates and adds
+  # rdp_users is intentionally NOT here — the xrdp module creates and adds
   # it only when the desktop is enabled (which tracks FPGA), so it's not blindly
   # applied everywhere.
   krg.users.defaultGroups = ["docker" "cuda"];
@@ -110,7 +110,7 @@
   # chain doesn't catch it either. The DOCKER-USER follow-up is tracked
   # in CLAUDE.md; meanwhile 9400 is bound to 0.0.0.0 by intention.
   krg.firewall = {
-    allowRDP = config.krg.remoteDesktop.enable; # 3389 only when the RDP desktop is up
+    allowRDP = config.krg.xrdp.enable; # 3389 only when the RDP desktop is up
     # Users never RDP to a compute box directly — access is through the Guacamole
     # gateway (clientless browser + Authentik SSO) on krg-prod. So 3389 is reachable
     # ONLY from krg-prod (137.110.161.106); no VPN/tunnel/public RDP exposure. Inert
