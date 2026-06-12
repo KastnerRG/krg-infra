@@ -57,11 +57,11 @@ in {
         stdenv.cc.cc.lib
         glib
         gtk3
-        xorg.libXrender
-        xorg.libX11
-        xorg.libXext
-        xorg.libXtst
-        xorg.libXi
+        libxrender
+        libx11
+        libxext
+        libxtst
+        libxi
         ncurses5
         libGL
         # Questa-specific dependencies
@@ -79,13 +79,13 @@ in {
       vivado-tinfo-shim # <-- Injects our custom symlink into the library path
 
       # X11 / GUI Graphic Libraries
-      xorg.libXext
-      xorg.libX11
-      xorg.libXrender
-      xorg.libXtst
-      xorg.libXi
-      xorg.libXft
-      xorg.libxcb
+      libxext
+      libx11
+      libxrender
+      libxtst
+      libxi
+      libxft
+      libxcb
 
       # System fonts and styling
       freetype
