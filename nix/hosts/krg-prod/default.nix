@@ -195,15 +195,28 @@ in {
   # secret/data/krg-prod/* (terraform/openbao/main.tf).
   krg.vaultAgent = {
     enable = true;
+    # TWO env files, same value — the webapp and postgres MUST NOT share one.
+    # `POSTGRES_PASSWORD` is a *legacy* Guacamole env var (the postgres container
+    # needs it; the webapp uses `POSTGRESQL_PASSWORD`). If the webapp sees both,
+    # the image's legacy-variable migration fires and leaves the effective
+    # postgresql-password EMPTY → "SCRAM ... password is an empty string". So the
+    # webapp gets web.env (POSTGRESQL_PASSWORD only) and postgres gets db.env
+    # (POSTGRES_PASSWORD only).
     renders = [
       {
-        destination = "/run/krg/guacamole/guacamole.env";
+        destination = "/run/krg/guacamole/web.env";
         perms = "0640";
-        # Same value under both names: POSTGRESQL_PASSWORD (webapp JDBC) and
-        # POSTGRES_PASSWORD (postgres container). Both services share this env_file.
         contents = ''
           {{- with secret "secret/data/krg-prod/guacamole" }}
           POSTGRESQL_PASSWORD={{ .Data.data.db_password }}
+          {{- end }}
+        '';
+      }
+      {
+        destination = "/run/krg/guacamole/db.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/guacamole" }}
           POSTGRES_PASSWORD={{ .Data.data.db_password }}
           {{- end }}
         '';
