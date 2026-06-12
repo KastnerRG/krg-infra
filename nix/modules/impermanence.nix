@@ -160,6 +160,22 @@ in {
           # Prometheus/Loki data + the OEC installer archive. Wiped = monitoring
           # data loss + secrets gone every boot.
 
+          # --- OEC security agents (krg.oecQualysTrellix, on fleet-wide via base) ---
+          # The campus-mandated Qualys + Trellix agents install their binaries +
+          # enrollment state OUTSIDE /var/lib/krg, onto the rolled-back root. Without
+          # these binds a reboot wipes the payload while oec-install's "already
+          # installed" marker (now co-located IN /var/lib/fireeye, modules/security/
+          # oec-qualys-trellix.nix) shares that fate — so the agents are reinstalled
+          # on the next boot if the bind is ever empty. Persisting them keeps a single
+          # enrollment across reboots (no per-boot re-enroll churn) and keeps both
+          # daemons' ConditionPathExists gates satisfied. Wiped = qualys-cloud-agent +
+          # xagt go inactive after the first reboot and the deploy's OEC gate fails.
+          "/opt/fireeye" # Trellix xagt binaries + agent_config.json
+          "/var/lib/fireeye" # Trellix enrollment db (xagt/main.db) + the install marker
+          "/usr/local/qualys" # Qualys Cloud Agent binaries + manifests/correlation
+          "/etc/qualys" # Qualys config
+          "/var/spool/qualys" # Qualys spool (/var/log/qualys rides /var/log above)
+
           # NOTE — /local is intentionally NOT here either. krg.localCache mounts it
           # from its own dataset (nvmepool/local, see hosts/waiter/disko-config.nix),
           # off the @blank rollback, so the per-user IDE servers + caches it holds are
