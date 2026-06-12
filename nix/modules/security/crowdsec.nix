@@ -255,6 +255,19 @@ in {
       };
     };
 
+    # Provide /etc/crowdsec/config.yaml. The 26.05 crowdsec module renders config to
+    # a STORE path and passes `-c` only to the daemon and its OWN cscli wrapper — it
+    # does NOT create /etc/crowdsec/config.yaml. But crowdsec-firewall-bouncer's
+    # register oneshot runs the RAW `cscli` with no `-c`, so it (and any ad-hoc
+    # `cscli` an operator runs — e.g. `cscli decisions list`) falls back to
+    # /etc/crowdsec/config.yaml and dies with "no such file or directory", failing
+    # switch-to-configuration and the whole fleet deploy (run 27428792380, krg-vault).
+    # Symlink the conventional path to the rendered config so default-path cscli
+    # resolves. Regenerating with the same `format.generate` call reproduces the
+    # daemon's EXACT store path (verified), so cscli reads the identical config.
+    environment.etc."crowdsec/config.yaml".source =
+      (pkgs.formats.yaml {}).generate "crowdsec.yaml" config.services.crowdsec.settings.general;
+
     # Seed an EMPTY online_api_credentials.yaml before the upstream
     # crowdsec setup runs. WHY: setting capi.credentialsFile above puts
     # `api.server.online_client.credentials_path` into config.yaml, and
