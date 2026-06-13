@@ -34,6 +34,12 @@ services:
       # Serve at the root context so the URL is https://remote.krg.ucsd.edu/
       # (not /guacamole). The OIDC redirect URI below must match this base.
       WEBAPP_CONTEXT: ROOT
+      # Honor X-Forwarded-For from Traefik (Tomcat RemoteIpValve) so Guacamole keys
+      # auth/bans on the real client IP, not the proxy's. Without it, the brute-force
+      # ban extension lumps every failure under the Traefik container IP — so one
+      # user's failed logins ban ALL users behind the proxy. The 172.x docker ranges
+      # are already in Tomcat's default trusted-proxy list, so no extra config needed.
+      REMOTE_IP_VALVE_ENABLED: "true"
       GUACD_HOSTNAME: guacd
       # Postgres JDBC backend (POSTGRESQL_ prefix auto-enables the JDBC extension;
       # POSTGRESQL_PASSWORD comes from the rendered env_file).
