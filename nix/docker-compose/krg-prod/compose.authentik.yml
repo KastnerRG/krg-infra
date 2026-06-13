@@ -88,7 +88,13 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./authentik/media:/media
       - ./authentik/data:/data
-      - ./authentik/media-icons:/data/media/public/krg-icons:ro
+      # NOTE: the read-only krg-icons mount is intentionally NOT mounted here.
+      # The worker runs as root, so its entrypoint does a recursive `chown /data`
+      # before dropping privileges; a :ro mount under /data makes that chown fail
+      # fatally (exit 1) and crash-loops the worker, which silently stops ALL
+      # background tasks (LDAP sync, email, outposts). App-tile icons are served
+      # over HTTP by authentik_server (which mounts them, but runs non-root and so
+      # skips the chown) — the worker never serves media, so it doesn't need them.
       - ./authentik/certs:/certs
       - ./authentik/custom-templates:/templates
     env_file:
