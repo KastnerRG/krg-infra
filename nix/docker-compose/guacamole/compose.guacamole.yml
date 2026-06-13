@@ -48,9 +48,12 @@ services:
       OPENID_ISSUER: https://auth.krg.ucsd.edu/application/o/guacamole/
       OPENID_CLIENT_ID: guacamole
       OPENID_REDIRECT_URI: https://remote.krg.ucsd.edu/
-      # Username = email claim (matches the Authentik provider sub_mode=user_email,
-      # consistent with grafana/outline).
-      OPENID_USERNAME_CLAIM_TYPE: email
+      # Guacamole username = the `preferred_username` claim (= Authentik username
+      # = AD sAMAccountName), NOT email. This makes the Guacamole identity match the
+      # AD username waiter's RDP/SSH expects, so ${GUAC_USERNAME} flows through to the
+      # target host. `preferred_username` rides the standard `profile` scope (already
+      # in the provider's property_mappings), so no Authentik change is needed.
+      OPENID_USERNAME_CLAIM_TYPE: preferred_username
       OPENID_SCOPE: openid email profile
     env_file:
       # web.env = POSTGRESQL_PASSWORD ONLY. The webapp must NOT see the legacy
