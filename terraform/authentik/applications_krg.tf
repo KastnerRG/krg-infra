@@ -188,8 +188,8 @@ resource "authentik_application" "guacamole" {
   protocol_provider = authentik_provider_oauth2.guacamole.id
   meta_launch_url   = "https://remote.krg.ucsd.edu"
   meta_description  = "Remote desktop / SSH gateway"
-  # meta_icon = "krg-icons/guacamole.svg"  # add an svg to authentik/media-icons/ to enable
-  group = "KRG"
+  meta_icon         = "krg-icons/guacamole.svg"
+  group             = "KRG"
 }
 
 # OUTER forward-auth gate. A SEPARATE Authentik application from the OIDC one above
