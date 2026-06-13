@@ -2,6 +2,12 @@
 
 App-tile icons shown on the Authentik user dashboard (`auth.krg.ucsd.edu`).
 
+**Convention: every third-party application surfaced in Authentik should ship an
+icon here.** An iconless tile renders as a generic placeholder and reads as a
+broken/untrusted link. When you add an app to `terraform/authentik/applications_*.tf`,
+add its icon in the same change (or, if no clean upstream logo exists yet, record
+it in the "Not yet iconed" list below so the gap is tracked, not forgotten).
+
 ## How they're wired
 
 Authentik 2026.2 serves application icons from its file-manager media store at
@@ -37,6 +43,7 @@ owner — used here only to label first-party links to those services).
 | `garage.svg`          | Garage UI            | `garage`                 |
 | `apache-superset.svg` | FishSense Analytics  | `apache-superset`        |
 | `vaultwarden.svg`     | Vaultwarden          | `vaultwarden`            |
+| `guacamole.svg`       | Guacamole            | `apache-guacamole`       |
 
 Not yet iconed (no clean off-the-shelf logo in dashboard-icons — follow-up):
 FishSense Workflows (Temporal), FishSense (main), FishSense Orchestrator,

@@ -225,6 +225,16 @@ let composeDir = ../../docker-compose/krg-prod; in
 3. Add the host to `nix/flake.nix` under `nixosConfigurations`
 4. `git add` the new files (a flake only sees git-tracked files), `nix flake check ./nix`, then deploy with `nixos-rebuild switch --flake ./nix#<name> --target-host ...`
 
+### 4. Authentik app icons
+
+**Every third-party application surfaced in Authentik must ship an app-tile icon.**
+An iconless tile renders as a generic placeholder and reads as a broken/untrusted
+link on the user dashboard. When you add an app to `terraform/authentik/applications_*.tf`,
+add its icon in the *same* change: drop the SVG in `nix/docker-compose/krg-prod/authentik/media-icons/`
+and set `meta_icon = "krg-icons/<file>.svg"`. If no clean upstream logo exists yet,
+record it in that dir's `README.md` "Not yet iconed" list so the gap is tracked, not
+forgotten. See `nix/docker-compose/krg-prod/authentik/media-icons/README.md` for the wiring.
+
 ## Secrets (Pre-Vault)
 
 Secrets are **not** managed by Nix yet (future: OpenBao/HashiCorp Vault on `krg-vault`). Before starting each compose stack, manually create the required files in the working directory. Each host's `default.nix` lists required secrets in a comment. (Vaultwarden is still in use — the earlier "drop Bitwarden" decision was reversed; it serves `vaultwarden.krg.ucsd.edu`.)
