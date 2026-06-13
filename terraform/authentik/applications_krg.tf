@@ -166,7 +166,11 @@ resource "authentik_provider_oauth2" "guacamole" {
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict", url = "https://remote.krg.ucsd.edu/" }]
-  property_mappings     = local.std_scopes
+  # std scopes + the AD-sourced `groups` scope so Guacamole receives the user's AD
+  # group names (claim "groups"). Drives admin + per-connection access via matching
+  # Guacamole user-groups (e.g. "Guacamole Admins" → ADMINISTER, "Waiter" → the
+  # waiter connection). The webapp sets OPENID_SCOPE=...groups + OPENID_GROUPS_CLAIM_TYPE.
+  property_mappings = concat(local.std_scopes, [authentik_property_mapping_provider_scope.groups.id])
   # RS256 signing key — REQUIRED: Guacamole verifies the ID token against the JWKS
   # endpoint (openid-jwks-endpoint). Without it Authentik falls back to HS256 + an
   # empty JWKS → "Invalid ID token" (the failure vaultwarden/garage-ui hit).
