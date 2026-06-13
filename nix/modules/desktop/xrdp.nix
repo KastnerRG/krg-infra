@@ -145,13 +145,20 @@ in {
       krg.adGroupSync.${gd.localGroup}.adGroups = deniedADGroups;
 
       # pam_access in the xrdp-sesman ACCOUNT phase. `required` -> a match (deny)
-      # fails the account check and refuses the RDP login. Runs before the NFS-home
-      # gate (order 12000); among `required` rules the order doesn't change the deny.
+      # fails the account check and refuses the RDP login.
+      #
+      # ORDER IS LOAD-BEARING: it MUST run before pam_sss (order 10400), which is
+      # `sufficient`. For an AD user pam_sss's account check succeeds, and a
+      # `sufficient` success short-circuits the rest of the account stack — so a deny
+      # placed AFTER pam_sss would never run for exactly the AD users (ARM PDK /
+      # Domain Admins) we block. Run first (10300): a `required` failure here is
+      # recorded and a later `sufficient` success can't override a prior required
+      # failure, so the deny holds; a permit just falls through to pam_sss/pam_unix.
       security.pam.services.xrdp-sesman.rules.account.krgGatewayDeny = {
         control = "required";
         modulePath = "${pkgs.pam}/lib/security/pam_access.so";
         args = ["nodefgroup" "accessfile=${accessConf}"];
-        order = 11000;
+        order = 10300;
       };
     }))
   ]);
