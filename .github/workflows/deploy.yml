@@ -164,5 +164,5 @@ jobs:
         if: success() && steps.gate.outputs.ok == 'true'
         env:
           TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
-          TOFU_TARGETS: "" # e.g. "authentik grafana e4e-nas" as each comes online
+          TOFU_TARGETS: "e4e-nas" # add grafana/authentik as each comes online
         run: ./deploy/deploy-tofu.sh
