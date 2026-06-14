@@ -135,12 +135,17 @@ reads each target's creds from KV at apply time. Seed these once with `bao kv pu
 | `e4e-nas` | `secret/e4e-nas/users` → `<dsm_user>` (default `e4e-automation`) | `TF_VAR_dsm_password` |
 | `e4e-nas` | `secret/e4e-nas/dsm-otp` → `secret` *(optional)* | `TF_VAR_dsm_otp_secret` |
 
-The krg-deploy AppRole policy already grants read on `secret/krg-deploy/*` and
-`secret/e4e-nas/*` (`terraform/openbao/main.tf`). **Policy gaps owned by the
-OpenBao/Authentik effort (#79/#81), not this leg:** `grafana` reads — and
-`authentik` writes back — under `secret/krg-prod/*`, which the AppRole policy does
-**not** yet cover; those two targets won't fully apply until the policy is widened.
-`e4e-nas` works against the current policy today.
+The krg-deploy AppRole policy grants read on `secret/krg-deploy/*` and
+`secret/e4e-nas/*`, read on `secret/krg-prod/grafana-admin`, and full lifecycle
+(create/update/read/delete) on the OIDC + roster paths the `authentik` target
+writes back — `secret/krg-prod/{grafana,outline,mlflow,roster,vaultwarden,guacamole}-oidc`,
+`secret/krg-prod/{roster,roster-ldap,guacamole}`, and `secret/e4e-nas/{garage-ui,dsm-sso}-oidc`
+(`local.authentik_managed_secrets` in `terraform/openbao/main.tf`). It is
+**enumerated, not `secret/krg-prod/*`** (#187 least-privilege), so adding a new
+`vault_kv_secret_v2` in `terraform/authentik/` requires adding its path to that
+local, or the apply 403s. `grafana` reads `grafana-oidc` from this same set, so it
+applies only after `authentik` has run at least once to populate it (hence
+authentik-before-grafana in `TOFU_TARGETS`). `e4e-nas` works against the policy too.
 
 **`openbao` target** provisions OpenBao's own mount/auth/policies, so it can't
 authenticate with the AppRole it's creating. Apply it manually with a privileged
