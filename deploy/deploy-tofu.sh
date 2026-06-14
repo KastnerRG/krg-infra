@@ -119,9 +119,12 @@ materialize() { # <target>
       export TF_VAR_dsm_user="${TF_VAR_dsm_user:-e4e-automation}"
       TF_VAR_dsm_password="$(_kv secret/e4e-nas/users "$TF_VAR_dsm_user")" || return 1
       export TF_VAR_dsm_password
-      # TOTP secret only if 2FA is on the API account (optional).
+      # TOTP secret only if 2FA is on the API account (optional). Use an `if`, not
+      # `[[ … ]] && …`: as the LAST statement in this branch a false test would make
+      # materialize() return non-zero → the loop silently SKIPS e4e-nas even though
+      # the password resolved fine. (Bit us: accounts without 2FA → empty otp.)
       local otp; otp="$(bao kv get -field=secret secret/e4e-nas/dsm-otp 2>/dev/null || true)"
-      [[ -n "$otp" ]] && export TF_VAR_dsm_otp_secret="$otp"
+      if [[ -n "$otp" ]]; then export TF_VAR_dsm_otp_secret="$otp"; fi
       ;;
     openbao)
       # Can't bootstrap OpenBao from OpenBao — needs a privileged operator token.
