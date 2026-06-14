@@ -44,6 +44,42 @@ resource "vault_approle_auth_backend_role" "krg_prod" {
 
 # ── Policies ───────────────────────────────────────────────────────────────────
 
+locals {
+  # Secrets the terraform/authentik target GENERATES and writes back into OpenBao
+  # (OIDC client_id/secret per app, plus the roster db/session/ldap passwords).
+  # krg-deploy runs that target via deploy/deploy-tofu.sh, so its AppRole needs to
+  # manage exactly these paths. Enumerated on purpose — NOT secret/data/krg-prod/*
+  # — so the deploy runner can write the OIDC entries without gaining write on every
+  # production secret (#187, least-privilege). MUST stay in sync with the
+  # vault_kv_secret_v2 resources in terraform/authentik/{vault,roster,guacamole}_secrets.tf:
+  # add a path here when a new app's secret is added there, or its apply 403s.
+  authentik_managed_secrets = [
+    "krg-prod/grafana-oidc",
+    "krg-prod/outline-oidc",
+    "krg-prod/mlflow-oidc",
+    "krg-prod/roster-oidc",
+    "krg-prod/roster",
+    "krg-prod/roster-ldap",
+    "krg-prod/vaultwarden-oidc",
+    "krg-prod/guacamole-oidc",
+    "krg-prod/guacamole",
+    "e4e-nas/garage-ui-oidc",
+    "e4e-nas/dsm-sso-oidc",
+  ]
+
+  # Render the per-path rules as one string to interpolate into the policy heredoc
+  # below (a single ${...} substitution — avoids %{for} directives fighting the
+  # <<- heredoc dedent). Full lifecycle on the data path (create/update on apply,
+  # read on refresh, delete on destroy) + metadata delete so the resource can be
+  # fully removed. Vault's HCL ignores the flat indentation of the rendered block.
+  authentik_secret_rules = join("\n", flatten([
+    for p in local.authentik_managed_secrets : [
+      "path \"secret/data/${p}\" { capabilities = [\"create\", \"read\", \"update\", \"delete\"] }",
+      "path \"secret/metadata/${p}\" { capabilities = [\"read\", \"delete\"] }",
+    ]
+  ]))
+}
+
 resource "vault_policy" "krg_deploy" {
   name   = "krg-deploy"
   policy = <<-EOT
@@ -63,21 +99,22 @@ resource "vault_policy" "krg_deploy" {
       capabilities = ["read"]
     }
 
-    # Read the Grafana secrets the terraform/grafana target consumes. krg-deploy
-    # runs that target via deploy/deploy-tofu.sh (AppRole login): providers.tf
-    # reads grafana-admin (admin password → provider auth) and sso.tf reads
-    # grafana-oidc (client_id/secret). Scoped to these two paths, NOT all of
-    # secret/krg-prod/* — the deploy runner shouldn't be able to read every
-    # production secret (#187). The authentik WRITE-back side of #187 stays
-    # deferred (bigger blast radius / needs a design decision). NOTE: grafana-oidc
-    # is produced by the authentik target, so grafana fully applies only once
-    # that's seeded.
+    # Read the Grafana ADMIN password the terraform/grafana target consumes:
+    # providers.tf reads grafana-admin → provider auth. Scoped to this one path,
+    # NOT all of secret/krg-prod/* — the deploy runner shouldn't be able to read
+    # every production secret (#187, least-privilege). grafana-oidc (the OTHER
+    # value grafana's sso.tf reads) is produced+managed by the authentik target,
+    # so it's covered by the authentik_managed_secrets block below (read included).
     path "secret/data/krg-prod/grafana-admin" {
       capabilities = ["read"]
     }
-    path "secret/data/krg-prod/grafana-oidc" {
-      capabilities = ["read"]
-    }
+
+    # Write-back for the terraform/authentik target (#187). authentik mints OIDC
+    # client secrets + the roster passwords and stores them here; grafana then
+    # reads grafana-oidc from the same set. Paths are enumerated (least-privilege)
+    # and rendered from local.authentik_managed_secrets — see that comment for the
+    # sync rule.
+    ${local.authentik_secret_rules}
 
     # Generate secret_ids for other roles so OpenTofu can bootstrap them
     path "auth/approle/role/+/secret-id" {
