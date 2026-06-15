@@ -1,0 +1,95 @@
+# Temporal — lab-wide workflow engine at workflows.krg.ucsd.edu.
+#
+# Formerly a FishSense-specific service (workflows.fishsense.e4e.ucsd.edu); it is
+# now a KRG lab-wide service hosted on krg-prod alongside the other tools. Three
+# containers:
+#   temporal-postgres  — dedicated persistence (own DB, docker-managed volume)
+#   temporal           — the Temporal server (auto-setup creates/upgrades schema)
+#   temporal-ui        — the Web UI, gated by Authentik OIDC (login federation)
+#
+# Auth is the UI's native OIDC client (like grafana/vaultwarden) — Traefik
+# terminates TLS, then temporal-ui itself bounces unauthenticated users through
+# Authentik. No proxy outpost needed.
+services:
+  temporal-postgres:
+    image: postgres:16.11
+    container_name: temporal-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=temporal
+    env_file:
+      # POSTGRES_PASSWORD (this container) + POSTGRES_PWD (server, same value) +
+      # TEMPORAL_AUTH_CLIENT_SECRET (ui). One file, shared by all three services;
+      # each image ignores the vars it doesn't recognise. See
+      # nix/hosts/krg-prod/default.nix for how to populate it from OpenBao.
+      - .secrets/temporal.env
+    volumes:
+      # Docker-managed named volume — postgres:16 runs as its own uid, so a named
+      # volume avoids the host-uid juggling a bind mount would need (same choice as
+      # the guacamole stack).
+      - temporal_postgres_data:/var/lib/postgresql/data
+    networks:
+      - default
+
+  temporal:
+    image: temporalio/auto-setup:1.29.7
+    container_name: temporal
+    restart: unless-stopped
+    depends_on:
+      - temporal-postgres
+    environment:
+      # postgres12 is the generic PostgreSQL plugin (works for PG 12+, incl. 16).
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_SEEDS=temporal-postgres
+      # Expose the server's Prometheus metrics so prometheus can scrape
+      # temporal:8000 over prometheus_network (see prometheus/prometheus.yml).
+      - PROMETHEUS_ENDPOINT=0.0.0.0:8000
+    env_file:
+      - .secrets/temporal.env # POSTGRES_PWD
+    networks:
+      - default
+      - prometheus_network
+
+  temporal-ui:
+    image: temporalio/ui:2.51.0
+    container_name: temporal-ui
+    restart: unless-stopped
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=https://workflows.krg.ucsd.edu
+      # ── Authentik OIDC SSO ────────────────────────────────────────────────────
+      # PROVIDER_URL is the Authentik application issuer (slug "temporal", trailing
+      # slash); temporal-ui (go-oidc) appends /.well-known/openid-configuration and
+      # verifies the ID token against jwks_uri — which is why the provider carries
+      # an RS256 signing_key in terraform/authentik/applications_krg.tf (HS256 +
+      # empty JWKS → "Invalid ID token", the failure guacamole/vaultwarden hit).
+      - TEMPORAL_AUTH_ENABLED=true
+      - TEMPORAL_AUTH_TYPE=oidc
+      - TEMPORAL_AUTH_PROVIDER_URL=https://auth.krg.ucsd.edu/application/o/temporal/
+      - TEMPORAL_AUTH_CLIENT_ID=temporal
+      - TEMPORAL_AUTH_CALLBACK_URL=https://workflows.krg.ucsd.edu/auth/sso/callback
+      - TEMPORAL_AUTH_SCOPES=openid,profile,email
+    env_file:
+      - .secrets/temporal.env # TEMPORAL_AUTH_CLIENT_SECRET
+    networks:
+      - traefik_proxy
+      - default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.temporal.rule=Host(`workflows.krg.ucsd.edu`)"
+      - "traefik.http.routers.temporal.entrypoints=websecure"
+      - "traefik.http.routers.temporal.tls.certresolver=letsencrypt"
+      - "traefik.http.services.temporal.loadbalancer.server.port=8080"
+
+networks:
+  traefik_proxy:
+    external: true
+  prometheus_network:
+    external: true
+
+volumes:
+  temporal_postgres_data:

@@ -2,6 +2,7 @@ include:
   - compose.authentik.yml
   - compose.grafana.yml
   - compose.vaultwarden.yml
+  - compose.temporal.yml
   # Temporarily disabled — bring up once verified.
   # - compose.outline.yml
   # - compose.mlflow.yml
@@ -50,6 +51,7 @@ services:
           - monitoring.krg.ucsd.edu
           - roster.krg.ucsd.edu
           - vaultwarden.krg.ucsd.edu
+          - workflows.krg.ucsd.edu
           # Aliases for the temporarily-disabled stacks — re-enable alongside their
           # compose includes above:
           # - docs.krg.ucsd.edu

@@ -116,4 +116,4 @@ scrape_configs:
     scrape_interval: 15s
     static_configs:
       - targets:
-          - fishsense-temporal:8000
+          - temporal:8000

@@ -48,6 +48,7 @@ in {
     "L+ /var/lib/krg/krg-prod/compose.authentik.yml    - - - - ${composeDir}/compose.authentik.yml"
     "L+ /var/lib/krg/krg-prod/compose.grafana.yml      - - - - ${composeDir}/compose.grafana.yml"
     "L+ /var/lib/krg/krg-prod/compose.vaultwarden.yml  - - - - ${composeDir}/compose.vaultwarden.yml"
+    "L+ /var/lib/krg/krg-prod/compose.temporal.yml     - - - - ${composeDir}/compose.temporal.yml"
     "L+ /var/lib/krg/krg-prod/compose.outline.yml      - - - - ${composeDir}/compose.outline.yml"
     "L+ /var/lib/krg/krg-prod/compose.mlflow.yml       - - - - ${composeDir}/compose.mlflow.yml"
 
@@ -140,6 +141,11 @@ in {
   #   vaultwarden.env                   (ADMIN_TOKEN=<argon2 hash>, SSO_CLIENT_SECRET=<from OpenBao>)
   #     ADMIN_TOKEN:      vaultwarden hash   (or argon2 a strong password) — gates /admin
   #     SSO_CLIENT_SECRET: bao kv get -field=client_secret secret/krg-prod/vaultwarden-oidc
+  #   temporal.env                      (shared by all 3 temporal services):
+  #     POSTGRES_PASSWORD=<pw>          temporal-postgres init
+  #     POSTGRES_PWD=<same pw>          temporal server → postgres (Temporal's var name)
+  #     TEMPORAL_AUTH_CLIENT_SECRET:   bao kv get -field=client_secret secret/krg-prod/temporal-oidc
+  #     (temporal-postgres data is a docker-managed named volume — no tmpfiles dir.)
   #
   # Also create /var/lib/krg/krg-prod/.env with:
   #   USER_ID=<UID of the account that owns the working directory>

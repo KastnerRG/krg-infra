@@ -81,29 +81,6 @@ resource "authentik_application" "garage_ui" {
   meta_icon         = "krg-icons/garage.svg"
 }
 
-# ── FishSense Workflows (Temporal) ────────────────────────────────────────────
-
-resource "authentik_provider_oauth2" "fishsense_workflows" {
-  name                   = "Provider for FishSense Workflows"
-  client_id              = "fishsense-workflows"
-  authorization_flow     = data.authentik_flow.default_authorization.id
-  invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://workflows.fishsense.e4e.ucsd.edu/auth/sso/callback" }]
-  property_mappings      = local.std_scopes
-  sub_mode               = "hashed_user_id"
-  access_token_validity  = "minutes=60"
-  refresh_token_validity = "days=30"
-}
-
-resource "authentik_application" "fishsense_workflows" {
-  name              = "FishSense Workflows"
-  slug              = "fishsense-workflows"
-  protocol_provider = authentik_provider_oauth2.fishsense_workflows.id
-  meta_launch_url   = "https://workflows.fishsense.e4e.ucsd.edu"
-  group             = "FishSense"
-  open_in_new_tab   = true
-}
-
 # ── FishSense Analytics (Superset) ────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "fishsense_analytics" {

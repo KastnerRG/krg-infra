@@ -44,7 +44,12 @@ owner — used here only to label first-party links to those services).
 | `apache-superset.svg` | FishSense Analytics  | `apache-superset`        |
 | `vaultwarden.svg`     | Vaultwarden          | `vaultwarden`            |
 | `guacamole.svg`       | Guacamole            | `apache-guacamole`       |
+| `temporal.svg`        | Temporal             | (Temporal brand assets)¹ |
+
+¹ `temporal.svg` is Temporal's official "Symbol (dark)" mark from the Temporal
+brand assets, not dashboard-icons. Note it's a near-black (`#141414`) glyph — fine
+on a light dashboard, low-contrast on the dark theme; swap for a light variant if
+that reads poorly.
 
 Not yet iconed (no clean off-the-shelf logo in dashboard-icons — follow-up):
-FishSense Workflows (Temporal), FishSense (main), FishSense Orchestrator,
-Qualcomm Docs, KRG Roster.
+FishSense (main), FishSense Orchestrator, Qualcomm Docs, KRG Roster.
