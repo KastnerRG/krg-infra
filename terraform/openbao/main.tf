@@ -109,6 +109,14 @@ resource "vault_policy" "krg_deploy" {
       capabilities = ["read"]
     }
 
+    # Read the authentik LDAP-source bind password (TF_VAR_ldap_bind_password for
+    # the terraform/authentik target). It lives under krg-prod (an authentik-service
+    # secret, also consumed by the LDAP outpost on krg-prod), so it needs an explicit
+    # scoped read here — secret/krg-prod/* is NOT blanket-readable (#187).
+    path "secret/data/krg-prod/authentik-ldap" {
+      capabilities = ["read"]
+    }
+
     # Write-back for the terraform/authentik target (#187). authentik mints OIDC
     # client secrets + the roster passwords and stores them here; grafana then
     # reads grafana-oidc from the same set. Paths are enumerated (least-privilege)

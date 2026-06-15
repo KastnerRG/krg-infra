@@ -108,7 +108,10 @@ materialize() { # <target>
     authentik)
       [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping authentik" >&2; return 1; }
       TF_VAR_authentik_token="$(_kv secret/krg-deploy/authentik-admin-token token)" || return 1
-      TF_VAR_ldap_bind_password="$(_kv secret/krg-deploy/authentik-bind password)" || return 1
+      # LDAP bind password lives under krg-prod (it's an authentik-service secret,
+      # consumed by the LDAP outpost on krg-prod too) — krg-deploy's policy grants a
+      # scoped read on this exact path (../terraform/openbao/main.tf).
+      TF_VAR_ldap_bind_password="$(_kv secret/krg-prod/authentik-ldap bind_password)" || return 1
       export TF_VAR_authentik_token TF_VAR_ldap_bind_password
       ;;
     e4e-nas)

@@ -5,9 +5,10 @@
 #   1. Bring up the krg-prod compose stack (Authentik must be healthy)
 #   2. Log into https://auth.krg.ucsd.edu as the akadmin account
 #   3. Create a long-lived API token: Admin → System → API Tokens
-#   4. Store it in vault:
+#   4. Store it in vault, alongside the authentik-bind AD account password:
 #        bao kv put secret/krg-deploy/authentik-admin-token token=<token>
-#   5. Set env vars and apply:
+#        bao kv put secret/krg-prod/authentik-ldap bind_password=<authentik-bind pw>
+#   5. Set env vars and apply (deploy/deploy-tofu.sh reads both from the paths above):
 #        export TF_VAR_vault_addr="https://krg-vault.ucsd.edu:8200"
 #        export VAULT_TOKEN="<vault token>"
 #        export TF_VAR_authentik_token="<authentik API token>"
