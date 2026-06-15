@@ -139,16 +139,15 @@ jobs:
           # Include e4e-nas in the converge. Inert until krg-deploy's OpenBao
           # AppRole creds are provisioned (graceful skip otherwise — see
           # deploy/deploy-ansible.sh).
+          #
+          # FULL converge (no SYNOLOGY_TAGS). The bring-up scoping (#165) is lifted:
+          # a read-only `--check --diff` of the whole playbook came back clean —
+          # 0 failures, 0 deletions (including the declarative-delete roles
+          # shares/acls/nfs/app_portal/quotas — spec is reconciled with live), and
+          # only benign config drift on roles already proven on a real apply. SNMP
+          # stays disabled in spec (#151) and mail deferred in group_vars (#163);
+          # those are role-internal gates, not tag scoping.
           DEPLOY_SYNOLOGY: "true"
-          # SCOPED to the bring-up-validated roles only. The FULL playbook (tags
-          # unset) runs every synology_* role, and its declarative sync DELETES
-          # live config not in spec (shares / ACLs / AppPortal / NFS) — but the
-          # full NAS spec isn't bring-up-reconciled yet (docs/e4e-nas-dsm.md), and
-          # several roles fail unattended (SNMPv3 #151, mail OAuth #163). So until
-          # those are brought up (#165) we converge ONLY the proven garage-ui +
-          # DSM-SSO stack. Widen this as roles are reconciled; drop it (→ full
-          # converge) once #165 is closed.
-          SYNOLOGY_TAGS: "synology_shares,synology_acls,synology_certificate,synology_app_portal,synology_garage,synology_sso"
         run: ./deploy/deploy-ansible.sh
 
       # OpenTofu layer. State is local on krg-deploy (ADR 0005) + encrypted with
