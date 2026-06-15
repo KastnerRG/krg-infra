@@ -84,20 +84,29 @@ if [[ -n "${TOFU_STATE_PASSPHRASE:-}" ]]; then
   # to add an `unencrypted` fallback method so tofu can READ the plaintext state and
   # REWRITE it encrypted (aes_gcm) on apply. Run once per plaintext-state target,
   # then drop the flag (leaving the fallback on permanently would defeat encryption).
+  # HCL: a block with an argument on the `{` line must close `}` on that same line.
+  # So the no-fallback form stays single-line; the migrate form uses a multi-line
+  # block (method + fallback on their own lines).
   if [[ -n "${TOFU_STATE_MIGRATE:-}" ]]; then
     migrate_method='
   method "unencrypted" "migrate" {}'
-    migrate_fallback='
-    fallback { method = method.unencrypted.migrate }'
+    state_blocks='state {
+    method = method.aes_gcm.m
+    fallback { method = method.unencrypted.migrate }
+  }
+  plan {
+    method = method.aes_gcm.m
+    fallback { method = method.unencrypted.migrate }
+  }'
   else
     migrate_method=''
-    migrate_fallback=''
+    state_blocks='state { method = method.aes_gcm.m }
+  plan  { method = method.aes_gcm.m }'
   fi
   export TF_ENCRYPTION='
   key_provider "pbkdf2" "k" { passphrase = "'"$esc"'" }
   method "aes_gcm" "m"      { keys = key_provider.pbkdf2.k }'"$migrate_method"'
-  state { method = method.aes_gcm.m'"$migrate_fallback"' }
-  plan  { method = method.aes_gcm.m'"$migrate_fallback"' }'
+  '"$state_blocks"
 fi
 
 # Read one KV field; non-zero (and a STDERR notice) if the path/field is unreadable
