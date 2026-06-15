@@ -209,6 +209,10 @@ resource "authentik_application" "guacamole_gate" {
   name              = "Guacamole (gateway)"
   slug              = "guacamole-gate"
   protocol_provider = authentik_provider_proxy.guacamole_gate.id
+  # Reuse the Guacamole logo so the gate reads correctly in the admin app list.
+  # Icon only — NO meta_launch_url/group, so it stays out of the user library (see
+  # the gate comment above: avoid a second "Guacamole" tile).
+  meta_icon = "krg-icons/guacamole.svg"
 }
 
 # ── Proxmox ────────────────────────────────────────────────────────────────────
