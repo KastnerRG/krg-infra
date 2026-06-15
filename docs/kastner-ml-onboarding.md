@@ -303,6 +303,32 @@ nix run github:nix-community/nixos-anywhere -- \
   --target-host c.crutchfield.642@kastner-ml.ucsd.edu
 ```
 
+> **Console route (used 2026-06-15) + two gotchas it surfaced.** Installing from
+> the NixOS ISO at the console (root never on the network): run disko, then
+> `sudo nixos-install --root /mnt --flake 'path:<repo>/nix#kastner-ml' --no-root-passwd`.
+> Use the `path:` flake ref (not `github:` or a git checkout) — it dodges both the
+> flaky `api.github.com` HEAD lookup and git's "dubious ownership" check on a
+> root-owned clone. Two things bit us on the first run, both now mandatory steps:
+>
+> 1. **Old bcache auto-assembles and holds the disks.** This box's Ubuntu root was
+>    btrfs-on-bcache (8 TB HDD backing + 2 TB SSD cache). The installer kernel
+>    re-assembled `bcache0` from the leftover superblocks on `sda1` + `sdb`, so
+>    `zpool create` couldn't claim them (no `zfs_member` ever appeared) — and
+>    disko's own wipe does NOT stop an active bcache. Tear it down FIRST:
+>    `echo 1 | sudo tee /sys/block/bcache0/bcache/stop` then
+>    `echo 1 | sudo tee /sys/fs/bcache/<cset-uuid>/stop`, then `wipefs -a` +
+>    `sgdisk --zap-all` the three target disks (NOT the USB), THEN run disko.
+>
+> 2. **Export the pools before rebooting.** disko leaves `rpool`/`scratchpool`
+>    imported (stamped with the *installer's* hostId) for `nixos-install`.
+>    `modules/zfs.nix` sets `forceImportRoot = false`, so on first boot the
+>    installed system (its own `hostId`) REFUSES to import a pool another host left
+>    "active" → root never mounts → boot hangs with no network. This box has **no
+>    BMC**, so that means a physical-console trip. nixos-anywhere exports for you;
+>    the console route does NOT. Before reboot run `sudo zpool export -a` (or export
+>    `rpool` + `scratchpool`). Recovery if already rebooted: boot the installer,
+>    `zpool import -f -N <pool>; zpool export <pool>` for both pools, then reboot.
+
 ### Post-install
 
 - [ ] Regenerate `hardware-configuration.nix` from the now-NixOS box and commit
@@ -312,7 +338,7 @@ nix run github:nix-community/nixos-anywhere -- \
       member case: `adcli join`).
 - [ ] Validate impermanence across two reboots (rollback fires; `/persist`
       preserved; `/home` mounts from e4e-nas; AD login works; 0 failed units).
-- [ ] Confirm `/scratch/krg` mounts, lab perms (`3770`, setgid+sticky), and the
-      overflow timer targets e4e-nas.
+- [ ] Confirm `/scratch/{fishsense,aid,huggingface}` mount + group perms (`3770`,
+      setgid+sticky). Overflow is off for now (no e4e-nas cold export yet).
 - [ ] Add kastner-ml to [fleet-inventory.md](fleet-inventory.md) and the
       Prometheus scrape targets (it was a not-yet-provisioned `kastner-ml` target).
