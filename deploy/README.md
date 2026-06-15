@@ -131,12 +131,12 @@ reads each target's creds from KV at apply time. Seed these once with `bao kv pu
 |---|---|---|
 | `grafana` | *(none — reads `secret/krg-prod/grafana-admin` + `grafana-oidc` in-config via the vault provider)* | `VAULT_TOKEN` only |
 | `authentik` | `secret/krg-deploy/authentik-admin-token` → `token` | `TF_VAR_authentik_token` |
-| `authentik` | `secret/krg-deploy/authentik-bind` → `password` | `TF_VAR_ldap_bind_password` |
+| `authentik` | `secret/krg-prod/authentik-ldap` → `bind_password` | `TF_VAR_ldap_bind_password` |
 | `e4e-nas` | `secret/e4e-nas/users` → `<dsm_user>` (default `e4e-automation`) | `TF_VAR_dsm_password` |
 | `e4e-nas` | `secret/e4e-nas/dsm-otp` → `secret` *(optional)* | `TF_VAR_dsm_otp_secret` |
 
 The krg-deploy AppRole policy grants read on `secret/krg-deploy/*` and
-`secret/e4e-nas/*`, read on `secret/krg-prod/grafana-admin`, and full lifecycle
+`secret/e4e-nas/*`, read on `secret/krg-prod/grafana-admin` + `secret/krg-prod/authentik-ldap`, and full lifecycle
 (create/update/read/delete) on the OIDC + roster paths the `authentik` target
 writes back — `secret/krg-prod/{grafana,outline,mlflow,roster,vaultwarden,guacamole}-oidc`,
 `secret/krg-prod/{roster,roster-ldap,guacamole}`, and `secret/e4e-nas/{garage-ui,dsm-sso}-oidc`
