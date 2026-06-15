@@ -21,7 +21,7 @@ resource "authentik_provider_oauth2" "grafana" {
   client_id              = "grafana"
   authorization_flow     = data.authentik_flow.default_authorization.id
   invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://dashboard.waiter.ucsd.edu/login/generic_oauth" }]
+  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://monitoring.krg.ucsd.edu/login/generic_oauth" }]
   property_mappings      = local.std_scopes
   sub_mode               = "user_email"
   access_token_validity  = "minutes=60"
@@ -32,7 +32,7 @@ resource "authentik_application" "grafana" {
   name              = "Grafana"
   slug              = "grafana"
   protocol_provider = authentik_provider_oauth2.grafana.id
-  meta_launch_url   = "https://dashboard.waiter.ucsd.edu"
+  meta_launch_url   = "https://monitoring.krg.ucsd.edu"
   meta_description  = "KRG lab metrics and dashboards"
   meta_icon         = "krg-icons/grafana.svg"
   group             = "KRG"
