@@ -1,6 +1,6 @@
 variable "grafana_url" {
   type    = string
-  default = "https://dashboard.waiter.ucsd.edu"
+  default = "https://monitoring.krg.ucsd.edu"
 }
 
 variable "authentik_url" {
