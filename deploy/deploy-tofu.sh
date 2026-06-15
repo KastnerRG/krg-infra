@@ -80,11 +80,24 @@ if [[ -n "${TOFU_STATE_PASSPHRASE:-}" ]]; then
   fi
   esc=${TOFU_STATE_PASSPHRASE//\\/\\\\}   # \ -> \\
   esc=${esc//\"/\\\"}                     # " -> \"
+  # One-time migration of a PRE-EXISTING UNENCRYPTED state: set TOFU_STATE_MIGRATE=1
+  # to add an `unencrypted` fallback method so tofu can READ the plaintext state and
+  # REWRITE it encrypted (aes_gcm) on apply. Run once per plaintext-state target,
+  # then drop the flag (leaving the fallback on permanently would defeat encryption).
+  if [[ -n "${TOFU_STATE_MIGRATE:-}" ]]; then
+    migrate_method='
+  method "unencrypted" "migrate" {}'
+    migrate_fallback='
+    fallback { method = method.unencrypted.migrate }'
+  else
+    migrate_method=''
+    migrate_fallback=''
+  fi
   export TF_ENCRYPTION='
   key_provider "pbkdf2" "k" { passphrase = "'"$esc"'" }
-  method "aes_gcm" "m"      { keys = key_provider.pbkdf2.k }
-  state { method = method.aes_gcm.m }
-  plan  { method = method.aes_gcm.m }'
+  method "aes_gcm" "m"      { keys = key_provider.pbkdf2.k }'"$migrate_method"'
+  state { method = method.aes_gcm.m'"$migrate_fallback"' }
+  plan  { method = method.aes_gcm.m'"$migrate_fallback"' }'
 fi
 
 # Read one KV field; non-zero (and a STDERR notice) if the path/field is unreadable
