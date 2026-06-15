@@ -58,6 +58,11 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.12.0
+    # NOTE: deliberately NO `user:` line. The prom/prometheus image already runs as
+    # its built-in `nobody` (uid 65534), and the ./prometheus-data bind mount is
+    # owned 65534 to match (see nix/hosts/krg-prod/default.nix tmpfiles). Pinning
+    # `user: '1000'` here (as grafana/loki do) would make nobody-owned TSDB blocks
+    # unwritable → "permission denied" panic → crash loop. Leave it on the default.
     container_name: prometheus
     command: >
       --config.file=/etc/prometheus/prometheus.yml

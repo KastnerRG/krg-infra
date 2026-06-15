@@ -206,13 +206,11 @@
         # so provisioning them is the go-live switch. deploy-ansible.sh resolves
         # REPO_ROOT from its own path, so no cd is needed.
         #
-        # SYNOLOGY_TAGS scopes the converge to the bring-up-validated roles only
-        # (keep in lockstep with deploy.yml): the full playbook would run every
-        # synology_* role and declaratively DELETE live config not in spec, but
-        # the full NAS spec isn't bring-up-reconciled yet (#165; SNMPv3 #151,
-        # mail OAuth #163). Widen as roles are reconciled; drop it once #165 closes.
+        # FULL converge (no SYNOLOGY_TAGS) — bring-up scoping lifted after a clean
+        # read-only `--check --diff` of the whole playbook (#165): 0 failures, 0
+        # deletions. SNMP stays off in spec (#151), mail deferred in group_vars
+        # (#163). Keep in lockstep with deploy.yml.
         DEPLOY_SYNOLOGY=true \
-        SYNOLOGY_TAGS=synology_shares,synology_acls,synology_certificate,synology_app_portal,synology_garage,synology_sso \
           ${pkgs.bash}/bin/bash /var/lib/krg-admin/krg-infra/deploy/deploy-ansible.sh
       '';
     };
