@@ -103,7 +103,15 @@ in {
 
     # Grafana, Prometheus data (writable)
     "d  /var/lib/krg/krg-prod/grafana-storage               0750 1000 1000 -"
-    "d  /var/lib/krg/krg-prod/prometheus-data               0750 1000 1000 -"
+    # Prometheus is the odd one out: unlike grafana/loki (which we pin to uid 1000),
+    # the prom/prometheus image runs as its built-in `nobody` (65534) and has NO
+    # `user:` line in compose.grafana.yml. Owning this dir 1000:1000 left nobody
+    # unable to traverse it (0750) → "open data/queries.active: permission denied"
+    # → panic on every start → crash loop → all Prometheus-backed dashboards "No
+    # data". Own it (and thus the existing 65534 TSDB under ./data) as 65534 to
+    # match the container user. Do NOT add `user: '1000'` to the service instead —
+    # that would orphan the on-disk TSDB (already 65534) the other direction.
+    "d  /var/lib/krg/krg-prod/prometheus-data               0750 65534 65534 -"
 
     # Vaultwarden: SQLite datastore (writable; owned by the container's uid 1000)
     "d  /var/lib/krg/krg-prod/vaultwarden                   0750 1000 1000 -"
