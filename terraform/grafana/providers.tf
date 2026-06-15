@@ -14,6 +14,10 @@ terraform {
 
 provider "vault" {
   address = var.vault_addr
+  # Use the supplied token (krg-deploy AppRole) directly — the AppRole policy doesn't
+  # grant auth/token/create, so the provider's default child-token mint 403s. Same
+  # fix as terraform/authentik/providers.tf.
+  skip_child_token = true
 }
 
 # Grafana admin credentials — password read from vault so it never appears in env.
