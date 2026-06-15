@@ -8,6 +8,9 @@
   # compose project) so its dependency on the OpenBao-rendered DB secret fails
   # closed for Guacamole alone — a bao outage must not take down the rest.
   guacamoleDir = ../../docker-compose/guacamole;
+  # Temporal — same rationale: standalone stack so its OpenBao-rendered secrets
+  # (postgres password + OIDC client secret) fail closed for Temporal alone.
+  temporalDir = ../../docker-compose/temporal;
 in {
   imports = [
     ../../profiles/server.nix
@@ -141,6 +144,10 @@ in {
   #     ADMIN_TOKEN:      vaultwarden hash   (or argon2 a strong password) — gates /admin
   #     SSO_CLIENT_SECRET: bao kv get -field=client_secret secret/krg-prod/vaultwarden-oidc
   #
+  # Temporal (separate stack, below) takes NO .secrets/ file — its postgres password
+  # and OIDC client secret are rendered from OpenBao to /run by krg.vaultAgent, same
+  # as Guacamole.
+  #
   # Also create /var/lib/krg/krg-prod/.env with:
   #   USER_ID=<UID of the account that owns the working directory>
   #   GROUP_ID=<GID of the account that owns the working directory>
@@ -185,7 +192,23 @@ in {
     requires = ["openbao-agent.service"];
   };
 
-  # OpenBao Agent: render Guacamole's Postgres password from bao to tmpfs. This is
+  # Temporal — lab-wide workflow engine at workflows.krg.ucsd.edu. Standalone stack
+  # (own systemd service) so its OpenBao dependency is scoped to Temporal alone, same
+  # as Guacamole. after/requires openbao-agent: the postgres password + OIDC client
+  # secret are rendered to /run BEFORE this starts, and the stack fails closed if bao
+  # is sealed/unreachable. Joins prometheus_network too so prometheus can scrape the
+  # server's metrics at temporal:8000.
+  krg.composeStacks.temporal = {
+    description = "Temporal — workflow engine (server + UI + postgres)";
+    composeFiles = ["${temporalDir}/compose.temporal.yml"];
+    workingDirectory = "/var/lib/krg/temporal";
+    networks = ["traefik_proxy" "prometheus_network"];
+    after = ["openbao-agent.service"];
+    requires = ["openbao-agent.service"];
+  };
+
+  # OpenBao Agent: render bao secrets to tmpfs for the standalone stacks (Guacamole's
+  # Postgres password; Temporal's Postgres password + OIDC client secret). This was
   # the repo's first bao-rendered secret (the vault-agent keystone). Bootstrap (the
   # ONE on-box secret) — minted by the krg-deploy AppRole, root-only 0400:
   #   /var/lib/krg/openbao-agent/role-id     (non-secret; from `tofu output krg_prod_role_id`)
@@ -218,6 +241,37 @@ in {
         contents = ''
           {{- with secret "secret/data/krg-prod/guacamole" }}
           POSTGRES_PASSWORD={{ .Data.data.db_password }}
+          {{- end }}
+        '';
+      }
+      # Temporal — postgres password (secret/krg-prod/temporal {db_password}, generated
+      # by terraform/authentik/temporal_secrets.tf) + OIDC client secret
+      # (secret/krg-prod/temporal-oidc {client_secret}, minted by Authentik in
+      # vault_secrets.tf). One var per file so no image sees a var it doesn't own.
+      {
+        destination = "/run/krg/temporal/db.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/temporal" }}
+          POSTGRES_PASSWORD={{ .Data.data.db_password }}
+          {{- end }}
+        '';
+      }
+      {
+        destination = "/run/krg/temporal/server.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/temporal" }}
+          POSTGRES_PWD={{ .Data.data.db_password }}
+          {{- end }}
+        '';
+      }
+      {
+        destination = "/run/krg/temporal/ui.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/temporal-oidc" }}
+          TEMPORAL_AUTH_CLIENT_SECRET={{ .Data.data.client_secret }}
           {{- end }}
         '';
       }
