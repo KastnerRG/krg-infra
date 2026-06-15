@@ -64,9 +64,9 @@ resource "vault_kv_secret_v2" "vaultwarden_oidc" {
   })
 }
 
-# Temporal — Authentik mints this client secret (brand new). Consumed by the
-# temporal-ui compose service as TEMPORAL_AUTH_CLIENT_SECRET (populated into
-# /var/lib/krg/krg-prod/.secrets/temporal.env; see nix/hosts/krg-prod/default.nix).
+# Temporal — Authentik mints this client secret (brand new). The OpenBao Agent on
+# krg-prod renders it to /run/krg/temporal/ui.env as TEMPORAL_AUTH_CLIENT_SECRET for
+# the temporal-ui compose service (krg.vaultAgent in nix/hosts/krg-prod/default.nix).
 resource "vault_kv_secret_v2" "temporal_oidc" {
   mount = "secret"
   name  = "krg-prod/temporal-oidc"
