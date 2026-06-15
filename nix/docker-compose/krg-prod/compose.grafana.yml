@@ -85,7 +85,9 @@ services:
 
 secrets:
   grafana_e4eadmin_password:
-    file: .secrets/gf_admin_password.txt
+    # Rendered from OpenBao (secret/krg-prod/grafana-admin, field `password`) by
+    # krg.vaultAgent — see nix/hosts/krg-prod/default.nix.
+    file: /run/krg/krg-prod/grafana-admin-password
 
 networks:
   loki_network:

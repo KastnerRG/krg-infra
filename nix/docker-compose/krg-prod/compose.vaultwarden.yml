@@ -35,8 +35,9 @@ services:
       # break-glass path alongside SSO.
     env_file:
       # ADMIN_TOKEN (argon2 hash; gates /admin) + SSO_CLIENT_SECRET (from OpenBao
-      # secret/krg-prod/vaultwarden-oidc). See nix/hosts/krg-prod/default.nix.
-      - .secrets/vaultwarden.env
+      # secret/krg-prod/vaultwarden-oidc), rendered from OpenBao to /run by
+      # krg.vaultAgent. See nix/hosts/krg-prod/default.nix.
+      - /run/krg/krg-prod/vaultwarden.env
     volumes:
       # SQLite datastore: db.sqlite3 + attachments/ + sends/ + rsa_key* + config.json.
       # Backup = copy this dir (or the /admin backup button) — no pg_dump.

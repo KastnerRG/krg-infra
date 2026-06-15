@@ -129,20 +129,22 @@ in {
   environment.systemPackages = with pkgs; [openbao];
   environment.variables.VAULT_ADDR = "https://krg-vault.ucsd.edu:8200";
 
-  # TODO Automate secrets
   # krg-prod runs as a single compose project (compose.yml uses `include:` to
   # bring in authentik, grafana, mlflow, and outline stacks).
   #
-  # Secrets required in /var/lib/krg/krg-prod/.secrets/ before starting:
-  #   authentik_postgres_admin_password.txt
-  #   authentik_admin_password.env      (AUTHENTIK_SECRET_KEY=... AUTHENTIK_POSTGRESQL__PASSWORD=...)
-  #   authentik_traefik_token.env
-  #   gf_admin_password.txt
+  # Authentik + Grafana + Vaultwarden secrets are now rendered from OpenBao to
+  # /run (tmpfs) by krg.vaultAgent (below) — no .secrets/ files for those three.
+  # Because they live in this single compose project, the whole stack `requires`
+  # openbao-agent and fails closed if bao is sealed/unreachable at boot (the same
+  # contract Guacamole already has). See krg.vaultAgent for the render list and
+  # docs/openbao-bringup.md "Seed the krg-prod stack secrets" for the one-time
+  # seeding of the LIVE values (SECRET_KEY, DB passwords, outpost token, admin
+  # token) — these are seeded at their current values, NOT regenerated.
+  #
+  # Still hand-placed in /var/lib/krg/krg-prod/.secrets/ (stacks not yet migrated;
+  # both are currently disabled in compose.yml):
   #   outline_secrets.env               (SECRET_KEY, UTILS_SECRET, OIDC_CLIENT_SECRET, DATABASE_URL, ...)
   #   mlflow.env                        (POSTGRES_PASSWORD, OIDC_* vars)
-  #   vaultwarden.env                   (ADMIN_TOKEN=<argon2 hash>, SSO_CLIENT_SECRET=<from OpenBao>)
-  #     ADMIN_TOKEN:      vaultwarden hash   (or argon2 a strong password) — gates /admin
-  #     SSO_CLIENT_SECRET: bao kv get -field=client_secret secret/krg-prod/vaultwarden-oidc
   #
   # Temporal (separate stack, below) takes NO .secrets/ file — its postgres password
   # and OIDC client secret are rendered from OpenBao to /run by krg.vaultAgent, same
@@ -152,15 +154,20 @@ in {
   #   USER_ID=<UID of the account that owns the working directory>
   #   GROUP_ID=<GID of the account that owns the working directory>
   #
-  # Guacamole (separate stack) takes NO .secrets/ file — its Postgres password is
-  # rendered from OpenBao to /run by krg.vaultAgent (below). The only on-box secret
-  # is the AppRole secret-id under /var/lib/krg/openbao-agent/ (see that block).
+  # The only on-box secret material is the AppRole secret-id under
+  # /var/lib/krg/openbao-agent/ (see the krg.vaultAgent block).
   krg.composeStacks.krg-prod = {
     description = "KRG production (lab-wide) stack — Traefik + Authentik + Grafana + services";
     composeFiles = ["${composeDir}/compose.yml"];
     workingDirectory = "/var/lib/krg/krg-prod";
     # External networks declared in compose.yml and compose.grafana.yml
     networks = ["traefik_proxy" "authentik" "prometheus_network"];
+    # Authentik/Grafana/Vaultwarden secrets render to /run BEFORE this starts, so
+    # the stack fails closed (no stale/empty secrets) if bao is down. This couples
+    # the lab's ingress (Traefik) + SSO (Authentik) to krg-vault being unsealed at
+    # boot — the deliberate cost of /run-only (never-on-durable-disk) secrets.
+    after = ["openbao-agent.service"];
+    requires = ["openbao-agent.service"];
   };
 
   # E4E Roster V3 — source lives at /var/lib/krg/e4e-roster (git-managed, not nix store).
@@ -207,25 +214,29 @@ in {
     requires = ["openbao-agent.service"];
   };
 
-  # OpenBao Agent: render bao secrets to tmpfs for the standalone stacks (Guacamole's
-  # Postgres password; Temporal's Postgres password + OIDC client secret). This was
-  # the repo's first bao-rendered secret (the vault-agent keystone). Bootstrap (the
-  # ONE on-box secret) — minted by the krg-deploy AppRole, root-only 0400:
+  # OpenBao Agent: render secrets from bao to tmpfs (/run). The keystone the repo
+  # deferred — consumers: Guacamole + Temporal (Postgres passwords + Temporal's OIDC
+  # client secret) and the Authentik / Grafana / Vaultwarden secrets that used to
+  # live in .secrets/. Bootstrap (the ONE on-box secret) — minted by the krg-deploy
+  # AppRole, root-only 0400:
   #   /var/lib/krg/openbao-agent/role-id     (non-secret; from `tofu output krg_prod_role_id`)
   #   /var/lib/krg/openbao-agent/secret-id   (secret; `bao write -f auth/approle/role/krg-prod/secret-id`)
-  # secret/krg-prod/guacamole {db_password} is generated + stored by
-  # terraform/authentik/guacamole_secrets.tf. krg-prod's policy already reads
-  # secret/data/krg-prod/* (terraform/openbao/main.tf).
+  # krg-prod's policy already reads secret/data/krg-prod/* (terraform/openbao/main.tf),
+  # so none of these paths need a policy change. The agent renders ALL of them in
+  # one oneshot — if any path is unseeded it exits non-zero (error_on_missing_key)
+  # and BOTH the krg-prod and guacamole stacks fail closed, so seed everything in
+  # docs/openbao-bringup.md before deploying.
   krg.vaultAgent = {
     enable = true;
-    # TWO env files, same value — the webapp and postgres MUST NOT share one.
-    # `POSTGRES_PASSWORD` is a *legacy* Guacamole env var (the postgres container
-    # needs it; the webapp uses `POSTGRESQL_PASSWORD`). If the webapp sees both,
-    # the image's legacy-variable migration fires and leaves the effective
-    # postgresql-password EMPTY → "SCRAM ... password is an empty string". So the
-    # webapp gets web.env (POSTGRESQL_PASSWORD only) and postgres gets db.env
-    # (POSTGRES_PASSWORD only).
     renders = [
+      # ── Guacamole Postgres password ──────────────────────────────────────────
+      # TWO env files, same value — the webapp and postgres MUST NOT share one.
+      # `POSTGRES_PASSWORD` is a *legacy* Guacamole env var (the postgres container
+      # needs it; the webapp uses `POSTGRESQL_PASSWORD`). If the webapp sees both,
+      # the image's legacy-variable migration fires and leaves the effective
+      # postgresql-password EMPTY → "SCRAM ... password is an empty string". So the
+      # webapp gets web.env (POSTGRESQL_PASSWORD only) and postgres gets db.env
+      # (POSTGRES_PASSWORD only).
       {
         destination = "/run/krg/guacamole/web.env";
         perms = "0640";
@@ -272,6 +283,70 @@ in {
         contents = ''
           {{- with secret "secret/data/krg-prod/temporal-oidc" }}
           TEMPORAL_AUTH_CLIENT_SECRET={{ .Data.data.client_secret }}
+          {{- end }}
+        '';
+      }
+
+      # ── Authentik ────────────────────────────────────────────────────────────
+      # Postgres superuser password — consumed as the `authentik_postgres_admin_password`
+      # docker secret (a bare-value file, no KEY=). Used by postgres_authentik's
+      # POSTGRES_PASSWORD_FILE. LIVE value: seeded from the running DB, not rotated.
+      {
+        destination = "/run/krg/krg-prod/authentik-postgres-admin-password";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik" }}{{ .Data.data.postgres_admin_password }}{{ end }}
+        '';
+      }
+      # SECRET_KEY (signs sessions/tokens) + the authentik DB-role password.
+      # env_file for authentik_server/worker/proxy AND the postgres init script.
+      # Both LIVE: rotating SECRET_KEY invalidates sessions; rotating the role
+      # password breaks the running DB role.
+      {
+        destination = "/run/krg/krg-prod/authentik.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik" }}
+          AUTHENTIK_SECRET_KEY={{ .Data.data.secret_key }}
+          AUTHENTIK_POSTGRESQL__PASSWORD={{ .Data.data.postgresql_password }}
+          {{- end }}
+        '';
+      }
+      # Proxy outpost token (Admin → Outposts → View token). LIVE: must match the
+      # token Authentik issued for the embedded outpost.
+      {
+        destination = "/run/krg/krg-prod/authentik-outpost-token.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik-outpost-token" }}
+          AUTHENTIK_TOKEN={{ .Data.data.token }}
+          {{- end }}
+        '';
+      }
+
+      # ── Grafana ──────────────────────────────────────────────────────────────
+      # Admin password — the `grafana_e4eadmin_password` docker secret (bare value).
+      # Same path the terraform/grafana provider authenticates with (field `password`).
+      {
+        destination = "/run/krg/krg-prod/grafana-admin-password";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/grafana-admin" }}{{ .Data.data.password }}{{ end }}
+        '';
+      }
+
+      # ── Vaultwarden ──────────────────────────────────────────────────────────
+      # ADMIN_TOKEN (argon2 hash; gates /admin) is a LIVE seeded value; the OIDC
+      # client secret comes from the authentik-generated vaultwarden-oidc path.
+      {
+        destination = "/run/krg/krg-prod/vaultwarden.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/vaultwarden" }}
+          ADMIN_TOKEN={{ .Data.data.admin_token }}
+          {{- end }}
+          {{- with secret "secret/data/krg-prod/vaultwarden-oidc" }}
+          SSO_CLIENT_SECRET={{ .Data.data.client_secret }}
           {{- end }}
         '';
       }
