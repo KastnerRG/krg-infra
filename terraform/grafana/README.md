@@ -31,10 +31,8 @@ issue #73.
   from OpenBao at `secret/krg-prod/grafana-admin` so it never appears in env.
 - Export `TF_VAR_vault_addr` + `VAULT_TOKEN` before applying. Vars
   ([`variables.tf`](variables.tf)): `grafana_url`, `authentik_url`, `vault_addr`.
-  > Note: the `grafana_url` / `authentik_url` defaults
-  > (`dashboard.waiter.ucsd.edu`, `auth.fabricant.ucsd.edu`) predate the DNS
-  > migration to `monitoring.krg.ucsd.edu` / `auth.krg.ucsd.edu` — override them
-  > (or update the defaults) when applying.
+  The `grafana_url` / `authentik_url` defaults are the post-migration hosts
+  (`monitoring.krg.ucsd.edu` / `auth.krg.ucsd.edu`); override per-apply if needed.
 - **State is local for now** and holds secrets — the top-level
   `terraform/.gitignore` keeps `*.tfstate*` and `*.tfvars` out of git. See
   [state encryption](../README.md#secrets--state-shared-rules).

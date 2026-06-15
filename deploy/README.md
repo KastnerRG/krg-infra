@@ -129,7 +129,7 @@ reads each target's creds from KV at apply time. Seed these once with `bao kv pu
 
 | Target | KV path → field | Used as |
 |---|---|---|
-| `grafana` | *(none — reads `secret/krg-prod/grafana-admin` + `grafana-oidc` in-config via the vault provider)* | `VAULT_TOKEN` only |
+| `grafana` | `secret/krg-prod/grafana-admin` → `password`, `secret/krg-prod/grafana-oidc` → `client_id` (pre-flighted as a skip-guard; `providers.tf`/`sso.tf` also read them in-config via the vault provider) | `VAULT_TOKEN` only |
 | `authentik` | `secret/krg-deploy/authentik-admin-token` → `token` | `TF_VAR_authentik_token` |
 | `authentik` | `secret/krg-prod/authentik-ldap` → `bind_password` | `TF_VAR_ldap_bind_password` |
 | `e4e-nas` | `secret/e4e-nas/users` → `<dsm_user>` (default `e4e-automation`) | `TF_VAR_dsm_password` |

@@ -167,9 +167,11 @@ jobs:
           # authentik mints the OIDC client secrets (and roster passwords) and
           # writes them back into OpenBao — krg-deploy's AppRole policy was widened
           # to manage exactly those paths (terraform/openbao/main.tf). It applies
-          # before grafana because grafana reads the grafana-oidc authentik produces.
-          # An unseeded authentik (no authentik-admin-token / -bind in KV) skips with
-          # a notice, so listing it is safe ahead of seeding. grafana is NEXT — add
-          # it here once authentik's first apply has populated secret/krg-prod/grafana-oidc.
-          TOFU_TARGETS: "authentik e4e-nas"
+          # before grafana because grafana reads the grafana-oidc authentik produces
+          # — so grafana MUST stay ordered after authentik here. An unseeded target
+          # (authentik: no authentik-admin-token / -bind in KV; grafana: no
+          # grafana-admin / grafana-oidc) skips with a notice, so listing it is safe
+          # ahead of seeding. openbao is NOT listed — it needs a privileged bootstrap
+          # token and is applied manually (see deploy/deploy-tofu.sh header).
+          TOFU_TARGETS: "authentik grafana e4e-nas"
         run: ./deploy/deploy-tofu.sh

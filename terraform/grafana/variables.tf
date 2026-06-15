@@ -5,7 +5,7 @@ variable "grafana_url" {
 
 variable "authentik_url" {
   type    = string
-  default = "https://auth.fabricant.ucsd.edu"
+  default = "https://auth.krg.ucsd.edu"
 }
 
 variable "vault_addr" {

@@ -103,7 +103,13 @@ materialize() { # <target>
     grafana)
       # providers.tf + sso.tf read grafana-admin + grafana-oidc from OpenBao via
       # the vault provider (VAULT_ADDR/VAULT_TOKEN already exported) — nothing else.
+      # Pre-flight both KV reads here so an unseeded secret SKIPS with a notice
+      # rather than hard-failing the apply when the vault data source resolves
+      # (matches the authentik/e4e-nas pattern). grafana-oidc is produced by the
+      # authentik target's write-back; grafana-admin is seeded manually.
       [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping grafana" >&2; return 1; }
+      _kv secret/krg-prod/grafana-admin password >/dev/null || return 1
+      _kv secret/krg-prod/grafana-oidc client_id >/dev/null || return 1
       ;;
     authentik)
       [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping authentik" >&2; return 1; }
