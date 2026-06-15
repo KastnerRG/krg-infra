@@ -20,11 +20,11 @@ jobs:
     name: lint (all layers)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: DeterminateSystems/nix-installer-action@v22
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
 
       # Every linter is fetched on demand via `nix run nixpkgs#<tool>`; no extra
       # setup. First run warms the nix cache, later runs are fast.

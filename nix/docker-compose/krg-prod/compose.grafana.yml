@@ -42,7 +42,7 @@ services:
   # promtail positions file). Runs as root so it can read the systemd journal +
   # root-owned files under /var/log; data dir is the only writable mount.
   alloy:
-    image: grafana/alloy:v1.16.2
+    image: grafana/alloy:v1.17.0
     volumes:
       - /var/log:/var/log:ro
       - /etc/machine-id:/etc/machine-id:ro

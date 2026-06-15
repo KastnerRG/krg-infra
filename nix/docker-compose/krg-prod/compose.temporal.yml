@@ -21,7 +21,7 @@
 #   ui.env     → TEMPORAL_AUTH_CLIENT_SECRET  (ui, from secret/krg-prod/temporal-oidc)
 services:
   temporal-postgres:
-    image: postgres:16.11
+    image: postgres:16.14
     container_name: temporal-postgres
     restart: unless-stopped
     environment:
