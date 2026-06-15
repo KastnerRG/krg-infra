@@ -68,6 +68,10 @@ services:
     networks:
       - prometheus_network
       - default
+      # Join the Traefik network so Prometheus can scrape Traefik's metrics
+      # entrypoint (traefik:8082) without publishing it to the host. traefik_proxy
+      # is declared external in compose.yml (the project root).
+      - traefik_proxy
     volumes:
       - ./prometheus:/etc/prometheus:ro
       - ./prometheus-data:/prometheus:rw

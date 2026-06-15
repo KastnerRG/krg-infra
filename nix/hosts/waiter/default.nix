@@ -164,6 +164,14 @@
   # arcstat if the hit-rate is starved or jobs need more RAM. Threadripper PRO 7985WX.
   krg.zfs.arcMaxBytes = 96 * 1024 * 1024 * 1024;
 
+  # Add the node_exporter `zfs` collector (on top of the default systemd/mdadm/textfile
+  # set) so node_zfs_arc_* metrics — ARC/L2ARC size + hit ratio — reach Prometheus.
+  # The ARC/L2ARC is the core of the scratch read-path design (96 GiB ARC + ~5.6 TiB
+  # L2ARC), so its hit-rate is the signal that tells us scratch is performing; the
+  # "ZFS & Storage Health" panels on the Waiter Grafana dashboard read these. Pool
+  # health itself still comes from the krg.zfs zpool-health textfile metric.
+  krg.nodeExporter.collectors = ["systemd" "mdadm" "textfile" "zfs"];
+
   # earlyoom: kill the worst memory hog early (before the kernel OOM killer livelocks
   # under ZFS ARC + zram pressure). Disable systemd-oomd (PSI-based, fights ARC
   # accounting) in favour of it. This is the deferred base.nix earlyoom item, landed
