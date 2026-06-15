@@ -4,13 +4,6 @@
   # relative symlinks and config bind-mounts below all point into the same
   # store derivation.
   composeDir = ../../docker-compose/krg-prod;
-  # Guacamole is its OWN standalone stack (not include'd into the krg-prod
-  # compose project) so its dependency on the OpenBao-rendered DB secret fails
-  # closed for Guacamole alone — a bao outage must not take down the rest.
-  guacamoleDir = ../../docker-compose/guacamole;
-  # Temporal — same rationale: standalone stack so its OpenBao-rendered secrets
-  # (postgres password + OIDC client secret) fail closed for Temporal alone.
-  temporalDir = ../../docker-compose/temporal;
 in {
   imports = [
     ../../profiles/server.nix
@@ -51,6 +44,8 @@ in {
     "L+ /var/lib/krg/krg-prod/compose.authentik.yml    - - - - ${composeDir}/compose.authentik.yml"
     "L+ /var/lib/krg/krg-prod/compose.grafana.yml      - - - - ${composeDir}/compose.grafana.yml"
     "L+ /var/lib/krg/krg-prod/compose.vaultwarden.yml  - - - - ${composeDir}/compose.vaultwarden.yml"
+    "L+ /var/lib/krg/krg-prod/compose.guacamole.yml    - - - - ${composeDir}/compose.guacamole.yml"
+    "L+ /var/lib/krg/krg-prod/compose.temporal.yml     - - - - ${composeDir}/compose.temporal.yml"
     "L+ /var/lib/krg/krg-prod/compose.outline.yml      - - - - ${composeDir}/compose.outline.yml"
     "L+ /var/lib/krg/krg-prod/compose.mlflow.yml       - - - - ${composeDir}/compose.mlflow.yml"
 
@@ -118,12 +113,12 @@ in {
 
     "d  /var/lib/krg/e4e-roster                             0750 root docker -"
 
-    # Guacamole (standalone stack). The compose-stack module creates the working
-    # dir + .secrets/; here we just symlink the committed DB schema into it so the
-    # postgres init mount (./initdb) resolves to the Nix store. Postgres data is a
-    # docker-managed named volume (no uid juggling). The DB secret is rendered to
-    # /run by krg.vaultAgent, not a .secrets/ file.
-    "L+ /var/lib/krg/guacamole/initdb                       - - - - ${guacamoleDir}/initdb"
+    # Guacamole: symlink its committed DB schema dir into the krg-prod working dir
+    # so the postgres init mount (./guacamole/initdb) resolves to the Nix store.
+    # Postgres data is a docker-managed named volume; the DB secret is rendered to
+    # /run by krg.vaultAgent. (Temporal needs no working-dir symlink — its only
+    # mounts are docker volumes + /run-rendered env files.)
+    "L+ /var/lib/krg/krg-prod/guacamole                     - - - - ${composeDir}/guacamole"
   ];
 
   environment.systemPackages = with pkgs; [openbao];
@@ -141,14 +136,14 @@ in {
   # seeding of the LIVE values (SECRET_KEY, DB passwords, outpost token, admin
   # token) — these are seeded at their current values, NOT regenerated.
   #
+  # Guacamole + Temporal are include'd into this project (compose.yml) and also take
+  # NO .secrets/ file — their Postgres passwords and Temporal's OIDC client secret
+  # render from OpenBao to /run by krg.vaultAgent, alongside the others.
+  #
   # Still hand-placed in /var/lib/krg/krg-prod/.secrets/ (stacks not yet migrated;
   # both are currently disabled in compose.yml):
   #   outline_secrets.env               (SECRET_KEY, UTILS_SECRET, OIDC_CLIENT_SECRET, DATABASE_URL, ...)
   #   mlflow.env                        (POSTGRES_PASSWORD, OIDC_* vars)
-  #
-  # Temporal (separate stack, below) takes NO .secrets/ file — its postgres password
-  # and OIDC client secret are rendered from OpenBao to /run by krg.vaultAgent, same
-  # as Guacamole.
   #
   # Also create /var/lib/krg/krg-prod/.env with:
   #   USER_ID=<UID of the account that owns the working directory>
@@ -185,34 +180,9 @@ in {
     networks = ["traefik_proxy"];
   };
 
-  # Guacamole — remote-desktop gateway at remote.krg.ucsd.edu. Standalone stack
-  # (own systemd service) so the OpenBao dependency is scoped to Guacamole alone.
-  # after/requires openbao-agent: the DB password is rendered to /run BEFORE this
-  # starts, and the stack fails closed if bao is sealed/unreachable. The `authentik`
-  # forward-auth middleware (krg-prod stack) + Guacamole's own OIDC are the two gates.
-  krg.composeStacks.guacamole = {
-    description = "Apache Guacamole — remote-desktop gateway (guacd + webapp + postgres)";
-    composeFiles = ["${guacamoleDir}/compose.guacamole.yml"];
-    workingDirectory = "/var/lib/krg/guacamole";
-    networks = ["traefik_proxy"];
-    after = ["openbao-agent.service"];
-    requires = ["openbao-agent.service"];
-  };
-
-  # Temporal — lab-wide workflow engine at workflows.krg.ucsd.edu. Standalone stack
-  # (own systemd service) so its OpenBao dependency is scoped to Temporal alone, same
-  # as Guacamole. after/requires openbao-agent: the postgres password + OIDC client
-  # secret are rendered to /run BEFORE this starts, and the stack fails closed if bao
-  # is sealed/unreachable. Joins prometheus_network too so prometheus can scrape the
-  # server's metrics at temporal:8000.
-  krg.composeStacks.temporal = {
-    description = "Temporal — workflow engine (server + UI + postgres)";
-    composeFiles = ["${temporalDir}/compose.temporal.yml"];
-    workingDirectory = "/var/lib/krg/temporal";
-    networks = ["traefik_proxy" "prometheus_network"];
-    after = ["openbao-agent.service"];
-    requires = ["openbao-agent.service"];
-  };
+  # Guacamole (remote.krg.ucsd.edu) and Temporal (workflows.krg.ucsd.edu) are no
+  # longer separate krg.composeStacks — they're include'd into the krg-prod project
+  # (compose.yml) and share its single openbao-agent dependency. See compose.yml.
 
   # OpenBao Agent: render secrets from bao to tmpfs (/run). The keystone the repo
   # deferred — consumers: Guacamole + Temporal (Postgres passwords + Temporal's OIDC
@@ -224,7 +194,7 @@ in {
   # krg-prod's policy already reads secret/data/krg-prod/* (terraform/openbao/main.tf),
   # so none of these paths need a policy change. The agent renders ALL of them in
   # one oneshot — if any path is unseeded it exits non-zero (error_on_missing_key)
-  # and BOTH the krg-prod and guacamole stacks fail closed, so seed everything in
+  # and the krg-prod stack fails closed, so seed everything in
   # docs/openbao-bringup.md before deploying.
   krg.vaultAgent = {
     enable = true;

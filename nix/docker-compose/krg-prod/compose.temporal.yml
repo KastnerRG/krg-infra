@@ -1,8 +1,8 @@
-# Temporal — lab-wide workflow engine at workflows.krg.ucsd.edu. Standalone compose
-# stack (NOT include'd into the krg-prod stack) so its dependency on the
-# OpenBao-rendered secrets fails closed for Temporal ALONE — a bao outage must not
-# take down authentik/grafana/vaultwarden/traefik. Same rationale as the guacamole
-# stack. Wired by nix/hosts/krg-prod/default.nix (krg.composeStacks.temporal).
+# Temporal — lab-wide workflow engine at workflows.krg.ucsd.edu. Include'd into the
+# krg-prod compose project (compose.yml). It started life as a standalone stack to
+# "scope" its OpenBao dependency, but that isolation was illusory (every bao-backed
+# service shares the single openbao-agent oneshot's fate), so it rides the one
+# krg-prod project + bao dependency alongside authentik/grafana/vaultwarden/guacamole.
 #
 # Three containers:
 #   temporal-postgres  — dedicated persistence (docker-managed named volume)

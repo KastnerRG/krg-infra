@@ -2,6 +2,12 @@ include:
   - compose.authentik.yml
   - compose.grafana.yml
   - compose.vaultwarden.yml
+  # Guacamole + Temporal were standalone compose projects, justified by scoping
+  # their OpenBao dependency. That isolation was illusory — every bao-backed stack
+  # shares the single openbao-agent oneshot's fate — so they're folded into this
+  # one project: one stack, one bao dependency, easier to reason about.
+  - compose.guacamole.yml
+  - compose.temporal.yml
   # Temporarily disabled — bring up once verified.
   # - compose.outline.yml
   # - compose.mlflow.yml
