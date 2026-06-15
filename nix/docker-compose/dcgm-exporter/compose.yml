@@ -11,7 +11,7 @@
 # names are served from the toolkit's generated spec (/etc/cdi or /run/cdi).
 services:
   dcgm_exporter:
-    image: nvcr.io/nvidia/k8s/dcgm-exporter:4.4.2-4.7.1-distroless
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:4.5.3-4.8.2-distroless
     container_name: dcgm_exporter
     restart: always
     ports:

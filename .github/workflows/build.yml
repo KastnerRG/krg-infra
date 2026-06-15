@@ -13,6 +13,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# magic-nix-cache-action (GitHub built-in cache backend) needs these.
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   # Fast job: evaluates all nixosConfigurations and checks module types.
   # Catches syntax errors, undefined options, and type mismatches without
@@ -26,11 +31,14 @@ jobs:
     outputs:
       hosts: ${{ steps.hosts.outputs.hosts }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: DeterminateSystems/nix-installer-action@v22
+        # v21+ defaults to Determinate Nix; keep upstream Nix (current behavior).
+        with:
+          determinate: false
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
 
       - name: Check flake
         run: nix flake check ./nix --all-systems
@@ -58,12 +66,12 @@ jobs:
       fail-fast: false
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       # Free up disk space — NixOS + NVIDIA + CUDA closure is large (~8–12 GB).
       # Without this the runner's default ~14 GB fills up.
       - name: Free disk space
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@v1.3.1
         with:
           tool-cache: false
           android: true
@@ -73,9 +81,12 @@ jobs:
           docker-images: true
           swap-storage: true
 
-      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: DeterminateSystems/nix-installer-action@v22
+        # v21+ defaults to Determinate Nix; keep upstream Nix (current behavior).
+        with:
+          determinate: false
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
 
       - name: Build ${{ matrix.host }}
         run: |

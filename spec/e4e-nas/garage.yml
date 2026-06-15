@@ -86,7 +86,7 @@ cluster:
 # "redeploy + re-apply" — cheap.
 ui:
   image: noooste/garage-ui
-  image_tag: "v0.6.1"                     # tags are v-prefixed on Docker Hub; v2.x admin API required (v0.6.2/v0.7.0/v0.8.0 exist — bump per ADR 0002 w/ changelog)
+  image_tag: "v0.8.0"                     # tags are v-prefixed on Docker Hub; v2.x admin API required (latest as of 2026-06; bump per ADR 0002 w/ changelog)
   container_name: garage-ui
   compose_path: /volume1/docker/garage-ui/docker-compose.yml
   config_path: /volume1/docker/garage-ui/config.yaml

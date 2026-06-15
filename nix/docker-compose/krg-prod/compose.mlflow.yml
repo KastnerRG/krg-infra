@@ -1,6 +1,9 @@
 services:
   mlflow_postgres:
-    image: postgres:16.11
+    # Major bump 16 → 18: requires the one-time dump/restore in
+    # docs/postgres-16-to-18-migration.md before this stack starts (18 won't read a
+    # 16.x data dir).
+    image: postgres:18.4
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mlflow}

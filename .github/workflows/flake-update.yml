@@ -29,19 +29,24 @@ concurrency:
   cancel-in-progress: false
 
 # Direct push to main needs write; the checkout token carries it.
+# id-token: write is required by magic-nix-cache-action.
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   flake-update:
     name: nix flake update → main
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: DeterminateSystems/nix-installer-action@v22
+        # v21+ defaults to Determinate Nix; keep upstream Nix (current behavior).
+        with:
+          determinate: false
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
 
       # `nix flake update` runs from the flake dir (nix/). In modern Nix a positional
       # arg is an INPUT name, not a path, so `nix flake update ./nix` would fail —

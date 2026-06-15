@@ -1,9 +1,12 @@
-x-authentik-image: &authentik-image ghcr.io/goauthentik/server:2026.2
-x-authentik-proxy-image: &authentik-proxy-image ghcr.io/goauthentik/proxy:2026.2
+x-authentik-image: &authentik-image ghcr.io/goauthentik/server:2026.5.2
+x-authentik-proxy-image: &authentik-proxy-image ghcr.io/goauthentik/proxy:2026.5.2
 
 services:
   postgres_authentik:
-    image: postgres:16.11
+    # Major bump 16 → 18: the PG data dir is NOT forward-compatible — the 18 image
+    # refuses to start on a 16.x cluster. Run the one-time dump/restore in
+    # docs/postgres-16-to-18-migration.md BEFORE this generation's stack starts.
+    image: postgres:18.4
     container_name: postgres_authentik
     restart: unless-stopped
     shm_size: 128 mb
