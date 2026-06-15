@@ -32,7 +32,7 @@ still exist. Tear the old project down first, copy the volume, then deploy:
 ```bash
 # 1. Stop the old standalone Guacamole project (removes its containers; the named
 #    volume persists — `down` without -v does NOT delete volumes).
-sudo systemctl stop guacamole-compose.service     # or: docker compose -p guacamole down
+sudo systemctl stop guacamole.service              # or: docker compose -p guacamole down
 
 # 2. Copy the live Postgres data into the volume the krg-prod project will use.
 #    Same Postgres major (16), so a raw datadir copy is safe (no dump/restore).
