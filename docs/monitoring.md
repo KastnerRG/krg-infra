@@ -26,6 +26,17 @@ picked up). Every panel targets the Prometheus datasource by its pinned UID
 | **IPMI / BMC** (`krg-ipmi`) | Physical hosts' out-of-band sensors: temp, fan, voltage, power | `ipmi_*` |
 | **Docker Engine** (`krg-docker-engine`) | Docker daemon built-in metrics (engine-level only) | `engine_daemon_*` |
 | **Monitoring Health** (`krg-monitoring-health`) | Self-monitoring: target up/down, scrape duration, TSDB stats | `up`, `scrape_*`, `prometheus_*` |
+| **Authentik** (`krg-authentik`) | SSO app: HTTP req rate/latency, flow executions, system tasks, runtime | `authentik_*`, `go_*` |
+| **Temporal** (`krg-temporal`) | Workflow engine: gRPC req/error rate + latency, persistence latency, runtime | `service_*`, `persistence_*`, `go_*` |
+| **Loki** (`krg-loki`) | Log store self-metrics: ingest bytes/lines, request latency, chunk flushes | `loki_*`, `go_*` |
+| **Grafana** (`krg-grafana`) | Grafana self: HTTP req/latency, datasource proxy, DB connections, runtime | `grafana_*`, `go_*` |
+| **Logs** (`krg-logs`) | **LogQL** log content: volume by job, error/warn rate, live log panels | Loki datasource (`krg-loki-ds`) |
+
+> The **Logs** dashboard queries the **Loki** datasource (`krg-loki-ds`, `datasources.tf`),
+> not Prometheus — it surfaces log *content* that Alloy ships to Loki. The **Loki**
+> dashboard above is Loki's own Prometheus *metrics*. Authentik/Temporal/Loki/Grafana
+> metric names should be confirmed against the live endpoints once deployed (versions
+> shift names; a "No data" panel just needs a query tweak, not a redeploy).
 
 ## Scrape inventory
 
@@ -41,7 +52,10 @@ Source of truth: `nix/docker-compose/krg-prod/prometheus/prometheus.yml`.
 | `prometheus` | 9090 | localhost | Self-scrape. |
 | `blackbox_exporter` / `website_monitoring` / `blackbox-ping` | 9115 | exporter + HTTP/ICMP targets | Synthetic probes. |
 | `octoprint` | 80 | e4e-octopi | 3D-printer exporter. |
-| `temporal` | 8000 | fishsense-temporal | **External** — container not defined in this repo. |
+| `temporal` | 8000 | temporal | Temporal server metrics (now an in-repo compose service, `compose.temporal.yml`). |
+| `loki` | 3100 | loki | Loki self-metrics, over the krg-prod default network. |
+| `grafana` | 3000 | grafana | Grafana self-metrics. |
+| `authentik` | 9300 | authentik_server, authentik_worker | Joined `prometheus_network` (`compose.authentik.yml`) so :9300 is reachable. |
 
 `node_zfs_*` (ARC/L2ARC) requires the node_exporter **`zfs`** collector, enabled
 only on **waiter** (`nix/hosts/waiter/default.nix`). Pool health everywhere comes
@@ -49,16 +63,25 @@ from the `zpool_health` textfile metric (`nix/modules/zfs.nix`).
 
 ## Known gaps (tracked as `area:monitoring` issues)
 
-These services run but expose no metrics to Prometheus yet — dashboards for them
-are blocked on a scrape job (and sometimes an exporter):
+Now covered (scrape job + dashboard added in the convergence PR): **Grafana**,
+**Loki** self-metrics, **Authentik** (`:9300`, joined `prometheus_network`),
+**Temporal**, and **log content** (Loki datasource + the `krg-logs` dashboard —
+previously logs were shipped to Loki by Alloy but had no datasource, so were
+invisible in Grafana).
 
-- **Grafana** `/metrics` — not scraped (exposes natively).
-- **Loki + Promtail** — expose metrics (3100 / 9080) but aren't scraped.
-- **PostgreSQL** (Authentik, Outline) — no `postgres_exporter`.
+Remaining gaps — still blocked on an exporter we don't run yet:
+
+- **PostgreSQL** (Authentik, Guacamole, Temporal, Outline DBs) — needs a
+  `postgres_exporter` sidecar per DB (+ a read-only monitoring role) before a
+  dashboard works. **Deferred** to a follow-up: it's an exporter fleet, not a
+  dashboard. Once those land, add `dashboards/postgres.json` with a `$instance`
+  picker over `pg_up`.
 - **Per-container** CPU/mem/net — `docker_exporter` is engine-level; needs cAdvisor.
 - **SMART** disk health on waiter — `smartd` runs (alerts only); no Prometheus metrics, despite the no-redundancy striped `scratchpool`.
-- **Authentik** — evaluate its Prometheus metrics endpoint.
-- **Stale/external targets** — `temporal` (external), `kastner-ml` (not in this flake), `localhost:9290` (dead) want an audit.
+- **Guacamole / Vaultwarden** — no native Prometheus endpoint; coverage is indirect
+  via the Traefik (ingress) + Uptime (blackbox) dashboards, plus the future Postgres
+  dashboard for Guacamole's DB.
+- **Stale targets** — `kastner-ml` (not in this flake) and `localhost:9290` (dead BMC on a VM) still want an audit.
 
 ## Adding a dashboard
 

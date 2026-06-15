@@ -64,6 +64,8 @@ services:
     networks:
       - authentik
       - traefik_proxy
+      # Prometheus scrapes authentik_* metrics on :9300 over this network.
+      - prometheus_network
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.authentik_server.rule=Host(`auth.krg.ucsd.edu`)"
@@ -105,6 +107,8 @@ services:
       - /run/krg/krg-prod/authentik.env
     networks:
       - authentik
+      # Prometheus scrapes the worker's :9300 metrics over this network.
+      - prometheus_network
     depends_on:
       postgres_authentik:
         condition: service_healthy
@@ -147,4 +151,6 @@ networks:
   authentik:
     external: true
   traefik_proxy:
+    external: true
+  prometheus_network:
     external: true

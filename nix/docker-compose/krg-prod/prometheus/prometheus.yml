@@ -128,3 +128,28 @@ scrape_configs:
     static_configs:
       - targets:
           - temporal:8000
+
+  # Loki self-metrics (loki_* — ingestion rate, request latency, chunk flushes).
+  # Reached over the krg-prod project's default network. Distinct from log CONTENT,
+  # which is queried via the Loki datasource (terraform/grafana/datasources.tf).
+  - job_name: 'loki'
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - loki:3100
+
+  # Grafana self-metrics (grafana_* + go_*). Reached over the default network.
+  - job_name: 'grafana'
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - grafana:3000
+
+  # Authentik server + worker expose Prometheus metrics on :9300 (authentik_*).
+  # They join prometheus_network in compose.authentik.yml so these are reachable.
+  - job_name: 'authentik'
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - authentik_server:9300
+          - authentik_worker:9300
