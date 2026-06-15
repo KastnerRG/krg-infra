@@ -44,6 +44,11 @@ provider "authentik" {
 
 provider "vault" {
   address = var.vault_addr
+  # Use the supplied token (krg-deploy AppRole) directly. By default the provider
+  # mints a short-lived child token via auth/token/create, which the AppRole policy
+  # doesn't grant → 403 "failed to create limited child token". The AppRole token is
+  # already short-lived (token_ttl 1h), so a child adds nothing here.
+  skip_child_token = true
 }
 
 provider "random" {}
