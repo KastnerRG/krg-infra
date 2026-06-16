@@ -1,6 +1,6 @@
 services:
   grafana:
-    image: grafana/grafana-enterprise:12.3
+    image: grafana/grafana-enterprise:13.0
     container_name: grafana
     user: '1000'
     restart: unless-stopped
@@ -24,7 +24,7 @@ services:
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
 
   loki:
-    image: grafana/loki:3.6
+    image: grafana/loki:3.7
     user: '1000'
     ports:
       - 3100:3100
@@ -37,23 +37,27 @@ services:
       - default
       - loki_network
 
-  promtail:
-    image: grafana/promtail:3.6
-    user: '1000'
+  # Grafana Alloy — log shipper, replaces Promtail (EOL 2026-03-02). Config in
+  # loki/config.alloy. --storage.path holds the read offsets (replaces the old
+  # promtail positions file). Runs as root so it can read the systemd journal +
+  # root-owned files under /var/log; data dir is the only writable mount.
+  alloy:
+    image: grafana/alloy:v1.17.0
     volumes:
       - /var/log:/var/log:ro
-      # Dropped: ./ansible.log mount (leftover from the Ansible-deployed host; the
-      # source doesn't exist under NixOS, so Docker would materialise it as a
-      # root-owned dir). promtail-config.yaml should target the journal / /var/log.
-      - ./loki/promtail-config.yaml:/etc/promtail/config.yml:ro
-      - promtail_positions:/var/lib/promtail
-    command: -config.file=/etc/promtail/config.yml
+      - /etc/machine-id:/etc/machine-id:ro
+      - ./loki/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy_data:/var/lib/alloy/data
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
     restart: unless-stopped
     networks:
       - loki_network
 
   prometheus:
-    image: prom/prometheus:v3.8.1
+    image: prom/prometheus:v3.12.0
     # NOTE: deliberately NO `user:` line. The prom/prometheus image already runs as
     # its built-in `nobody` (uid 65534), and the ./prometheus-data bind mount is
     # owned 65534 to match (see nix/hosts/krg-prod/default.nix tmpfiles). Pinning
@@ -69,6 +73,10 @@ services:
     networks:
       - prometheus_network
       - default
+      # Join the Traefik network so Prometheus can scrape Traefik's metrics
+      # entrypoint (traefik:8082) without publishing it to the host. traefik_proxy
+      # is declared external in compose.yml (the project root).
+      - traefik_proxy
     volumes:
       - ./prometheus:/etc/prometheus:ro
       - ./prometheus-data:/prometheus:rw
@@ -86,7 +94,9 @@ services:
 
 secrets:
   grafana_e4eadmin_password:
-    file: .secrets/gf_admin_password.txt
+    # Rendered from OpenBao (secret/krg-prod/grafana-admin, field `password`) by
+    # krg.vaultAgent — see nix/hosts/krg-prod/default.nix.
+    file: /run/krg/krg-prod/grafana-admin-password
 
 networks:
   loki_network:
@@ -94,4 +104,4 @@ networks:
     external: true
 
 volumes:
-  promtail_positions:
+  alloy_data:

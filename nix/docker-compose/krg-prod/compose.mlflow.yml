@@ -1,11 +1,19 @@
 services:
   mlflow_postgres:
-    image: postgres:16.11
+    # Major bump 16 → 18: requires the one-time dump/restore in
+    # docs/postgres-16-to-18-migration.md before this stack starts (18 won't read a
+    # 16.x data dir).
+    image: postgres:18.4
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mlflow}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: mlflow
+      # postgres:18 changed its default data layout and rejects data at the legacy
+      # /var/lib/postgresql/data mount — pin PGDATA back to keep the pre-18 layout.
+      # See docs/postgres-16-to-18-migration.md. (Stack disabled today; fixed so it
+      # doesn't break on re-enable.)
+      PGDATA: /var/lib/postgresql/data
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

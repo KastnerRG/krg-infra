@@ -14,12 +14,13 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
 	GRANT ALL PRIVILEGES ON DATABASE authentik_db TO authentik;
 EOSQL
 
-# Set the password separately using psql's :'var' quoting so that any special
-# characters in the password are properly escaped as a SQL string literal.
-# ENCRYPTED is specified explicitly to make the security intent clear.
+# Set the password. psql's `:'var'` interpolation proved unreliable under the
+# postgres:18 client here — the token was sent literally (`syntax error at ":"`),
+# leaving the role with NO password. Escape single quotes for the SQL string
+# literal in the shell and inline it instead. ENCRYPTED makes the intent explicit.
+authpw_esc=${AUTHENTIK_POSTGRESQL__PASSWORD//\'/\'\'}
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" \
-    --set=authpw="$AUTHENTIK_POSTGRESQL__PASSWORD" \
-    -c "ALTER ROLE authentik ENCRYPTED PASSWORD :'authpw'"
+    -c "ALTER ROLE authentik ENCRYPTED PASSWORD '${authpw_esc}'"
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname="authentik_db" <<-EOSQL
 	GRANT ALL ON SCHEMA public TO authentik;

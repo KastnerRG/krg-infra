@@ -1,18 +1,28 @@
-x-authentik-image: &authentik-image ghcr.io/goauthentik/server:2026.2
-x-authentik-proxy-image: &authentik-proxy-image ghcr.io/goauthentik/proxy:2026.2
+x-authentik-image: &authentik-image ghcr.io/goauthentik/server:2026.5.3
+x-authentik-proxy-image: &authentik-proxy-image ghcr.io/goauthentik/proxy:2026.5.3
 
 services:
   postgres_authentik:
-    image: postgres:16.11
+    # Major bump 16 → 18: the PG data dir is NOT forward-compatible — the 18 image
+    # refuses to start on a 16.x cluster. Run the one-time dump/restore in
+    # docs/postgres-16-to-18-migration.md BEFORE this generation's stack starts.
+    image: postgres:18.4
     container_name: postgres_authentik
     restart: unless-stopped
     shm_size: 128 mb
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/authentik_postgres_admin_password
+      # postgres:18 moved the default data layout to /var/lib/postgresql/<major>/docker
+      # and refuses to use data at the legacy /var/lib/postgresql/data mount ("unused
+      # mount/volume"). Pin PGDATA back to the bind-mount path to keep the pre-18 layout
+      # (so the ./authentik/postgres/data bind mount is used directly). See
+      # docs/postgres-16-to-18-migration.md.
+      PGDATA: /var/lib/postgresql/data
     env_file:
       # Provides AUTHENTIK_POSTGRESQL__PASSWORD used by the init script
       # (2026-05-21_create_users.sh) to set the authentik role password.
-      - .secrets/authentik_admin_password.env
+      # Rendered from OpenBao by krg.vaultAgent (nix/hosts/krg-prod/default.nix).
+      - /run/krg/krg-prod/authentik.env
     volumes:
       - ./authentik/postgres/data/:/var/lib/postgresql/data/:rw
       - ./authentik/postgres/config/:/etc/postgresql/:ro
@@ -55,11 +65,13 @@ services:
       - ./authentik/media-icons:/data/media/public/krg-icons:ro
       - /var/run/docker.sock:/var/run/docker.sock
     env_file:
-      - .secrets/authentik_admin_password.env
+      - /run/krg/krg-prod/authentik.env
     user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
     networks:
       - authentik
       - traefik_proxy
+      # Prometheus scrapes authentik_* metrics on :9300 over this network.
+      - prometheus_network
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.authentik_server.rule=Host(`auth.krg.ucsd.edu`)"
@@ -98,9 +110,11 @@ services:
       - ./authentik/certs:/certs
       - ./authentik/custom-templates:/templates
     env_file:
-      - .secrets/authentik_admin_password.env
+      - /run/krg/krg-prod/authentik.env
     networks:
       - authentik
+      # Prometheus scrapes the worker's :9300 metrics over this network.
+      - prometheus_network
     depends_on:
       postgres_authentik:
         condition: service_healthy
@@ -126,8 +140,8 @@ services:
       traefik.http.middlewares.authentik.forwardauth.authResponseHeaders: X-authentik-username,X-authentik-groups,X-authentik-entitlements,X-authentik-email,X-authentik-name,X-authentik-uid,X-authentik-jwt,X-authentik-meta-jwks,X-authentik-meta-outpost,X-authentik-meta-provider,X-authentik-meta-app,X-authentik-meta-version,X-authentik-username,X-authentik-email,X-authentik-name
       traefik.http.routers.authentik.priority: 1000000
     env_file:
-      - .secrets/authentik_admin_password.env
-      - .secrets/authentik_traefik_token.env
+      - /run/krg/krg-prod/authentik.env
+      - /run/krg/krg-prod/authentik-outpost-token.env
     restart: unless-stopped
     networks:
       - authentik
@@ -135,10 +149,14 @@ services:
 
 secrets:
   authentik_postgres_admin_password:
-    file: .secrets/authentik_postgres_admin_password.txt
+    # Rendered from OpenBao (secret/krg-prod/authentik, field
+    # `postgres_admin_password`) by krg.vaultAgent — see nix/hosts/krg-prod/default.nix.
+    file: /run/krg/krg-prod/authentik-postgres-admin-password
 
 networks:
   authentik:
     external: true
   traefik_proxy:
+    external: true
+  prometheus_network:
     external: true

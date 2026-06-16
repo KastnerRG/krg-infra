@@ -63,6 +63,8 @@ locals {
     "krg-prod/vaultwarden-oidc",
     "krg-prod/guacamole-oidc",
     "krg-prod/guacamole",
+    "krg-prod/temporal-oidc",
+    "krg-prod/temporal",
     "e4e-nas/garage-ui-oidc",
     "e4e-nas/dsm-sso-oidc",
   ]

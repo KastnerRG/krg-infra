@@ -17,10 +17,11 @@ terraform {
   required_providers {
     vault = {
       source  = "hashicorp/vault"
-      version = "~> 4.0"
+      version = "~> 5.0"
     }
   }
-  required_version = ">= 1.8.0"
+  # vault provider v5 requires Terraform/OpenTofu >= 1.11.
+  required_version = ">= 1.11.0"
 }
 
 provider "vault" {

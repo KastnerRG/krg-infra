@@ -112,6 +112,53 @@ openbao  →  authentik  (writes generated OIDC client secrets back into OpenBao
 See each target's README under [`terraform/`](../terraform/README.md) for its
 required vars and tokens.
 
+## 7. Seed the krg-prod stack secrets (Authentik / Grafana / Vaultwarden)
+
+The Authentik, Grafana, and Vaultwarden compose services no longer read
+hand-placed `/var/lib/krg/krg-prod/.secrets/*` files — `krg.vaultAgent`
+(`nix/hosts/krg-prod/default.nix`) renders them from OpenBao to `/run` at boot,
+and the krg-prod compose stack `requires` the agent (fails closed if bao is
+sealed/unreachable). The agent renders **all** paths in one oneshot, so every
+path below must exist before deploying or the agent exits non-zero and the
+stack won't start.
+
+Some values already exist (skip them): `secret/krg-prod/grafana-admin`
+(field `password`, also used by the grafana tofu provider) and the
+authentik-generated `secret/krg-prod/vaultwarden-oidc`.
+
+The rest are **LIVE** values — seed them at their *current* values, do **not**
+regenerate (rotating `secret_key` invalidates Authentik sessions; rotating the
+DB passwords breaks the running Postgres role; the outpost token must match the
+one Authentik issued). Read the current values from the existing `.secrets/`
+files on krg-prod, then write them once:
+
+```bash
+# On krg-prod, as the operator (these read live secret files — keep them off
+# shell history; the heredoc/`<` forms below avoid arg capture):
+cd /var/lib/krg/krg-prod/.secrets
+
+# Authentik — SECRET_KEY + the authentik DB-role password live together in
+# authentik_admin_password.env (KEY=VALUE lines); the superuser password is the
+# bare-value file authentik_postgres_admin_password.txt.
+bao kv put secret/krg-prod/authentik \
+  secret_key="$(grep '^AUTHENTIK_SECRET_KEY=' authentik_admin_password.env | cut -d= -f2-)" \
+  postgresql_password="$(grep '^AUTHENTIK_POSTGRESQL__PASSWORD=' authentik_admin_password.env | cut -d= -f2-)" \
+  postgres_admin_password="$(cat authentik_postgres_admin_password.txt)"
+
+# Authentik embedded-outpost token (the value in authentik_traefik_token.env,
+# AUTHENTIK_TOKEN=...). If lost, re-read it in Authentik: Admin → Outposts → View token.
+bao kv put secret/krg-prod/authentik-outpost-token \
+  token="$(grep '^AUTHENTIK_TOKEN=' authentik_traefik_token.env | cut -d= -f2-)"
+
+# Vaultwarden /admin argon2 hash (the ADMIN_TOKEN line in vaultwarden.env).
+bao kv put secret/krg-prod/vaultwarden \
+  admin_token="$(grep '^ADMIN_TOKEN=' vaultwarden.env | cut -d= -f2-)"
+```
+
+After seeding, deploy krg-prod. Once the stack is healthy on bao-rendered
+secrets, the `.secrets/` files for these three are dead and can be removed
+(keep `outline_secrets.env` + `mlflow.env` until those stacks are migrated).
+
 ## Backup & recovery
 
 - **Raft snapshot** (the whole datastore, encrypted): `bao operator raft snapshot

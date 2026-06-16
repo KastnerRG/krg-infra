@@ -215,6 +215,39 @@ resource "authentik_application" "guacamole_gate" {
   meta_icon = "krg-icons/guacamole.svg"
 }
 
+# ── Temporal ─────────────────────────────────────────────────────────────────────
+# Lab-wide workflow engine at workflows.krg.ucsd.edu (was FishSense-specific
+# workflows.fishsense.e4e.ucsd.edu). The Temporal Web UI is the OIDC client; its
+# go-oidc verifies the ID token against jwks_uri, so this carries an RS256
+# signing_key — without it Authentik falls back to HS256 + an empty JWKS →
+# "Invalid ID token" (the failure guacamole/vaultwarden/garage-ui hit). The
+# callback path /auth/sso/callback is temporal-ui's default. Consumed by
+# nix/docker-compose/krg-prod/compose.temporal.yml.
+
+resource "authentik_provider_oauth2" "temporal" {
+  name                   = "Provider for Temporal"
+  client_id              = "temporal"
+  authorization_flow     = data.authentik_flow.default_authorization.id
+  invalidation_flow      = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://workflows.krg.ucsd.edu/auth/sso/callback" }]
+  property_mappings      = local.std_scopes
+  signing_key            = data.authentik_certificate_key_pair.default.id
+  sub_mode               = "hashed_user_id"
+  access_token_validity  = "minutes=60"
+  refresh_token_validity = "days=30"
+}
+
+resource "authentik_application" "temporal" {
+  name              = "Temporal"
+  slug              = "temporal"
+  protocol_provider = authentik_provider_oauth2.temporal.id
+  meta_launch_url   = "https://workflows.krg.ucsd.edu"
+  meta_description  = "KRG lab workflow engine"
+  meta_icon         = "krg-icons/temporal.svg"
+  group             = "KRG"
+  open_in_new_tab   = true
+}
+
 # ── Proxmox ────────────────────────────────────────────────────────────────────
 # Commented out — Proxmox auth is currently managed via Ansible/PVE realm config.
 # Uncomment when ready to bring SSO login to the PVE web UI under IaC.
