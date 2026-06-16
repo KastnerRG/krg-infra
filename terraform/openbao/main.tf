@@ -126,6 +126,9 @@ resource "vault_policy" "krg_deploy" {
     # sync rule.
     ${local.authentik_secret_rules}
 
+    # PKI: issue Temporal mTLS client certs (rules defined in pki.tf)
+    ${local.pki_krg_deploy_rules}
+
     # Generate secret_ids for other roles so OpenTofu can bootstrap them
     path "auth/approle/role/+/secret-id" {
       capabilities = ["create", "update"]
@@ -145,6 +148,9 @@ resource "vault_policy" "krg_prod" {
     path "auth/token/renew-self" {
       capabilities = ["update"]
     }
+
+    # PKI: issue the Temporal frontend server cert (rules defined in pki.tf)
+    ${local.pki_krg_prod_rules}
   EOT
 }
 

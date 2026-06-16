@@ -31,11 +31,38 @@ upstream links.
   - `krg-prod` — the lab-wide production stack. Reads `secret/data/krg-prod/*`
     (Authentik, Grafana, Outline, MLflow, …) and renews its own token.
 
+## PKI: lab-internal CA (`pki.tf`)
+
+A **private two-tier CA** (root → intermediate) for mutual-TLS *between lab
+services* — deliberately separate from the public Let's Encrypt certs Traefik
+issues for browser HTTPS (mTLS certs can't be public-CA issued, and these are
+machine endpoints). The root signs **only** the intermediate; every leaf comes
+from the intermediate, so leaf-issuing trust rotates without touching the root.
+
+- **`pki`** (root, 10y) → **`pki_int`** (intermediate, 5y), EC P-256 throughout.
+  Root/intermediate keys are `type = "internal"` — generated in OpenBao, never
+  exported.
+- Two issuing **roles** on `pki_int`:
+  - `temporal-frontend` — the Temporal gRPC frontend's **server** cert (krg-prod
+    `vault-agent` issues it, renders cert+key to `/run` tmpfs, auto-renews). SANs
+    from `var.temporal_frontend_domains`.
+  - `temporal-client` — **client** certs for callers of the frontend (the
+    `terraform/temporal` provider, workers, the UI). `server_flag` off.
+- Grants: `krg-deploy` may issue `temporal-client` certs; `krg-prod` may issue
+  `temporal-frontend`. Folded into the policies in `main.tf` via
+  `local.pki_*_rules` (defined in `pki.tf`). **Reading** the CA/CRL needs no
+  grant — `pki_int/ca`, `/ca/pem`, `/crl` are unauthenticated by design.
+
+> First consumer is Temporal (frontend mTLS, `TEMPORAL_TLS_REQUIRE_CLIENT_AUTH`)
+> — see `terraform/temporal/` and `nix/docker-compose/krg-prod/compose.temporal.yml`.
+> The CA is generic, though: any future lab service needing mTLS adds a role here.
+
 ## Outputs (`outputs.tf`)
 
 `krg_deploy_role_id` and `krg_prod_role_id` — the AppRole `role_id`s. These are
 **non-secret** and safe to store; the paired `secret_id`s are handled
-out-of-band and never land in state.
+out-of-band and never land in state. `pki_int_ca_cert` — the intermediate CA
+certificate (PEM, non-secret trust anchor; also at `…/v1/pki_int/ca/pem`).
 
 ## Secrets & state
 
