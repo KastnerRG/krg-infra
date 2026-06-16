@@ -184,7 +184,7 @@ resource "authentik_application" "e4e_roster" {
   name              = "KRG Roster"
   slug              = "e4e-roster"
   protocol_provider = authentik_provider_oauth2.e4e_roster.id
-  meta_launch_url   = "https://roster.e4e.ucsd.edu"
+  meta_launch_url   = "https://roster.krg.ucsd.edu/login"
   meta_description  = "KRG lab roster and account management"
   group             = "KRG"
 }
