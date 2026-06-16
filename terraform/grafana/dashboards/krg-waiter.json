@@ -204,7 +204,7 @@
     },
     {
       "type": "gauge",
-      "title": "GPU Utilization (avg)",
+      "title": "GPU Utilization (per GPU)",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -262,8 +262,8 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "avg(DCGM_FI_DEV_GPU_UTIL{instance=\"waiter.ucsd.edu:9400\"})",
-          "legendFormat": "gpu",
+          "expr": "DCGM_FI_DEV_GPU_UTIL{instance=\"waiter.ucsd.edu:9400\"}",
+          "legendFormat": "GPU {{gpu}}",
           "instant": false,
           "range": true,
           "refId": "A"
