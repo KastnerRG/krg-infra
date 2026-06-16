@@ -35,5 +35,5 @@ variable "temporal_client_domains" {
     names keeps the role least-privilege.
   EOT
   type        = list(string)
-  default     = ["krg-deploy", "temporal-worker"]
+  default     = ["krg-deploy", "temporal-worker", "temporal-ui"]
 }
