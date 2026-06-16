@@ -271,7 +271,11 @@ in {
       # POSTGRES_PASSWORD_FILE. LIVE value: seeded from the running DB, not rotated.
       {
         destination = "/run/krg/krg-prod/authentik-postgres-admin-password";
-        perms = "0640";
+        # 0644 (not 0640): consumed as a docker `secrets: file:` which is bind-mounted
+        # INTO the container and read by the postgres process (uid 1000), not by the
+        # root compose CLI. Must be world-readable so uid 1000 can read it; the parent
+        # /run/krg/krg-prod dir stays 0750 root, so the host is still gated.
+        perms = "0644";
         contents = ''
           {{- with secret "secret/data/krg-prod/authentik" }}{{ .Data.data.postgres_admin_password }}{{ end }}
         '';
@@ -307,7 +311,9 @@ in {
       # Same path the terraform/grafana provider authenticates with (field `password`).
       {
         destination = "/run/krg/krg-prod/grafana-admin-password";
-        perms = "0640";
+        # 0644: docker `secrets: file:` read by the grafana process (uid 1000), same
+        # rationale as authentik-postgres-admin-password above (dir stays 0750 root).
+        perms = "0644";
         contents = ''
           {{- with secret "secret/data/krg-prod/grafana-admin" }}{{ .Data.data.password }}{{ end }}
         '';
