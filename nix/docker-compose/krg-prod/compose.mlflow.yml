@@ -9,6 +9,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-mlflow}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: mlflow
+      # postgres:18 changed its default data layout and rejects data at the legacy
+      # /var/lib/postgresql/data mount — pin PGDATA back to keep the pre-18 layout.
+      # See docs/postgres-16-to-18-migration.md. (Stack disabled today; fixed so it
+      # doesn't break on re-enable.)
+      PGDATA: /var/lib/postgresql/data
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
