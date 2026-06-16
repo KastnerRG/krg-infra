@@ -265,6 +265,56 @@ in {
         '';
       }
 
+      # Temporal frontend mTLS (the lab-internal CA in terraform/openbao/pki.tf).
+      # The gRPC frontend on :7233 presents this SERVER cert and REQUIRES a client
+      # cert; temporal-ui presents the CLIENT cert below. See docs/temporal-mtls.md
+      # for the full design + the on-box validation gates (this is unvalidated).
+      #
+      # 0644 + the dir stays 0750 root (vault-agent's ExecStartPre): the files are
+      # bind-mounted into the container and read by the temporal/ui process (uid
+      # 1000), not the root compose CLI — same rationale as the grafana/authentik
+      # secrets above. The private key sits in /run (tmpfs), never durable disk.
+      #
+      # CERT+KEY GO IN ONE FILE on purpose: each `pki_int/issue/...` call mints a
+      # fresh keypair, so splitting cert and key across two render blocks could
+      # pair a cert with a DIFFERENT issuance's key. One combined PEM (Go's
+      # tls.LoadX509KeyPair reads cert+key from the same file) makes the pair
+      # atomic. TEMPORAL_TLS_FRONTEND_CERT and _KEY both point at frontend.pem.
+      {
+        destination = "/run/krg/temporal/tls/frontend.pem";
+        perms = "0644";
+        contents = ''
+          {{- with secret "pki_int/issue/temporal-frontend" "common_name=temporal" "alt_names=temporal.krg.ucsd.edu" }}
+          {{ .Data.certificate }}
+          {{ .Data.issuing_ca }}
+          {{ .Data.private_key }}
+          {{- end }}
+        '';
+      }
+      # Trust anchor: the intermediate CA. Serves as BOTH the frontend's client-CA
+      # (verifying caller certs) and the UI's server-CA (verifying the frontend).
+      # issuing_ca off the same issuance — identical regardless of the leaf.
+      {
+        destination = "/run/krg/temporal/tls/ca.crt";
+        perms = "0644";
+        contents = ''
+          {{- with secret "pki_int/issue/temporal-frontend" "common_name=temporal" "alt_names=temporal.krg.ucsd.edu" }}
+          {{ .Data.issuing_ca }}
+          {{- end }}
+        '';
+      }
+      # temporal-ui's CLIENT cert (cert+key in one PEM, same atomicity rationale).
+      {
+        destination = "/run/krg/temporal/tls/ui-client.pem";
+        perms = "0644";
+        contents = ''
+          {{- with secret "pki_int/issue/temporal-client" "common_name=temporal-ui" }}
+          {{ .Data.certificate }}
+          {{ .Data.private_key }}
+          {{- end }}
+        '';
+      }
+
       # ── Authentik ────────────────────────────────────────────────────────────
       # Postgres superuser password — consumed as the `authentik_postgres_admin_password`
       # docker secret (a bare-value file, no KEY=). Used by postgres_authentik's
