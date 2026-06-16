@@ -38,6 +38,17 @@ with lib; let
         default = "0640";
         description = "File mode for the rendered file.";
       };
+      dirPerms = mkOption {
+        type = types.str;
+        default = "0750";
+        description = ''
+          Mode for the render's parent dir. Defaults to 0750 (root-gated). Raise to
+          0755 when the file is bind-mounted into a container that runs as a non-root
+          uid and must traverse the dir to read it — the dir's own parent stays
+          0750, so the host is still gated. A dir gets the MOST PERMISSIVE dirPerms
+          among the renders that target it.
+        '';
+      };
       contents = mkOption {
         type = types.str;
         description = ''
@@ -89,7 +100,25 @@ with lib; let
   '';
 
   # Parent dirs of every render destination (recreated each boot since /run is tmpfs).
-  destDirs = unique (map (r: builtins.dirOf r.destination) cfg.renders);
+  # Each dir takes the MOST PERMISSIVE dirPerms among the renders targeting it, so a
+  # container-read dir can opt up to 0755 while everything else stays 0750. (Mode
+  # strings compare lexically — "0755" > "0750" — which is the ordering we want here.)
+  renderDirPairs =
+    map (r: {
+      dir = builtins.dirOf r.destination;
+      inherit (r) dirPerms;
+    })
+    cfg.renders;
+  destDirs =
+    map (d: {
+      dir = d;
+      perms = foldl' (acc: p:
+        if p.dir == d && p.dirPerms > acc
+        then p.dirPerms
+        else acc) "0000"
+      renderDirPairs;
+    })
+    (unique (map (p: p.dir) renderDirPairs));
 in {
   options.krg.vaultAgent = {
     enable = mkEnableOption "OpenBao Agent secret rendering (AppRole → tmpfs)";
@@ -147,7 +176,7 @@ in {
         RuntimeDirectory = "openbao-agent";
         # Recreate render-destination parent dirs (on /run tmpfs, wiped each boot).
         ExecStartPre = pkgs.writeShellScript "openbao-agent-mkdirs" (
-          concatMapStringsSep "\n" (d: "${pkgs.coreutils}/bin/install -d -m 0750 ${escapeShellArg d}") destDirs
+          concatMapStringsSep "\n" (d: "${pkgs.coreutils}/bin/install -d -m ${d.perms} ${escapeShellArg d.dir}") destDirs
         );
         ExecStart = "${pkgs.openbao}/bin/bao agent -config=${agentConfig}";
       };
