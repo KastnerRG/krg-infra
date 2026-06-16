@@ -3047,6 +3047,7 @@
   "schemaVersion": 42,
   "tags": [
     "krg",
+    "generated",
     "waiter",
     "compute"
   ],
