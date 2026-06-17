@@ -114,6 +114,51 @@ resource "vault_pki_secret_backend_role" "temporal_client" {
   max_ttl            = 60 * 60 * 24 * 30 # 30d ceiling
 }
 
+# ── General lab roles (AD-aware) ──────────────────────────────────────────────
+
+# host — SERVER cert for any lab host/service presenting TLS that isn't Temporal:
+# waiter's XRDP endpoint, future internal services, etc. The host's vault-agent
+# issues + renews to /run tmpfs. SAN is the host's FQDN under the AD DNS zone
+# (krg.local) and/or the public zone (krg.ucsd.edu). Because every host trusts the
+# CA root fleet-wide (nix profiles/base.nix security.pki), peers validate these
+# leaves BY CHAIN — so a leaf rotating on each render no longer trips cert-TOFU
+# (the impermanence pain it replaces). Server-only: a host identity can't be
+# replayed as a client cert.
+resource "vault_pki_secret_backend_role" "host" {
+  backend          = vault_mount.pki_int.path
+  name             = "host"
+  allowed_domains  = var.host_allowed_domains
+  allow_subdomains = true # e.g. waiter.krg.local, grafana.krg.ucsd.edu
+  server_flag      = true
+  client_flag      = false
+  key_type         = "ec"
+  key_bits         = 256
+  ttl              = 60 * 60 * 24 * 30 # 30d issued
+  max_ttl          = 60 * 60 * 24 * 90 # 90d ceiling
+}
+
+# user — CLIENT cert bound to an AD identity. The AD userPrincipalName goes in an
+# otherName SAN (OID 1.3.6.1.4.1.311.20.2.3 — the AD/PKINIT UPN extension), so the
+# cert IS the AD principal and downstream mTLS authz keys off AD group membership
+# instead of a parallel cert-only namespace. Issued via the AD-group-gated policies
+# in ldap.tf: a user logs into OpenBao with their KRG.LOCAL account and mints their
+# own short-lived cert. SANs are deliberately PKINIT-ready (if cert-based Kerberos
+# logon lands later, no re-issue needed). Client-only + short TTL (re-minted at use).
+resource "vault_pki_secret_backend_role" "user" {
+  backend            = vault_mount.pki_int.path
+  name               = "user"
+  allowed_domains    = [var.ad_upn_suffix] # CN/email domain, if used
+  allow_bare_domains = true                # CN == bare sAMAccountName
+  allow_subdomains   = false
+  allowed_other_sans = ["1.3.6.1.4.1.311.20.2.3;UTF8:*@${var.ad_upn_suffix}"]
+  server_flag        = false
+  client_flag        = true
+  key_type           = "ec"
+  key_bits           = 256
+  ttl                = 60 * 60 * 24 * 1 # 1d issued (short — re-minted at login)
+  max_ttl            = 60 * 60 * 24 * 7 # 7d ceiling
+}
+
 # ── Policy grants folded into the krg-deploy / krg-prod policies (main.tf) ─────
 # Kept here so all PKI specifics live in one file; interpolated via
 # ${local.pki_*_rules} into the heredocs in main.tf (same module, same pattern

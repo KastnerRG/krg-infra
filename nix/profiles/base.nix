@@ -220,6 +220,18 @@ in {
       sshKeysFromAD = mkDefault true;
     };
 
+    # Trust the lab-internal OpenBao CA fleet-wide (terraform/openbao/pki.tf).
+    # When every host trusts the CA root, TLS/mTLS leaves issued by pki_int (the
+    # Temporal frontend, hosts' XRDP/service certs, AD-user client certs) validate
+    # BY CHAIN — so short-lived leaves rendered to /run by krg.vaultAgent can rotate
+    # freely without tripping cert-TOFU (the impermanence breakage this replaces).
+    # The CA root is a PUBLIC trust anchor, not a secret; it's committed at
+    # nix/keys/krg-pki-ca.pem (obtain it once from `bao read pki/cert/ca` — see
+    # docs/pki-ad-integration.md). Guarded on pathExists so a checkout WITHOUT the
+    # PEM yet still evaluates (no-op) instead of failing the flake.
+    security.pki.certificateFiles =
+      mkIf (builtins.pathExists ../keys/krg-pki-ca.pem) [../keys/krg-pki-ca.pem];
+
     # QEMU guest agent on VMs (graceful shutdown + IP reporting to Proxmox).
     services.qemuGuest.enable = mkDefault cfg.isVM;
 

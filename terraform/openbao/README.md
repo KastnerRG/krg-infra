@@ -42,20 +42,47 @@ from the intermediate, so leaf-issuing trust rotates without touching the root.
 - **`pki`** (root, 10y) → **`pki_int`** (intermediate, 5y), EC P-256 throughout.
   Root/intermediate keys are `type = "internal"` — generated in OpenBao, never
   exported.
-- Two issuing **roles** on `pki_int`:
+- Issuing **roles** on `pki_int`:
   - `temporal-frontend` — the Temporal gRPC frontend's **server** cert (krg-prod
     `vault-agent` issues it, renders cert+key to `/run` tmpfs, auto-renews). SANs
     from `var.temporal_frontend_domains`.
   - `temporal-client` — **client** certs for callers of the frontend (the
     `terraform/temporal` provider, workers, the UI). `server_flag` off.
-- Grants: `krg-deploy` may issue `temporal-client` certs; `krg-prod` may issue
-  `temporal-frontend`. Folded into the policies in `main.tf` via
-  `local.pki_*_rules` (defined in `pki.tf`). **Reading** the CA/CRL needs no
-  grant — `pki_int/ca`, `/ca/pem`, `/crl` are unauthenticated by design.
+  - `host` — general-purpose **server** cert for any lab host/service (waiter's
+    XRDP, future internal services). FQDN under `var.host_allowed_domains`
+    (`krg.local` / `krg.ucsd.edu`), subdomains allowed. Issued+renewed by the
+    host's `vault-agent`.
+  - `user` — **client** cert bound to an AD identity: the user's UPN is stamped
+    into an `otherName` SAN (OID `1.3.6.1.4.1.311.20.2.3`, the AD/PKINIT UPN
+    extension), so the cert *is* the AD principal. Short-lived; minted by the user
+    via the AD-gated grants below. PKINIT-ready by design.
+- Grants: `krg-deploy` may issue `temporal-client`; `krg-prod` may issue
+  `temporal-frontend` (+ the UI client cert). Folded into the AppRole policies in
+  `main.tf` via `local.pki_*_rules`. **Reading** the CA/CRL needs no grant —
+  `pki_int/ca`, `/ca/pem`, `/crl` are unauthenticated by design.
+
+## AD-backed issuance (`ldap.tf`)
+
+The PKI is **hooked into Active Directory**: who may mint which cert is decided by
+AD group membership, the same authority model as host logins and Grafana SSO.
+
+- **`ldap` auth backend** bound to `KRG.LOCAL` over LDAPS. *Machines* keep using
+  AppRole (a host isn't an AD user); *humans* authenticate here to mint their own
+  `user` client certs.
+- **`var.pki_ad_group_roles`** maps each AD group → the `pki_int/issue/<role>`s its
+  members get. `ldap.tf` renders one least-privilege policy + group binding per
+  entry. Default: `Domain Admins → {host, user, temporal-client}`; widen as needed
+  (e.g. `ARM-PDK → {user}`).
+- **Bootstrap caveat**: LDAPS verification uses `var.ldap_ca_cert` — Samba's
+  self-signed cert at first, swappable to the lab root once the DC cert is
+  re-issued from `pki_int`. `binddn`/`bindpass`/`ldap_ca_cert` have no defaults;
+  supply `bindpass` via `TF_VAR_ldap_bindpass`. **Prerequisites (AD-side, manual):
+  see [`docs/pki-ad-integration.md`](../../docs/pki-ad-integration.md).**
 
 > First consumer is Temporal (frontend mTLS, `TEMPORAL_TLS_REQUIRE_CLIENT_AUTH`)
 > — see `terraform/temporal/` and `nix/docker-compose/krg-prod/compose.temporal.yml`.
-> The CA is generic, though: any future lab service needing mTLS adds a role here.
+> The CA is generic, though: any future lab service needing mTLS adds a role here,
+> and the fleet trusts the CA root via `nix profiles/base.nix` (`security.pki`).
 
 ## Outputs (`outputs.tf`)
 
