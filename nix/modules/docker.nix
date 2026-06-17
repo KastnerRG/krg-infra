@@ -94,7 +94,14 @@ in {
         }
         (mkIf cfg.enableNvidiaRuntime {
           runtimes.nvidia = {
-            path = "${pkgs.nvidia-container-toolkit}/bin/nvidia-container-runtime";
+            # nvidia-container-toolkit is multi-output (out, tools): nvidia-ctk lives
+            # in the default `out`, but the runtime shims (nvidia-container-runtime
+            # et al.) ship in the `tools` output. So this MUST be `.tools` — the bare
+            # `${pkgs.nvidia-container-toolkit}/bin/...` points at out/bin, which has
+            # no nvidia-container-runtime, registering a runtime path that doesn't
+            # exist. (getExe'/getBin don't help: getBin falls back to `out`, not the
+            # non-standard `tools` output.)
+            path = "${pkgs.nvidia-container-toolkit.tools}/bin/nvidia-container-runtime";
             args = [];
           };
         })
