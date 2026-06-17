@@ -25,7 +25,7 @@ secrets plumbing.
 flowchart TB
     subgraph internet[Internet]
         client[Client]
-        le[Let's Encrypt / InCommon ACME]
+        le[Let's Encrypt ACME]
     end
 
     subgraph krgprod[krg-prod — central, staff-operated]
@@ -184,8 +184,8 @@ The platform substrate plus the coordinated repo-side changes we own:
 
 ## Open items
 
-- [ ] **CA source** (ADR 0008 discovery): UCSD InCommon/Sectigo ACME vs Let's
-      Encrypt for `*.e4e.ucsd.edu`.
+- [x] **CA source** — **Let's Encrypt** (decided). InCommon rejected: per-cert
+      manual approval is incompatible with automated renewal (ADR 0008).
 - [ ] e4e-prod VM provisioning on fabricant → real `hardware-configuration.nix`,
       static IP `137.110.161.107`, generous CPU/RAM/IO sizing, first deploy.
 - [ ] **Nested KVM on fabricant** — `kvm_intel nested=1` + e4e-prod CPU type

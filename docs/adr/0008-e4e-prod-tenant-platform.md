@@ -174,7 +174,7 @@ construction:
 
 The one residual we don't fully control: the LE limit is keyed on the registered
 domain `ucsd.edu`, shared with all of campus. Multi-SAN + 60-day keeps our
-footprint negligible, but see the open discovery item.
+footprint negligible (see "CA source" below for why LE, not InCommon).
 
 ## Why not the alternatives we considered
 
@@ -211,14 +211,21 @@ footprint negligible, but see the open discovery item.
 - The `isolation` knob means this ADR is **not** a forever-commitment to
   microVMs for every tenant — it's the default boundary, overridable per tenant.
 
-## Open discovery item — the CA source
+## CA source — Let's Encrypt (InCommon rejected)
 
-The central cert-manager is designed **CA-agnostic** (LE prod / LE staging /
-InCommon are all just ACME directory URLs). Before committing to Let's Encrypt,
-run down whether **UCSD ITS offers an InCommon/Sectigo ACME** endpoint for
-`*.e4e.ucsd.edu` (Sectigo ACME supports HTTP-01). If it does, it is the preferred
-issuer — it takes us out of the campus-shared `ucsd.edu` LE bucket entirely. This
-is the one decision deferred out of this ADR.
+The CA is **Let's Encrypt**. UCSD's **InCommon/Sectigo** path was considered and
+**rejected**: campus InCommon certs traditionally require **manual approval per
+certificate** — fundamentally incompatible with an automated edge that issues and
+renews multi-SAN certs on a ~60-day cadence with no human in the loop. (This is
+why the lab has historically avoided InCommon.)
+
+The accepted residual: LE's "certificates per registered domain" limit is keyed
+on `ucsd.edu`, shared with all of campus. The issuance invariant above keeps our
+footprint negligible (one central client, one multi-SAN cert per tenant, 60-day
+renewal, never on-demand). The cert-manager is still written **CA-agnostic** (any
+ACME directory URL), so if UCSD ever offers an **auto-approved** Sectigo ACME
+endpoint, switching is a config change — but manual-approval InCommon is not a
+candidate.
 
 Related: ADR 0001 (git as source of truth), ADR 0005 (repo integration /
 OpenTofu / krg-deploy as control node), `docs/e4e-prod-tenant-platform.md`
