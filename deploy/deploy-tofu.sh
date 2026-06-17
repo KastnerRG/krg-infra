@@ -226,7 +226,7 @@ for t in "${TARGETS[@]}"; do
     tofu -chdir="$dir" apply -auto-approve -input=false \
          -state="${state_dir}/terraform.tfstate"
   ) || rc=$?
-  echo "::endgroup::"
+  printf '\n::endgroup::\n'
   if [[ $rc -ne 0 ]]; then
     echo "FAILED: ${t} (exit ${rc}) — stopping; remaining targets not applied"
     exit 1
