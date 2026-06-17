@@ -199,7 +199,18 @@ footprint negligible (see "CA source" below for why LE, not InCommon).
 ## Consequences
 
 - e4e-prod gains a per-tenant microVM fleet (microvm.nix as a flake input), a
-  platform edge Traefik, an OpenBao PKI engine, and the `krg.tenants` module.
+  platform edge Traefik, and the `krg.tenants` module.
+- **The internal CA already exists — reuse, don't rebuild.** The lab OpenBao PKI
+  (`pki_root` → `pki_int`, #241) is generalized into a fleet CA with generic
+  `host`/`user` issuing roles + **fleet-wide CA trust in `base.nix`** by #259, and
+  the "vault-agent issues a TLS leaf from the PKI" pattern is proven by the waiter
+  XRDP cert (#260: per-consumer AppRole → `pki_int/issue/host` → rendered to
+  `/run`, secret_id on a persisted path). e4e-prod **reuses `pki_int/issue/host`**
+  for tenant-VM inner-Traefik server certs and the existing `temporal-client`-style
+  client-role pattern for the edge's mTLS leg. **Net-new is small:** per-tenant
+  AppRoles + an edge client-cert role + vault-agent render targets — *not* a new
+  CA. **This work stacks on #259** (fleet CA trust + the `host` role) and follows
+  #260's pattern; see `docs/pki-ad-integration.md`.
 - **Adding a hostname is a 3-actor act**, only the middle one automatable: CNAME
   ticket (external) → edge SAN added + re-issued (platform) → tenant adds the
   service+label (self-service in-VM). Routing stays stable (subtree match).
@@ -229,5 +240,5 @@ candidate.
 
 Related: ADR 0001 (git as source of truth), ADR 0005 (repo integration /
 OpenTofu / krg-deploy as control node), `docs/e4e-prod-tenant-platform.md`
-(the companion design doc), `docs/krg-prod-iac.md`,
-[Vault-agent keystone](../troubleshooting.md).
+(the companion design doc), `docs/pki-ad-integration.md` (the lab PKI this builds
+on — #241/#259, vault-agent issuance pattern #260), `docs/krg-prod-iac.md`.

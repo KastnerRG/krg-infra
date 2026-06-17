@@ -137,9 +137,17 @@ if it bites).
 - **Public TLS:** the edge is the sole ACME client; explicit SAN list per tenant;
   HTTP-01; staging-first; ~60-day renewal; **on-demand TLS forbidden** (ADR 0008
   issuance invariant).
-- **Internal TLS:** an **OpenBao PKI** secrets engine is the internal CA. Each
-  VM's vault-agent fetches + auto-rotates a short-TTL cert for its inner Traefik;
-  the edge presents an OpenBao-issued client cert for mTLS to the backend.
+- **Internal TLS:** **reuses the existing lab OpenBao PKI** — root → `pki_int`
+  intermediate (#241), generalized to a fleet CA with generic `host`/`user`
+  issuing roles + fleet-wide CA trust in `base.nix` (#259). Each tenant VM's
+  inner Traefik gets a server cert from `pki_int/issue/host`, rendered +
+  auto-rotated by its vault-agent — the **same pattern as the waiter XRDP cert
+  (#260)**: a per-consumer AppRole granting `pki_int/issue/host`, `secret_id` on
+  a persisted path. The edge presents a client cert (a small client role,
+  mirroring the existing `temporal-client` mTLS role) for mTLS to backends; the
+  chain validates against the fleet-trusted root. **Net-new: per-tenant AppRoles
+  + the edge client role + render targets — not a new CA.** See
+  [pki-ad-integration.md](pki-ad-integration.md).
 - **App secrets:** each tenant has a per-tenant **OpenBao AppRole** + policy
   scoping it to its own path. Its vault-agent renders the app's `.secrets/` /
   env into the VM's `DEPLOY_DIR` (fail-closed) — so the tenant's compose, which
@@ -192,7 +200,9 @@ The platform substrate plus the coordinated repo-side changes we own:
       `host` (prerequisite for the nested microvm.nix fleet).
 - [ ] microvm.nix as a flake input (cloud-hypervisor backend); per-tenant zvol;
       host bridge networking + inter-VM firewall.
-- [ ] OpenBao PKI engine standup (root/intermediate, roles, TTLs) on krg-vault.
+- [ ] PKI: **reuse** the existing lab CA (#241/#259) — add per-tenant AppRoles +
+      an edge client-cert role + vault-agent render targets (pattern: #260). No
+      new CA; build stacked on #259 (fleet CA trust + `host` role).
 - [ ] krg-prod Temporal: `fishsense` namespace, client-cert issuance, cross-host
       gRPC exposure + firewall.
 - [ ] Per-VM monitoring (node/cadvisor → prometheus_network) and whether tenant
