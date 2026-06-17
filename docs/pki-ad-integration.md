@@ -106,6 +106,57 @@ bao write -format=json pki_int/issue/user common_name=<aduser> \
 openssl verify <(echo "$LEAF_PEM")     # no -CAfile needed once the root is trusted
 ```
 
+## Human cert issuance (who `pki_ad_group_roles` is for)
+
+Two actors issue certs, and they're authorized differently:
+
+| Actor | Auth to OpenBao | Authorized by | Example |
+|-------|-----------------|---------------|---------|
+| **Machine** | AppRole (`role_id`+`secret_id` on the host) | the role's policy (`main.tf`) | krg-prod issues `temporal-frontend`; waiter issues `host`; a long-running worker issues `temporal-client` via vault-agent |
+| **Human** | `bao login -method=ldap` (their KRG.LOCAL account) | **`pki_ad_group_roles`** (`ldap.tf`) | a developer mints a client cert to reach the Temporal frontend from their laptop |
+
+`pki_ad_group_roles` exists for the **human** row: it's how a person is allowed to
+mint a cert by hand without being handed a machine's AppRole `secret_id`, governed
+by the same AD groups as logins/Grafana/RDP. Nothing else reads these groups.
+
+### Worked example — a Temporal user mints a client cert
+
+Temporal's gRPC frontend requires a CA-signed **client** cert
+(`TEMPORAL_TLS_REQUIRE_CLIENT_AUTH`). A researcher connecting interactively (the
+`tctl`/`temporal` CLI or an SDK from their workstation) needs one. They're in the
+`Temporal Users` AD group, mapped to the `user` role, so:
+
+```bash
+# 1. authenticate with the AD account (no AppRole secret handed out)
+bao login -method=ldap username=alice
+
+# 2. mint a short-lived client cert carrying alice's AD UPN (her identity travels
+#    in the cert, so Temporal authz can key off it)
+bao write -format=json pki_int/issue/user \
+  common_name=alice \
+  other_sans="1.3.6.1.4.1.311.20.2.3;UTF8:alice@krg.local" \
+  ttl=8h > /tmp/cert.json
+jq -r .data.certificate  /tmp/cert.json > ~/.temporal/client.pem
+jq -r .data.private_key  /tmp/cert.json > ~/.temporal/client.key
+
+# 3. point the client at it (the CA root is already in the system trust store, layer C)
+temporal --tls-cert-path ~/.temporal/client.pem \
+         --tls-key-path  ~/.temporal/client.key \
+         --address workflows.krg.ucsd.edu:7233  workflow list
+```
+
+**Why `user` and not `temporal-client` for humans:** `temporal-client`'s
+`allowed_domains` are scoped to service names (`temporal-worker`, `temporal-ui`,
+the tofu runner) for *machine* callers; a person's cert instead carries their AD
+UPN via the `user` role, so the identity is auditable and reusable for any
+future mTLS service. The frontend accepts either (it only checks CA-signing).
+The short TTL (≤7d) is fine for interactive use — re-mint at the start of a
+session; long-running workers stay on the machine/AppRole path instead.
+
+> **Prerequisite:** the `Temporal Users` group (and any other mapped group) must
+> exist in `KRG.LOCAL`. Until then the binding matches no one — see
+> `var.pki_ad_group_roles` and `krg-local-ad-principals-pending`.
+
 ## Closing the bootstrap loop (optional, after the chain is up)
 
 7. Re-issue the DC's LDAPS cert from `pki_int` (role `host`, SAN

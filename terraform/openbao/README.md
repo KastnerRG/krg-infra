@@ -70,9 +70,13 @@ AD group membership, the same authority model as host logins and Grafana SSO.
   AppRole (a host isn't an AD user); *humans* authenticate here to mint their own
   `user` client certs.
 - **`var.pki_ad_group_roles`** maps each AD group → the `pki_int/issue/<role>`s its
-  members get. `ldap.tf` renders one least-privilege policy + group binding per
-  entry. Default: `Domain Admins → {host, user, temporal-client}`; widen as needed
-  (e.g. `ARM-PDK → {user}`).
+  members may mint **by hand** (the human issuance path). `ldap.tf` renders one
+  least-privilege policy + group binding per entry. Default: `Domain Admins →
+  {host, user, temporal-client}` and `Temporal Users → {user}` (researchers mint
+  their own AD-identity client cert to reach the Temporal mTLS frontend
+  interactively — see the worked example in
+  [`docs/pki-ad-integration.md`](../../docs/pki-ad-integration.md#human-cert-issuance-who-pki_ad_group_roles-is-for)).
+  Widen as needed (e.g. `ARM-PDK → {user}`).
 - **Bootstrap caveat**: LDAPS verification uses `var.ldap_ca_cert` — Samba's
   self-signed cert at first, swappable to the lab root once the DC cert is
   re-issued from `pki_int`. `binddn`/`bindpass`/`ldap_ca_cert` have no defaults;

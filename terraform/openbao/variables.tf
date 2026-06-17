@@ -121,13 +121,23 @@ variable "ldap_groupfilter" {
 
 variable "pki_ad_group_roles" {
   description = <<-EOT
-    AD group name → the pki_int issuing roles its members may use (ldap.tf turns
-    each entry into a least-privilege policy + group binding). Widen as lab cert
-    needs grow — e.g. add "ARM-PDK" = ["user"] to let that group mint client certs.
-    Group names must exist in KRG.LOCAL (see docs/pki-ad-integration.md).
+    AD group → the pki_int issuing roles its members may mint BY HAND after
+    `bao login -method=ldap`. This is the HUMAN issuance path; machines issue via
+    AppRole (main.tf) and never consult these groups. ldap.tf turns each entry into
+    a least-privilege policy + group binding. Group names must exist in KRG.LOCAL
+    (see docs/pki-ad-integration.md "Human cert issuance"). Widen as needs grow —
+    e.g. "ARM-PDK" = ["user"].
   EOT
   type        = map(list(string))
   default = {
+    # Admins can mint any lab cert by hand (bring-up, debugging, break-glass).
     "Domain Admins" = ["host", "user", "temporal-client"]
+
+    # Temporal users mint their own AD-identity client cert (`user`) to reach the
+    # mTLS frontend interactively (CLI/SDK from a workstation). Long-running workers
+    # are MACHINES — they get a `temporal-client` cert via AppRole/vault-agent, not
+    # this path. RENAME to the real KRG.LOCAL group once AD groups are finalized
+    # (the binding matches no one until that group exists).
+    "Temporal Users" = ["user"]
   }
 }
