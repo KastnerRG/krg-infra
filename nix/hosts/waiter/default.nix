@@ -243,5 +243,15 @@
   # GNU Make for researchers building from source on this workstation.
   environment.systemPackages = [pkgs.gnumake];
 
+  # XRDP TLS cert from the lab PKI (krg.xrdp.tlsCert, modules/desktop/xrdp.nix) —
+  # replaces xrdp's per-boot self-signed cert, which under impermanence breaks RDP
+  # cert-TOFU on every rollback. waiter's first vault-agent issues + renews a `host`
+  # cert; the Guacamole gateway dials by IP, so the IP SAN is what it verifies.
+  # Needs the `waiter` AppRole secret_id out-of-band (docs/pki-ad-integration.md).
+  krg.xrdp.tlsCert = {
+    enable = true;
+    ipSans = ["137.110.161.67"];
+  };
+
   system.stateVersion = "25.11";
 }

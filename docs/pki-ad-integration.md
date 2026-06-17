@@ -197,6 +197,50 @@ start, so the LDAPS path already chains to the lab CA. (If you took the quick
 self-signed-with-SAN alternative in step 3, the loop closure is: re-issue from
 `pki_int`, install on the DC, swap `TF_VAR_ldap_ca_cert` to the lab root, re-apply.)
 
+## XRDP TLS cert from the lab PKI (host consumers of the `host` role)
+
+`feat/waiter-xrdp-cert-pki` (stacked on this branch) makes each XRDP host — **waiter
+and kastner-ml** — present a CA-issued cert instead of a per-boot self-signed one,
+fixing the cert-TOFU break the Guacamole `ignore-cert` workaround papered over. The
+wiring lives in the `krg.xrdp` module (`krg.xrdp.tlsCert.enable`): the host's
+`krg.vaultAgent` issues a `host` cert into `/run/xrdp-tls/bundle.pem`, an
+`xrdp-tls-split` oneshot splits it into `cert.pem`/`key.pem`, and `services.xrdp`
+points at them. Each host sets its RDP-facing IP as the cert's `ipSans` (the
+Guacamole gateway dials by IP) and has its **own** AppRole (`waiter`, `kastner-ml`)
+so a box can only mint its own cert.
+
+Offline / one-time, **per host** (`HOST` ∈ {`waiter`, `kastner-ml`}):
+
+1. **Mint the host's AppRole `secret_id`** from krg-deploy (which holds
+   `auth/approle/role/+/secret-id`) and place it root-only at the persisted default
+   path — survives the impermanence rollback because `/var/lib/krg` is in the persist
+   set:
+   ```bash
+   HOST=waiter   # or: HOST=kastner-ml
+   # role_id is non-secret (tofu output <host>_role_id, underscores):
+   tofu -chdir=terraform/openbao output -raw "${HOST//-/_}_role_id" \
+     | ssh "$HOST" 'sudo install -d -m700 /var/lib/krg/openbao-agent && sudo tee /var/lib/krg/openbao-agent/role-id >/dev/null'
+   # secret_id is a live credential — mint and deliver without it touching disk/logs here:
+   bao write -f -field=secret_id "auth/approle/role/$HOST/secret-id" \
+     | ssh "$HOST" 'sudo tee /var/lib/krg/openbao-agent/secret-id >/dev/null && sudo chmod 400 /var/lib/krg/openbao-agent/secret-id'
+   ```
+2. **Apply** `terraform/openbao` (adds the `waiter` + `kastner-ml` roles/policies),
+   then rebuild the host.
+
+On-box validation gates, per host (mark the PR `[~]` until these pass — same
+convention as the Temporal mTLS bring-up):
+
+- `systemctl status openbao-agent xrdp-tls-split xrdp` — all green, in that order.
+- `openssl x509 -in /run/xrdp-tls/cert.pem -noout -subject -issuer -ext subjectAltName`
+  → issued by the lab intermediate, `CN=<host>.krg.local`, IP SAN present.
+- From a client that trusts the CA root: connect via RDP and confirm **no cert
+  warning** (chain validates). Only **then** retire `ignore-cert` on the Guacamole
+  connection (follow-up — Guacamole's `guacd` container must also trust the CA root;
+  outside this PR and shouldn't flip until the above passes, or RDP breaks).
+- Confirm xrdp serves the rendered cert and not a regenerated self-signed one
+  (the NixOS xrdp `[ ! -f sslCert ]` guard should skip generation since the split
+  creates the file first).
+
 ## Beyond this scope
 
 The `user` cert SANs are deliberately **PKINIT-ready** (UPN `otherName`). Full
