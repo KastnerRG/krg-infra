@@ -93,6 +93,12 @@
       hostNames = ["krg-prod.ucsd.edu" "137.110.161.106"];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILeQ8gYCBKrTWwDGtvcGrBA9/efa7T0N6rndXYI5yVAV";
     };
+    # E4E GPU compute box, provisioned via nixos-anywhere (fresh key). Deployed as
+    # e4e-admin (deploy/deploy-nixos.sh USER_OVERRIDE). SHA256:VD/h/Bv4QFcj7V+WwipAZdtFtjUabQFfctX8w2LZXRQ
+    kastner-ml = {
+      hostNames = ["kastner-ml.ucsd.edu" "132.239.17.123"];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDNW45FIs6o2rMuemY+a7SHjSCby9txBmzjTLAkp/LDh";
+    };
     # Proxmox hypervisor — for the Ansible leg (deploy-ansible.sh → root@fabricant).
     fabricant = {
       hostNames = ["fabricant.ucsd.edu"];
