@@ -322,15 +322,23 @@ in {
       # ── Vaultwarden ──────────────────────────────────────────────────────────
       # ADMIN_TOKEN (argon2 hash; gates /admin) is a LIVE seeded value; the OIDC
       # client secret comes from the authentik-generated vaultwarden-oidc path.
+      # NB: this env file is consumed by docker compose via `env_file`, and
+      # compose INTERPOLATES env_file values — a literal `$` (the argon2 PHC
+      # string is full of them: `$argon2id$v=19$m=...`) is read as a variable
+      # reference and stripped, so the container would receive a hash with every
+      # `$` gone and reject every admin login. Double each `$` -> `$$` here; the
+      # OpenBao value stays a clean single-`$` hash, and compose collapses `$$`
+      # back to `$` so the container gets the intact hash. Same guard on the OIDC
+      # secret in case Authentik ever mints one containing `$`.
       {
         destination = "/run/krg/krg-prod/vaultwarden.env";
         perms = "0640";
         contents = ''
           {{- with secret "secret/data/krg-prod/vaultwarden" }}
-          ADMIN_TOKEN={{ .Data.data.admin_token }}
+          ADMIN_TOKEN={{ .Data.data.admin_token | replaceAll "$" "$$" }}
           {{- end }}
           {{- with secret "secret/data/krg-prod/vaultwarden-oidc" }}
-          SSO_CLIENT_SECRET={{ .Data.data.client_secret }}
+          SSO_CLIENT_SECRET={{ .Data.data.client_secret | replaceAll "$" "$$" }}
           {{- end }}
         '';
       }
