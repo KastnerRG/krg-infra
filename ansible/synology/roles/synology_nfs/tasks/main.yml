@@ -21,6 +21,7 @@
   ansible.builtin.include_vars:
     file: "{{ synology_nfs_spec }}"
     name: nfs_spec
+  tags: [synology_nfs]
 
 - name: Apply global NFS service settings (full-object set; partial = DSM err 2001)
   ansible.builtin.script: >-
@@ -33,6 +34,7 @@
   changed_when: "'CHANGED' in nfs_global.stdout or 'WOULD-CHANGE' in nfs_global.stdout"
   failed_when: "nfs_global.rc != 0 or 'FAIL' in nfs_global.stdout"
   check_mode: false # run in --check too; apply_nfs.py --check self-gates (read-only GET)
+  tags: [synology_nfs]
 
 - name: Apply per-share NFS export rules (SharePrivilege load/diff/save)
   ansible.builtin.script: >-
@@ -47,6 +49,7 @@
   changed_when: "'CHANGED' in nfs_rules.stdout or 'WOULD-CHANGE' in nfs_rules.stdout"
   failed_when: "nfs_rules.rc != 0 or 'FAIL' in nfs_rules.stdout"
   check_mode: false
+  tags: [synology_nfs]
 
 # --- Drift export (read-only) — only with `--tags export` -----------------------
 - name: Export live state for drift detection

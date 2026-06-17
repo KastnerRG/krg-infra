@@ -31,7 +31,7 @@ uses).
 
 | Script | Applies | Notes |
 |---|---|---|
-| `deploy-nixos.sh` | krg-vault, krg-ldap, krg-prod, waiter | `--build-host = --target-host` so each host builds its own closure (krg-deploy only evaluates). **krg-deploy itself is excluded** from the rebuild — it runs the job; it stays current via nightly `autoUpgrade` (and self-verifies OEC locally — see *OEC* below). **e4e-prod is omitted** until the host is provisioned. **Stages the OEC installer to each host before the switch and verifies both security daemons are active afterwards** (see *OEC* below). |
+| `deploy-nixos.sh` | krg-vault, krg-ldap, krg-prod, waiter, kastner-ml | `--build-host = --target-host` so each host builds its own closure (krg-deploy only evaluates). **krg-deploy itself is excluded** from the rebuild — it runs the job; it stays current via nightly `autoUpgrade` (and self-verifies OEC locally — see *OEC* below). **e4e-prod is omitted** until the host is provisioned. **Stages the OEC installer to each host before the switch and verifies both security daemons are active afterwards** (see *OEC* below). |
 | `deploy-ansible.sh` | `ansible/playbooks/site.yml` (Proxmox) | Synology is **opt-in** (`DEPLOY_SYNOLOGY=true`, off by default) — its declarative sync deletes, and bring-up has gates (see [docs/e4e-nas-dsm.md](../docs/e4e-nas-dsm.md)). Galaxy collections (`ansible/requirements.yml`) must be **provisioned on the control node** (not installed per-run — matches the nightly `ansible-apply`); deterministic/Nix-managed collections tracked in #129. **Passes `oec_installer` so the Proxmox hosts enroll + verify the OEC daemons too** (see *OEC* below). |
 | `deploy-tofu.sh` | the targets named in `TOFU_TARGETS` | **Active; creds from OpenBao, no secrets on disk.** krg-deploy logs into OpenBao with its AppRole (the same `openbao-role-id`/`openbao-secret-id` the Ansible leg uses) and reads each target's creds from KV at apply time (paths below). **Opt-in:** only targets listed in `TOFU_TARGETS` apply (empty by default — like `SYNOLOGY_TAGS` scopes the synology converge); a listed target whose KV secret isn't seeded **skips** with a notice. A ready target with no `TOFU_STATE_PASSPHRASE` **hard-fails** rather than writing plaintext state (ADR 0005). State persists under `TOFU_STATE_ROOT` (CI checkout is ephemeral), always encrypted. **`openbao` is special** — it provisions OpenBao's own auth, so it can't use that AppRole; apply it manually with a privileged `TOFU_OPENBAO_TOKEN` (see below). |
 
@@ -47,8 +47,17 @@ at a time (`concurrency: deploy-fleet`).
 
 **Fail-fast, end to end.** Each script stops on the first failed host/target (it
 doesn't push on to the rest), and each workflow stage gates the next (`success() &&
-…`), so a failed NixOS apply skips the Ansible (and OpenTofu) stage rather than
-deploying on top of a half-broken fleet.
+…`), so a failed stage skips the rest rather than deploying on top of a half-broken
+fleet.
+
+**Stage order = dependency order: Ansible → NixOS → OpenTofu.** Ansible provisions the
+substrate the OS hosts consume (the Proxmox hypervisor, the firewall, and the NFS
+exports the compute boxes mount as `/home` — waiter←fabricant, kastner-ml←e4e-nas);
+NixOS then brings up the machines and the services that run on them; OpenTofu configures
+those services last (it talks to their APIs and reads/writes OpenBao secrets, so they
+must already exist). Running NixOS first would deadlock a compute box whose `/home`
+export is created by the Ansible stage — `home.mount` fails, fail-fast skips Ansible,
+and the export is never created. See [lab-interdependencies.md](../docs/lab-interdependencies.md).
 
 ## Rebooting the fleet (manual)
 

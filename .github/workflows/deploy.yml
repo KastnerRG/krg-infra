@@ -119,20 +119,22 @@ jobs:
       # Stage gating: each deploy stage runs only if the gate passed AND every
       # earlier stage succeeded. The explicit success() is load-bearing — a step
       # with a custom if: does not reliably inherit the "previous steps succeeded"
-      # default, so without it a failed NixOS apply would NOT stop the Ansible (or
-      # OpenTofu) stage. Combined with each script's own internal fail-fast, one
-      # failed host/target halts the whole deploy.
-      # Stages the campus-mandated OEC (Qualys + Trellix) installer to each host and
-      # verifies both security daemons are active — the deploy FAILS if the archive
-      # is missing on the control node or any host's daemons aren't up (#22). The
-      # credentialed archive is staged out-of-band at
-      # /var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz (see
-      # deploy/README.md "OEC"); override with OEC_INSTALLER if elsewhere. Same
-      # gate applies to the Proxmox hosts in the Ansible step below.
-      - name: Deploy NixOS hosts
-        if: success() && steps.gate.outputs.ok == 'true'
-        run: ./deploy/deploy-nixos.sh
-
+      # default, so without it a failed earlier stage would NOT stop the next one.
+      # Combined with each script's own internal fail-fast, one failed host/target
+      # halts the whole deploy.
+      #
+      # STAGE ORDER = dependency order: Ansible → NixOS → OpenTofu.
+      #   1. Ansible provisions the substrate the OS hosts CONSUME: the Proxmox
+      #      hypervisor (hosts the VMs), the firewall, and — load-bearing here — the
+      #      NFS exports the NixOS compute boxes mount as /home (waiter <- fabricant
+      #      rpool/nfs/home; kastner-ml <- e4e-nas e4e-home). If this ran AFTER NixOS,
+      #      a compute box's home.mount would fail on the very deploy meant to create
+      #      its export — and fail-fast would then SKIP this Ansible stage, so the
+      #      export never lands: a deadlock.
+      #   2. NixOS brings up the machines + the services (Authentik, Grafana,
+      #      OpenBao) that run on them.
+      #   3. OpenTofu configures those services via their APIs and reads/writes
+      #      OpenBao secrets — so it MUST come last, after the services exist.
       - name: Apply Ansible layer
         if: success() && steps.gate.outputs.ok == 'true'
         env:
@@ -149,6 +151,17 @@ jobs:
           # those are role-internal gates, not tag scoping.
           DEPLOY_SYNOLOGY: "true"
         run: ./deploy/deploy-ansible.sh
+
+      # Stages the campus-mandated OEC (Qualys + Trellix) installer to each host and
+      # verifies both security daemons are active — the deploy FAILS if the archive
+      # is missing on the control node or any host's daemons aren't up (#22). The
+      # credentialed archive is staged out-of-band at
+      # /var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz (see
+      # deploy/README.md "OEC"); override with OEC_INSTALLER if elsewhere. The same
+      # OEC gate applied to the Proxmox hosts in the Ansible step above.
+      - name: Deploy NixOS hosts
+        if: success() && steps.gate.outputs.ok == 'true'
+        run: ./deploy/deploy-nixos.sh
 
       # OpenTofu layer. State is local on krg-deploy (ADR 0005) + encrypted with
       # the TOFU_STATE_PASSPHRASE Actions secret. Creds come from OpenBao (krg-deploy
