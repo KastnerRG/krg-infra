@@ -41,9 +41,18 @@ TLS configs. Two internal callers hit the frontend and would be locked out:
    (`auto-setup.sh`).
 
 Naively enabling `requireClientAuth` therefore **wedges first boot**. The fix is
-the **internal-frontend**: `USE_INTERNAL_FRONTEND=true` stands up a second frontend
-on `:7236` for internal traffic, and we don't put TLS on the internode path, so
-`:7236` is **plaintext, localhost-only inside the container**. Then:
+the **internal-frontend**: a second frontend on `:7236` for internal traffic, with
+no TLS on the internode path, so `:7236` is **plaintext, localhost-only inside the
+container**. Enabling it is a **two-part** requirement (this bit us — getting only
+one half leaves internal-frontend "configured but not requested", `:7236` never
+listens, and the bootstrap waits forever):
+
+- `USE_INTERNAL_FRONTEND=true` renders the internal-frontend **config block**.
+- `SERVICES=frontend:internal-frontend:history:matching:worker` adds the role to
+  the server's **run list** (`start-temporal.sh` starts only the default 4 roles
+  otherwise — `internal-frontend` is not a default).
+
+Then:
 
 - `TEMPORAL_ADDRESS=127.0.0.1:7236` points the bootstrap CLI at the plaintext
   internal-frontend, so health/namespace setup never touches the mTLS `:7233`.

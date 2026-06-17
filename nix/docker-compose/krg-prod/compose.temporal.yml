@@ -72,7 +72,12 @@ services:
       # talk to the frontend — so enabling it naively wedges first boot. Fixed with
       # the internal-frontend: internal traffic uses plaintext :7236, leaving the
       # PUBLIC :7233 free to require client certs.
-      - USE_INTERNAL_FRONTEND=true # system workers + bootstrap → internal-frontend :7236
+      - USE_INTERNAL_FRONTEND=true # render the internal-frontend config block (:7236)
+      # USE_INTERNAL_FRONTEND only renders the *config*; the server still has to be
+      # ASKED to run the role. start-temporal.sh starts only the default 4 roles
+      # unless SERVICES lists them — without this, internal-frontend is configured
+      # but "not requested", :7236 never listens, and the bootstrap waits forever.
+      - SERVICES=frontend:internal-frontend:history:matching:worker
       - TEMPORAL_ADDRESS=127.0.0.1:7236 # point the in-container setup CLI at :7236, not mTLS :7233
       - BIND_ON_IP=0.0.0.0 # frontend must bind all ifaces so temporal-ui reaches :7233 cross-container (auto-setup default 127.0.0.1 is container-local — a latent pre-TLS bug)
       - TEMPORAL_TLS_REQUIRE_CLIENT_AUTH=true
