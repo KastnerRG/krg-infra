@@ -1,10 +1,19 @@
 # Temporal frontend mTLS
 
-> **Status: BUILT, UNVALIDATED.** This wiring has never booted on-box. The base
-> Temporal stack itself was never deployed (see
-> `docs/guacamole-temporal-consolidation.md`: "Temporal not deployed"), so first
-> bring-up validates *both* the base stack and mTLS at once. Treat every claim
-> here as a hypothesis until the validation gates below pass.
+> **Status: VALIDATED on-box 2026-06-16** (krg-prod). All gates below pass: certs
+> render, the server boots with mTLS on `:7233`, the bootstrap completes via the
+> plaintext internal-frontend, the UI connects with its client cert, and a
+> no-cert/plaintext probe to `:7233` is rejected. This was also the base Temporal
+> stack's first real deploy. Two bugs were found and fixed during bring-up:
+>
+> 1. **Cert dir not traversable.** `/run/krg/temporal/tls` was `0750 root`, so the
+>    container (uid 1000) couldn't read the bind-mounted certs (`permission denied`
+>    on `frontend.pem`). Fixed with the `dirPerms = "0755"` option on `krg.vaultAgent`
+>    (parent `/run/krg/temporal` stays `0750`, so the host is still gated).
+> 2. **internal-frontend configured but not run.** `USE_INTERNAL_FRONTEND` only
+>    renders the config block; the server logged `Service is not requested ...
+>    internal-frontend` and `:7236` never listened, so the bootstrap waited forever.
+>    Fixed by adding it to the `SERVICES` run list (see below).
 
 ## Why
 
@@ -98,10 +107,10 @@ nixos-rebuild switch --flake ./nix#krg-prod \
   --target-host krg-admin@krg-prod.ucsd.edu --sudo --ask-sudo-password
 ```
 
-## Validation gates (must pass before trusting this)
+## Validation gates (verified 2026-06-16; re-run after changes)
 
-These are the facts the build assumes but could not be verified without a live
-boot. Check each on-box:
+These were unknowns at build time, all confirmed on-box during bring-up. Re-run
+them after any change to the TLS env, certs, or image tags:
 
 1. **Certs render.** `/run/krg/temporal/tls/{frontend.pem,ca.crt,ui-client.pem}`
    exist, `frontend.pem` contains both a CERTIFICATE and a PRIVATE KEY block, and
