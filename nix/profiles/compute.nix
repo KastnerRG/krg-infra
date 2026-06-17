@@ -143,7 +143,11 @@
   #      so the kernel has no handler to fetch the SPNEGO/Kerberos blob during SMB
   #      session setup. We mkForce-override it, KEEPING the two NFS rules (waiter
   #      mounts NFS for /home + scratch overflow) and adding the cifs.spnego rule
-  #      pointing at cifs.upcall.
+  #      pointing at cifs.upcall. NOTE: cifs-utils is multi-output and its binaries
+  #      live in the `bin` output, NOT the default `out` (which is just lib/) — so
+  #      this MUST be `cifs-utils.bin`, else request-key execs a nonexistent path
+  #      and every sec=krb5 mount fails -126/ENOKEY despite a valid ticket. (nfs-utils
+  #      and keyutils keep their binaries in the default out, so those lines don't.)
   #
   # tmpfiles recreates /sbin/request-key on every boot, so this survives the
   # impermanence root rollback.
@@ -154,6 +158,6 @@
   environment.etc."request-key.conf".text = lib.mkForce ''
     create id_resolver  * * ${pkgs.nfs-utils}/bin/nfsidmap -t 600 %k %d
     create dns_resolver * * ${pkgs.keyutils}/bin/key.dns_resolver %k
-    create cifs.spnego  * * ${pkgs.cifs-utils}/bin/cifs.upcall %k
+    create cifs.spnego  * * ${pkgs.cifs-utils.bin}/bin/cifs.upcall %k
   '';
 }
