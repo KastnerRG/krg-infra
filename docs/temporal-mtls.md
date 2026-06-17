@@ -19,15 +19,16 @@
 
 The Temporal gRPC frontend (`:7233`) is a cluster-admin surface: anyone who can
 reach it can create/delete namespaces and start/terminate workflows. `auto-setup`
-ships it **unauthenticated** (only the *UI* is gated, by Authentik OIDC). Before
-the `terraform/temporal` provider can manage it — let alone before it's ever
-exposed beyond the docker network — the frontend needs real client authentication.
+ships it **unauthenticated** (only the *UI* is gated, by Authentik OIDC). The
+frontend is **published to the internet** (`:7233`) so off-site workers — e.g. the
+NRP cluster — and the `terraform/temporal` provider can reach it, so it needs real
+client authentication, not just network reach.
 
 mTLS solves it at the source: with `requireClientAuth`, only holders of a cert
-signed by our CA can talk to `:7233`. This is a **private** CA, separate from the
-public Let's Encrypt certs Traefik issues for the UI's browser HTTPS — mTLS certs
-can't be public-CA issued, and these are machine endpoints. See
-`terraform/openbao/pki.tf` for the CA.
+signed by our CA can talk to `:7233` — reachability is not the control, the cert
+is. This is a **private** CA, separate from the public Let's Encrypt certs Traefik
+issues for the UI's browser HTTPS — mTLS certs can't be public-CA issued, and these
+are machine endpoints. See `terraform/openbao/pki.tf` for the CA.
 
 ## The pieces
 
@@ -37,7 +38,8 @@ can't be public-CA issued, and these are machine endpoints. See
 | **Certs** | vault-agent issues + renders `frontend.pem`, `ca.crt`, `ui-client.pem` to `/run/krg/temporal/tls/` (tmpfs) on krg-prod | `nix/hosts/krg-prod/default.nix` (`krg.vaultAgent.renders`) |
 | **Server** | `temporal` mounts the certs, requires client auth on `:7233` | `nix/docker-compose/krg-prod/compose.temporal.yml` |
 | **UI** | `temporal-ui` presents its client cert to the frontend | same compose file |
-| **Provider** | `terraform/temporal` issues itself a `temporal-client` cert (step 3, not yet built) | — |
+| **Provider** | `terraform/temporal` issues itself a `temporal-client` cert and manages namespaces | `terraform/temporal/` |
+| **Public ingress** | `:7233` published to the internet (mTLS-gated) for off-site workers + the provider | `compose.temporal.yml` (`ports`), `ansible/.../krg-prod.fw` |
 
 ## The auto-setup gotcha (and the fix)
 

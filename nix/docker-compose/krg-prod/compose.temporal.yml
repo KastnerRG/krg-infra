@@ -94,6 +94,14 @@ services:
       # mTLS material rendered by vault-agent (read-only). uid 1000 reads it; the
       # /run/krg/temporal/tls dir is 0750 root on the host, so it's gated there.
       - /run/krg/temporal/tls:/etc/temporal/tls:ro
+    ports:
+      # PUBLIC gRPC frontend — external workers (NRP) + the terraform/temporal
+      # provider connect here. Explicit 0.0.0.0 (overriding krg.docker.defaultPublishAddress's
+      # loopback default) is the deliberate opt-in to expose it; safe ONLY because the
+      # frontend requires a client cert (TEMPORAL_TLS_REQUIRE_CLIENT_AUTH) — reachability
+      # is not the control, the mTLS cert is. The proxmox perimeter opens :7233 too
+      # (ansible krg-prod.fw). The UI/HTTP stays behind Traefik; this is gRPC only.
+      - "0.0.0.0:7233:7233"
     networks:
       - temporal_internal
       - prometheus_network

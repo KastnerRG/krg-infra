@@ -157,6 +157,21 @@ materialize() { # <target>
       local otp; otp="$(bao kv get -field=secret secret/e4e-nas/dsm-otp 2>/dev/null || true)"
       if [[ -n "$otp" ]]; then export TF_VAR_dsm_otp_secret="$otp"; fi
       ;;
+    temporal)
+      # The temporal provider builds its mTLS client at CONFIGURE time, so cert/key/ca
+      # must be KNOWN AT PLAN — they can't come from an in-tofu vault resource (provider
+      # configures before the resource exists → "failed to find any PEM data"). So mint
+      # a short-lived client cert HERE (ONE issuance → matching cert+key) and pass it as
+      # vars. krg-deploy's AppRole holds pki_int/issue/temporal-client; lives only in env.
+      [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping temporal" >&2; return 1; }
+      local cj
+      cj="$(bao write -format=json pki_int/issue/temporal-client common_name=krg-deploy ttl=1h 2>/dev/null)" \
+        || { echo "  could not issue temporal-client cert — skipping temporal" >&2; return 1; }
+      TF_VAR_temporal_client_cert="$(jq -r '.data.certificate' <<<"$cj")"
+      TF_VAR_temporal_client_key="$(jq -r '.data.private_key' <<<"$cj")"
+      TF_VAR_temporal_ca_cert="$(jq -r '.data.issuing_ca' <<<"$cj")"
+      export TF_VAR_temporal_client_cert TF_VAR_temporal_client_key TF_VAR_temporal_ca_cert
+      ;;
     openbao)
       # Can't bootstrap OpenBao from OpenBao — needs a privileged operator token.
       if [[ -z "${TOFU_OPENBAO_TOKEN:-}" ]]; then
