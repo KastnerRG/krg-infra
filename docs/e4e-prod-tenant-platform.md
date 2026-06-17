@@ -81,12 +81,16 @@ internal OpenBao PKI. Authentik and Temporal are reached cross-host on krg-prod.
 
 ## The `krg.tenants.<name>` module (interface sketch)
 
-Not yet written — this is the intended surface. Each tenant is one declaration;
-the module generates the microVM, user, ZFS volume + caps, runner, vault-agent
-targets, OpenBao AppRole reference, and the edge hostname→VM rule.
+Namespace is **`krg.tenants`** (generic, org-wide), not `e4e.*` — see
+[ADR 0008 §6](adr/0008-e4e-prod-tenant-platform.md). Not yet written — this is the
+intended surface. Each tenant is one declaration; the module generates the
+microVM, user, ZFS volume + caps, runner, vault-agent targets, OpenBao AppRole
+reference, and the edge hostname→VM rule.
 
 ```nix
+# shared tenant roster — imported by every platform host
 krg.tenants.fishsense = {
+  platform = "e4e-student";                # which platform instance hosts this
   repo = "UCSD-E4E/fishsense-lite";        # repo-scoped runner registers here
   subtree = "fishsense.e4e.ucsd.edu";      # wildcard SNI/Host rule → this VM
   hostnames = [                            # EXPLICIT SAN list for LE issuance
@@ -98,14 +102,29 @@ krg.tenants.fishsense = {
   deployDir = "/srv/fishsense";            # persistent runner checkout (in-VM)
   resources = { vcpu = 6; memMiB = 16384; diskGiB = 200; };
   isolation = "microvm";                   # pluggable knob (default)
-  secrets.openbaoPath = "secret/e4e-prod/fishsense";  # per-tenant AppRole scope
+  secrets.openbaoPath = "secret/e4e-student/fishsense";  # per-tenant AppRole scope
 };
+
+# in the platform host (currently e4e-prod, → e4e-student if krg-student lands)
+krg.tenantPlatform = { enable = true; id = "e4e-student"; };
 ```
 
 Routing stays stable: adding `newthing.fishsense.e4e.ucsd.edu` needs **no** edge
 routing change (the subtree rule catches it) — only a CNAME ticket and a
 one-line `hostnames` addition (the SAN re-issue), plus the tenant's own
 compose service.
+
+### Multiple platforms
+
+The design is a **per-platform instance**, not e4e-prod-specific. A host becomes
+a platform with `krg.tenantPlatform = { enable = true; id = "<id>"; }` and owns
+that instance's edge Traefik + microVM fleet + cert-manager + bridge (its own IP,
+LE ACME client, internal-CA client cert). A platform host instantiates only the
+`krg.tenants` whose `platform` matches its `id`; the rest stay inert there. So an
+`e4e-student` and a `krg-student` platform can run **concurrently**, tenants
+partitioned by the `platform` field. Reassigning a tenant is a one-field change
+(+ a DNS CNAME re-point + cert/zvol re-home, since each platform has its own edge
+IP/cert). This is why the module is generic `krg.tenants`, not `e4e.*`.
 
 ## Hypervisor & VM substrate
 
@@ -163,8 +182,8 @@ if it bites).
 3. **Authentik (krg-prod):** register the tenant's app(s)/provider(s) + outpost
    in `terraform/authentik/applications_e4e.tf`; ship app-tile icons (CLAUDE.md
    §4).
-4. **Platform:** add `krg.tenants.<name>` (repo, subtree, hostnames, resources,
-   AppRole path); `nix flake check`; deploy e4e-prod.
+4. **Platform:** add `krg.tenants.<name>` (platform, repo, subtree, hostnames,
+   resources, AppRole path); `nix flake check`; deploy the platform host.
 5. **Runner:** register the repo-scoped runner token (operator secret) so the
    in-VM `github-runner` comes online.
 6. **Repo side:** the tenant repo sets `DEPLOY_DIR`/`USER_ID`/`GROUP_ID`,
