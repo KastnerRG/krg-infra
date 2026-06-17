@@ -22,10 +22,12 @@ variable "temporal_frontend_domains" {
   description = <<-EOT
     Names the temporal-frontend SERVER cert may carry. Must include whatever
     clients verify as the TLS server name: the docker service name `temporal`
-    internally, plus the public name if the gRPC frontend is ever fronted.
+    (the UI, internally) AND the public name external workers + the tofu provider
+    connect to (`workflows.krg.ucsd.edu` — the gRPC frontend is published to the
+    internet on :7233, mTLS-gated).
   EOT
   type        = list(string)
-  default     = ["temporal", "temporal.krg.ucsd.edu"]
+  default     = ["temporal", "temporal.krg.ucsd.edu", "workflows.krg.ucsd.edu"]
 }
 
 variable "temporal_client_domains" {

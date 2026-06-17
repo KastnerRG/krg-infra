@@ -13,4 +13,10 @@ IN SSH(ACCEPT)           -source +dc/ops  -log nolog
 IN ACCEPT -p tcp -dport 80  -log nolog
 IN ACCEPT -p tcp -dport 443 -log nolog
 
+# Temporal gRPC frontend (workflows.krg.ucsd.edu:7233) — PUBLIC for off-site
+# workers (e.g. the NRP cluster) + the terraform/temporal provider. Open to the
+# internet on purpose: the frontend requires a client cert (mTLS), so the cert is
+# the access control, not the network. See docs/temporal-mtls.md.
+IN ACCEPT -p tcp -dport 7233 -log nolog
+
 IN DROP -log nolog

@@ -285,7 +285,7 @@ in {
         perms = "0644";
         dirPerms = "0755"; # container (uid 1000) must traverse to read; parent /run/krg/temporal stays 0750
         contents = ''
-          {{- with secret "pki_int/issue/temporal-frontend" "common_name=temporal" "alt_names=temporal.krg.ucsd.edu" }}
+          {{- with secret "pki_int/issue/temporal-frontend" "common_name=temporal" "alt_names=temporal.krg.ucsd.edu,workflows.krg.ucsd.edu" }}
           {{ .Data.certificate }}
           {{ .Data.issuing_ca }}
           {{ .Data.private_key }}
@@ -300,7 +300,7 @@ in {
         perms = "0644";
         dirPerms = "0755";
         contents = ''
-          {{- with secret "pki_int/issue/temporal-frontend" "common_name=temporal" "alt_names=temporal.krg.ucsd.edu" }}
+          {{- with secret "pki_int/issue/temporal-frontend" "common_name=temporal" "alt_names=temporal.krg.ucsd.edu,workflows.krg.ucsd.edu" }}
           {{ .Data.issuing_ca }}
           {{- end }}
         '';
