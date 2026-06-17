@@ -172,6 +172,18 @@ if it bites).
   env into the VM's `DEPLOY_DIR` (fail-closed) — so the tenant's compose, which
   reads those files, runs unmodified. No host-side plaintext secrets, no
   pre-Vault `.secrets` interim.
+- **Runner registration:** the credential is a **GitHub App** (one per GitHub
+  org — `UCSD-E4E` for e4e tenants, `KastnerRG` for krg-student tenants —
+  installed on the selected tenant repos), **not** long-lived PATs. The App
+  private key lives in OpenBao; a small **in-VM oneshot mints a short-lived
+  runner registration token** (App JWT → installation token → registration
+  token) just before the runner (re)registers, writing it to the `tokenFile` the
+  vault-agent path provides. `services.github-runners` consumes that token file;
+  the ephemeral nature is the module's concern. Rotating the App key is an
+  OpenBao change; the only operator-placed secret stays the per-tenant AppRole
+  `secret_id` (secret-zero). **krg-deploy migrates to this same pattern** — its
+  current hand-placed `/var/lib/krg-admin/.secrets/github-runner-token` (the
+  deferred manual file) is retired in the same effort.
 
 ## Onboarding a new tenant (checklist)
 
@@ -184,8 +196,10 @@ if it bites).
    §4).
 4. **Platform:** add `krg.tenants.<name>` (platform, repo, subtree, hostnames,
    resources, AppRole path); `nix flake check`; deploy the platform host.
-5. **Runner:** register the repo-scoped runner token (operator secret) so the
-   in-VM `github-runner` comes online.
+5. **Runner:** install the org's GitHub App on the tenant repo; the in-VM
+   oneshot mints the registration token from the App key (OpenBao) and the
+   repo-scoped `github-runner` comes online. Only the AppRole `secret_id` is
+   operator-placed (secret-zero).
 6. **Repo side:** the tenant repo sets `DEPLOY_DIR`/`USER_ID`/`GROUP_ID`,
    bootstraps its ops dirs, and points at central Authentik + Temporal.
 7. **Deploy:** first `auto-deploy/*` merge runs `docker compose up` in the VM.
@@ -226,4 +240,8 @@ The platform substrate plus the coordinated repo-side changes we own:
       gRPC exposure + firewall.
 - [ ] Per-VM monitoring (node/cadvisor → prometheus_network) and whether tenant
       VMs AD-join (default: no).
+- [ ] **GitHub App** for runner registration — one per GitHub org (`UCSD-E4E`,
+      `KastnerRG`), App key → OpenBao, in-VM token-minting oneshot (no PATs).
+      **Migrate krg-deploy's runner** off its hand-placed `github-runner-token`
+      file to the same App-based, OpenBao-rendered pattern (same effort).
 - [ ] `krg.tenants` module implementation + fishsense instantiation.

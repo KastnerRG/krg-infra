@@ -105,6 +105,13 @@ contributor pushes); branch protection + review gates merges to `main`. The
 trust boundary is therefore "people who can merge a project's `main`," confined
 to that project's VM.
 
+The runner's registration credential is a **GitHub App** (one per GitHub org —
+`UCSD-E4E`, `KastnerRG` — installed on the tenant repos; key in OpenBao, a short-
+lived registration token minted in-VM, **no long-lived PATs**). The only
+operator-placed secret is the per-tenant AppRole `secret_id` (secret-zero); the
+rest is vault-agent-rendered. **krg-deploy migrates to this same pattern**,
+retiring its deferred hand-placed `github-runner-token` file.
+
 ### 4. Edge: LE-terminate at the platform, re-encrypt to tenants over OpenBao PKI
 
 A **single platform-owned edge Traefik** on the e4e-prod host:
