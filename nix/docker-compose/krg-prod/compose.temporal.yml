@@ -19,6 +19,14 @@
 #   db.env     → POSTGRES_PASSWORD            (postgres, from secret/krg-prod/temporal)
 #   server.env → POSTGRES_PWD                 (server, same value, Temporal's var name)
 #   ui.env     → TEMPORAL_AUTH_CLIENT_SECRET  (ui, from secret/krg-prod/temporal-oidc)
+#
+# Frontend mTLS material is ALSO vault-agent-rendered, to /run/krg/temporal/tls/
+# (issued by the lab-internal CA in terraform/openbao/pki.tf), mounted read-only
+# at /etc/temporal/tls in the server + UI:
+#   frontend.pem  → frontend SERVER cert+key (temporal-frontend role)
+#   ca.crt        → intermediate CA (frontend client-CA + UI server-CA)
+#   ui-client.pem → temporal-ui CLIENT cert+key (temporal-client role)
+# Design + on-box validation gates: docs/temporal-mtls.md (UNVALIDATED).
 services:
   temporal-postgres:
     image: postgres:16.14
@@ -54,11 +62,38 @@ services:
       # Expose the server's Prometheus metrics so prometheus can scrape
       # temporal:8000 over prometheus_network (see the krg-prod prometheus.yml).
       - PROMETHEUS_ENDPOINT=0.0.0.0:8000
+      # ── Frontend mTLS ─────────────────────────────────────────────────────────
+      # Lab-internal CA (terraform/openbao/pki.tf); certs rendered by vault-agent
+      # to /run/krg/temporal/tls (mounted below). UNVALIDATED — see the bring-up +
+      # validation gates in docs/temporal-mtls.md before trusting this.
+      #
+      # requireClientAuth is SHARED with internode TLS, and the internal system
+      # worker + the auto-setup bootstrap (health check, default-namespace create)
+      # talk to the frontend — so enabling it naively wedges first boot. Fixed with
+      # the internal-frontend: internal traffic uses plaintext :7236, leaving the
+      # PUBLIC :7233 free to require client certs.
+      - USE_INTERNAL_FRONTEND=true # render the internal-frontend config block (:7236)
+      # USE_INTERNAL_FRONTEND only renders the *config*; the server still has to be
+      # ASKED to run the role. start-temporal.sh starts only the default 4 roles
+      # unless SERVICES lists them — without this, internal-frontend is configured
+      # but "not requested", :7236 never listens, and the bootstrap waits forever.
+      - SERVICES=frontend:internal-frontend:history:matching:worker
+      - TEMPORAL_ADDRESS=127.0.0.1:7236 # point the in-container setup CLI at :7236, not mTLS :7233
+      - BIND_ON_IP=0.0.0.0 # frontend must bind all ifaces so temporal-ui reaches :7233 cross-container (auto-setup default 127.0.0.1 is container-local — a latent pre-TLS bug)
+      - TEMPORAL_TLS_REQUIRE_CLIENT_AUTH=true
+      - TEMPORAL_TLS_FRONTEND_CERT=/etc/temporal/tls/frontend.pem
+      - TEMPORAL_TLS_FRONTEND_KEY=/etc/temporal/tls/frontend.pem # combined cert+key PEM (atomic pair)
+      - TEMPORAL_TLS_CLIENT1_CA_CERT=/etc/temporal/tls/ca.crt # CA that signs accepted client certs
+      - TEMPORAL_TLS_FRONTEND_SERVER_NAME=temporal
     env_file:
       - /run/krg/temporal/server.env # POSTGRES_PWD
     depends_on:
       temporal-postgres:
         condition: service_healthy
+    volumes:
+      # mTLS material rendered by vault-agent (read-only). uid 1000 reads it; the
+      # /run/krg/temporal/tls dir is 0750 root on the host, so it's gated there.
+      - /run/krg/temporal/tls:/etc/temporal/tls:ro
     networks:
       - temporal_internal
       - prometheus_network
@@ -70,6 +105,16 @@ services:
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
       - TEMPORAL_CORS_ORIGINS=https://workflows.krg.ucsd.edu
+      # ── Frontend mTLS (client side) ─────────────────────────────────────────────
+      # The frontend now requires client auth, so the UI must present a client cert
+      # (temporal-client role) and verify the server against the lab-internal CA.
+      # server_name MUST match the frontend cert's SAN (`temporal`). Cert+key in one
+      # PEM (atomic pair, see the host render). docs/temporal-mtls.md, UNVALIDATED.
+      - TEMPORAL_TLS_CA=/etc/temporal/tls/ca.crt
+      - TEMPORAL_TLS_CERT=/etc/temporal/tls/ui-client.pem
+      - TEMPORAL_TLS_KEY=/etc/temporal/tls/ui-client.pem
+      - TEMPORAL_TLS_SERVER_NAME=temporal
+      - TEMPORAL_TLS_ENABLE_HOST_VERIFICATION=true
       # ── Authentik OIDC SSO ────────────────────────────────────────────────────
       # PROVIDER_URL is the Authentik application issuer (slug "temporal", trailing
       # slash); temporal-ui (go-oidc) appends /.well-known/openid-configuration and
@@ -86,6 +131,9 @@ services:
       - /run/krg/temporal/ui.env # TEMPORAL_AUTH_CLIENT_SECRET
     depends_on:
       - temporal
+    volumes:
+      # mTLS material rendered by vault-agent (read-only) — the UI's client cert + CA.
+      - /run/krg/temporal/tls:/etc/temporal/tls:ro
     networks:
       - temporal_internal
       - traefik_proxy
