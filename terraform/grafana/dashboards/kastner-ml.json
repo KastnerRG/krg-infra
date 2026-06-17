@@ -26,7 +26,7 @@
       "title": "",
       "gridPos": {
         "h": 4,
-        "w": 24,
+        "w": 18,
         "x": 0,
         "y": 0
       },
@@ -36,6 +36,71 @@
         "content": "<h1 style=\"font-size:64px;margin:0\">Kastner-ML</h1>"
       },
       "pluginVersion": "12.3.6"
+    },
+    {
+      "type": "stat",
+      "title": "NixOS Version",
+      "description": "NixOS version (node_os_info `version`) — matches `nixos-version`: release.date.gitrev (codename).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 41,
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "name",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "node_os_info{instance=\"kastner-ml.ucsd.edu:9100\"}",
+          "legendFormat": "{{version}}",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ]
     },
     {
       "type": "row",
