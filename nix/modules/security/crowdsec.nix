@@ -316,6 +316,23 @@ in {
     # Add a `d` for the parent in the SAME settings block — tmpfiles creates a
     # directory before the file it contains — so the seed no longer depends on
     # upstream's stateDir rule having run first.
+    # Fix the upstream crowdsec-update-hub.service (autoUpdateService).
+    # It runs `cscli hub update` as the unprivileged crowdsec DynamicUser
+    # (PrivateUsers + NoNewPrivileges), then
+    #   ExecStartPost = systemctl reload crowdsec.service
+    # That reload is a D-Bus call to PID 1 that needs root — as the
+    # sandboxed dynamic user polkit denies it ("Failed to reload
+    # crowdsec.service: Access denied", status 4/NOPERMISSION), the
+    # oneshot fails, switch-to-configuration exits 4, and the WHOLE fleet
+    # deploy aborts (run 27663630406, krg-vault). Prefix the reload with
+    # "+" so systemd runs just that one exec line with full privileges
+    # (User=/NoNewPrivileges/PrivateUsers et al. are not applied to a
+    # "+"-prefixed command) — exactly the privilege the reload needs. The
+    # `cscli hub update` ExecStart still runs sandboxed as the crowdsec
+    # user; only the reload is elevated.
+    systemd.services.crowdsec-update-hub.serviceConfig.ExecStartPost =
+      lib.mkForce "+systemctl reload crowdsec.service";
+
     systemd.tmpfiles.settings."10-crowdsec-seed-capi" = let
       credFile = config.services.crowdsec.settings.capi.credentialsFile;
       owner = {
