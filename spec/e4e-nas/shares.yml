@@ -71,6 +71,17 @@ shares:
   - { name: passive-acoustic-biodiversity, path: /volume2/passive-acoustic-biodiversity, description: "" }
   - { name: rustfs, path: /volume2/rustfs, description: "" }
 
+  # NFS-only Linux home backing for E4E compute (kastner-ml /home; ADR 0001).
+  # Deliberately a PLAIN share, NOT the DSM "homes" user-home share: it's exported
+  # no_root_squash (nfs-exports.yml) so the client's pam_mkhomedir creates+chowns each
+  # home to the SSSD uid (e.g. 751001103) — DSM's winbind RID idmap never enters the
+  # picture (it can't even resolve AD users today, and its range doesn't match SSSD).
+  # Mirrors the waiter<->fabricant rpool/nfs/home pattern. No SMB users → not browseable,
+  # no recycle bin (would litter #recycle in every home).
+  # ⚠️ RIG: confirm this share is created WITHOUT Synology ACL (plain POSIX) so root-over-
+  # NFS chown behaves; otherwise the home perms fight DSM ACL inheritance.
+  - { name: e4e-home, path: /volume2/e4e-home, description: "E4E Linux NFS home (kastner-ml)", recycle_bin: false, browseable: false }
+
   # --- NEW: Garage S3 backend (ADR 0003) ---
   # TODO confirm volume + snapshot policy. Bind-mounted into the Garage container (terraform/e4e-nas).
   - { name: s3-data, path: /volume2/s3-data, description: "Garage S3 object store data", recycle_bin: false, browseable: false }

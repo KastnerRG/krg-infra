@@ -48,19 +48,22 @@
   krg.impermanence.rootSnapshot = "rpool/root@blank";
   krg.impermanence.importUnit = "zfs-import-rpool.service";
 
-  # AD user homes come from NFS — served by e4e-nas (/homes), same subnet (132.239.17.0/24)
-  # as this box. This moves /home OFF the rolled-back root (the prerequisite for
-  # impermanence). requireMountForLogin (default on) fail-closes: if e4e-nas is down at
-  # boot, AD logins are denied rather than getting an ephemeral home a reboot would wipe;
-  # break-glass e4e-admin (home /var/lib/e4e-admin) is unaffected.
+  # AD user homes come from NFS — served by e4e-nas, same subnet (132.239.17.0/24) as this
+  # box. This moves /home OFF the rolled-back root (the prerequisite for impermanence).
+  # requireMountForLogin (default on) fail-closes: if e4e-nas is down at boot, AD logins
+  # are denied rather than getting an ephemeral home a reboot would wipe; break-glass
+  # e4e-admin (home /var/lib/e4e-admin) is unaffected.
   #
-  # TODO(bring-up): verify the e4e-nas NFSv4 export path + that its winbind idmap matches
-  # SSSD's algorithmic UID/GID range (today this box reaches e4e-nas only over CIFS).
-  # Synology NFS may need nfsVersion = "4.1"; default 4.2 here pending verification.
+  # Export is the DEDICATED e4e-home share (/volume2/e4e-home, spec/e4e-nas/{shares,
+  # nfs-exports}.yml), NOT DSM's "homes" share: it's exported no_root_squash so this box's
+  # pam_mkhomedir creates+chowns homes to the SSSD uid — DSM's winbind RID idmap (which
+  # doesn't match SSSD's algorithmic range, and can't resolve AD users) is bypassed.
+  # Mirrors waiter<->fabricant. Synology NFS may need nfsVersion = "4.1"; default 4.2 here
+  # pending rig verification.
   krg.nfsHome = {
     enable = true;
     server = "132.239.17.124"; # e4e-nas.ucsd.edu (pinned by IP — no DNS dependency at mount)
-    export = "/volume1/homes"; # TODO verify actual DSM export path
+    export = "/volume2/e4e-home";
   };
 
   # AD client (krg.adClient enabled in base.nix). This box is on 132.239.17.0/24 while
