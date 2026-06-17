@@ -145,6 +145,15 @@ if it bites).
   desktop-virtualization focus (GPU/wayland) is off-target for headless service
   fleets, and its per-device sandboxing edge is tail-risk here since the VM is
   already the tenant boundary (semi-trusted tenants, not hostile guests).
+- **Host filesystem: ZFS-on-root** (single pool, lz4, via disko like waiter). The
+  platform host owns its storage and carves the per-tenant zvols itself — so
+  adding a tenant stays a single `krg.tenants` declaration, no Proxmox/ansible-layer
+  disk provisioning. Because e4e-prod is a VM on fabricant's ZFS, this is **nested
+  ZFS** (ZFS-on-ZFS): accepted and **tuned** — small inner ARC / `primarycache=metadata`
+  (no double data cache), a single inner vdev (fabricant provides redundancy),
+  `volblocksize`/`sync` tuned; IO contention monitored per [ADR 0004](adr/0004-vm-disk-io-budget.md).
+  **Impermanence** (waiter-style ephemeral root) is an **optional later hardening**,
+  not v1.
 - **Per-tenant disk:** a dedicated ZFS **zvol** as the VM's durable block device
   (DEPLOY_DIR + Postgres), so tenant data is on its own dataset with its own
   quota — a real boundary, independent of the rolled-up root.
@@ -227,8 +236,9 @@ The platform substrate plus the coordinated repo-side changes we own:
 
 - [x] **CA source** — **Let's Encrypt** (decided). InCommon rejected: per-cert
       manual approval is incompatible with automated renewal (ADR 0008).
-- [ ] e4e-prod VM provisioning on fabricant → real `hardware-configuration.nix`,
-      static IP `137.110.161.107`, generous CPU/RAM/IO sizing, first deploy.
+- [ ] e4e-prod VM provisioning on fabricant → real `hardware-configuration.nix`
+      (**ZFS-on-root via disko**, single pool + lz4, nested-ZFS tuning), static IP
+      `137.110.161.107`, generous CPU/RAM/IO sizing, first deploy.
 - [ ] **Nested KVM on fabricant** — `kvm_intel nested=1` + e4e-prod CPU type
       `host` (prerequisite for the nested microvm.nix fleet).
 - [ ] microvm.nix as a flake input (cloud-hypervisor backend); per-tenant zvol;

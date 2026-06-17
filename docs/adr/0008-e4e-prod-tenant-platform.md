@@ -73,8 +73,13 @@ student-stack IO contention against fabricant's shared pool — [ADR 0004](0004-
 — is accepted and monitored rather than designed around with a dedicated host).
 This keeps the single-platform-host model: the flake owns the whole fleet and
 `krg.tenants.<name>` renders each VM. It requires **nested KVM** on fabricant
-(`kvm_intel nested=1` + CPU type `host`). Each tenant gets a dedicated ZFS
-**zvol** as its durable disk. The microVM **backend is cloud-hypervisor**
+(`kvm_intel nested=1` + CPU type `host`). The host runs **ZFS-on-root** (single
+pool, lz4, via disko) and carves the per-tenant **zvols** itself — self-contained,
+so a new tenant is one `krg.tenants` declaration (not a Proxmox/ansible-layer disk
+provision). Since e4e-prod sits on fabricant's ZFS this is **nested ZFS**, accepted
+and tuned (small inner ARC / `primarycache=metadata`, single inner vdev), IO
+monitored per [ADR 0004](0004-vm-disk-io-budget.md). The microVM **backend is
+cloud-hypervisor**
 (`krg.tenants` is still written backend-agnostic so it's swappable, but
 cloud-hypervisor is the chosen default; QEMU is the compatibility fallback).
 
