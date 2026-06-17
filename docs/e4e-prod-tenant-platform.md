@@ -152,13 +152,52 @@ if it bites).
   ZFS** (ZFS-on-ZFS): accepted and **tuned** — small inner ARC / `primarycache=metadata`
   (no double data cache), a single inner vdev (fabricant provides redundancy),
   `volblocksize`/`sync` tuned; IO contention monitored per [ADR 0004](adr/0004-vm-disk-io-budget.md).
-  **Impermanence** (waiter-style ephemeral root) is an **optional later hardening**,
-  not v1.
+  **Impermanence** (ephemeral root) is **in** for both the host and the tenant VMs
+  — see "Operator access & impermanence" below.
 - **Per-tenant disk:** a dedicated ZFS **zvol** as the VM's durable block device
   (DEPLOY_DIR + Postgres), so tenant data is on its own dataset with its own
   quota — a real boundary, independent of the rolled-up root.
 - **Networking:** TAP-on-bridge per VM; inter-VM firewalling on the host
   (nftables on the bridge); the edge reaches each VM by its bridge IP.
+
+## Operator access & impermanence
+
+**Access — break-glass only, jump through the host.** Tenant microVMs are
+appliances: deploy via the runner, configure via `nixos-rebuild`, observe via
+Grafana/Loki. SSH is break-glass. A VM's `:22` is **bridge-only** — never
+external, never cross-tenant (the edge only proxies HTTP[S]; bridge nftables keep
+`:22` reachable only from the host). Operators jump through the e4e-prod bastion:
+`ssh -J e4e-admin@e4e-prod.ucsd.edu ops@fishsense.vm` (the host carries a
+per-tenant `/etc/hosts` alias → stable bridge IP). The VM authorizes the
+platform-ops keys from `nix/keys/admins.json`, **key-only, no AD** (appliances
+don't AD-join — the break-glass pattern of `nix/users/admin.nix`). Default
+**jump-only sshd**; deepest fallback when a VM's net/sshd is down is to attach to
+its **serial console** from the host (cloud-hypervisor/microvm.nix). **Tenant
+maintainers get no shell** — they deploy via their repo and observe via
+Grafana/Loki, so the VM stays drift-free (IaC-strict).
+
+**Impermanence — ephemeral root on both the host and the tenant VMs**
+(`modules/impermanence.nix`, battle-tested on waiter incl. the systemd-258
+`/usr/bin/env` initrd reseed). Root resets every boot; only declared state
+survives. This makes "appliance / repair-by-redeploy / no student drift" literal
+and is **anti-persistence**: a foothold or manual change in a VM root doesn't
+survive a reboot.
+
+- **Tenant VM — survives:** its durable **zvol** (DEPLOY_DIR + Postgres
+  bind-mounts, a separate device); `/var/lib/docker` on a persisted dataset (else
+  images re-pull every boot); SSH host keys + `machine-id`; the vault-agent
+  **secret-zero** (AppRole `secret_id`) on a persisted path. *Ephemeral:*
+  everything else — the runner **re-registers via the App oneshot** on boot (no
+  stale registration), vault-agent re-renders all secrets/PKI.
+- **Host — survives:** `/persist` (host keys, `machine-id`, AD keytab,
+  secret-zero); the cert-manager **`acme.json`** (so LE certs are **not** re-issued
+  every boot — rate-limit-critical, ties to the issuance invariant); the ZFS
+  data/zvols (separate datasets, not under the ephemeral root). *Ephemeral:* host
+  root.
+
+**v1 cost (honest):** impermanence is the one area waiter needed several boot-bug
+fixes; the module carries them, so this is de-risked by precedent but remains the
+highest-fiddle part of bring-up — validate across reboots before go-live.
 
 ## Secrets & PKI
 
@@ -250,6 +289,11 @@ The platform substrate plus the coordinated repo-side changes we own:
       gRPC exposure + firewall.
 - [ ] Per-VM monitoring (node/cadvisor → prometheus_network) and whether tenant
       VMs AD-join (default: no).
+- [ ] Impermanence (host + tenant VMs): persist sets (host keys, machine-id,
+      secret-zero, `acme.json`, `/var/lib/docker`, the zvols); **validate across
+      reboots** before go-live (the highest-fiddle bring-up step).
+- [ ] Operator access: jump-only sshd on tenant VMs (bridge-only `:22`, fleet
+      keys, per-tenant `/etc/hosts` alias) + serial-console fallback.
 - [ ] **GitHub App** for runner registration — one per GitHub org (`UCSD-E4E`,
       `KastnerRG`), App key → OpenBao, in-VM token-minting oneshot (no PATs).
       **Migrate krg-deploy's runner** off its hand-placed `github-runner-token`

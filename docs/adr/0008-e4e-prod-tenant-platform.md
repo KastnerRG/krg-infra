@@ -78,7 +78,13 @@ pool, lz4, via disko) and carves the per-tenant **zvols** itself — self-contai
 so a new tenant is one `krg.tenants` declaration (not a Proxmox/ansible-layer disk
 provision). Since e4e-prod sits on fabricant's ZFS this is **nested ZFS**, accepted
 and tuned (small inner ARC / `primarycache=metadata`, single inner vdev), IO
-monitored per [ADR 0004](0004-vm-disk-io-budget.md). The microVM **backend is
+monitored per [ADR 0004](0004-vm-disk-io-budget.md). Both the host and the tenant
+VMs run **impermanent (ephemeral) root** (`modules/impermanence.nix`); only
+`/persist` + the durable zvols survive, so drift or a compromise foothold in a VM
+root resets on reboot — making "repair by redeploy" literal and contributing to
+the runner-root containment above. Operator SSH is **break-glass, jump-through-the-host
+only** (`:22` bridge-only, fleet keys, no AD; serial console as the deeper
+fallback); tenant maintainers get no shell. The microVM **backend is
 cloud-hypervisor**
 (`krg.tenants` is still written backend-agnostic so it's swappable, but
 cloud-hypervisor is the chosen default; QEMU is the compatibility fallback).
