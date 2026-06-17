@@ -10,8 +10,9 @@
       { "cidr": "132.239.10.0/24", "comment": "Sealab Wifi?" },
       { "cidr": "132.239.17.124", "comment": "e4e-nas.ucsd.edu" },
       { "cidr": "137.110.161.106", "comment": "krg-prod.ucsd.edu" },
-      { "cidr": "137.110.161.107", "comment": "krg-ad.ucsd.edu (old AD, being decommissioned)" },
-      { "cidr": "137.110.161.109", "comment": "krg-ldap.ucsd.edu" }
+      { "cidr": "137.110.161.107", "comment": "e4e-prod.ucsd.edu" },
+      { "cidr": "137.110.161.109", "comment": "krg-ldap.ucsd.edu" },
+      { "cidr": "132.239.17.123",  "comment": "kastner-ml.ucsd.edu (compute; domain member)" }
     ],
     "ucsd": [
       { "cidr": "100.0.0.0/8" },
@@ -20,7 +21,7 @@
       { "cidr": "132.239.17.124", "comment": "e4e-nas.ucsd.edu" },
       { "cidr": "137.110.0.0/16" },
       { "cidr": "137.110.161.106", "comment": "krg-prod.ucsd.edu" },
-      { "cidr": "137.110.161.107", "comment": "krg-ad.ucsd.edu (old AD, being decommissioned)" },
+      { "cidr": "137.110.161.107", "comment": "e4e-prod.ucsd.edu" },
       { "cidr": "137.110.161.109", "comment": "krg-ldap.ucsd.edu" }
     ],
     "ops": [
@@ -32,7 +33,8 @@
       { "cidr": "137.110.161.106", "comment": "krg-prod.ucsd.edu" },
       { "cidr": "137.110.161.109", "comment": "krg-ldap.ucsd.edu" },
       { "cidr": "137.110.161.122", "comment": "krg-deploy.ucsd.edu" },
-      { "cidr": "137.110.161.123", "comment": "krg-vault.ucsd.edu" }
+      { "cidr": "137.110.161.123", "comment": "krg-vault.ucsd.edu" },
+      { "cidr": "132.239.17.123",  "comment": "kastner-ml.ucsd.edu (compute; domain member)" }
     ]
   }
 }
