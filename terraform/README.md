@@ -21,7 +21,7 @@ and secrets. A NAS `apply` must not be able to touch Vault's state.
 | [`authentik/`](authentik/) | `goauthentik/authentik` + `hashicorp/vault` + `hashicorp/random` | Authentik **SSO config**: applications, OAuth2/OIDC + proxy providers, LDAP source/outpost, groups; writes OIDC client secrets into OpenBao | **built** |
 | [`openbao/`](openbao/) | `hashicorp/vault` (OpenBao is API-compatible) | OpenBao **structure**: KV-v2 mount, AppRole auth, per-consumer policies (krg-deploy, krg-prod) | **built** |
 | [`grafana/`](grafana/) | `grafana/grafana` + `hashicorp/vault` | Grafana objects: data sources, folders, dashboards, SSO via Authentik (creds from OpenBao) | **built** |
-| [`temporal/`](temporal/) | `platacard/temporal` + `hashicorp/vault` | Temporal **namespaces** on the krg-prod cluster; authenticates to the mTLS frontend with a `temporal-client` cert minted from the lab CA | **built** |
+| [`temporal/`](temporal/) | `platacard/temporal` | Temporal **namespaces** on the krg-prod cluster; authenticates to the mTLS frontend with a `temporal-client` cert minted from the lab CA by the deploy script | **built** |
 
 > `authentik/`, `openbao/`, and `grafana/` manage the *configuration of* services
 > that are **deployed elsewhere** (Authentik + Grafana are compose stacks on

@@ -1,9 +1,3 @@
-variable "vault_addr" {
-  description = "OpenBao API address (used to issue the temporal-client cert)"
-  type        = string
-  default     = "https://krg-vault.ucsd.edu:8200"
-}
-
 variable "temporal_host" {
   description = <<-EOT
     Dial address for the Temporal gRPC frontend. Defaults to krg-prod's internal
@@ -29,6 +23,29 @@ variable "temporal_tls_server_name" {
   EOT
   type        = string
   default     = "workflows.krg.ucsd.edu"
+}
+
+# mTLS client material — minted per-run by deploy/deploy-tofu.sh from the lab CA's
+# temporal-client role and exported as TF_VAR_*. Defaults are empty so `tofu
+# validate` works without them; an apply needs all three (the script sets them).
+variable "temporal_client_cert" {
+  description = "Client certificate PEM for mTLS to the frontend"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "temporal_client_key" {
+  description = "Client private key PEM for mTLS to the frontend"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "temporal_ca_cert" {
+  description = "Lab-internal CA PEM the frontend's server cert is verified against"
+  type        = string
+  default     = ""
 }
 
 variable "namespaces" {
