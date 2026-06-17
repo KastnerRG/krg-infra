@@ -157,6 +157,13 @@ materialize() { # <target>
       local otp; otp="$(bao kv get -field=secret secret/e4e-nas/dsm-otp 2>/dev/null || true)"
       if [[ -n "$otp" ]]; then export TF_VAR_dsm_otp_secret="$otp"; fi
       ;;
+    temporal)
+      # terraform/temporal mints its own temporal-client cert via the vault provider
+      # (krg-deploy AppRole holds pki_int/issue/temporal-client) and uses it to reach
+      # the mTLS frontend. Just needs the AppRole token (+ vault addr, which the
+      # target defaults); the cert is issued by the apply, not materialized here.
+      [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping temporal" >&2; return 1; }
+      ;;
     openbao)
       # Can't bootstrap OpenBao from OpenBao — needs a privileged operator token.
       if [[ -z "${TOFU_OPENBAO_TOKEN:-}" ]]; then
