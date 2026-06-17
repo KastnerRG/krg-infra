@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Deploy every NixOS host in the flake from the control node (krg-deploy).
 #
-# Activation is non-interactive because the break-glass admin (krg-admin) has
-# sudoNoPassword on every host (nix/users/admin.nix), so `nixos-rebuild --sudo`
-# needs no password prompt. Each host BUILDS ITS OWN config (--build-host =
+# Activation is non-interactive because the break-glass admin (krg-admin, or
+# e4e-admin on E4E hosts — see USER_OVERRIDE) has sudoNoPassword on every host
+# (nix/users/admin.nix), so `nixos-rebuild --sudo` needs no password prompt. The
+# control node's deploy key is authorized for BOTH admin accounts
+# (nix/keys/admins.json). Each host BUILDS ITS OWN config (--build-host =
 # --target-host) so krg-deploy (a small VM) never has to build waiter's
 # NVIDIA/CUDA closure or copy gigabytes around — it only evaluates + orchestrates.
 #
@@ -17,9 +19,11 @@ FLAKE="${REPO_ROOT}/nix"
 ADMIN="${DEPLOY_ADMIN:-krg-admin}"
 
 # Deploy order: dependencies first (vault/AD before the services that use them).
+# Compute boxes (waiter, kastner-ml) go last — they depend on the directory/vault
+# tier, not the other way round.
 # e4e-prod is defined in the flake but NOT provisioned yet — omitted until the host
 # exists (deploying it would fail at SSH). Re-add it here + in ADDR when it's up.
-ORDER=(krg-vault krg-ldap krg-prod waiter)
+ORDER=(krg-vault krg-ldap krg-prod waiter kastner-ml)
 
 # host -> ssh address. Fully-qualified DNS names only — never IPs (DNS is the stable
 # handle; IPs may change). Names are final per the machine-rename plan (#128).
@@ -28,7 +32,16 @@ declare -A ADDR=(
   [krg-ldap]=krg-ldap.ucsd.edu
   [krg-prod]=krg-prod.ucsd.edu
   [waiter]=waiter.ucsd.edu
+  [kastner-ml]=kastner-ml.ucsd.edu
   # [e4e-prod]=e4e-prod.ucsd.edu   # not provisioned yet — re-add to ORDER when it exists
+)
+# Per-host remote user (default ADMIN). kastner-ml is E4E hardware → e4e-admin
+# break-glass account (nix/hosts/kastner-ml/default.nix sets krg.adminAccount);
+# the control node's deploy key is authorized there too (nix/keys/admins.json),
+# and e4e-admin has sudoNoPassword, so the OEC staging + --sudo rebuild stay
+# non-interactive. Mirrors the USER_OVERRIDE map in reboot-fleet.sh.
+declare -A USER_OVERRIDE=(
+  [kastner-ml]=e4e-admin
 )
 
 DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-/var/lib/krg-admin/.ssh/id_ed25519}"
@@ -126,7 +139,7 @@ verify_oec_local() {
 # before the services that use them), so a failure early means the dependents
 # would be deploying against a broken base — don't.
 for host in "${ORDER[@]}"; do
-  target="${ADMIN}@${ADDR[$host]}"
+  target="${USER_OVERRIDE[$host]:-$ADMIN}@${ADDR[$host]}"
   echo "::group::nixos-rebuild switch ${host} (${target})"
   # Stage the OEC archive BEFORE the switch so this rebuild's oec-install
   # oneshot finds it and enrolls on the same run.
@@ -156,7 +169,7 @@ done
 echo "::group::verify OEC security daemons (qualys-cloud-agent + xagt)"
 oec_failed=0
 for host in "${ORDER[@]}"; do
-  target="${ADMIN}@${ADDR[$host]}"
+  target="${USER_OVERRIDE[$host]:-$ADMIN}@${ADDR[$host]}"
   verify_oec "$target" "$host" || oec_failed=1
 done
 # ...plus the control node itself (excluded from the rebuild loop above).
