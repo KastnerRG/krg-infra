@@ -34,3 +34,20 @@ exports:
         insecure: false
         crossmnt: true
         security_flavor: { sys: true, kerberos: false, kerberos_integrity: false, kerberos_privacy: false }
+
+  # e4e-home = /volume2/e4e-home (created by synology_shares). Linux NFS /home for the
+  # E4E compute box (kastner-ml mounts it at /home via krg.nfsHome). root_squash: root
+  # (=> no_root_squash) is LOAD-BEARING: the client's pam_mkhomedir runs as root and must
+  # create + chown each home to the user's SSSD uid. Because ownership is set client-side
+  # over sec=sys, the numeric SSSD uid (e.g. 751001103) is what lands on disk — DSM's
+  # winbind idmap is bypassed entirely (it doesn't resolve AD users and its RID range
+  # doesn't match SSSD anyway). Same shape/posture as the fabricant-prod-share rule above.
+  - share: e4e-home
+    rules:
+      - client: kastner-ml.ucsd.edu
+        privilege: rw
+        root_squash: root          # no_root_squash — required for client pam_mkhomedir
+        async: true
+        insecure: false
+        crossmnt: true
+        security_flavor: { sys: true, kerberos: false, kerberos_integrity: false, kerberos_privacy: false }
