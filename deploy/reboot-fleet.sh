@@ -33,11 +33,14 @@ declare -A ADDR=(
   [krg-ldap]=krg-ldap.ucsd.edu
   [krg-prod]=krg-prod.ucsd.edu
   [waiter]=waiter.ucsd.edu
+  [kastner-ml]=kastner-ml.ucsd.edu
   [e4e-nas]=132.239.17.124
 )
-# Per-host remote user (default ADMIN). e4e-nas is E4E hardware → e4e-admin slot;
-# the control node's key is authorized there too (same key, see deploy-ansible.sh).
+# Per-host remote user (default ADMIN). kastner-ml and e4e-nas are E4E hardware →
+# e4e-admin slot; the control node's key is authorized there too (same key, see
+# deploy-ansible.sh / nix/keys/admins.json).
 declare -A USER_OVERRIDE=(
+  [kastner-ml]=e4e-admin
   [e4e-nas]=e4e-admin
 )
 # Reboot command, run over SSH with sudo (every host has passwordless sudo for the
@@ -53,7 +56,7 @@ declare -A REBOOT_CMD_OVERRIDE=(
 # Reboot order. Sequential, one host fully back before the next, so the fleet is
 # never all-down at once and the log shows exactly where a failure happened. The
 # NAS goes last (slowest to reboot, least coupled to the others' reachability).
-ORDER=(krg-vault krg-ldap krg-prod waiter e4e-nas)
+ORDER=(krg-vault krg-ldap krg-prod waiter kastner-ml e4e-nas)
 
 # Optional args restrict the run to a subset, given as a comma- and/or
 # space-separated list of HOSTNAMES (e.g. `reboot-fleet.sh waiter,krg-prod` or
