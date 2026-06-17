@@ -129,8 +129,13 @@ A **single platform-owned edge Traefik** on the e4e-prod host:
 
 - terminates **public TLS** with Let's Encrypt certificates — it is the **sole,
   controlled ACME client** on the platform;
-- routes each tenant's subdomain subtree to that tenant's VM (wildcard SNI/Host
-  match → one stable rule per tenant);
+- routes each tenant's subdomain subtree to that tenant's VM — **one stable rule
+  per tenant covering the apex label *and* every name beneath it**,
+  `HostRegexp(`^(.+\.)?<subtree>$`)`. The apex matters: `fishsense.e4e.ucsd.edu`
+  (the web portal) sits under `*.e4e.ucsd.edu`, **not** `*.fishsense.e4e.ucsd.edu`,
+  so a bare `*.fishsense…` wildcard would miss it. Tenants thus partition the
+  shared `*.e4e.ucsd.edu` space: `fishsense.*` → fishsense VM, `smartfin.*` →
+  smartfin VM, each owning its label apex + subtree;
 - **re-encrypts** the hop to each tenant VM over **OpenBao PKI** (internal CA,
   short-TTL certs auto-rotated by the VM's vault-agent), optionally **mTLS** so a
   VM backend accepts connections only from the edge.

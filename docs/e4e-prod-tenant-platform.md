@@ -65,19 +65,33 @@ Key: a **single** edge Traefik holds the only public LE key and is the only
 ACME client. Each tenant is a sealed microVM; the edge re-encrypts to it over
 internal OpenBao PKI. Authentik and Temporal are reached cross-host on krg-prod.
 
-## Request path (fishsense example)
+## Request path
 
-1. Client → `https://orchestrator.fishsense.e4e.ucsd.edu` resolves (per-hostname
-   CNAME → e4e-prod) to the host edge `:443`.
-2. Edge Traefik **terminates** the public LE cert, matches the `*.fishsense`
-   subtree → fishsense VM, and **re-encrypts** over OpenBao-PKI (mTLS) to the
-   VM's inner Traefik.
-3. Inner Traefik terminates the internal cert, applies the tenant's own
-   `authentik@docker` outpost (per-route, from compose labels; outpost
-   forward-auths to krg-prod Authentik), and routes to the app container.
+Two cases matter — a sub-service and the **subtree apex** (the web portal lives
+*at* `fishsense.e4e.ucsd.edu`, the apex itself):
+
+1. Client → `https://orchestrator.fishsense.e4e.ucsd.edu` **or**
+   `https://fishsense.e4e.ucsd.edu` resolves (per-hostname CNAME → e4e-prod) to
+   the host edge `:443`.
+2. Edge Traefik **terminates** the public LE cert (the SNI selects the fishsense
+   tenant's multi-SAN cert), matches the **fishsense tenant rule — apex +
+   descendants**, `HostRegexp(`^(.+\.)?fishsense\.e4e\.ucsd\.edu$`)` → fishsense
+   VM, and **re-encrypts** over OpenBao-PKI (mTLS) to the VM's inner Traefik.
+3. Inner Traefik terminates the internal cert and routes by `Host(...)` to the
+   app container — `orchestrator.fishsense…` → the API (behind the tenant's own
+   `authentik@docker` outpost, which forward-auths to krg-prod Authentik);
+   `fishsense.e4e.ucsd.edu` → the `fishsense-lite-web` portal (auth is **in-app
+   OIDC** to krg-prod Authentik, *not* edge/forward-auth).
 4. fishsense workers reach krg-prod's Temporal over gRPC; SSO subjects resolve
    against krg-prod Authentik. Object store (Garage) + NAS are reached per the
    tenant's own mounted config, outside the platform's concern.
+
+> **Apex is load-bearing.** `fishsense.e4e.ucsd.edu` sits under `*.e4e.ucsd.edu`,
+> **not** under `*.fishsense.e4e.ucsd.edu` — a bare `*.fishsense…` wildcard would
+> miss it. The tenant rule must cover the apex label *and* everything beneath it
+> (`^(.+\.)?<subtree>$`), so tenants partition the shared `*.e4e.ucsd.edu` space
+> cleanly: `fishsense.*` → fishsense VM, `smartfin.*` → smartfin VM, each owning
+> its label apex + subtree.
 
 ## The `krg.tenants.<name>` module (interface sketch)
 
@@ -92,7 +106,7 @@ reference, and the edge hostname→VM rule.
 krg.tenants.fishsense = {
   platform = "e4e-student";                # which platform instance hosts this
   repo = "UCSD-E4E/fishsense-lite";        # repo-scoped runner registers here
-  subtree = "fishsense.e4e.ucsd.edu";      # wildcard SNI/Host rule → this VM
+  subtree = "fishsense.e4e.ucsd.edu";      # → rule ^(.+\.)?fishsense\.e4e\.ucsd\.edu$ (apex + descendants)
   hostnames = [                            # EXPLICIT SAN list for LE issuance
     "fishsense.e4e.ucsd.edu"
     "orchestrator.fishsense.e4e.ucsd.edu"
