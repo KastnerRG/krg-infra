@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh the Proxmox VE version textfile metric
+
+[Timer]
+# Republish shortly after boot and hourly thereafter; the version only changes on
+# a pve-manager upgrade, so an hourly cadence is plenty to catch it.
+OnBootSec=2min
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

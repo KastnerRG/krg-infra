@@ -8,6 +8,11 @@
 ad_allowed_groups:
   - Domain Admins
 
+# Publish the PVE version (`pveversion`) as a node_exporter textfile metric
+# (node_pve_version) — these hosts have pve-manager; node_os_info only carries the
+# Debian base. The monitoring role no-ops this where the var is false (all.yml).
+monitoring_pve_version: true
+
 # Guests with a per-VM firewall file: the proxmox_firewall role copies
 # roles/proxmox_firewall/files/<fw_file> to /etc/pve/firewall/<vmid>.fw. The
 # IPSets these reference are defined in cluster.fw (templated from
