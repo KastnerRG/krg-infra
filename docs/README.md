@@ -31,6 +31,7 @@ actually operate / recover this" layer.
 | [fabricant-topology.md](fabricant-topology.md) | fabricant (Proxmox) storage + NFS + firewall diagrams |
 | [krg-ldap-topology.md](krg-ldap-topology.md) | krg-ldap (AD DC) storage + network diagrams |
 | [krg-prod-iac.md](krg-prod-iac.md) | How the krg-prod + e4e-nas IaC maps onto this repo's nix/ansible/terraform layers, and the NAS standup plan |
+| [e4e-prod-tenant-platform.md](e4e-prod-tenant-platform.md) | e4e-prod multi-tenant platform for student-built projects: sealed microVM per tenant, edge TLS + OpenBao PKI, the `krg.tenants` interface, onboarding |
 
 > Topology and monitoring diagrams are [Mermaid](https://mermaid.js.org/) and render
 > inline on GitHub.
@@ -57,3 +58,4 @@ Immutable decision records under [`adr/`](adr/). All Accepted.
 | [0005](adr/0005-repo-integration-opentofu-krg-deploy.md) | krg-prod IaC integrates into this repo; OpenTofu over Terraform; krg-deploy is the control node |
 | [0006](adr/0006-no-oec-on-dsm.md) | No Qualys/Trellix (OEC) on DSM — DSM-native Security Advisor replaces it |
 | [0007](adr/0007-dsm-config-ansible-not-terraform.md) | The DSM tofu/ansible split follows API surface (real provider resources vs CLI-only), not "appliance-ness" |
+| [0008](adr/0008-e4e-prod-tenant-platform.md) | e4e-prod is a multi-tenant platform for student-built projects — sealed microVM per tenant, repo-owned deploys, LE-terminate-then-re-encrypt edge |
