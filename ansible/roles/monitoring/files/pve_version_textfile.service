@@ -1,0 +1,8 @@
+[Unit]
+Description=Publish Proxmox VE version as a node_exporter textfile metric
+# node_exporter creates the textfile dir's tmpfiles; ordering is best-effort.
+After=node_exporter.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pve_version_textfile.sh

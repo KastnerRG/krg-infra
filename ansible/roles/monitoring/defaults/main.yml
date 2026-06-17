@@ -8,3 +8,11 @@ node_exporter_sha256: "9f5ea48e5bc7b656f8a91a32e7d7deb89f70f73dabd0d974418aca15f
 monitoring_ipmi_exporter: true
 ipmi_exporter_version: "1.10.1"
 ipmi_exporter_sha256: "5a0fb507db69433c49d7c6beb2912854cc0996dd6fa66091bc4bc6b7ce8ffea0"
+
+# Publish the Proxmox VE version (`pveversion`) as a node_exporter textfile metric
+# (node_pve_version) — node_os_info only carries the Debian base. Off by default;
+# set true for the proxmox group (group_vars/proxmox.yml), where `pveversion` exists.
+monitoring_pve_version: false
+# NOTE: the static node_exporter.service + pve_version_textfile.sh hardcode this
+# same path — keep them in sync if you ever override it (they aren't templated).
+monitoring_textfile_dir: /var/lib/node_exporter/textfile
