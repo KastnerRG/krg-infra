@@ -22,7 +22,8 @@
       { "cidr": "137.110.0.0/16" },
       { "cidr": "137.110.161.106", "comment": "krg-prod.ucsd.edu" },
       { "cidr": "137.110.161.107", "comment": "e4e-prod.ucsd.edu" },
-      { "cidr": "137.110.161.109", "comment": "krg-ldap.ucsd.edu" }
+      { "cidr": "137.110.161.109", "comment": "krg-ldap.ucsd.edu" },
+      { "cidr": "132.239.17.123",  "comment": "kastner-ml.ucsd.edu (compute; domain member)" }
     ],
     "ops": [
       { "cidr": "97.252.106.89", "comment": "admin remote (chris)" },
