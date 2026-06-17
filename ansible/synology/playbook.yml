@@ -6,6 +6,7 @@
 #   ansible-playbook playbook.yml                                       # apply
 #   ansible-playbook playbook.yml --check --diff                        # dry run
 #   ansible-playbook playbook.yml --tags export                         # drift snapshot (read-only)
+#   ansible-playbook playbook.yml --tags synology_shares,synology_nfs   # storage only (shares + NFS exports)
 #   ansible-playbook playbook.yml --tags acls-recursive                 # post-AD-join one-shot
 #   ansible-playbook playbook.yml -e ad_join_password='<pass>'          # AD domain join
 #   ansible-playbook playbook.yml -e @secrets-hb.yml                    # Hyper Backup secrets
