@@ -58,14 +58,15 @@
   # nfs-exports}.yml), NOT DSM's "homes" share: it's exported no_root_squash so this box's
   # pam_mkhomedir creates+chowns homes to the SSSD uid — DSM's winbind RID idmap (which
   # doesn't match SSSD's algorithmic range, and can't resolve AD users) is bypassed.
-  # Mirrors waiter<->fabricant. nfsVersion pinned to 4.1: Synology DSM tops out at
-  # NFSv4.1, so the module default (4.2) is rejected by e4e-nas with "mount.nfs:
-  # Protocol not supported" (confirmed on the box 2026-06-17).
+  # Mirrors waiter<->fabricant. nfsVersion pinned to 4.0: this e4e-nas DSM rejects
+  # both the module default (4.2) AND 4.1 with "mount.nfs: Protocol not supported"
+  # — 4.0 is the actual ceiling here, confirmed on-box via manual mount (2026-06-17;
+  # nconnect=4 also verified fine at 4.0, so no override needed there).
   krg.nfsHome = {
     enable = true;
     server = "132.239.17.124"; # e4e-nas.ucsd.edu (pinned by IP — no DNS dependency at mount)
     export = "/volume2/e4e-home";
-    nfsVersion = "4.1";
+    nfsVersion = "4.0";
   };
 
   # AD client (krg.adClient enabled in base.nix). This box is on 132.239.17.0/24 while
