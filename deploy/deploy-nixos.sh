@@ -145,7 +145,7 @@ for host in "${ORDER[@]}"; do
   # oneshot finds it and enrolls on the same run.
   if ! stage_oec "$target"; then
     echo "FAILED: ${host} — could not stage OEC installer; stopping"
-    echo "::endgroup::"
+    printf '\n::endgroup::\n'
     exit 1
   fi
   if ! nixos-rebuild switch \
@@ -154,11 +154,11 @@ for host in "${ORDER[@]}"; do
         --build-host  "${target}" \
         --sudo; then
     echo "FAILED: ${host} — stopping; remaining hosts not deployed"
-    echo "::endgroup::"
+    printf '\n::endgroup::\n'
     exit 1
   fi
   echo "OK: ${host}"
-  echo "::endgroup::"
+  printf '\n::endgroup::\n'
 done
 
 # ── Verify the campus-mandated security daemons on every host ────────────────
@@ -174,7 +174,7 @@ for host in "${ORDER[@]}"; do
 done
 # ...plus the control node itself (excluded from the rebuild loop above).
 verify_oec_local || oec_failed=1
-echo "::endgroup::"
+printf '\n::endgroup::\n'
 if [[ "$oec_failed" -ne 0 ]]; then
   echo "FAILED: OEC security daemons not running on one or more hosts — deploy considered failed"
   exit 1

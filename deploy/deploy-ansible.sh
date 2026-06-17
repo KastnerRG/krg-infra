@@ -59,10 +59,10 @@ if ! (
   ansible-playbook playbooks/site.yml -e "oec_installer=${OEC_INSTALLER}"
 ); then
   echo "FAILED: ansible site.yml"
-  echo "::endgroup::"
+  printf '\n::endgroup::\n'
   exit 1
 fi
-echo "::endgroup::"
+printf '\n::endgroup::\n'
 
 SYNOLOGY_TAGS="${SYNOLOGY_TAGS:-}"   # empty = full playbook (entire NAS); set e.g. synology_garage to narrow
 role_id_file="${OPENBAO_ROLE_ID_FILE:-/var/lib/krg-admin/.secrets/openbao-role-id}"
@@ -146,8 +146,8 @@ else
     ansible-playbook playbook.yml ${SYNOLOGY_TAGS:+--tags "$SYNOLOGY_TAGS"} -e @"$vars_file"
   ); then
     echo "FAILED: ansible synology"
-    echo "::endgroup::"
+    printf '\n::endgroup::\n'
     exit 1
   fi
-  echo "::endgroup::"
+  printf '\n::endgroup::\n'
 fi
