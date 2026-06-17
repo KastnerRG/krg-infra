@@ -185,5 +185,12 @@ jobs:
           # grafana-admin / grafana-oidc) skips with a notice, so listing it is safe
           # ahead of seeding. openbao is NOT listed — it needs a privileged bootstrap
           # token and is applied manually (see deploy/deploy-tofu.sh header).
-          TOFU_TARGETS: "authentik grafana e4e-nas"
+          #
+          # temporal manages namespaces on the krg-prod cluster; deploy-tofu.sh's
+          # temporal) case mints a short-lived temporal-client cert from the lab CA
+          # (krg-deploy AppRole holds the issue grant) to reach the mTLS frontend.
+          # Prereqs: openbao applied (the PKI role + grant) and krg-prod up with the
+          # frontend reachable on :7233 — both land in earlier stages / manual openbao.
+          # A missing AppRole token skips it gracefully; a failed apply halts the deploy.
+          TOFU_TARGETS: "authentik grafana e4e-nas temporal"
         run: ./deploy/deploy-tofu.sh
