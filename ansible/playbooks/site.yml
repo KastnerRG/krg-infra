@@ -25,6 +25,17 @@
   roles:
     - proxmox_firewall      # cluster.fw + per-guest <vmid>.fw
 
+# Hypervisor-side per-VM metrics (prometheus-pve-exporter → pve_* via the PVE API).
+# The complement of the in-guest node_exporter: Proxmox's accounting of each guest
+# (alloc vs used, balloon, per-VMID disk/net I/O). The scrape port (9221) is opened
+# to the monitoring host in each PVE host's host.fw (proxmox_host_fw_rules in
+# host_vars). See issue #235.
+- name: Proxmox per-VM metrics (prometheus-pve-exporter)
+  hosts: proxmox
+  become: true
+  roles:
+    - pve_exporter
+
 # Storage — exports backed by a ZFS dataset on the hypervisor's pool, plus the pool
 # capacity policy (cap VM storage so user data wins contention). Deliberately
 # host-scoped to `fabricant` (NOT the `proxmox` group): other PVE hosts must not

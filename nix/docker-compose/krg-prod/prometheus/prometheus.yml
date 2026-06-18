@@ -11,12 +11,23 @@ scrape_configs:
           - waiter.ucsd.edu:9100
           - kastner-ml.ucsd.edu:9100
           - fabricant.ucsd.edu:9100
-          - krg-prod.ucsd.edu:9100
-          # node_exporter is on every NixOS host via profiles/base.nix, but these
-          # were never scraped. Added so the Node Fleet dashboard covers the fleet.
+          # node_exporter is on every NixOS host via profiles/base.nix, and each
+          # host opens :9100 to this monitoring host in-guest (issue #234,
+          # krg.firewall.monitoringPorts wired from node-exporter.nix).
           - e4e-prod.ucsd.edu:9100
           - krg-ldap.ucsd.edu:9100
           - krg-vault.ucsd.edu:9100
+      # krg-prod runs Prometheus itself. Scraping its OWN external IP hairpins
+      # through Docker SNAT — the in-guest firewall sees the docker-bridge source,
+      # not the monitoring IP, and drops it (loopback works). Scrape over loopback
+      # and relabel the instance back to the FQDN so it shows as one fleet host.
+      - targets:
+          - localhost:9100
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: localhost:9100
+        target_label: instance
+        replacement: krg-prod.ucsd.edu:9100
 
   - job_name: 'dcgm_exporter'
     scrape_interval: 15s
@@ -31,6 +42,24 @@ scrape_configs:
       - targets:
           - waiter.ucsd.edu:9323
           - kastner-ml.ucsd.edu:9323
+
+  # Hypervisor-side per-VM metrics (pve_*) from prometheus-pve-exporter on the
+  # Proxmox host (ansible pve_exporter role, issue #235). The exporter runs on
+  # fabricant:9221 and queries the PVE API; Prometheus passes the PVE host to query
+  # as ?target=, so __param_target is the PVE host and __address__ is the exporter.
+  - job_name: 'pve'
+    scrape_interval: 30s
+    metrics_path: /pve
+    static_configs:
+      - targets:
+          - fabricant.ucsd.edu   # the PVE host whose API to scrape
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: fabricant.ucsd.edu:9221   # the exporter's address
 
   # Removed: the ansible_deploy_monitor job (port 9000). That exporter belonged to
   # the old Ansible deploy host; under NixOS it's replaced by system.autoUpgrade, so

@@ -1,0 +1,452 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Hypervisor's view of each Proxmox guest (prometheus-pve-exporter, pve_*): Proxmox's accounting of allocation vs use, per-VM up/down, and overcommit. Complements KRG · Node Fleet (the in-guest node_exporter view). One dashboard for all guests via the $node/$name pickers.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Overview",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Guests Up",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "count(pve_up{id=~\"qemu/.*|lxc/.*\"} * on(id) group_left(node) pve_guest_info{node=~\"$node\"} == 1)",
+          "legendFormat": "Up",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "count(pve_up{id=~\"qemu/.*|lxc/.*\"} * on(id) group_left(node) pve_guest_info{node=~\"$node\"})",
+          "legendFormat": "Total",
+          "instant": true,
+          "range": false,
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "vCPU Allocated",
+      "description": "Sum of guests' configured vCPUs (pve_cpu_usage_limit) on the selected node(s). Compare with the node's physical cores for overcommit.",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum(pve_cpu_usage_limit{id=~\"qemu/.*|lxc/.*\"} * on(id) group_left(node) pve_guest_info{node=~\"$node\"})",
+          "legendFormat": "vCPU",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Memory Allocated",
+      "description": "Sum of guests' configured memory (pve_memory_size_bytes) on the selected node(s).",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "unit": "bytes",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum(pve_memory_size_bytes{id=~\"qemu/.*|lxc/.*\"} * on(id) group_left(node) pve_guest_info{node=~\"$node\"})",
+          "legendFormat": "Mem",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Memory Used",
+      "description": "Sum of guests' used memory (pve_memory_usage_bytes) on the selected node(s).",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "unit": "bytes",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum(pve_memory_usage_bytes{id=~\"qemu/.*|lxc/.*\"} * on(id) group_left(node) pve_guest_info{node=~\"$node\"})",
+          "legendFormat": "Mem used",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Per-VM",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+      "id": 6,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Guests",
+      "description": "Per-guest snapshot as Proxmox sees it. CPU is the configured-core utilisation ratio; Mem/Disk are used vs configured. Joined to pve_guest_info for name/node.",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "CPU" },
+            "properties": [{ "id": "unit", "value": "percentunit" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Mem Used" },
+            "properties": [{ "id": "unit", "value": "bytes" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Mem Alloc" },
+            "properties": [{ "id": "unit", "value": "bytes" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Disk Alloc" },
+            "properties": [{ "id": "unit", "value": "bytes" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Up" },
+            "properties": [
+              { "id": "mappings", "value": [
+                { "type": "value", "options": { "0": { "text": "down", "color": "red", "index": 0 }, "1": { "text": "up", "color": "green", "index": 1 } } }
+              ] },
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 7 },
+      "id": 7,
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false, "reducer": ["sum"], "fields": "" }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "pve_up{id=~\"qemu/.*|lxc/.*\"} * on(id) group_left(name, node) pve_guest_info{node=~\"$node\", name=~\"$name\"}",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "pve_cpu_usage_ratio{id=~\"qemu/.*|lxc/.*\"} * on(id) group_left(name, node) pve_guest_info{node=~\"$node\", name=~\"$name\"}",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "pve_memory_usage_bytes{id=~\"qemu/.*|lxc/.*\"} * on(id) group_left(name, node) pve_guest_info{node=~\"$node\", name=~\"$name\"}",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "pve_memory_size_bytes{id=~\"qemu/.*|lxc/.*\"} * on(id) group_left(name, node) pve_guest_info{node=~\"$node\", name=~\"$name\"}",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "D"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "pve_disk_size_bytes{id=~\"qemu/.*|lxc/.*\"} * on(id) group_left(name, node) pve_guest_info{node=~\"$node\", name=~\"$name\"}",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "E"
+        }
+      ],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true,
+              "id": true
+            },
+            "indexByName": {
+              "name": 0,
+              "node": 1,
+              "Value #A": 2,
+              "Value #B": 3,
+              "Value #C": 4,
+              "Value #D": 5,
+              "Value #E": 6
+            },
+            "renameByName": {
+              "name": "VM",
+              "node": "Node",
+              "Value #A": "Up",
+              "Value #B": "CPU",
+              "Value #C": "Mem Used",
+              "Value #D": "Mem Alloc",
+              "Value #E": "Disk Alloc"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU utilisation by guest",
+      "description": "pve_cpu_usage_ratio — fraction of the guest's configured vCPUs in use, as Proxmox meters it.",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "axisPlacement": "auto"
+          },
+          "color": { "mode": "palette-classic" },
+          "mappings": [],
+          "unit": "percentunit",
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 8,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "pve_cpu_usage_ratio{id=~\"qemu/.*|lxc/.*\"} * on(id) group_left(name) pve_guest_info{node=~\"$node\", name=~\"$name\"}",
+          "legendFormat": "{{name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory used by guest",
+      "description": "pve_memory_usage_bytes — memory in use per guest as Proxmox meters it.",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "axisPlacement": "auto"
+          },
+          "color": { "mode": "palette-classic" },
+          "mappings": [],
+          "unit": "bytes",
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 9,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "pve_memory_usage_bytes{id=~\"qemu/.*|lxc/.*\"} * on(id) group_left(name) pve_guest_info{node=~\"$node\", name=~\"$name\"}",
+          "legendFormat": "{{name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "type": "query",
+        "label": "Node",
+        "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+        "definition": "label_values(pve_guest_info, node)",
+        "query": "label_values(pve_guest_info, node)",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "regex": "",
+        "current": {},
+        "options": [],
+        "hide": 0,
+        "allValue": ".*"
+      },
+      {
+        "name": "name",
+        "type": "query",
+        "label": "Guest",
+        "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+        "definition": "label_values(pve_guest_info{node=~\"$node\"}, name)",
+        "query": "label_values(pve_guest_info{node=~\"$node\"}, name)",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "regex": "",
+        "current": {},
+        "options": [],
+        "hide": 0,
+        "allValue": ".*"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "refresh": "auto",
+  "schemaVersion": 42,
+  "tags": ["krg", "generated"],
+  "title": "KRG · Proxmox",
+  "uid": "krg-proxmox",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1
+}

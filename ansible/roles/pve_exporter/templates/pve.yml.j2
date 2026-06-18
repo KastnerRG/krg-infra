@@ -1,0 +1,9 @@
+# Managed by ansible (pve_exporter role) — DO NOT EDIT.
+# Holds a generated PVE API token; this file is never committed to git.
+# Regenerated only if it loses its token_value (see roles/pve_exporter/tasks).
+default:
+  user: {{ pve_api_user }}
+  token_name: {{ pve_api_token_name }}
+  token_value: {{ _pve_token_value }}
+  # PVE serves its API over a self-signed cert on localhost:8006 — skip verification.
+  verify_ssl: false

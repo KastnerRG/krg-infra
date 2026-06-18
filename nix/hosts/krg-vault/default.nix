@@ -43,7 +43,8 @@ in {
     # SSH (22) inherits from base.nix's default allowedTCPPorts = [22];
     # serviceHost = true (also from base.nix default) restricts it to
     # ucsd + ops via sshSources (stricter than the fleet CrowdSec floor).
-    monitoringPorts = [9100];
+    # node-exporter's 9100 is auto-opened to the monitoring host by
+    # nix/modules/services/node-exporter.nix (issue #234).
     # 80 → globally public for ACME HTTP-01 ONLY. Let's Encrypt does
     # multi-perspective validation from US + EU + Asia validators with
     # unpredictable source IPs; ANY source restriction (geo allowlist,

@@ -1,0 +1,22 @@
+# prometheus-pve-exporter — the hypervisor's per-VM view (issue #235). Unlike
+# node_exporter (in-guest: a VM's own CPU/mem/disk), this queries the Proxmox API
+# and exposes pve_* metrics: Proxmox's accounting of each guest (alloc vs used,
+# balloon, per-VMID disk/net I/O, up/down, pve_guest_info with name/id/node).
+#
+# Installed into a self-contained venv and run under its own systemd unit — the
+# same "pin the version + own the unit" approach as roles/monitoring (node/ipmi),
+# not apt, so the version is reproducible and the unit/listen-address are ours.
+pve_exporter_version: "3.4.4" # verify latest at bring-up (pip; no checksum gate like the release tarballs)
+pve_exporter_port: 9221
+pve_exporter_listen_address: "0.0.0.0" # source-restricted to the monitor in fabricant host.fw
+pve_exporter_venv: /opt/prometheus-pve-exporter
+pve_exporter_config: /etc/prometheus/pve.yml
+pve_exporter_user: pve-exporter # unprivileged system user the service runs as
+
+# PVE API identity the exporter authenticates with (created via pveum). PVEAuditor
+# is read-only — the exporter only reads guest/node state. The token is minted
+# on-box and written to pve_exporter_config (0640, never committed); regenerated
+# only if that file loses its token (so re-runs don't rotate it every time).
+pve_api_user: "monitoring@pve"
+pve_api_token_name: "prometheus"
+pve_api_role: "PVEAuditor"

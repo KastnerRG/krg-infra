@@ -1,0 +1,8 @@
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Restart pve exporter
+  ansible.builtin.systemd_service:
+    name: pve_exporter
+    state: restarted

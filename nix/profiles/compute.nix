@@ -116,10 +116,12 @@
     # ONLY from krg-prod (137.110.161.106); no VPN/tunnel/public RDP exposure. Inert
     # on compute hosts without the desktop (allowRDP=false there).
     rdpSources = ["137.110.161.106"];
-    # node-exporter (9100), docker metrics (9323), prometheus client (9000),
-    # IPMI exporter (9290). DCGM (9400) is contributed by the nvidia module
+    # node-exporter (9100) and IPMI exporter (9290) open themselves to the
+    # monitoring host from their own modules now (issue #234), so only the
+    # Docker-daemon metrics (9323) and the legacy prometheus client (9000) need
+    # listing here. DCGM (9400) is contributed by the nvidia module
     # (krg.nvidia.dcgmExporter), coupled to the driver — not listed here.
-    monitoringPorts = [9100 9290 9323 9000];
+    monitoringPorts = [9323 9000];
   };
 
   # nix-ld allows running conda, MATLAB, and other dynamically-linked binaries

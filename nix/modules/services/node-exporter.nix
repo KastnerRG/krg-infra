@@ -49,5 +49,14 @@ in {
       enabledCollectors = cfg.collectors;
       extraFlags = ["--collector.textfile.directory=${cfg.textfileDir}"];
     };
+
+    # Open the scrape port to the Prometheus host fleet-wide (issue #234). Wiring
+    # this from the exporter module — not per-host/profile — means EVERY host
+    # running the exporter is reachable by the scraper, with no chance of drift
+    # (the bug behind #234: krg-prod/krg-ldap/krg-vault were up=0 because the
+    # in-guest firewall never opened :9100 to the monitor). Mirrors how
+    # nvidia.nix opens dcgm 9400. monitoringSourceIp is set fleet-wide in
+    # profiles/base.nix from networks/trusted.json (monitoring_host).
+    krg.firewall.monitoringPorts = [cfg.port];
   };
 }
