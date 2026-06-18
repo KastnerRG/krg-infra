@@ -117,21 +117,70 @@ flake still evaluates.
 
 ---
 
-## Apply order
+## Bring-up sequence (in order)
+
+Run from a **`main`** checkout on **krg-deploy** (the control node), with **#259 +
+#289 merged** first — `main` is the live source of truth (ADR 0001), and the
+`openbao` tofu target is deliberately excluded from the push-CD, so you drive the
+applies by hand. The PKI must exist before the DC's LDAPS cert (it's issued from
+`pki_int`), so the OpenBao apply is **staged** (steps 3 + 5). All secret material
+(the privileged OpenBao token, the bind password, the DC private key) stays in your
+shell — never commit it.
 
 ```bash
-# A + B — OpenBao structure (ldap auth, host/user roles, AD-group policies)
-cd terraform/openbao
-export VAULT_TOKEN="<root or admin token>"
-export TF_VAR_vault_addr="https://krg-vault.ucsd.edu:8200"
-export TF_VAR_ldap_binddn="CN=svc-openbao,CN=Users,DC=krg,DC=local"
-export TF_VAR_ldap_bindpass='…'                 # from your password store, your shell only
-export TF_VAR_ldap_ca_cert="$(bao read -field=certificate pki/cert/ca)"  # CA from step 3
-tofu init && tofu plan && tofu apply
-
-# C — fleet CA trust: commit nix/keys/krg-pki-ca.pem, push to main.
-# Hosts pick it up on the next nixos-rebuild / 04:00 auto-upgrade.
+git checkout main && git pull
 ```
+
+**1. Create the bind account + store its password** `[krg-ldap → OpenBao]`
+The krg-ad apply ASSERTS `svc-openbao` exists (it never auto-creates an account —
+that needs a password; see service-accounts.yml), so create it once:
+```bash
+sudo samba-tool user create svc-openbao --description "OpenBao LDAP bind (read-only)"
+#   set a strong password; keep it in your password store / OpenBao (consumed below
+#   as TF_VAR_ldap_bindpass). Never in a tfvars file.
+```
+
+**2. Apply the krg-ad leg** `[krg-deploy]` — asserts `svc-openbao`, creates the
+`Temporal Users` group (#289):
+```bash
+cd ansible/krg-ad && ansible-playbook playbook.yml
+```
+
+**3. Stand up the PKI + LDAP — apply #1** `[krg-deploy, privileged token]`
+Login won't work yet (the DC's cert has no SAN — step 4 fixes that), but this
+creates the CA + the `host` role step 4 needs. The placeholder `ldap_ca_cert` is the
+DC's *current* cert, just so the apply validates:
+```bash
+cd "$(git rev-parse --show-toplevel)"
+export VAULT_ADDR=https://krg-vault.ucsd.edu:8200
+export TF_VAR_ldap_binddn='CN=svc-openbao,CN=Users,DC=krg,DC=local'
+export TF_VAR_ldap_bindpass='…'                               # your shell only
+export TF_VAR_ldap_ca_cert="$(echo | openssl s_client -connect krg-ldap.krg.local:636 2>/dev/null | openssl x509)"
+TOFU_TARGETS=openbao TOFU_OPENBAO_TOKEN='<privileged token>' \
+  TOFU_STATE_PASSPHRASE='<tofu state passphrase>' ./deploy/deploy-tofu.sh
+```
+(`deploy-tofu.sh` sets up encrypted state per ADR 0005 and inherits your `TF_VAR_*`.)
+
+**4. Give the DC a SAN-bearing LDAPS cert from `pki_int`** `[krg-deploy → krg-ldap]`
+See the detailed install in *Prerequisites → 3* above. In short:
+```bash
+bao write -format=json pki_int/issue/host common_name=krg-ldap.krg.local ttl=2160h > /tmp/dc.json
+#   install cert+chain+key on krg-ldap (key stays on the DC, 0600 root), point smb.conf
+#   tls certfile/keyfile/cafile at them, then: sudo systemctl restart samba-ad-dc
+echo | openssl s_client -connect krg-ldap.krg.local:636 2>/dev/null \
+  | openssl x509 -noout -ext subjectAltName        # must show DNS:krg-ldap.krg.local
+```
+
+**5. Swap the LDAP trust anchor to the lab root — apply #2** `[krg-deploy]`
+```bash
+export TF_VAR_ldap_ca_cert="$(bao read -field=certificate pki/cert/ca)"   # the real lab root
+TOFU_TARGETS=openbao TOFU_OPENBAO_TOKEN='<privileged token>' \
+  TOFU_STATE_PASSPHRASE='<tofu state passphrase>' ./deploy/deploy-tofu.sh
+```
+
+**6. Fleet CA trust (layer C)** `[krg-deploy → git]` — export the public CA cert (see
+*Prerequisites → 4*), commit `nix/keys/krg-pki-ca.pem`, push to `main`. Hosts pick it
+up on the next `nixos-rebuild` / 04:00 auto-upgrade, after which leaves verify by chain.
 
 ---
 
