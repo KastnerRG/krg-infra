@@ -60,3 +60,5 @@ Immutable decision records under [`adr/`](adr/). All Accepted.
 | [0007](adr/0007-dsm-config-ansible-not-terraform.md) | The DSM tofu/ansible split follows API surface (real provider resources vs CLI-only), not "appliance-ness" |
 | [0008](adr/0008-e4e-prod-tenant-platform.md) | e4e-prod is a multi-tenant platform for student-built projects — sealed microVM per tenant, repo-owned deploys, LE-terminate-then-re-encrypt edge |
 | [0009](adr/0009-lab-internal-pki-ad.md) | Lab-internal PKI is a private OpenBao CA hooked into AD — machines issue via AppRole, humans via AD-group-gated LDAP; CA trusted fleet-wide; separate from public Let's Encrypt |
+| [0010](adr/0010-active-directory-structure-as-iac.md) | KRG.LOCAL AD structure (groups, service accounts, ACLs, password policy) is IaC in spec/krg-ad + ansible/krg-ad; apply is non-authoritative (adds, never deletes); humans come from roster |
+| [0011](adr/0011-cross-layer-deploy-ordering.md) | Cross-layer deploy ordering: a phased pipeline (foundation → converge → verify), not a single linear order — back-edges between Ansible/NixOS/Tofu can't be solved by reordering |
