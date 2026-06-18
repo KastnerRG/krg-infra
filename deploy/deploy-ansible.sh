@@ -56,10 +56,18 @@ if ! (
   # installed per-run — this matches the nightly ansible-apply service and avoids an
   # unpinned upstream pull on every deploy (non-reproducible). Pinning them and
   # managing the install via Nix so both paths share one set is tracked in #129.
-  # ad_require_joined=true: gate the deploy on a working AD join (the ad_client role
-  # asserts `adcli testjoin --domain` per host). Strict on the automated path; manual
-  # first-bring-up runs omit it so an unjoined host stages config + warns instead.
-  ansible-playbook playbooks/site.yml -e "oec_installer=${OEC_INSTALLER}" -e ad_require_joined=true
+  # AD membership gate NOT enabled here yet (ad_require_joined stays default-false).
+  # Ordering: this Ansible stage runs BEFORE the NixOS stage (deploy.yml), but
+  # fabricant's ability to reach the DC depends on a NIX change that lands in the
+  # NixOS stage — krg-ldap's in-guest firewall opening the AD ports to fabricant (the
+  # `machines` IPSet fix in this PR). Asserting `adcli testjoin` here would fail
+  # before that fix is applied → deadlock (Ansible fails → NixOS never runs → firewall
+  # never fixed). The role's assert + `ad_require_joined` knob exist; turn it on
+  # (`-e ad_require_joined=true`) in a FOLLOW-UP once krg-ldap is rebuilt and fabricant
+  # is online. The NixOS layer still gates ITS members in deploy/deploy-nixos.sh (no
+  # cross-layer dependency there). Cleaner long-term: move the membership gate to a
+  # single post-deploy step that runs AFTER NixOS, for all hosts.
+  ansible-playbook playbooks/site.yml -e "oec_installer=${OEC_INSTALLER}"
 ); then
   echo "FAILED: ansible site.yml"
   printf '\n::endgroup::\n'

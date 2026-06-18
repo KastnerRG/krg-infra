@@ -173,8 +173,8 @@ runs it per NixOS member; the Proxmox layer runs it via the `ad_client` role.
 | waiter | ✅ joined 2026-05-21 (`adcli --login-ccache`); testjoin OK 2026-06-18 |
 | krg-prod | ✅ joined; testjoin OK 2026-06-18 |
 | kastner-ml | ✅ joined; testjoin OK 2026-06-18 |
-| krg-vault | ✅ joined 2026-06-18; testjoin OK (re-joined once to resync a stale keytab — see note). `enable = true` lands via the `adclient-enable-vault-deploy` branch |
-| krg-deploy | ✅ joined 2026-06-18; testjoin OK. `enable = true` lands via the `adclient-enable-vault-deploy` branch |
+| krg-vault | ✅ joined 2026-06-18; testjoin OK (re-joined once to resync a stale keytab — see note). `krg.adClient.enable = true` set here. |
+| krg-deploy | ✅ joined 2026-06-18; testjoin OK. `krg.adClient.enable = true` set here. |
 | fabricant | ⚠️ joined but was **offline from the DC** — the DC's in-guest firewall (`samba-ad.nix` opens the AD ports to `sealab+machines+ops`) dropped it because fabricant wasn't in **`machines`**. **Fixed in this PR** (added `137.110.161.98` to `machines` in `trusted.json`); apply with a krg-ldap rebuild, then SSSD comes online. (Also fixed: `ad_client`'s `adcli testjoin` lacked `--domain`, so it probed `ucsd.edu`.) |
 | e4e-prod | ⏳ not deployed yet (unreachable) |
 
