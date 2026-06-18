@@ -37,13 +37,17 @@ a shared daemon.
 
 ## Decision
 
-### 1. Scope — E4E student projects only
+### 1. Scope — per-platform; E4E first
 
-e4e-prod hosts student-built **E4E** (Engineers for Exploration) project
-services. Not lab-wide tooling (that's krg-prod), not all-of-KRG student work.
-The name, the reserved IP, and the existing
-[`terraform/authentik/applications_e4e.tf`](../../terraform/authentik/applications_e4e.tf)
-seed all line up with this scope.
+The *module* is platform-generic (§6). The *first platform instance* hosts
+student-built **E4E** (Engineers for Exploration) project services on the host
+currently named `e4e-prod`; the reserved IP and the existing
+[`applications_e4e.tf`](../../terraform/authentik/applications_e4e.tf) seed line
+up with that. Scope is therefore **per-platform**, not module-wide: a second
+platform for **all-KRG student** projects (`krg-student`) is anticipated and the
+design accommodates it (tenants partitioned by `platform`, §6). If that sibling
+lands, `e4e-prod` would be renamed `e4e-student` for symmetry. Lab-wide *tooling*
+stays krg-prod's, distinct from either student platform.
 
 ### 2. One sealed microVM per tenant (the isolation boundary)
 
@@ -69,8 +73,19 @@ student-stack IO contention against fabricant's shared pool — [ADR 0004](0004-
 — is accepted and monitored rather than designed around with a dedicated host).
 This keeps the single-platform-host model: the flake owns the whole fleet and
 `krg.tenants.<name>` renders each VM. It requires **nested KVM** on fabricant
-(`kvm_intel nested=1` + CPU type `host`). Each tenant gets a dedicated ZFS
-**zvol** as its durable disk. The microVM **backend is cloud-hypervisor**
+(`kvm_intel nested=1` + CPU type `host`). The host runs **ZFS-on-root** (single
+pool, lz4, via disko) and carves the per-tenant **zvols** itself — self-contained,
+so a new tenant is one `krg.tenants` declaration (not a Proxmox/ansible-layer disk
+provision). Since e4e-prod sits on fabricant's ZFS this is **nested ZFS**, accepted
+and tuned (small inner ARC / `primarycache=metadata`, single inner vdev), IO
+monitored per [ADR 0004](0004-vm-disk-io-budget.md). Both the host and the tenant
+VMs run **impermanent (ephemeral) root** (`modules/impermanence.nix`); only
+`/persist` + the durable zvols survive, so drift or a compromise foothold in a VM
+root resets on reboot — making "repair by redeploy" literal and contributing to
+the runner-root containment above. Operator SSH is **break-glass, jump-through-the-host
+only** (`:22` bridge-only, fleet keys, no AD; serial console as the deeper
+fallback); tenant maintainers get no shell. The microVM **backend is
+cloud-hypervisor**
 (`krg.tenants` is still written backend-agnostic so it's swappable, but
 cloud-hypervisor is the chosen default; QEMU is the compatibility fallback).
 
@@ -101,14 +116,26 @@ contributor pushes); branch protection + review gates merges to `main`. The
 trust boundary is therefore "people who can merge a project's `main`," confined
 to that project's VM.
 
+The runner's registration credential is a **GitHub App** (one per GitHub org —
+`UCSD-E4E`, `KastnerRG` — installed on the tenant repos; key in OpenBao, a short-
+lived registration token minted in-VM, **no long-lived PATs**). The only
+operator-placed secret is the per-tenant AppRole `secret_id` (secret-zero); the
+rest is vault-agent-rendered. **krg-deploy migrates to this same pattern**,
+retiring its deferred hand-placed `github-runner-token` file.
+
 ### 4. Edge: LE-terminate at the platform, re-encrypt to tenants over OpenBao PKI
 
 A **single platform-owned edge Traefik** on the e4e-prod host:
 
 - terminates **public TLS** with Let's Encrypt certificates — it is the **sole,
   controlled ACME client** on the platform;
-- routes each tenant's subdomain subtree to that tenant's VM (wildcard SNI/Host
-  match → one stable rule per tenant);
+- routes each tenant's subdomain subtree to that tenant's VM — **one stable rule
+  per tenant covering the apex label *and* every name beneath it**,
+  `HostRegexp(`^(.+\.)?<subtree>$`)`. The apex matters: `fishsense.e4e.ucsd.edu`
+  (the web portal) sits under `*.e4e.ucsd.edu`, **not** `*.fishsense.e4e.ucsd.edu`,
+  so a bare `*.fishsense…` wildcard would miss it. Tenants thus partition the
+  shared `*.e4e.ucsd.edu` space: `fishsense.*` → fishsense VM, `smartfin.*` →
+  smartfin VM, each owning its label apex + subtree;
 - **re-encrypts** the hop to each tenant VM over **OpenBao PKI** (internal CA,
   short-TTL certs auto-rotated by the VM's vault-agent), optionally **mTLS** so a
   VM backend accepts connections only from the edge.
@@ -137,14 +164,33 @@ possible for a tenant that wants uniform auth; not the default.)
   `fishsense` namespace + client mTLS certs + cross-host gRPC on the krg-prod
   side.
 
-### 6. `krg.tenants.<name>` is the abstraction; fishsense is tenant #1
+### 6. `krg.tenants.<name>` is the abstraction (generic, multi-platform)
 
-A NixOS module generates a tenant's microVM, dedicated user, ZFS volume + caps,
-the runner, the vault-agent render targets (per-tenant **OpenBao AppRole**), and
-the edge's hostname→VM entry. The `isolation` backend is a **pluggable knob**
-(`microvm` today) so a future tenant needing weaker/stronger isolation is a
-config change, not a rewrite. **vault-agent is wired from the start** (no
-pre-Vault `.secrets` interim).
+The module namespace is **`krg.tenants`, not `e4e.*`**. `krg.*` is the repo's
+single option namespace — org-wide, not a host marker (`krg.scratch`,
+`krg.localCache`, `krg.adClient` all run off krg-prod) — so an `e4e.*` namespace
+would be the first non-`krg` option tree for a marginal signal, and worse, would
+bake one platform's identity into a generic mechanism. E4E scope is expressed by
+enablement + declarations (the repo's existing pattern: `applications_e4e.tf`, the
+`e4e-prod` host, `e4e-admin` — scope by site, one option tree), not by the prefix.
+
+The module generates a tenant's microVM, dedicated user, ZFS volume + caps, the
+runner, the vault-agent render targets (per-tenant **OpenBao AppRole**), and the
+edge's hostname→VM entry. `isolation` is a **pluggable knob** (`microvm` today).
+**vault-agent from the start** (no pre-Vault `.secrets` interim).
+
+**Multiple platforms, tenants partitioned across them.** The design is a
+*per-platform instance*, not e4e-prod-specific. A host becomes a platform via
+`krg.tenantPlatform = { enable = true; id = "<platform>"; }` and owns that
+instance's edge Traefik, microVM fleet, cert-manager, and bridge — its own IP, LE
+ACME client, and internal-CA client cert. Each entry in the shared `krg.tenants`
+roster carries a `platform = "<id>"` field; a platform host instantiates only the
+tenants whose `platform` matches its `id`, leaving the rest inert. So **two
+platform hosts can run concurrently** — e.g. an `e4e-student` platform and a
+`krg-student` platform — with tenants assigned to each by one field. Reassigning a
+tenant is a one-field change (+ a DNS CNAME re-point + cert/zvol re-home, since
+each platform has its own edge IP/cert). This is exactly why the module stays
+generic.
 
 ### 7. We own both sides
 

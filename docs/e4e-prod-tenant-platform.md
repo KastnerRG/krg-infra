@@ -65,30 +65,48 @@ Key: a **single** edge Traefik holds the only public LE key and is the only
 ACME client. Each tenant is a sealed microVM; the edge re-encrypts to it over
 internal OpenBao PKI. Authentik and Temporal are reached cross-host on krg-prod.
 
-## Request path (fishsense example)
+## Request path
 
-1. Client → `https://orchestrator.fishsense.e4e.ucsd.edu` resolves (per-hostname
-   CNAME → e4e-prod) to the host edge `:443`.
-2. Edge Traefik **terminates** the public LE cert, matches the `*.fishsense`
-   subtree → fishsense VM, and **re-encrypts** over OpenBao-PKI (mTLS) to the
-   VM's inner Traefik.
-3. Inner Traefik terminates the internal cert, applies the tenant's own
-   `authentik@docker` outpost (per-route, from compose labels; outpost
-   forward-auths to krg-prod Authentik), and routes to the app container.
+Two cases matter — a sub-service and the **subtree apex** (the web portal lives
+*at* `fishsense.e4e.ucsd.edu`, the apex itself):
+
+1. Client → `https://orchestrator.fishsense.e4e.ucsd.edu` **or**
+   `https://fishsense.e4e.ucsd.edu` resolves (per-hostname CNAME → e4e-prod) to
+   the host edge `:443`.
+2. Edge Traefik **terminates** the public LE cert (the SNI selects the fishsense
+   tenant's multi-SAN cert), matches the **fishsense tenant rule — apex +
+   descendants**, `HostRegexp(`^(.+\.)?fishsense\.e4e\.ucsd\.edu$`)` → fishsense
+   VM, and **re-encrypts** over OpenBao-PKI (mTLS) to the VM's inner Traefik.
+3. Inner Traefik terminates the internal cert and routes by `Host(...)` to the
+   app container — `orchestrator.fishsense…` → the API (behind the tenant's own
+   `authentik@docker` outpost, which forward-auths to krg-prod Authentik);
+   `fishsense.e4e.ucsd.edu` → the `fishsense-lite-web` portal (auth is **in-app
+   OIDC** to krg-prod Authentik, *not* edge/forward-auth).
 4. fishsense workers reach krg-prod's Temporal over gRPC; SSO subjects resolve
    against krg-prod Authentik. Object store (Garage) + NAS are reached per the
    tenant's own mounted config, outside the platform's concern.
 
+> **Apex is load-bearing.** `fishsense.e4e.ucsd.edu` sits under `*.e4e.ucsd.edu`,
+> **not** under `*.fishsense.e4e.ucsd.edu` — a bare `*.fishsense…` wildcard would
+> miss it. The tenant rule must cover the apex label *and* everything beneath it
+> (`^(.+\.)?<subtree>$`), so tenants partition the shared `*.e4e.ucsd.edu` space
+> cleanly: `fishsense.*` → fishsense VM, `smartfin.*` → smartfin VM, each owning
+> its label apex + subtree.
+
 ## The `krg.tenants.<name>` module (interface sketch)
 
-Not yet written — this is the intended surface. Each tenant is one declaration;
-the module generates the microVM, user, ZFS volume + caps, runner, vault-agent
-targets, OpenBao AppRole reference, and the edge hostname→VM rule.
+Namespace is **`krg.tenants`** (generic, org-wide), not `e4e.*` — see
+[ADR 0008 §6](adr/0008-e4e-prod-tenant-platform.md). Not yet written — this is the
+intended surface. Each tenant is one declaration; the module generates the
+microVM, user, ZFS volume + caps, runner, vault-agent targets, OpenBao AppRole
+reference, and the edge hostname→VM rule.
 
 ```nix
+# shared tenant roster — imported by every platform host
 krg.tenants.fishsense = {
+  platform = "e4e-student";                # which platform instance hosts this
   repo = "UCSD-E4E/fishsense-lite";        # repo-scoped runner registers here
-  subtree = "fishsense.e4e.ucsd.edu";      # wildcard SNI/Host rule → this VM
+  subtree = "fishsense.e4e.ucsd.edu";      # → rule ^(.+\.)?fishsense\.e4e\.ucsd\.edu$ (apex + descendants)
   hostnames = [                            # EXPLICIT SAN list for LE issuance
     "fishsense.e4e.ucsd.edu"
     "orchestrator.fishsense.e4e.ucsd.edu"
@@ -98,14 +116,29 @@ krg.tenants.fishsense = {
   deployDir = "/srv/fishsense";            # persistent runner checkout (in-VM)
   resources = { vcpu = 6; memMiB = 16384; diskGiB = 200; };
   isolation = "microvm";                   # pluggable knob (default)
-  secrets.openbaoPath = "secret/e4e-prod/fishsense";  # per-tenant AppRole scope
+  secrets.openbaoPath = "secret/e4e-student/fishsense";  # per-tenant AppRole scope
 };
+
+# in the platform host (currently e4e-prod, → e4e-student if krg-student lands)
+krg.tenantPlatform = { enable = true; id = "e4e-student"; };
 ```
 
 Routing stays stable: adding `newthing.fishsense.e4e.ucsd.edu` needs **no** edge
 routing change (the subtree rule catches it) — only a CNAME ticket and a
 one-line `hostnames` addition (the SAN re-issue), plus the tenant's own
 compose service.
+
+### Multiple platforms
+
+The design is a **per-platform instance**, not e4e-prod-specific. A host becomes
+a platform with `krg.tenantPlatform = { enable = true; id = "<id>"; }` and owns
+that instance's edge Traefik + microVM fleet + cert-manager + bridge (its own IP,
+LE ACME client, internal-CA client cert). A platform host instantiates only the
+`krg.tenants` whose `platform` matches its `id`; the rest stay inert there. So an
+`e4e-student` and a `krg-student` platform can run **concurrently**, tenants
+partitioned by the `platform` field. Reassigning a tenant is a one-field change
+(+ a DNS CNAME re-point + cert/zvol re-home, since each platform has its own edge
+IP/cert). This is why the module is generic `krg.tenants`, not `e4e.*`.
 
 ## Hypervisor & VM substrate
 
@@ -126,11 +159,59 @@ if it bites).
   desktop-virtualization focus (GPU/wayland) is off-target for headless service
   fleets, and its per-device sandboxing edge is tail-risk here since the VM is
   already the tenant boundary (semi-trusted tenants, not hostile guests).
+- **Host filesystem: ZFS-on-root** (single pool, lz4, via disko like waiter). The
+  platform host owns its storage and carves the per-tenant zvols itself — so
+  adding a tenant stays a single `krg.tenants` declaration, no Proxmox/ansible-layer
+  disk provisioning. Because e4e-prod is a VM on fabricant's ZFS, this is **nested
+  ZFS** (ZFS-on-ZFS): accepted and **tuned** — small inner ARC / `primarycache=metadata`
+  (no double data cache), a single inner vdev (fabricant provides redundancy),
+  `volblocksize`/`sync` tuned; IO contention monitored per [ADR 0004](adr/0004-vm-disk-io-budget.md).
+  **Impermanence** (ephemeral root) is **in** for both the host and the tenant VMs
+  — see "Operator access & impermanence" below.
 - **Per-tenant disk:** a dedicated ZFS **zvol** as the VM's durable block device
   (DEPLOY_DIR + Postgres), so tenant data is on its own dataset with its own
   quota — a real boundary, independent of the rolled-up root.
 - **Networking:** TAP-on-bridge per VM; inter-VM firewalling on the host
   (nftables on the bridge); the edge reaches each VM by its bridge IP.
+
+## Operator access & impermanence
+
+**Access — break-glass only, jump through the host.** Tenant microVMs are
+appliances: deploy via the runner, configure via `nixos-rebuild`, observe via
+Grafana/Loki. SSH is break-glass. A VM's `:22` is **bridge-only** — never
+external, never cross-tenant (the edge only proxies HTTP[S]; bridge nftables keep
+`:22` reachable only from the host). Operators jump through the e4e-prod bastion:
+`ssh -J e4e-admin@e4e-prod.ucsd.edu ops@fishsense.vm` (the host carries a
+per-tenant `/etc/hosts` alias → stable bridge IP). The VM authorizes the
+platform-ops keys from `nix/keys/admins.json`, **key-only, no AD** (appliances
+don't AD-join — the break-glass pattern of `nix/users/admin.nix`). Default
+**jump-only sshd**; deepest fallback when a VM's net/sshd is down is to attach to
+its **serial console** from the host (cloud-hypervisor/microvm.nix). **Tenant
+maintainers get no shell** — they deploy via their repo and observe via
+Grafana/Loki, so the VM stays drift-free (IaC-strict).
+
+**Impermanence — ephemeral root on both the host and the tenant VMs**
+(`modules/impermanence.nix`, battle-tested on waiter incl. the systemd-258
+`/usr/bin/env` initrd reseed). Root resets every boot; only declared state
+survives. This makes "appliance / repair-by-redeploy / no student drift" literal
+and is **anti-persistence**: a foothold or manual change in a VM root doesn't
+survive a reboot.
+
+- **Tenant VM — survives:** its durable **zvol** (DEPLOY_DIR + Postgres
+  bind-mounts, a separate device); `/var/lib/docker` on a persisted dataset (else
+  images re-pull every boot); SSH host keys + `machine-id`; the vault-agent
+  **secret-zero** (AppRole `secret_id`) on a persisted path. *Ephemeral:*
+  everything else — the runner **re-registers via the App oneshot** on boot (no
+  stale registration), vault-agent re-renders all secrets/PKI.
+- **Host — survives:** `/persist` (host keys, `machine-id`, AD keytab,
+  secret-zero); the cert-manager **`acme.json`** (so LE certs are **not** re-issued
+  every boot — rate-limit-critical, ties to the issuance invariant); the ZFS
+  data/zvols (separate datasets, not under the ephemeral root). *Ephemeral:* host
+  root.
+
+**v1 cost (honest):** impermanence is the one area waiter needed several boot-bug
+fixes; the module carries them, so this is de-risked by precedent but remains the
+highest-fiddle part of bring-up — validate across reboots before go-live.
 
 ## Secrets & PKI
 
@@ -153,6 +234,18 @@ if it bites).
   env into the VM's `DEPLOY_DIR` (fail-closed) — so the tenant's compose, which
   reads those files, runs unmodified. No host-side plaintext secrets, no
   pre-Vault `.secrets` interim.
+- **Runner registration:** the credential is a **GitHub App** (one per GitHub
+  org — `UCSD-E4E` for e4e tenants, `KastnerRG` for krg-student tenants —
+  installed on the selected tenant repos), **not** long-lived PATs. The App
+  private key lives in OpenBao; a small **in-VM oneshot mints a short-lived
+  runner registration token** (App JWT → installation token → registration
+  token) just before the runner (re)registers, writing it to the `tokenFile` the
+  vault-agent path provides. `services.github-runners` consumes that token file;
+  the ephemeral nature is the module's concern. Rotating the App key is an
+  OpenBao change; the only operator-placed secret stays the per-tenant AppRole
+  `secret_id` (secret-zero). **krg-deploy migrates to this same pattern** — its
+  current hand-placed `/var/lib/krg-admin/.secrets/github-runner-token` (the
+  deferred manual file) is retired in the same effort.
 
 ## Onboarding a new tenant (checklist)
 
@@ -163,10 +256,12 @@ if it bites).
 3. **Authentik (krg-prod):** register the tenant's app(s)/provider(s) + outpost
    in `terraform/authentik/applications_e4e.tf`; ship app-tile icons (CLAUDE.md
    §4).
-4. **Platform:** add `krg.tenants.<name>` (repo, subtree, hostnames, resources,
-   AppRole path); `nix flake check`; deploy e4e-prod.
-5. **Runner:** register the repo-scoped runner token (operator secret) so the
-   in-VM `github-runner` comes online.
+4. **Platform:** add `krg.tenants.<name>` (platform, repo, subtree, hostnames,
+   resources, AppRole path); `nix flake check`; deploy the platform host.
+5. **Runner:** install the org's GitHub App on the tenant repo; the in-VM
+   oneshot mints the registration token from the App key (OpenBao) and the
+   repo-scoped `github-runner` comes online. Only the AppRole `secret_id` is
+   operator-placed (secret-zero).
 6. **Repo side:** the tenant repo sets `DEPLOY_DIR`/`USER_ID`/`GROUP_ID`,
    bootstraps its ops dirs, and points at central Authentik + Temporal.
 7. **Deploy:** first `auto-deploy/*` merge runs `docker compose up` in the VM.
@@ -194,8 +289,9 @@ The platform substrate plus the coordinated repo-side changes we own:
 
 - [x] **CA source** — **Let's Encrypt** (decided). InCommon rejected: per-cert
       manual approval is incompatible with automated renewal (ADR 0008).
-- [ ] e4e-prod VM provisioning on fabricant → real `hardware-configuration.nix`,
-      static IP `137.110.161.107`, generous CPU/RAM/IO sizing, first deploy.
+- [ ] e4e-prod VM provisioning on fabricant → real `hardware-configuration.nix`
+      (**ZFS-on-root via disko**, single pool + lz4, nested-ZFS tuning), static IP
+      `137.110.161.107`, generous CPU/RAM/IO sizing, first deploy.
 - [ ] **Nested KVM on fabricant** — `kvm_intel nested=1` + e4e-prod CPU type
       `host` (prerequisite for the nested microvm.nix fleet).
 - [ ] microvm.nix as a flake input (cloud-hypervisor backend); per-tenant zvol;
@@ -207,4 +303,13 @@ The platform substrate plus the coordinated repo-side changes we own:
       gRPC exposure + firewall.
 - [ ] Per-VM monitoring (node/cadvisor → prometheus_network) and whether tenant
       VMs AD-join (default: no).
+- [ ] Impermanence (host + tenant VMs): persist sets (host keys, machine-id,
+      secret-zero, `acme.json`, `/var/lib/docker`, the zvols); **validate across
+      reboots** before go-live (the highest-fiddle bring-up step).
+- [ ] Operator access: jump-only sshd on tenant VMs (bridge-only `:22`, fleet
+      keys, per-tenant `/etc/hosts` alias) + serial-console fallback.
+- [ ] **GitHub App** for runner registration — one per GitHub org (`UCSD-E4E`,
+      `KastnerRG`), App key → OpenBao, in-VM token-minting oneshot (no PATs).
+      **Migrate krg-deploy's runner** off its hand-placed `github-runner-token`
+      file to the same App-based, OpenBao-rendered pattern (same effort).
 - [ ] `krg.tenants` module implementation + fishsense instantiation.
