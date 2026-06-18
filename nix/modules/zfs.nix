@@ -24,6 +24,13 @@ with lib; let
           echo "zpool_health{pool=\"$name\",state=\"$health\"} $val"
         done
     } > "$tmp"
+    # mktemp creates the temp file 0600. node_exporter runs as the unprivileged
+    # `node-exporter` user (not root), so it can't read a 0600 root-owned file —
+    # the textfile collector silently skips it (node_textfile_scrape_error=1) and
+    # zpool_health never reaches Prometheus. Make it world-readable like the dir's
+    # other *.prom files before publishing. (This is why the Pool Health panel was
+    # empty on waiter/kastner-ml.)
+    ${pkgs.coreutils}/bin/chmod 0644 "$tmp"
     ${pkgs.coreutils}/bin/mv -f "$tmp" "$out"
   '';
 in {
