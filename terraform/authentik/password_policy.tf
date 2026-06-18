@@ -91,7 +91,10 @@ resource "authentik_policy_password" "default_password_change" {
   amount_uppercase = 0
   amount_lowercase = 0
   amount_symbols   = 0
-  symbol_charset   = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ "
+  # Authentik's default charset literally contains a backslash before the quote
+  # (!\"…) and inside [\] — match it byte-for-byte (HCL: \\\" = \", [\\] = [\]) so
+  # the import is a no-op on this field. Trailing space is part of the stock value.
+  symbol_charset = "!\\\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ "
 }
 
 # ── Coverage summary ───────────────────────────────────────────────────────────
