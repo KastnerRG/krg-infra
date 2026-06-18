@@ -55,6 +55,18 @@ services:
       AUTHENTIK_POSTGRESQL__HOST: postgres_authentik
       AUTHENTIK_POSTGRESQL__USER: authentik
       AUTHENTIK_POSTGRESQL__NAME: authentik_db
+      # Mirrors authentik_worker's email block below. The server process handles the
+      # HTTP request that constructs+enqueues outgoing email (e.g. the recovery
+      # stage's "forgot password" send), computing from_email from ITS OWN Django
+      # settings at that point — only the worker had these vars, so the server fell
+      # back to authentik's hardcoded default (authentik@localhost), which UCSD's
+      # relay then rejected as not fully-qualified ("Sender address rejected").
+      AUTHENTIK_EMAIL__HOST: smtp.ucsd.edu
+      AUTHENTIK_EMAIL__PORT: 25
+      AUTHENTIK_EMAIL__USE_TLS: false
+      AUTHENTIK_EMAIL__USE_SSL: false
+      AUTHENTIK_EMAIL__TIMEOUT: 60
+      AUTHENTIK_EMAIL__FROM: e4e@ucsd.edu
     volumes:
       - ./authentik/media:/media
       - ./authentik/data:/data
