@@ -1,0 +1,103 @@
+# 0009. Lab-internal PKI is an OpenBao CA hooked into Active Directory
+
+**Status:** Accepted · **Date:** 2026-06-17
+
+## Context
+
+The lab needs **mutual-TLS and internal TLS between machines** — the Temporal gRPC
+frontend requires client-auth, compute hosts expose XRDP over TLS, and future
+internal services will want server/client certs. These certificates **cannot come
+from the public CA** (Let's Encrypt, which Traefik already uses for browser HTTPS):
+mTLS client certs aren't issuable by a public CA, and these are machine endpoints,
+not browser ones. So the lab needs its **own** certificate authority.
+
+Two facilities already exist to build on: **OpenBao** (`krg-vault`) is a tofu-managed
+target, and **Samba AD** (`KRG.LOCAL`) is the lab's single identity authority —
+host logins, Grafana SSO, and `/scratch` group ownership all key off AD groups
+(`krg.adClient`, [[authentik-groups-from-ad]]-style). A second, cert-only identity
+or authorization namespace would be a parallel source of truth to keep in sync.
+
+A compliance constraint sharpened the trust model. Export-controlled work (the ARM
+PDK Technology Control Plan) requires storage/access "using a **self-signed
+certificate**." In that context "self-signed" means **not vouched for by an external
+authority** — the lab signs for itself. An internal CA chains to a lab-controlled
+root, not the public WebPKI, so it satisfies that intent exactly; the distinction
+between a literally self-signed leaf and a lab-CA-signed leaf does not matter to the
+requirement, and a managed CA is operationally better (rotation, revocation, one
+trust anchor).
+
+The first concrete consumer that forced the design was the XRDP cert on the
+**impermanent** compute hosts: their root rolls back every boot, so xrdp's
+auto-generated self-signed cert changes each reboot and every RDP client hits a
+cert-TOFU mismatch (worked around with `ignore-cert`). A stable cert was needed —
+and the clean fix turned out to depend on the CA being trusted fleet-wide.
+
+## Decision
+
+### 1. A private two-tier OpenBao CA, separate from the public CA
+
+`terraform/openbao/pki.tf`: root (`pki`, 10y) signs **only** an intermediate
+(`pki_int`, 5y); every leaf is issued by the intermediate. EC P-256, keys `internal`
+(generated in OpenBao, never exported). The root stays dormant. This is deliberately
+separate from Traefik's public Let's Encrypt certs — **two PKIs, two jobs.**
+
+### 2. "Self-signed" = internal CA
+
+A `pki_int`-issued cert satisfies a "self-signed certificate" requirement: no
+external authority is in the trust path, the lab signs for itself. We use the
+managed CA rather than literal per-service self-signed certs.
+
+### 3. Issuance authority is split by actor — machines vs humans
+
+- **Machines authenticate with AppRole** (`terraform/openbao/main.tf`): per-host
+  roles, each granted only the issue paths it needs (`krg-prod` → temporal-frontend,
+  `krg-deploy` → temporal-client, `waiter`/`kastner-ml` → `host`). A box can mint
+  only its own cert.
+- **Humans authenticate with OpenBao's `ldap` method** bound to `KRG.LOCAL`
+  (`terraform/openbao/ldap.tf`); **AD group membership** authorizes which roles they
+  may issue (`var.pki_ad_group_roles`). This reuses AD as the single authority — no
+  cert-only ACL — and hands no one a machine's AppRole secret.
+
+### 4. Certs carry AD identity, PKINIT-ready
+
+The `user` role stamps the AD userPrincipalName into an `otherName` SAN
+(OID `1.3.6.1.4.1.311.20.2.3`), so a client cert *is* an AD principal and downstream
+authz keys off AD groups. SANs are shaped to be PKINIT-ready; cert-based Kerberos
+logon itself is **out of scope** (a separate, larger effort).
+
+### 5. The CA root is trusted fleet-wide
+
+`nix/profiles/base.nix` adds the root to `security.pki.certificateFiles` on every
+host. Because peers validate **by chain**, leaves can be short-lived and rotate
+freely — so consumers render an ephemeral leaf to `/run` (tmpfs) via `krg.vaultAgent`
+and re-issue each boot, with **nothing durable to persist** and no TOFU breakage.
+
+### 6. Consumers
+
+- **Temporal frontend mTLS** (first consumer; `krg-prod`).
+- **XRDP server cert** on compute hosts (`waiter`, `kastner-ml`) via
+  `krg.xrdp.tlsCert` — chosen **over persisting a static self-signed cert** because
+  chain validation makes the rotating `/run` leaf TOFU-free and impermanence-friendly,
+  and it folds RDP into the same lab-CA trust as everything else.
+
+## Consequences
+
+- **One trust root, one authority.** Every host trusts the lab CA; AD groups govern
+  human issuance, matching logins/Grafana/RDP. New mTLS services add a role, not a
+  new trust story.
+- **krg-vault becomes a boot-time dependency** for cert-rendering consumers (the
+  `/run` leaf re-issues each boot). Degrades gracefully — SSH (pubkey) is independent,
+  and a host that can't reach OpenBao at boot simply lacks the rendered cert rather
+  than failing to boot.
+- **LDAPS bootstrap is not free.** OpenBao verifies the DC over LDAPS, and Samba's
+  autogenerated cert is CN-only (no SAN) which Go/OpenBao rejects — so the DC's LDAPS
+  cert must be (re)issued from `pki_int` with `SAN=krg-ldap.krg.local`. And krg-vault
+  must resolve the `krg.local` zone (point it at the DC) before the bind connects.
+- **Per-host secret-zero.** Each AppRole consumer needs its `secret_id` delivered
+  out-of-band once (rides the persisted `/var/lib/krg` path on impermanent hosts).
+- **PKINIT deferred.** The identity model is ready for cert-based Kerberos logon, but
+  it isn't wired.
+
+Implementation and bring-up: `docs/pki-ad-integration.md`;
+`terraform/openbao/{pki,ldap,main}.tf`; `nix/profiles/base.nix`;
+`nix/modules/services/vault-agent.nix`; `nix/modules/desktop/xrdp.nix`.
