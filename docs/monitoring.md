@@ -81,7 +81,7 @@ Remaining gaps — still blocked on an exporter we don't run yet:
 - **Guacamole / Vaultwarden** — no native Prometheus endpoint; coverage is indirect
   via the Traefik (ingress) + Uptime (blackbox) dashboards, plus the future Postgres
   dashboard for Guacamole's DB.
-- **Stale targets** — `kastner-ml` (not in this flake) and `localhost:9290` (dead BMC on a VM) still want an audit.
+- **Stale targets** — `localhost:9290` (dead BMC on a VM) and the external `temporal:8000` job still want an audit (#161). `kastner-ml` is no longer stale: it's now a real flake host (#223).
 
 ## Adding a dashboard
 

@@ -19,6 +19,7 @@ comments and per-host configs; this is the one table to update when they change.
 | **krg-deploy** | 137.110.161.122 | krg-deploy.ucsd.edu | Ansible + OpenTofu control node; GitHub Actions deploy runner (`base`) | NixOS flake | VM on fabricant | 102 |
 | **krg-prod** | 137.110.161.106 | krg-prod.ucsd.edu | Lab-wide services (`server` profile) | NixOS flake | VM on fabricant | 103 |
 | **e4e-prod** | TBD | e4e-prod.ucsd.edu | E4E services (scaffold, `server`) | NixOS flake | VM (hypervisor TBD) | TBD |
+| **kastner-ml** | 132.239.17.123 | kastner-ml.ucsd.edu | E4E GPU compute, RTX A6000 (`compute` profile) | NixOS flake | physical | — |
 | **e4e-nas** | 132.239.17.124 | e4e-nas.ucsd.edu | Synology NAS (krg-prod storage) | (separate IaC effort) | appliance | — |
 | ~~krg-ad~~ | 137.110.161.107 | krg-ad.ucsd.edu | **OLD AD — being decommissioned** (breached) | — | — | — |
 
@@ -71,10 +72,12 @@ flowchart LR
   end
 
   waiter[("waiter<br/>node :9100 · ipmi :9290<br/>docker :9323 · DCGM :9400")]
+  kml[("kastner-ml<br/>node :9100<br/>docker :9323 · DCGM :9400")]
   fab[("fabricant<br/>node :9100 · ipmi :9290")]
   ldap[("krg-ldap<br/>node :9100")]
 
   prom -->|"scrape (pull)"| waiter
+  prom -->|"scrape (pull)"| kml
   prom -->|"scrape (pull)"| fab
   prom -->|"scrape (pull)"| ldap
   bb -.->|"probe HTTP/ICMP"| ext(("lab & E4E websites,<br/>1.1.1.1, 8.8.8.8"))
@@ -86,14 +89,15 @@ flowchart LR
 |---|---|---|---|---|
 | node_exporter | 9100 | native systemd (nix) / systemd (ansible) | all | + ZFS pool-health textfile collector ([`zfs.nix`](../nix/modules/zfs.nix)) |
 | ipmi_exporter | 9290 | native systemd | waiter, fabricant, krg-prod | compute + hypervisor + servers |
-| DCGM exporter | 9400 | Docker (CDI GPU) | waiter (+ any GPU host) | coupled to the NVIDIA driver ([`nvidia.nix`](../nix/modules/hardware/nvidia.nix)) |
-| docker metrics | 9323 | dockerd | waiter | Docker daemon metrics endpoint |
+| DCGM exporter | 9400 | Docker (CDI GPU) | waiter, kastner-ml | coupled to the NVIDIA driver ([`nvidia.nix`](../nix/modules/hardware/nvidia.nix)) |
+| docker metrics | 9323 | dockerd | waiter, kastner-ml | Docker daemon metrics endpoint |
 
 > **Prometheus scrape config** [`prometheus.yml`](../nix/docker-compose/krg-prod/prometheus/prometheus.yml)
 > now targets the renamed hosts (`krg-prod.ucsd.edu`, etc.) per the machine/CNAME
-> rename plan. Two known leftovers remain: the dead `ansible_deploy_monitor` job on
-> `:9000` (replaced by `system.autoUpgrade` — now connection-refused), and the
-> `kastner-ml.ucsd.edu` targets, which stay until that host is provisioned (out of
-> scope today). Blackbox probe targets (E4E/lab websites) track the new CNAMEs.
-> **krg-vault** and **krg-deploy** also expose node-exporter `:9100` (monitoring-host
-> only) but are not yet in the `node_exporter` scrape job — add them when convenient.
+> rename plan. The dead `ansible_deploy_monitor` `:9000` job has been dropped
+> (replaced by `system.autoUpgrade`), and `kastner-ml.ucsd.edu` is now a real
+> provisioned fleet host (issue #223) scraped for node/dcgm/docker metrics — no
+> longer an unmanaged leftover. Blackbox probe targets (E4E/lab websites) track the
+> new CNAMEs. **krg-vault** and **krg-deploy** also expose node-exporter `:9100`
+> (monitoring-host only) but are not yet in the `node_exporter` scrape job — add them
+> when convenient.
