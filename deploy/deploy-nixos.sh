@@ -1,71 +1,63 @@
 #!/usr/bin/env bash
-# Deploy every NixOS host in the flake from the control node (krg-deploy).
+# Rebuild NixOS hosts in the flake from the control node (krg-deploy).
 #
 # Activation is non-interactive because the break-glass admin (krg-admin, or
-# e4e-admin on E4E hosts — see USER_OVERRIDE) has sudoNoPassword on every host
-# (nix/users/admin.nix), so `nixos-rebuild --sudo` needs no password prompt. The
-# control node's deploy key is authorized for BOTH admin accounts
+# e4e-admin on E4E hosts — see USER_OVERRIDE in deploy/lib.sh) has sudoNoPassword
+# on every host (nix/users/admin.nix), so `nixos-rebuild --sudo` needs no password
+# prompt. The control node's deploy key is authorized for BOTH admin accounts
 # (nix/keys/admins.json). Each host BUILDS ITS OWN config (--build-host =
 # --target-host) so krg-deploy (a small VM) never has to build waiter's
 # NVIDIA/CUDA closure or copy gigabytes around — it only evaluates + orchestrates.
 #
-# krg-deploy ITSELF is intentionally excluded: it runs this deploy, and a
-# self-switch can restart the github-runner service mid-job. krg-deploy stays
+# PHASED DEPLOY (ADR 0011): this script REBUILDS only — it does NOT verify. The
+# phased pipeline (.github/workflows/deploy.yml) calls it TWICE:
+#   • phase 0 (foundation) — DEPLOY_NIXOS_HOSTS="krg-vault krg-ldap", BEFORE Ansible.
+#     krg-ldap carries the in-guest AD firewall the Ansible substrate phase depends
+#     on (it must open the DC ports to fabricant before fabricant can validate AD),
+#     and krg-vault brings up OpenBao. Hoisting them removes the NixOS→Ansible
+#     back-edge that no single layer ordering could satisfy.
+#   • phase 2 (systems) — DEPLOY_NIXOS_HOSTS="krg-prod waiter kastner-ml", AFTER it.
+#     The compute boxes mount /home from the NFS exports the Ansible phase creates.
+# OEC + AD membership are checked in the FINAL verify phase (deploy/deploy-verify.sh),
+# never here — so a health gate can't deadlock the converge meant to satisfy it.
+#
+# krg-deploy ITSELF is intentionally excluded (not in ORDER): it runs this deploy,
+# and a self-switch can restart the github-runner service mid-job. krg-deploy stays
 # current via the nightly system.autoUpgrade in nix/profiles/base.nix.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FLAKE="${REPO_ROOT}/nix"
-ADMIN="${DEPLOY_ADMIN:-krg-admin}"
+# Shared host map + SSH setup (ORDER, ADDR, USER_OVERRIDE, target_for, sshopts,
+# FLAKE, ADMIN, NIX_SSHOPTS) — also used by deploy-verify.sh; kept in one place.
+# shellcheck source-path=SCRIPTDIR source=lib.sh
+source "${REPO_ROOT}/deploy/lib.sh"
 
-# Deploy order: dependencies first (vault/AD before the services that use them).
-# Compute boxes (waiter, kastner-ml) go last — they depend on the directory/vault
-# tier, not the other way round.
-# e4e-prod is defined in the flake but NOT provisioned yet — omitted until the host
-# exists (deploying it would fail at SSH). Re-add it here + in ADDR when it's up.
-ORDER=(krg-vault krg-ldap krg-prod waiter kastner-ml)
-
-# host -> ssh address. Fully-qualified DNS names only — never IPs (DNS is the stable
-# handle; IPs may change). Names are final per the machine-rename plan (#128).
-declare -A ADDR=(
-  [krg-vault]=krg-vault.ucsd.edu
-  [krg-ldap]=krg-ldap.ucsd.edu
-  [krg-prod]=krg-prod.ucsd.edu
-  [waiter]=waiter.ucsd.edu
-  [kastner-ml]=kastner-ml.ucsd.edu
-  # [e4e-prod]=e4e-prod.ucsd.edu   # not provisioned yet — re-add to ORDER when it exists
-)
-# Per-host remote user (default ADMIN). kastner-ml is E4E hardware → e4e-admin
-# break-glass account (nix/hosts/kastner-ml/default.nix sets krg.adminAccount);
-# the control node's deploy key is authorized there too (nix/keys/admins.json),
-# and e4e-admin has sudoNoPassword, so the OEC staging + --sudo rebuild stay
-# non-interactive. Mirrors the USER_OVERRIDE map in reboot-fleet.sh.
-declare -A USER_OVERRIDE=(
-  [kastner-ml]=e4e-admin
-)
-
-DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-/var/lib/krg-admin/.ssh/id_ed25519}"
-# Strict host-key checking by default (matches ansible.cfg host_key_checking=True):
-# krg-deploy's known_hosts must be provisioned out-of-band with the fleet's host
-# keys. For FIRST-TIME bring-up only, DEPLOY_SSH_ACCEPT_NEW=true falls back to
-# trust-on-first-use (accept-new). Never lower this just to unblock a routine run.
-hostkey="yes"
-[[ "${DEPLOY_SSH_ACCEPT_NEW:-false}" == "true" ]] && hostkey="accept-new"
-# An array (not a string) so each option is a distinct argv element — passed as
-# "${sshopts[@]}" to ssh/scp it never word-splits or globs. NIX_SSHOPTS, which
-# nixos-rebuild reads as a single space-separated string, gets the joined form.
-sshopts=(-o "StrictHostKeyChecking=${hostkey}" -o BatchMode=yes -o ConnectTimeout=15)
-[[ -f "$DEPLOY_SSH_KEY" ]] && sshopts=(-i "$DEPLOY_SSH_KEY" "${sshopts[@]}")
-export NIX_SSHOPTS="${NIX_SSHOPTS:-${sshopts[*]}}"
+# Which hosts to rebuild this invocation. DEPLOY_NIXOS_HOSTS = space-separated
+# subset of ORDER (must be known hosts); unset = the full ORDER (a manual, single-
+# shot full rebuild). Hosts always rebuild in ORDER (dependency-first) regardless
+# of the order they're listed in the env.
+declare -A WANT=()
+if [[ -n "${DEPLOY_NIXOS_HOSTS:-}" ]]; then
+  read -r -a _sel <<< "$DEPLOY_NIXOS_HOSTS"
+  for h in "${_sel[@]}"; do
+    if [[ -z "${ADDR[$h]:-}" ]]; then
+      echo "FATAL: DEPLOY_NIXOS_HOSTS names unknown host '$h' (known: ${!ADDR[*]})"
+      exit 2
+    fi
+    WANT[$h]=1
+  done
+else
+  for h in "${ORDER[@]}"; do WANT[$h]=1; done
+fi
 
 # ── OEC (campus-mandated Qualys Cloud Agent + Trellix HX/xagt) ───────────────
 # These agents are mandatory on EVERY host. The credentialed installer archive
 # (live ActivationId/CustomerId — gitignored, .secrets/ is too) is staged
 # out-of-band on the control node; we scp it to each host's runtime path BEFORE
 # the rebuild so that switch's oec-install oneshot enrolls on the SAME run
-# (modules/security/oec-qualys-trellix.nix gates the oneshot on this path), then
-# verify both daemons came up afterwards. A missing archive is fatal — we never
-# deploy a silently-unhardened host. (Same path/policy as the Ansible layer.)
+# (modules/security/oec-qualys-trellix.nix gates the oneshot on this path). A
+# missing archive is fatal — we never deploy a silently-unhardened host. (Whether
+# both daemons actually came up is asserted later, in deploy/deploy-verify.sh.)
 OEC_INSTALLER="${OEC_INSTALLER:-/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz}"
 OEC_DEST="/var/lib/krg/oec/oec-qualystrellixinstallers-linux.tgz"
 if [[ ! -r "$OEC_INSTALLER" ]]; then
@@ -105,41 +97,12 @@ stage_oec() {
       "
 }
 
-# Both security daemons must be active after the rebuild. A host where either is
-# down fails the deploy (campus-mandated; no half-hardened fleet).
-verify_oec() {
-  local target="$1" host="$2"
-  if ssh "${sshopts[@]}" "$target" 'systemctl is-active --quiet qualys-cloud-agent && systemctl is-active --quiet xagt'; then
-    echo "OK: ${host} — qualys-cloud-agent + xagt active"
-    return 0
-  fi
-  echo "FAILED: ${host} — OEC security daemons not both active:"
-  ssh "${sshopts[@]}" "$target" 'systemctl is-active qualys-cloud-agent xagt; true' || true
-  return 1
-}
-
-# krg-deploy verifies ITSELF, locally (no ssh, no rebuild). It's excluded from the
-# rebuild loop below — a self-switch would restart this very github-runner mid-job
-# — and enrolls instead via its nightly autoUpgrade (which points oec-install at
-# the archive the control node already holds; see nix/hosts/krg-deploy). This is
-# verify-only: if its daemons aren't up yet (e.g. before the first autoUpgrade has
-# enrolled it), the deploy fails like any other host — bootstrap with a one-off
-# `sudo nixos-rebuild switch --flake ./nix#krg-deploy` if needed.
-verify_oec_local() {
-  if systemctl is-active --quiet qualys-cloud-agent && systemctl is-active --quiet xagt; then
-    echo "OK: krg-deploy (local) — qualys-cloud-agent + xagt active"
-    return 0
-  fi
-  echo "FAILED: krg-deploy (local) — OEC security daemons not both active:"
-  systemctl is-active qualys-cloud-agent xagt || true
-  return 1
-}
-
 # Fail-fast: stop on the first failed host. Order is dependency-first (vault/AD
 # before the services that use them), so a failure early means the dependents
 # would be deploying against a broken base — don't.
 for host in "${ORDER[@]}"; do
-  target="${USER_OVERRIDE[$host]:-$ADMIN}@${ADDR[$host]}"
+  [[ -n "${WANT[$host]:-}" ]] || continue
+  target="$(target_for "$host")"
   echo "::group::nixos-rebuild switch ${host} (${target})"
   # Stage the OEC archive BEFORE the switch so this rebuild's oec-install
   # oneshot finds it and enrolls on the same run.
@@ -160,22 +123,3 @@ for host in "${ORDER[@]}"; do
   echo "OK: ${host}"
   printf '\n::endgroup::\n'
 done
-
-# ── Verify the campus-mandated security daemons on every host ────────────────
-# Checked across ALL hosts (not fail-fast) so the log shows every offender, then
-# the deploy fails if any host is missing a daemon. Enrollment can lag the switch
-# (oec-install runs after network-online), so a host that just enrolled should be
-# active by the time the whole fleet has rebuilt.
-echo "::group::verify OEC security daemons (qualys-cloud-agent + xagt)"
-oec_failed=0
-for host in "${ORDER[@]}"; do
-  target="${USER_OVERRIDE[$host]:-$ADMIN}@${ADDR[$host]}"
-  verify_oec "$target" "$host" || oec_failed=1
-done
-# ...plus the control node itself (excluded from the rebuild loop above).
-verify_oec_local || oec_failed=1
-printf '\n::endgroup::\n'
-if [[ "$oec_failed" -ne 0 ]]; then
-  echo "FAILED: OEC security daemons not running on one or more hosts — deploy considered failed"
-  exit 1
-fi

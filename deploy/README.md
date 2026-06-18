@@ -15,10 +15,12 @@ push to main
    ▼                                                    │
 .github/workflows/deploy.yml  ──(workflow_run, gated)───┘
    │   runs-on [self-hosted, krg-deploy]
-   ▼
-deploy/deploy-nixos.sh   nixos-rebuild switch --target-host (each host builds itself)
-deploy/deploy-ansible.sh ansible-playbook site.yml  (Synology opt-in)
-deploy/deploy-tofu.sh    tofu apply per target  (active; creds from OpenBao, opt-in via TOFU_TARGETS)
+   ▼   PHASED PIPELINE (ADR 0011) — not one linear layer order:
+ phase 0  deploy-nixos.sh  DEPLOY_NIXOS_HOSTS="krg-vault krg-ldap"  (foundation: OpenBao + AD DC/firewall)
+ phase 1  deploy-ansible.sh  ansible-playbook site.yml  (substrate: Proxmox + NFS exports; Synology opt-in)
+ phase 2  deploy-nixos.sh  DEPLOY_NIXOS_HOSTS="krg-prod waiter kastner-ml"  (systems: services + compute)
+ phase 3  deploy-tofu.sh   tofu apply per target  (config; creds from OpenBao, opt-in via TOFU_TARGETS)
+ phase 4  deploy-verify.sh  OEC + AD membership, whole fleet  (the ONLY gates; fatal here)
 ```
 
 The runner itself is declarative — `services.github-runners.krg-deploy` in
@@ -31,12 +33,16 @@ uses).
 
 | Script | Applies | Notes |
 |---|---|---|
-| `deploy-nixos.sh` | krg-vault, krg-ldap, krg-prod, waiter, kastner-ml | `--build-host = --target-host` so each host builds its own closure (krg-deploy only evaluates). **krg-deploy itself is excluded** from the rebuild — it runs the job; it stays current via nightly `autoUpgrade` (and self-verifies OEC locally — see *OEC* below). **e4e-prod is omitted** until the host is provisioned. **Stages the OEC installer to each host before the switch and verifies both security daemons are active afterwards** (see *OEC* below). |
-| `deploy-ansible.sh` | `ansible/playbooks/site.yml` (Proxmox) | Synology is **opt-in** (`DEPLOY_SYNOLOGY=true`, off by default) — its declarative sync deletes, and bring-up has gates (see [docs/e4e-nas-dsm.md](../docs/e4e-nas-dsm.md)). Galaxy collections (`ansible/requirements.yml`) must be **provisioned on the control node** (not installed per-run — matches the nightly `ansible-apply`); deterministic/Nix-managed collections tracked in #129. **Passes `oec_installer` so the Proxmox hosts enroll + verify the OEC daemons too** (see *OEC* below). |
+| `deploy-nixos.sh` | the hosts in `DEPLOY_NIXOS_HOSTS` (unset = all: krg-vault, krg-ldap, krg-prod, waiter, kastner-ml) | **Rebuild only — no verification** (OEC/AD checks moved to `deploy-verify.sh`). `--build-host = --target-host` so each host builds its own closure (krg-deploy only evaluates). The phased pipeline calls it **twice** — `DEPLOY_NIXOS_HOSTS="krg-vault krg-ldap"` (phase 0, foundation) then `"krg-prod waiter kastner-ml"` (phase 2, systems); unset rebuilds the full set in dependency order for a manual run. **krg-deploy is excluded** (it runs the job; stays current via nightly `autoUpgrade`). **e4e-prod is omitted** until provisioned. **Stages the OEC installer to each host before the switch** so `oec-install` enrolls on the same run (see *OEC*). |
+| `deploy-ansible.sh` | `ansible/playbooks/site.yml` (Proxmox) | Synology is **opt-in** (`DEPLOY_SYNOLOGY=true`, off by default) — its declarative sync deletes, and bring-up has gates (see [docs/e4e-nas-dsm.md](../docs/e4e-nas-dsm.md)). Galaxy collections (`ansible/requirements.yml`) must be **provisioned on the control node** (not installed per-run — matches the nightly `ansible-apply`); deterministic/Nix-managed collections tracked in #129. **Passes `oec_installer` so the Proxmox hosts enroll the OEC daemons too** (see *OEC*). AD membership **converges in warn-mode** (`ad_require_joined` default-false); the strict gate is phase 4. |
 | `deploy-tofu.sh` | the targets named in `TOFU_TARGETS` | **Active; creds from OpenBao, no secrets on disk.** krg-deploy logs into OpenBao with its AppRole (the same `openbao-role-id`/`openbao-secret-id` the Ansible leg uses) and reads each target's creds from KV at apply time (paths below). **Opt-in:** only targets listed in `TOFU_TARGETS` apply (empty by default — like `SYNOLOGY_TAGS` scopes the synology converge); a listed target whose KV secret isn't seeded **skips** with a notice. A ready target with no `TOFU_STATE_PASSPHRASE` **hard-fails** rather than writing plaintext state (ADR 0005). State persists under `TOFU_STATE_ROOT` (CI checkout is ephemeral), always encrypted. **`openbao` is special** — it provisions OpenBao's own auth, so it can't use that AppRole; apply it manually with a privileged `TOFU_OPENBAO_TOKEN` (see below). |
+| `deploy-verify.sh` | nothing — **read-only checks** the whole fleet | **Phase 4: the single verification phase.** Asserts the OEC daemons (Qualys + Trellix) are active on every host + the control node, and that every host **configured** as an AD member passes `adcli testjoin` — NixOS hosts (gated on `krg.adClient.enable`, read from the flake) and the Proxmox hosts (ad-hoc against the `proxmox` group). Health gates live **only** here, after every layer has converged, so a gate can't deadlock the stage that satisfies it (ADR 0011). Fatal — any down daemon or broken join fails the deploy. `DEPLOY_VERIFY_AD=false` skips the AD checks for a first total bring-up. |
 
-The scripts run by hand on krg-deploy too (they only need the deploy toolchain + the
-secrets below) — `./deploy/deploy-nixos.sh`, etc.
+`deploy/lib.sh` (sourced, not run) holds the shared host map + SSH setup for the two
+NixOS legs (`deploy-nixos.sh` rebuilds, `deploy-verify.sh` checks) so the host list
+can't drift between them. The scripts run by hand on krg-deploy too (they only need
+the deploy toolchain + the secrets below) — `DEPLOY_NIXOS_HOSTS=… ./deploy/deploy-nixos.sh`,
+etc.; a full manual deploy walks phases 0→4 in order, ending with `./deploy/deploy-verify.sh`.
 
 ## Gating
 
@@ -46,18 +52,29 @@ same commit before applying — so a broken commit never deploys. A single deplo
 at a time (`concurrency: deploy-fleet`).
 
 **Fail-fast, end to end.** Each script stops on the first failed host/target (it
-doesn't push on to the rest), and each workflow stage gates the next (`success() &&
-…`), so a failed stage skips the rest rather than deploying on top of a half-broken
+doesn't push on to the rest), and each workflow phase gates the next (`success() &&
+…`), so a failed phase skips the rest rather than deploying on top of a half-broken
 fleet.
 
-**Stage order = dependency order: Ansible → NixOS → OpenTofu.** Ansible provisions the
-substrate the OS hosts consume (the Proxmox hypervisor, the firewall, and the NFS
-exports the compute boxes mount as `/home` — waiter←fabricant, kastner-ml←e4e-nas);
-NixOS then brings up the machines and the services that run on them; OpenTofu configures
-those services last (it talks to their APIs and reads/writes OpenBao secrets, so they
-must already exist). Running NixOS first would deadlock a compute box whose `/home`
-export is created by the Ansible stage — `home.mount` fails, fail-fast skips Ansible,
-and the export is never created. See [lab-interdependencies.md](../docs/lab-interdependencies.md).
+**Phased pipeline, not a single layer order** ([ADR 0011](../docs/adr/0011-cross-layer-deploy-ordering.md)).
+The layers depend on each other in *both* directions — Ansible's NFS exports must
+exist before NixOS mounts `/home`, but krg-ldap's NixOS AD firewall must open the DC
+ports before the Ansible AD join can validate — so no linear "Ansible → NixOS →
+OpenTofu" order satisfies every edge. Instead the deploy runs in **phases**:
+
+| Phase | What | Why here |
+|---|---|---|
+| 0 foundation | NixOS **krg-vault + krg-ldap** | OpenBao + the AD DC and its in-guest firewall — the shared prerequisite, hoisted ahead of Ansible (removes the NixOS→Ansible back-edge). |
+| 1 substrate | **Ansible** (Proxmox, firewall, NFS exports) | the substrate the compute boxes mount as `/home`; can now reach the DC through phase 0's firewall. |
+| 2 systems | NixOS **krg-prod + waiter + kastner-ml** | the services OpenTofu configures, and the compute boxes that mount phase 1's exports. |
+| 3 config | **OpenTofu** (per `TOFU_TARGETS`) | configures the services through their APIs / OpenBao — they must already exist. |
+| 4 verify | **deploy-verify.sh** (OEC + AD, whole fleet) | every health/membership gate, once, *after* the stages that satisfy them — so a gate can't deadlock the deploy. |
+
+Phases 0–3 **converge** (health gates warn, don't fail); phase 4 is the only place
+gates are **fatal**. The nightly pull-converge (`system.autoUpgrade` + the
+`ansible-apply` timer) remains the backstop for any edge not perfectly ordered in the
+push path. See [lab-interdependencies.md](../docs/lab-interdependencies.md) for the
+live edge list and the worked deadlock example.
 
 ## Rebooting the fleet (manual)
 
@@ -108,17 +125,18 @@ them as a hard gate rather than best-effort:
 - **NixOS** (`deploy-nixos.sh`): `scp`s the archive to each host's runtime path
   (`/var/lib/krg/oec/…`) **before** `nixos-rebuild switch` — so that switch's
   `oec-install` oneshot ([`modules/security/oec-qualys-trellix.nix`](../nix/modules/security/oec-qualys-trellix.nix))
-  enrolls on the same run — then, after the whole fleet has rebuilt, checks
-  `qualys-cloud-agent` + `xagt` are `active` on every host.
+  enrolls on the same run. **Verification is deferred to phase 4** (`deploy-verify.sh`),
+  which checks `qualys-cloud-agent` + `xagt` are `active` on every host once the whole
+  fleet has rebuilt.
 - **krg-deploy itself** (the control node) is excluded from the rebuild loop — a
   self-`switch` would restart the running github-runner mid-job — so it enrolls via
   its nightly `autoUpgrade` instead, pointed at the archive it already holds in
   `.secrets/` ([`nix/hosts/krg-deploy`](../nix/hosts/krg-deploy/default.nix) sets
-  `krg.oecQualysTrellix.installerArchive`). `deploy-nixos.sh` still verifies it,
-  **locally** (no ssh/rebuild), folded into the same gate.
+  `krg.oecQualysTrellix.installerArchive`). `deploy-verify.sh` checks it **locally**
+  (no ssh/rebuild), folded into the same phase-4 gate.
 - **Proxmox** (`deploy-ansible.sh`): passes `oec_installer`; the
   [`oec_qualys_trellix`](../ansible/roles/oec_qualys_trellix) role copies + installs
-  the archive and asserts both daemons are active.
+  the archive and asserts both daemons are active during the converge.
 - **A missing archive on the control node, or any host where either daemon is not
   active, fails the deploy** — no silently-unhardened machine. (The Ansible role
   still no-ops gracefully when `oec_installer` is unset, so `--check`/local runs are
@@ -168,6 +186,8 @@ TOFU_TARGETS=openbao TOFU_OPENBAO_TOKEN="<privileged token>" \
 ## Tunables (env)
 
 `DEPLOY_ADMIN` (`krg-admin`) · `DEPLOY_SSH_KEY` · `DEPLOY_SSH_ACCEPT_NEW` (`false`) ·
+`DEPLOY_NIXOS_HOSTS` (empty = the full `ORDER`; the pipeline sets it per phase) ·
+`DEPLOY_VERIFY_AD` (`true`; `false` = skip AD checks for a first bring-up) ·
 `DEPLOY_SYNOLOGY` (`false`) · `OEC_INSTALLER`
 (`/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz`) ·
 `TOFU_TARGETS` (empty — explicit opt-in) · `TOFU_OPENBAO_TOKEN` (openbao bootstrap) ·

@@ -30,8 +30,12 @@
     group: root
     mode: "0644"
 
+# --domain is load-bearing: without it adcli autodetects the host's DNS domain
+# (ucsd.edu) instead of the AD realm (krg.local) and always fails to find a DC, so
+# ad_joined would be wrongly false on a genuinely-joined host (observed on fabricant
+# 2026-06-18). Pin it to the realm.
 - name: Check current domain membership
-  ansible.builtin.command: adcli testjoin
+  ansible.builtin.command: adcli testjoin --domain {{ ad_domain }}
   register: ad_testjoin
   changed_when: false
   failed_when: false
@@ -129,3 +133,19 @@
     enabled: true
     state: started
   when: ad_joined | bool
+
+# Deploy gate: require a working AD join. ad_joined comes from `adcli testjoin
+# --domain` above — a LIVE check against the DC using the host's machine keytab (no
+# user/admin account, and it can't pass on stale SSSD cache the way a getent could).
+# Mirrors the adcli-testjoin gate in deploy/deploy-nixos.sh so both layers prove AD
+# membership the same way. Off by default so a FIRST bring-up run (host not joined
+# yet, no creds) still stages config + warns rather than failing; the automated fleet
+# deploy sets ad_require_joined=true (deploy/deploy-ansible.sh) to gate strictly.
+- name: Require a working AD join (fleet deploy gate)
+  ansible.builtin.assert:
+    that: ad_joined | bool
+    fail_msg: >-
+      {{ inventory_hostname }} is not a working AD member —
+      'adcli testjoin --domain {{ ad_domain }}' failed (lost join or DC unreachable).
+    success_msg: "{{ inventory_hostname }} — adcli testjoin validated (live DC member)"
+  when: ad_require_joined | bool

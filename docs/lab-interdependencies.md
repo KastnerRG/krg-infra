@@ -83,20 +83,32 @@ graph TD
 
 ## Deploy-time order (CD)
 
-`deploy.yml` applies in **dependency order: Ansible → NixOS → OpenTofu**, fail-fast
-between stages. The rule: *provision the substrate before its consumers.*
+`deploy.yml` applies as a **phased pipeline**, not a single linear layer order
+([ADR 0011](adr/0011-cross-layer-deploy-ordering.md)) — because the layers depend on
+each other in *both* directions (Ansible's NFS export → NixOS `/home`, but krg-ldap's
+NixOS AD firewall → the Ansible AD join), so no "Ansible → NixOS → OpenTofu" ordering
+satisfies every edge. Fail-fast between phases. The rule within each phase is still
+*provision the substrate before its consumers*; the phasing handles the back-edges.
 
-1. **Ansible** — the hypervisor, firewall, and the **NFS exports the compute boxes
-   mount as `/home`**. Must precede NixOS: a compute box can't mount a `/home`
-   export that doesn't exist yet.
-2. **NixOS** — the machines, and the services (Authentik, Grafana, OpenBao) that run
-   on them. Internal host order (`deploy/deploy-nixos.sh` `ORDER`):
-   `krg-vault → krg-ldap → krg-prod → waiter → kastner-ml` — secrets and identity
-   before the services and compute that consume them.
-3. **OpenTofu** — configures those services **through their APIs** and reads/writes
-   OpenBao secrets, so it must come last. Target order
-   (`TOFU_TARGETS`): `authentik → grafana → e4e-nas` — Grafana reads the OIDC secret
-   Authentik mints, so Authentik first.
+0. **foundation** — NixOS **krg-vault + krg-ldap**: OpenBao and the AD DC (with its
+   in-guest AD firewall, which the Ansible phase needs to reach the DC). Hoisted
+   ahead of Ansible so the shared prerequisite is up first.
+1. **substrate** — **Ansible**: the hypervisor, firewall, and the **NFS exports the
+   compute boxes mount as `/home`**. Must precede the member NixOS hosts (a compute
+   box can't mount a `/home` export that doesn't exist yet), and now runs after
+   phase 0 so fabricant can already reach the DC.
+2. **systems** — NixOS **krg-prod + waiter + kastner-ml**: the services (Authentik,
+   Grafana, OpenBao consumers) and the compute boxes that mount phase 1's exports.
+   Hosts rebuild in the `deploy/lib.sh` `ORDER`
+   (`krg-vault → krg-ldap → krg-prod → waiter → kastner-ml`), split across phases 0/2.
+3. **config** — **OpenTofu**: configures those services **through their APIs** and
+   reads/writes OpenBao secrets, so it must come after they exist. Target order
+   (`TOFU_TARGETS`): `authentik → grafana → e4e-nas → temporal` — Grafana reads the
+   OIDC secret Authentik mints, so Authentik first.
+4. **verify** — `deploy/deploy-verify.sh`: every health/membership gate (OEC daemons,
+   `adcli testjoin`) for the whole fleet, **once, here** — after the stages that
+   satisfy them. Phases 0–3 converge (gates warn); phase 4 is the only fatal gate, so
+   a check can't deadlock the deploy that would make it pass.
 
 `krg-deploy` itself is **excluded** from the NixOS rebuild loop (it runs the job; a
 self-switch would restart the runner mid-deploy). It stays current via its nightly

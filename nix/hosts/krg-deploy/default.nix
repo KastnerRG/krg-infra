@@ -58,8 +58,10 @@
   # Point bao at krg-vault so every shell session works without manual export.
   environment.variables.VAULT_ADDR = "https://krg-vault.ucsd.edu:8200";
 
-  # Not yet domain-joined — disable AD client until keytab is provisioned.
-  krg.adClient.enable = false;
+  # AD domain member — joined 2026-06-18 (adcli; testjoin OK). Explicit marker;
+  # base.nix defaults krg.adClient.enable on. adClient prepends the DC as the primary
+  # resolver (krg-deploy had campus-only DNS before).
+  krg.adClient.enable = true;
 
   # ── Fleet SSH host keys (deploy trust anchor) ───────────────────────────────
   # Renders /etc/ssh/ssh_known_hosts so the push deploy (deploy/deploy-nixos.sh,

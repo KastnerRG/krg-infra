@@ -198,6 +198,9 @@
   # default. Break-glass krg-admin (local) is unaffected. NOTE: the "Waiter" AD group
   # must exist and have members (AD-side, see docs/creating-a-user.md); it's matched
   # under CN=Users — use krg.adClient.accessFilter if it ever lives in a custom OU.
+  # AD domain member — verified joined 2026-05-21, re-verified 2026-06-18
+  # (`getent Administrator` resolves). Explicit marker; base.nix defaults enable on.
+  krg.adClient.enable = true;
   krg.adClient.allowedGroups = ["Domain Admins" "Waiter"];
 
   networking = {

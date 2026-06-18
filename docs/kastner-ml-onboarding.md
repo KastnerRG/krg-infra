@@ -309,7 +309,7 @@ flake, and reboots into NixOS — hands-off after launch.
 ```bash
 nix run github:nix-community/nixos-anywhere -- \
   --flake ./nix#kastner-ml \
-  --target-host c.crutchfield.642@kastner-ml.ucsd.edu
+  --target-host root@kastner-ml.ucsd.edu   # the pre-NixOS box, as root (or any sudo user)
 ```
 
 > **Console route (used 2026-06-15) + two gotchas it surfaced.** Installing from

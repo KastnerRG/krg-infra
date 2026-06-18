@@ -158,12 +158,32 @@ group to exist in AD with members — also covered in
 
 ---
 
-## Status (2026-05-23)
+## Status (verified 2026-06-18)
+
+Status as of 2026-06-18. Membership is gated at deploy time by
+`adcli testjoin --domain krg.local` — a live check of the host's **machine keytab**
+against the DC: it needs no user/admin/service account and bypasses the SSSD cache,
+so (unlike a `getent`, which serves a cached entry once looked up) it can't pass on
+stale cache and catches a member that has drifted offline. `deploy/deploy-nixos.sh`
+runs it per NixOS member; the Proxmox layer runs it via the `ad_client` role.
 
 | Host | Joined? |
 |---|---|
-| krg-ldap | ✅ provisioned + keytab exported (the DC) |
-| waiter | ✅ joined 2026-05-21 (`adcli --login-ccache`) |
-| fabricant | ⏳ pending (`-e ad_join_password=…`) + on-box validation |
-| krg-prod / e4e-prod | ⏳ pending (not yet deployed) |
-| krg-vault / krg-deploy | ⏳ pending — `krg.adClient.enable = false` until a keytab is provisioned |
+| krg-ldap | ✅ the DC (provisioned + keytab exported) — *is* the domain, not a member |
+| waiter | ✅ joined 2026-05-21 (`adcli --login-ccache`); testjoin OK 2026-06-18 |
+| krg-prod | ✅ joined; testjoin OK 2026-06-18 |
+| kastner-ml | ✅ joined; testjoin OK 2026-06-18 |
+| krg-vault | ✅ joined 2026-06-18; testjoin OK (re-joined once to resync a stale keytab — see note). `krg.adClient.enable = true` set here. |
+| krg-deploy | ✅ joined 2026-06-18; testjoin OK. `krg.adClient.enable = true` set here. |
+| fabricant | ⚠️ joined but was **offline from the DC** — the DC's in-guest firewall (`samba-ad.nix` opens the AD ports to `sealab+machines+ops`) dropped it because fabricant wasn't in **`machines`**. **Fixed in this PR** (added `137.110.161.98` to `machines` in `trusted.json`); apply with a krg-ldap rebuild, then SSSD comes online. (Also fixed: `ad_client`'s `adcli testjoin` lacked `--domain`, so it probed `ucsd.edu`.) |
+| e4e-prod | ⏳ not deployed yet (unreachable) |
+
+> **Troubleshooting — `adcli testjoin` reports `Preauthentication failed`** (seen on
+> krg-vault 2026-06-18): the host's keytab is out of sync with the machine account's
+> password in AD (a partial/duplicated join leaves them mismatched), **or** the clock
+> is skewed >5 min from the DC (Kerberos preauth is time-sensitive). Rule out skew
+> first (`timedatectl`, compare to the DC), then re-run the join to resync the keytab:
+> `sudo adcli join --domain krg.local --login-user Administrator --host-fqdn <host>.krg.local`,
+> then `sudo systemctl restart sssd`. Note SSSD may serve **cached** users fine in
+> this state, so a `getent` looks healthy — only `adcli testjoin` (a live machine-cred
+> check) catches it, which is why the deploy gate uses it.

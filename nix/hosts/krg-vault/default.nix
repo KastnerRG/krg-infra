@@ -31,8 +31,10 @@ in {
     nameservers = ["132.239.0.252" "8.8.8.8" "1.1.1.1"];
   };
 
-  # Not yet domain-joined — disable AD client until keytab is provisioned.
-  krg.adClient.enable = false;
+  # AD domain member — joined 2026-06-18 (adcli; testjoin OK). Explicit marker;
+  # base.nix defaults krg.adClient.enable on. adClient pins + prepends the DC as the
+  # primary resolver, which SUPERSEDES the manual nameserver fix in #264 (close it).
+  krg.adClient.enable = true;
 
   # Ensure the bao CLI always talks to the local instance over TLS.
   # Without this it defaults to https://127.0.0.1:8200 which fails cert

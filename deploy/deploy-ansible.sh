@@ -56,6 +56,15 @@ if ! (
   # installed per-run — this matches the nightly ansible-apply service and avoids an
   # unpinned upstream pull on every deploy (non-reproducible). Pinning them and
   # managing the install via Nix so both paths share one set is tracked in #129.
+  # AD membership gate NOT asserted here (ad_require_joined stays default-false) — by
+  # design, per the phased pipeline (ADR 0011). This Ansible substrate phase runs
+  # BEFORE the NixOS phase that lands krg-ldap's in-guest AD firewall (the change that
+  # lets fabricant reach the DC — the `machines` IPSet fix). Asserting `adcli testjoin`
+  # here would fail before that fix applies → the exact cross-layer deadlock ADR 0011
+  # fixes (Ansible fails → NixOS never runs → firewall never fixed). So this phase
+  # CONVERGES in warn-mode (the ad_client role stages config + warns when not joined);
+  # the strict membership gate runs ONCE, for the whole fleet, in the final verify
+  # phase (deploy/deploy-verify.sh), AFTER the firewall has landed.
   ansible-playbook playbooks/site.yml -e "oec_installer=${OEC_INSTALLER}"
 ); then
   echo "FAILED: ansible site.yml"

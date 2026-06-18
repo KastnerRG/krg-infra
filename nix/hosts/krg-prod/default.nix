@@ -20,6 +20,11 @@ in {
   # project-specific services live on the separate e4e-prod host.
   krg.adminAccount = "krg-admin";
 
+  # AD domain member — verified joined 2026-06-18 (`getent Administrator` resolves).
+  # Explicit marker; base.nix already defaults krg.adClient.enable on. Login stays
+  # Domain-Admins-only (the base default allowedGroups).
+  krg.adClient.enable = true;
+
   # Proxmox VM. The in-guest NixOS firewall stays ON (base.nix runs it on every
   # host) — isVM just enables the QEMU guest agent. Defense-in-depth: ports/SSH
   # are restricted in-guest AND at the Proxmox perimeter (not "firewall off").
