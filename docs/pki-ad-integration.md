@@ -83,8 +83,11 @@ jq -r .data.private_key  /tmp/dc-ldaps.json                      # key
 #     tls cafile   = /var/lib/samba/private/tls/ca.pem   # the pki_int CA chain
 #   systemctl restart samba   (or samba-ad-dc)
 
-# ldap_ca_cert is then the lab CA the DC cert chains to (root or pki_int chain):
-export TF_VAR_ldap_ca_cert="$(bao read -field=certificate pki/cert/ca)"
+# ldap_ca_cert must verify the DC cert. The DC leaf is signed by the INTERMEDIATE,
+# so use the pki_int chain (intermediate + root) — the root alone gives OpenBao
+# "x509: certificate signed by unknown authority" unless the DC also ships the
+# intermediate in its TLS handshake:
+export TF_VAR_ldap_ca_cert="$(bao read -field=certificate pki_int/cert/ca_chain)"
 ```
 
 Re-run the SAN check after the swap — it must now show `DNS:krg-ldap.krg.local`.
@@ -173,7 +176,7 @@ echo | openssl s_client -connect krg-ldap.krg.local:636 2>/dev/null \
 
 **5. Swap the LDAP trust anchor to the lab root — apply #2** `[krg-deploy]`
 ```bash
-export TF_VAR_ldap_ca_cert="$(bao read -field=certificate pki/cert/ca)"   # the real lab root
+export TF_VAR_ldap_ca_cert="$(bao read -field=certificate pki_int/cert/ca_chain)"   # intermediate + root (signs the DC leaf)
 TOFU_TARGETS=openbao TOFU_OPENBAO_TOKEN='<privileged token>' \
   TOFU_STATE_PASSPHRASE='<tofu state passphrase>' ./deploy/deploy-tofu.sh
 ```
