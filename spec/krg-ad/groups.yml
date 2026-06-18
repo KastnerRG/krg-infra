@@ -37,6 +37,7 @@ groups:
   - { name: "Docker Users", description: "docker daemon access on hosts (docker.nix accessGroups -> ad-group-sync)" }
   - { name: "KastnerML", description: "Access to the kastner-ml host" }
   - { name: "Guacamole Admins", description: "Apache Guacamole administrators" }
+  - { name: "Temporal Users", description: "May mint a lab-PKI client cert to reach the Temporal mTLS frontend (OpenBao ldap auth -> pki_int/issue/user; terraform/openbao var.pki_ad_group_roles)" }
 
   # --- Lab / org groups ---
   - { name: "Kastner Research Group", description: "Kastner Research Group members; owns /scratch/krg (gid group)" }
