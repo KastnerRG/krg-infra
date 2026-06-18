@@ -95,6 +95,9 @@ services:
       AUTHENTIK_EMAIL__USE_TLS: false
       AUTHENTIK_EMAIL__USE_SSL: false
       AUTHENTIK_EMAIL__TIMEOUT: 60
+      # No SMTP auth needed: smtp.ucsd.edu:25 relays for e4e@ucsd.edu unauthenticated
+      # from krg-prod's IP (confirmed via manual smtplib send, 2026-06-17).
+      AUTHENTIK_EMAIL__FROM: e4e@ucsd.edu
     user: root
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
