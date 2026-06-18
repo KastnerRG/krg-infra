@@ -70,6 +70,13 @@ services:
       --storage.tsdb.retention.size=700GB
       --storage.tsdb.wal-compression
     restart: unless-stopped
+    # Reach krg-prod's OWN host node_exporter (on the host's 0.0.0.0:9100) from
+    # inside the container. `localhost` here is the container's namespace, not the
+    # host — host.docker.internal resolves to the docker bridge gateway (the host).
+    # prometheus.yml scrapes host.docker.internal:9100 for the krg-prod self-target;
+    # krg-prod's in-guest firewall opens 9100 to the docker bridge subnet for it.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - prometheus_network
       - default

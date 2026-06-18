@@ -16,4 +16,11 @@ IN ACCEPT -p tcp -dport 8200         -source +dc/sealab   -log nolog
 IN ACCEPT -p tcp -dport 8200         -source +dc/ops      -log nolog
 IN ACCEPT -p tcp -dport 8200         -source +dc/machines -log nolog
 
+# node_exporter — scraped only by the monitoring host (krg-prod). The datacenter
+# cluster.fw 9100 rule applies to NODES (the hypervisor), not guests, so a guest
+# behind this default-DROP needs the allow here or the scrape times out (the
+# in-guest krg.firewall already opens 9100 to the same IP). Source = the
+# nix/networks/trusted.json monitoring_host.
+IN ACCEPT -p tcp -dport 9100         -source 137.110.161.106 -log nolog # node exporter (krg-prod)
+
 IN DROP -log nolog
