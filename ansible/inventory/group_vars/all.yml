@@ -22,8 +22,15 @@ admin_password_hash: "{{ (lookup('file', krg_admin_passwords_file) | from_json).
 base_timezone: "America/Los_Angeles"
 
 # ssh_hardening
-ssh_permit_root: "prohibit-password"   # key-only root (PVE relies on root)
+ssh_permit_root: "prohibit-password"   # key-only root (the Match-block mode; PVE relies on root)
 ssh_restrict_algorithms: false         # keep false on clusters (inter-node SSH may use RSA)
+# Root SSH is OFF globally and re-permitted (key-only) ONLY from these sources: the
+# control node (krg-deploy — it pushes Ansible as root) + admin remotes (ops). Humans
+# get no direct root (they use their AD account or krg-admin + sudo). Derived from the
+# shared trusted.json so it tracks the IPSets; krg-deploy is selected out of `machines`
+# by comment. If a hypervisor ever joins a PVE cluster, add the peer node IPs here
+# (PVE needs inter-node root SSH). krg_trusted is defined below.
+ssh_root_allowed_sources: "{{ (krg_trusted.ipsets.machines | selectattr('comment', 'defined') | selectattr('comment', 'search', 'krg-deploy') | map(attribute='cidr') | list) + (krg_trusted.ipsets.ops | map(attribute='cidr') | list) }}"
 
 # fail2ban — SUPERSEDED by CrowdSec (roles/crowdsec) fleet-wide.
 # Default flipped to false here so the role is a no-op everywhere. Set

@@ -2,7 +2,16 @@
 # (which Includes sshd_config.d/*.conf). Mirrors nix/profiles/base.nix SSH policy.
 PasswordAuthentication no
 KbdInteractiveAuthentication no
+{% if ssh_root_allowed_sources | length > 0 %}
+# Root SSH is OFF globally and re-permitted (key-only) ONLY from the trusted sources
+# in the Match block below (the control node + admin remotes). PVE relies on root SSH
+# for cluster inter-node operations, so this keeps it possible from KNOWN hosts while
+# removing root as a globally-reachable login. If this host ever joins a PVE cluster,
+# add the peer node IPs to ssh_root_allowed_sources.
+PermitRootLogin no
+{% else %}
 PermitRootLogin {{ ssh_permit_root }}
+{% endif %}
 PubkeyAuthentication yes
 MaxAuthTries 3
 LoginGraceTime 30
@@ -10,4 +19,12 @@ X11Forwarding no
 {% if ssh_restrict_algorithms %}
 # ed25519-only. WARNING: can break PVE cluster inter-node SSH if those keys are RSA.
 PubkeyAcceptedAlgorithms {{ ssh_pubkey_algorithms }}
+{% endif %}
+{% if ssh_root_allowed_sources | length > 0 %}
+
+# Re-permit key-only root from the control node + admin remotes (see above). Keep
+# this Match block LAST — sshd applies it to end-of-file; later global directives
+# would otherwise fall inside it.
+Match Address {{ ssh_root_allowed_sources | join(',') }}
+    PermitRootLogin {{ ssh_permit_root }}
 {% endif %}
