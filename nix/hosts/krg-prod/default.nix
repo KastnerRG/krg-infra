@@ -25,6 +25,19 @@ in {
   # are restricted in-guest AND at the Proxmox perimeter (not "firewall off").
   krg.base.isVM = true;
 
+  # krg-prod hosts Prometheus (in a container) AND its own node_exporter (on the
+  # host's 0.0.0.0:9100). The container scrapes the host via host.docker.internal
+  # (compose.grafana.yml + prometheus.yml), arriving from a docker-bridge source —
+  # NOT the monitoringSourceIp that node-exporter.nix's monitoringPorts rule allows.
+  # Open 9100 to the docker private range so the self-scrape lands. RFC1918 docker
+  # nets never appear on the external interface, so this doesn't widen real exposure.
+  krg.firewall.sourcedPorts = [
+    {
+      port = 9100;
+      sources = ["172.16.0.0/12"];
+    }
+  ];
+
   networking = {
     hostName = "krg-prod";
     domain = "ucsd.edu";

@@ -17,15 +17,18 @@ scrape_configs:
           - e4e-prod.ucsd.edu:9100
           - krg-ldap.ucsd.edu:9100
           - krg-vault.ucsd.edu:9100
-      # krg-prod runs Prometheus itself. Scraping its OWN external IP hairpins
-      # through Docker SNAT — the in-guest firewall sees the docker-bridge source,
-      # not the monitoring IP, and drops it (loopback works). Scrape over loopback
-      # and relabel the instance back to the FQDN so it shows as one fleet host.
+      # krg-prod runs Prometheus itself, in a container. Its host node_exporter is
+      # on the HOST's 0.0.0.0:9100 — unreachable as `localhost` (that's the
+      # container's own namespace → connection refused) and unreachable via the
+      # external IP (hairpins through Docker SNAT → dropped). Scrape the host via
+      # host.docker.internal (the bridge gateway; mapped in compose.grafana.yml) and
+      # relabel the instance back to the FQDN so it shows as one fleet host.
+      # krg-prod's in-guest firewall opens 9100 to the docker bridge subnet for this.
       - targets:
-          - localhost:9100
+          - host.docker.internal:9100
     relabel_configs:
       - source_labels: [__address__]
-        regex: localhost:9100
+        regex: host\.docker\.internal:9100
         target_label: instance
         replacement: krg-prod.ucsd.edu:9100
 
