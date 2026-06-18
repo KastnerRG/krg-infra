@@ -30,3 +30,31 @@ resource "authentik_brand" "default" {
   # The new addition — everything else above matches live state exactly.
   flow_recovery = authentik_flow.recovery.uuid
 }
+
+# The default LOGIN flow's identification stage — also pre-existing, brought under
+# management the same way. The brand's flow_recovery above does NOT put a "Forgot
+# password?" link on the actual login page; that link is rendered by THIS stage's
+# own recovery_flow field, which is a separate setting. Without this, the brand
+# wiring alone leaves the login page with no visible link, even though the recovery
+# flow itself works fine when hit directly.
+#
+# Values below were captured read-only from the live object on 2026-06-18
+# (GET /api/v3/stages/identification/, pk d332b973-c488-4663-bfd2-455c76bd4508)
+# before this resource existed in Terraform — recovery_flow is the ONLY field
+# changing from its live value (null -> the new recovery flow's uuid). Same caution
+# as the brand above: if `tofu plan` shows anything ELSE changing, re-capture before
+# applying.
+#
+# One-time import:
+#   tofu import authentik_stage_identification.default_authentication d332b973-c488-4663-bfd2-455c76bd4508
+
+resource "authentik_stage_identification" "default_authentication" {
+  name                      = "default-authentication-identification"
+  user_fields                = ["email", "username"]
+  case_insensitive_matching = true
+  show_matched_user         = true
+  pretend_user_exists       = true
+
+  # The new addition — everything else above matches live state exactly.
+  recovery_flow = authentik_flow.recovery.uuid
+}
