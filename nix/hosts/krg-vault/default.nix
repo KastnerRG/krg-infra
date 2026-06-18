@@ -28,10 +28,18 @@ in {
       }
     ];
     defaultGateway = "137.110.161.1";
-    nameservers = ["132.239.0.252" "8.8.8.8" "1.1.1.1"];
+    # krg-ldap (the AD DC, 137.110.161.109) FIRST: OpenBao's `ldap` auth backend
+    # binds to ldaps://krg-ldap.krg.local, so krg-vault must resolve the internal
+    # krg.local zone — which only the DC serves. The DC forwards everything it isn't
+    # authoritative for (samba-ad.nix dns forwarder), so the campus/public resolvers
+    # below are just fallbacks if the DC is down. This is DNS only — krg-vault is NOT
+    # a domain member (no keytab; krg.adClient stays off below). Normally krg.adClient
+    # prepends the DC for joined hosts; we set it by hand because that's disabled here.
+    nameservers = ["137.110.161.109" "132.239.0.252" "8.8.8.8" "1.1.1.1"];
   };
 
-  # Not yet domain-joined — disable AD client until keytab is provisioned.
+  # Not yet domain-joined — disable AD client until keytab is provisioned. (DNS for
+  # the krg.local zone is still wired above so OpenBao can reach the DC over LDAPS.)
   krg.adClient.enable = false;
 
   # Ensure the bao CLI always talks to the local instance over TLS.
