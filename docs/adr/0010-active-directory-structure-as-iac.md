@@ -86,11 +86,32 @@ password screening. **AD password policy cannot express that** — no dictionary
 breach check. So the standard is met by **two layers together**: AD enforces
 length/complexity/history/expiry; **Authentik** enforces strength + breach
 screening via a password-strength policy (zxcvbn + HaveIBeenPwned) bound to its
-enrollment and password-change flows. The Authentik half lives in
-`terraform/authentik/` — owned by the parallel SSO effort
-([[terraform-openbao-authentik-hands-off]]), **not** this change — and is recorded
-here as a **cross-layer obligation**: the password mandate is not fully satisfied
-until that policy lands. This ADR owns the AD half and the requirement on the
+enrollment and password-change flows.
+
+**Where enforcement actually happens (the nuance that scopes the obligation).**
+For AD-sourced users — i.e. every human — Authentik does not store the password;
+its password-change flow **writes back to Samba AD** (`unicodePwd`), and Samba
+enforces the domain policy *on that write*. So the length/complexity bar set here
+is **already enforced for AD users even before any Authentik policy exists** — a
+non-compliant password is rejected at the AD write step (fail-closed; it surfaces
+as a generic "Failed to update user", same shape as the ACL break that motivated
+this ADR). The Authentik policy is therefore **not** what makes AD users compliant
+on length/complexity. What still has *no* enforcement anywhere is:
+
+1. **Breach/dictionary screening** ("not a recognizable word") — only Authentik
+   (HIBP/zxcvbn) can do it; AD cannot.
+2. **Local (non-AD) Authentik accounts** — e.g. the `akadmin` bootstrap — have no
+   AD write-back, so *only* an Authentik policy bounds them.
+3. **UX** — a client-side policy rejects weak input *in the form* with a clear
+   message, instead of the opaque AD-write failure.
+
+The Authentik half lives in `terraform/authentik/` — which currently declares
+**no** password policy or flows (verified: it manages apps/providers/groups/LDAP/
+outpost/secrets only) — and is owned by the parallel SSO effort
+([[terraform-openbao-authentik-hands-off]]), **not** this change. It is recorded
+here as a **cross-layer obligation**: AD users are covered for length/complexity
+today, but the mandate is not *fully* satisfied (breach screening, local accounts,
+UX) until that policy lands. This ADR owns the AD half and the requirement on the
 Authentik half.
 
 ## Consequences
