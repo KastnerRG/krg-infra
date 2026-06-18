@@ -268,6 +268,26 @@ in {
       AllowSuspendThenHibernate = false;
     };
 
+    # earlyoom on EVERY host: kill the single worst memory hog *early*, before the
+    # in-kernel OOM killer livelocks the box under sustained pressure (the old waiter
+    # ran an early-OOM daemon for exactly this). systemd-oomd is disabled in its
+    # favour — running two OOM managers is asking for them to fight, and oomd's
+    # PSI-based accounting fights ZFS ARC anyway (see threshold note below).
+    #
+    # LOW thresholds on purpose. earlyoom's 10% default fires absurdly early on a
+    # big-RAM box (10% of 377 GiB ≈ 38 GiB "free" still triggers a kill). Worse, on
+    # ZFS hosts the ARC counts against MemAvailable until evicted, so an uncapped ARC
+    # looks like permanent memory pressure — 5% free / 10% free-swap is the floor
+    # where a kill is genuinely warranted. Ties to `krg.zfs.arcMaxBytes` (zfs.nix):
+    # capping the ARC is what keeps "free" honest. mkDefault so a host with an unusual
+    # RAM/ARC balance can retune.
+    services.earlyoom = {
+      enable = mkDefault true;
+      freeMemThreshold = mkDefault 5; # act when <5% RAM free
+      freeSwapThreshold = mkDefault 10;
+    };
+    systemd.oomd.enable = mkDefault false;
+
     nix.settings = {
       experimental-features = ["nix-command" "flakes"];
       auto-optimise-store = true; # dedup store paths (hardlink) on every build

@@ -59,8 +59,8 @@ in {
         Cap the ZFS ARC (bytes). null = ZFS default (~50% of RAM). On a big-RAM ML
         box this interacts with the OOM killer: ARC counts against /proc/meminfo
         MemAvailable until evicted, so an uncapped ARC + earlyoom can look like
-        memory pressure that isn't real. Set a ceiling here if that bites. (See the
-        deferred earlyoom base change.)
+        memory pressure that isn't real. Set a ceiling here if that bites. (earlyoom
+        runs fleet-wide with low thresholds — profiles/base.nix services.earlyoom.)
       '';
     };
 

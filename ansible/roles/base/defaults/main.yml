@@ -11,6 +11,13 @@ base_packages:
   - pkexec
   - python3.13-venv        # PEP 668 / externally-managed: need venvs for pip tooling
   - unattended-upgrades
+  - earlyoom               # early-OOM daemon (mirrors nix services.earlyoom)
+
+# earlyoom thresholds — mirror nix profiles/base.nix services.earlyoom. LOW on
+# purpose: -m/-s are percent-free floors; 10% defaults fire absurdly early on a
+# big-RAM box, and ZFS ARC inflates MemAvailable until evicted (esp. on the
+# Proxmox ZFS hosts). Act at <5% RAM free / <10% swap free.
+base_earlyoom_args: "-m 5 -s 10"
 base_packages_absent:
   - cups-browsed
   - cups-filters
