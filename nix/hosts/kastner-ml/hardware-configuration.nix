@@ -3,9 +3,9 @@
 #   - ZFS knobs (devNodes, supportedFilesystems)   -> modules/zfs.nix
 #   - rollback + persistence                       -> modules/impermanence.nix
 #
-# GOTCHA — this is a PLACEHOLDER until the box is installed. After first boot, run
+# GOTCHA — regenerating this file. When you run
 #   nixos-generate-config --show-hardware-config
-# on the real kastner-ml and copy in ONLY the hardware lines
+# on the real kastner-ml, copy in ONLY the hardware lines
 # (boot.initrd.*KernelModules, microcode, max-jobs). Do NOT paste the `fileSystems.*`,
 # `swapDevices`, or `boot.loader.*` it emits — disko declares the filesystems, swap is
 # zram (hosts/kastner-ml/default.nix), and the bootloader is set below. Pasting them
@@ -36,11 +36,12 @@
   boot.loader.efi.canTouchEfiVariables = false;
   boot.loader.efi.efiSysMountPoint = "/boot";
 
-  # ---- placeholders: replace with real `nixos-generate-config` output ----
-  # Reasonable defaults for a SATA (HDD + SSD) + NVMe (Optane) x86_64 server.
+  # ---- hardware lines from `nixos-generate-config` on the real kastner-ml ----
+  # SATA (HDD + SSD) + NVMe (Optane) x86_64 server.
   boot.initrd.availableKernelModules = [
-    "xhci_pci"
     "ahci"
+    "xhci_pci"
+    "ehci_pci"
     "nvme"
     "usbhid"
     "usb_storage"
