@@ -153,17 +153,23 @@ recoverable while NFS is down.
 
 ## Host integration (the rest of "pull into the fleet")
 
-> **Status (2026-06-08):** the `nix/hosts/kastner-ml/` files + the flake entry are
-> **drafted and validated** — `nix flake check ./nix` passes (config evaluates,
-> alejandra gate green) and the disko script builds. Not deployed (the bring-up
-> gates below still stand, chiefly the AD migration and e4e-nas NFS verification).
+> **Status (2026-06-17): brought up.** The host is deployed and live on the flake:
+> `nix/hosts/kastner-ml/` + the `nixosConfigurations` entry are in `main`, the
+> `hardware-configuration.nix` was synced from the real box, `/home` is served from
+> e4e-nas over NFS (`krg.nfsHome`, pinned v4.0 — Synology max), the Grafana compute
+> dashboard and the (FPGA-decoupled) remote desktop landed, and Prometheus scrapes it
+> as a real fleet host. Onboarding issue #223 is closed. **One residual:**
+> `krg.adClient.allowedGroups` is still locked to `["Domain Admins"]` (fail-safe) —
+> widening to the E4E project groups (`fishsense`, `aid`, `huggingface`) is gated on
+> creating those AD groups (#100) and tracked in #19, so the ~61 E4E users don't have
+> SSH access until that lands. See "Remaining work" below.
 
 Contents:
 
 1. **`nix/hosts/kastner-ml/disko-config.nix`** — the layout above.
-2. **`nix/hosts/kastner-ml/hardware-configuration.nix`** — generated on-box at
-   first deploy (`nixos-generate-config --show-hardware-config`); placeholder
-   until then.
+2. **`nix/hosts/kastner-ml/hardware-configuration.nix`** — now the real config
+   synced from the box (`nixos-generate-config --show-hardware-config`), no longer a
+   placeholder.
 3. **`nix/hosts/kastner-ml/default.nix`** — imports `profiles/compute.nix`, plus:
    - **`krg.adminAccount = "e4e-admin";`** — E4E-owned infra (overrides the
      `krg-admin` default; same as e4e-prod).
