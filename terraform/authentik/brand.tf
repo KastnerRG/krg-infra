@@ -40,10 +40,10 @@ resource "authentik_brand" "default" {
 #
 # Values below were captured read-only from the live object on 2026-06-18
 # (GET /api/v3/stages/identification/, pk d332b973-c488-4663-bfd2-455c76bd4508)
-# before this resource existed in Terraform — recovery_flow is the ONLY field
-# changing from its live value (null -> the new recovery flow's uuid). Same caution
-# as the brand above: if `tofu plan` shows anything ELSE changing, re-capture before
-# applying.
+# before this resource existed in Terraform — recovery_flow and passwordless_flow
+# are the ONLY fields changing from their live values (each null -> a new flow's
+# uuid: recovery.tf and passkey.tf respectively). Same caution as the brand above:
+# if `tofu plan` shows anything ELSE changing, re-capture before applying.
 #
 # One-time import:
 #   tofu import authentik_stage_identification.default_authentication d332b973-c488-4663-bfd2-455c76bd4508
@@ -55,6 +55,7 @@ resource "authentik_stage_identification" "default_authentication" {
   show_matched_user         = true
   pretend_user_exists       = true
 
-  # The new addition — everything else above matches live state exactly.
-  recovery_flow = authentik_flow.recovery.uuid
+  # Managed additions — everything ABOVE matches live state exactly:
+  recovery_flow     = authentik_flow.recovery.uuid     # "Forgot password?" link (recovery.tf)
+  passwordless_flow = authentik_flow.passwordless.uuid # "Use a passkey" button (passkey.tf)
 }

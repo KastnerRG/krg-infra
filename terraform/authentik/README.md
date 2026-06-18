@@ -22,6 +22,33 @@ This target manages what lives *inside* Authentik:
   `authentik_group` resources
 - A proxy **outpost** (`outpost.tf`) and the generated-OIDC-secret writeback
   into OpenBao (`vault_secrets.tf`, `roster_secrets.tf`)
+- Custom **flows**: self-service password recovery (`recovery.tf`) and
+  passwordless **passkey** login (`passkey.tf`) — see below. Both are wired into
+  the live login screen via `brand.tf` (the one fleet-wide stage it manages).
+
+## Passkey (passwordless WebAuthn) login — `passkey.tf`
+
+Users register a passkey (platform biometric or a security key / phone) from
+**Account → Settings**, then sign in with just the passkey — no KRG.LOCAL
+password. The password path stays; the passkey adds a **"Use a passkey"** button
+to the same login screen.
+
+`passkey.tf` builds, the `recovery.tf` way, a self-contained passwordless flow
+(`authentik_flow.passwordless` → a webauthn `authenticator_validate` stage →
+`user_login`) plus an enrollment stage bound into the user-settings flow. The
+enrollment stage forces **discoverable (resident)** credentials so they work in
+the passwordless flow.
+
+The button itself is the `passwordless_flow` attribute of the
+`default-authentication-identification` stage — the stage *every* login screen
+runs. That stage is **already managed in `brand.tf`** (imported there to wire the
+recovery link), so the button is turned on by **one line in `brand.tf`**, not by
+importing the stage again here. No extra import step beyond the one `brand.tf`
+already documents.
+
+> `user_verification` is left at `"preferred"` (won't lock out authenticators
+> that can't do UV). For stricter passwordless, flip it + `webauthn_user_verification`
+> to `"required"` in `passkey.tf`.
 
 ## Prerequisites before this can plan
 
