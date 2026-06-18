@@ -30,12 +30,18 @@
     group: root
     mode: "0644"
 
-# --domain is load-bearing: without it adcli autodetects the host's DNS domain
-# (ucsd.edu) instead of the AD realm (krg.local) and always fails to find a DC, so
-# ad_joined would be wrongly false on a genuinely-joined host (observed on fabricant
-# 2026-06-18). Pin it to the realm.
+# Both pins are load-bearing on a Debian member:
+#   --domain — without it adcli autodetects the host's DNS domain (ucsd.edu) instead
+#     of the AD realm (krg.local) and always fails to find a DC.
+#   --domain-controller — adcli discovers the DC via DNS SRV records, but a Debian
+#     member's resolver is campus DNS, which doesn't serve the internal krg.local zone,
+#     so SRV discovery fails with "couldn't find usable domain controller" even on a
+#     genuinely-joined host with the AD ports open (observed on fabricant 2026-06-18).
+#     We pin the DC (resolved via the /etc/hosts entry this role adds) so testjoin
+#     connects directly — exactly as the `adcli join` command below already does. NixOS
+#     members don't need this: their SSSD resolver routes krg.local to the DC.
 - name: Check current domain membership
-  ansible.builtin.command: adcli testjoin --domain {{ ad_domain }}
+  ansible.builtin.command: adcli testjoin --domain {{ ad_domain }} --domain-controller {{ ad_dc_host }}
   register: ad_testjoin
   changed_when: false
   failed_when: false
