@@ -54,6 +54,38 @@
     reload: true
   loop: "{{ base_sysctl | dict2items }}"
 
+# earlyoom: kill the worst memory hog early before the kernel OOM killer livelocks
+# the box under sustained pressure. Mirrors nix profiles/base.nix services.earlyoom.
+# The package is installed via base_packages above; here we set the LOW thresholds
+# and disable systemd-oomd so two OOM managers don't fight (oomd's PSI accounting
+# also fights ZFS ARC). See base_earlyoom_args for the threshold rationale.
+- name: Configure earlyoom thresholds
+  ansible.builtin.copy:
+    dest: /etc/default/earlyoom
+    content: |
+      # Managed by krg-infra ansible base role — DO NOT EDIT.
+      # Mirrors nix profiles/base.nix services.earlyoom.
+      EARLYOOM_ARGS="{{ base_earlyoom_args }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart earlyoom
+
+- name: Enable and start earlyoom
+  ansible.builtin.systemd_service:
+    name: earlyoom
+    enabled: true
+    state: started
+
+- name: Disable systemd-oomd (don't run two OOM managers; PSI fights ARC accounting)
+  ansible.builtin.systemd_service:
+    name: systemd-oomd
+    enabled: false
+    state: stopped
+    masked: true
+  # systemd-oomd may not be installed on a given host; absence is fine, not a failure.
+  failed_when: false
+
 # --- 2. Security + monitoring baseline (every host) -------------------------
 # ORDER IS LOAD-BEARING: krg_admin creates the named, key-only sudo admin BEFORE
 # ssh_hardening turns password auth off. This repo exists because a host's root

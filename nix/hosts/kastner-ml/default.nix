@@ -157,14 +157,8 @@
   # leaving ~93 GiB for jobs on top of the Optane L2ARC. Tune with arcstat if needed.
   krg.zfs.arcMaxBytes = 32 * 1024 * 1024 * 1024;
 
-  # earlyoom over systemd-oomd (which fights ARC accounting): kill the worst memory hog
-  # early before the kernel OOM killer livelocks under ARC + zram pressure.
-  services.earlyoom = {
-    enable = true;
-    freeMemThreshold = 5;
-    freeSwapThreshold = 10;
-  };
-  systemd.oomd.enable = false;
+  # earlyoom + systemd-oomd-off now live in the shared baseline (profiles/base.nix,
+  # 5% mem / 10% swap) — a ZFS ARC + zram box, so the baseline thresholds apply here.
 
   # smartd: scratchpool has NO redundancy (single HDD + single Optane), so advance
   # warning of a failing disk matters. No MTA — escalate via wall + the journal; the

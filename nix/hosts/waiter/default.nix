@@ -172,16 +172,9 @@
   # health itself still comes from the krg.zfs zpool-health textfile metric.
   krg.nodeExporter.collectors = ["systemd" "mdadm" "textfile" "zfs"];
 
-  # earlyoom: kill the worst memory hog early (before the kernel OOM killer livelocks
-  # under ZFS ARC + zram pressure). Disable systemd-oomd (PSI-based, fights ARC
-  # accounting) in favour of it. This is the deferred base.nix earlyoom item, landed
-  # here for waiter (the box that actually needs it) as part of this redesign.
-  services.earlyoom = {
-    enable = true;
-    freeMemThreshold = 5; # act when <5% RAM free
-    freeSwapThreshold = 10;
-  };
-  systemd.oomd.enable = false;
+  # earlyoom + systemd-oomd-off now live in the shared baseline (profiles/base.nix,
+  # 5% mem / 10% swap) — this is exactly the box that motivated it (ZFS ARC + zram
+  # pressure under mixed ML jobs), so the baseline thresholds are tuned for it.
 
   # smartd: monitor the physical disks (the redesign's striped scratchpool has NO
   # redundancy, so advance warning of a failing disk matters — esp. the historically
