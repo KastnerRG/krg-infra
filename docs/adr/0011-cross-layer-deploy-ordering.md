@@ -37,6 +37,42 @@ the second depends *on* NixOS. Treating "Ansible" as one node manufactures a fal
 cycle. So the question is not "what order" — it is "how fine-grained, and how do we
 handle the edges that remain."
 
+```mermaid
+flowchart LR
+  subgraph A["Ansible (substrate)"]
+    nfs["fabricant NFS exports"]
+    adjoin["fabricant AD join / testjoin"]
+  end
+  subgraph N["NixOS (systems)"]
+    dcfw["krg-ldap: DC + AD firewall"]
+    homemount["waiter/kastner-ml: /home NFS mount"]
+    svcs["krg-prod: Authentik / Grafana / OpenBao up"]
+    agent["host vault-agent: render certs/secrets"]
+  end
+  subgraph T["OpenTofu (config)"]
+    pki["OpenBao PKI roles / Authentik OIDC"]
+  end
+
+  nfs --> homemount
+  dcfw --> adjoin
+  svcs --> pki
+  pki --> agent
+
+  classDef ansible fill:#fde2c4,stroke:#d98a2b,color:#000;
+  classDef nixos fill:#cfe3fb,stroke:#3b74c4,color:#000;
+  classDef tofu fill:#e0d2f5,stroke:#7d4fc0,color:#000;
+  class nfs,adjoin ansible;
+  class dcfw,homemount,svcs,agent nixos;
+  class pki tofu;
+```
+
+Read by *resource* the graph is acyclic — every edge flows left-to-right and there
+is no cycle to break. The apparent deadlock only appears when you collapse each
+coloured cluster to a single node: then `Ansible → NixOS` (nfs→homemount) and
+`NixOS → Ansible` (dcfw→adjoin) point in opposite directions and no layer ordering
+satisfies both. The fix is therefore *not* a better layer order but a phasing that
+respects the resource edges.
+
 ## Decision
 
 Do **not** reorder the layers to chase each new dependency. Adopt a **phased
