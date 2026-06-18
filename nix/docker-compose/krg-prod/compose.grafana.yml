@@ -78,7 +78,14 @@ services:
       # is declared external in compose.yml (the project root).
       - traefik_proxy
     volumes:
-      - ./prometheus:/etc/prometheus:ro
+      # Mount the config by its Nix store path (PROM_CONFIG_DIR, set in the
+      # krg-prod compose-stack service environment by nix/hosts/krg-prod/default.nix)
+      # rather than the ./prometheus working-dir symlink. The store path changes
+      # whenever prometheus/ changes, so `docker compose up -d` sees a different
+      # volume and recreates Prometheus on deploy — otherwise the running container
+      # keeps the config it bind-mounted at create time and scrape edits never go
+      # live (Prometheus has no --web.enable-lifecycle and isn't force-recreated).
+      - ${PROM_CONFIG_DIR}:/etc/prometheus:ro
       - ./prometheus-data:/prometheus:rw
 
   blackbox_exporter:
