@@ -182,8 +182,15 @@
     # by `cscli bouncers add`. Flow:
     #   1. Read the current bouncer-config file (if it exists) — pull out
     #      any existing api_key so we don't pointlessly re-mint one.
-    #   2. If no api_key OR a placeholder is present, run `cscli bouncers
-    #      add` to mint one.
+    #   2. Cross-check that key against the LAPI's ACTUAL registered bouncers
+    #      (`cscli bouncers list`). A key in the config is NOT proof of a live
+    #      registration: if the LAPI database is reset/re-provisioned after the
+    #      bouncer was first added, the config keeps a key the LAPI no longer
+    #      knows — the bouncer then fails auth ("bouncer stream halted") and
+    #      crash-loops forever (observed on fabricant: 9000+ restarts), and the
+    #      old "re-register only when the config key is missing" logic never
+    #      self-heals. So (re)register when the key is missing/placeholder OR our
+    #      bouncer name isn't present in the LAPI.
     #   3. Render the config template ON EVERY RUN with the resolved key
     #      (newly-minted OR previously persisted). This way changes to
     #      other role vars (mode, update frequency, chain list, log level)
@@ -223,15 +230,44 @@
       when: crowdsec_bouncer_config_slurp.content is defined
       no_log: true
 
-    - name: Register firewall bouncer with LAPI (one-time)
+    # cscli reads/writes the LAPI database directly, so this works before the
+    # daemon is (re)started in step 8 (matching the existing `cscli bouncers add`).
+    - name: List bouncers registered in the LAPI
+      ansible.builtin.command: cscli bouncers list -o json
+      register: crowdsec_bouncers_list
+      changed_when: false
+      check_mode: false
+
+    - name: Decide whether the bouncer needs (re)registration
+      ansible.builtin.set_fact:
+        # Empty/zero bouncers -> `[]`; from_json gives a list, map->names.
+        crowdsec_bouncer_registered: >-
+          {{ crowdsec_bouncer_name in
+             (crowdsec_bouncers_list.stdout | default('[]', true) | from_json
+              | map(attribute='name') | list) }}
+        crowdsec_bouncer_needs_register: >-
+          {{ (crowdsec_bouncer_existing_api_key | default('')) == ''
+             or '${API_KEY}' in (crowdsec_bouncer_existing_api_key | default(''))
+             or '<api-key>' in (crowdsec_bouncer_existing_api_key | default(''))
+             or crowdsec_bouncer_name not in
+                (crowdsec_bouncers_list.stdout | default('[]', true) | from_json
+                 | map(attribute='name') | list) }}
+
+    # Re-keying an EXISTING name: `cscli bouncers add` errors if the name is
+    # already registered, so drop it first. Only reached when the config key was
+    # lost/placeholder but the LAPI still holds the name; the common orphaned-key
+    # case (key present, name ABSENT — fabricant) skips this and just adds.
+    - name: Prune the existing registration before re-adding (re-key case)
+      ansible.builtin.command: "cscli bouncers delete {{ crowdsec_bouncer_name }}"
+      when:
+        - crowdsec_bouncer_needs_register | bool
+        - crowdsec_bouncer_registered | bool
+      changed_when: true
+
+    - name: Register firewall bouncer with LAPI (one-time / self-heal)
       ansible.builtin.command: "cscli bouncers add {{ crowdsec_bouncer_name }} --output raw"
       register: crowdsec_bouncer_register
-      # Trigger registration when no usable key was persisted: file
-      # absent, key empty, or key is one of the upstream placeholders.
-      when: >-
-        (crowdsec_bouncer_existing_api_key | default('')) == ''
-        or '${API_KEY}' in (crowdsec_bouncer_existing_api_key | default(''))
-        or '<api-key>' in (crowdsec_bouncer_existing_api_key | default(''))
+      when: crowdsec_bouncer_needs_register | bool
       changed_when: crowdsec_bouncer_register.rc == 0
       no_log: true   # raw API key
 
