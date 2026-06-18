@@ -21,7 +21,7 @@ resource "authentik_provider_oauth2" "grafana" {
   client_id              = "grafana"
   authorization_flow     = data.authentik_flow.default_authorization.id
   invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://monitoring.krg.ucsd.edu/login/generic_oauth" }]
+  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://monitoring.krg.ucsd.edu/login/generic_oauth" }]
   property_mappings      = local.std_scopes
   sub_mode               = "user_email"
   access_token_validity  = "minutes=60"
@@ -45,7 +45,7 @@ resource "authentik_provider_oauth2" "outline" {
   client_id              = "outline"
   authorization_flow     = data.authentik_flow.default_authorization.id
   invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://wiki.fabricant.ucsd.edu/auth/oidc.callback" }]
+  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://wiki.fabricant.ucsd.edu/auth/oidc.callback" }]
   property_mappings      = local.std_scopes
   sub_mode               = "user_email"
   access_token_validity  = "minutes=60"
@@ -69,7 +69,7 @@ resource "authentik_provider_oauth2" "mlflow" {
   client_id              = "mlflow"
   authorization_flow     = data.authentik_flow.default_authorization.id
   invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://mlflow.krg.ucsd.edu/callback" }]
+  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://mlflow.krg.ucsd.edu/callback" }]
   property_mappings      = local.std_scopes
   sub_mode               = "user_username"
   access_token_validity  = "minutes=60"
@@ -118,7 +118,7 @@ resource "authentik_provider_oauth2" "vaultwarden" {
   client_id             = "vaultwarden"
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://vaultwarden.krg.ucsd.edu/identity/connect/oidc-signin" }]
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://vaultwarden.krg.ucsd.edu/identity/connect/oidc-signin" }]
   # Like std_scopes, but swaps the managed email scope for vaultwarden_email
   # (asserts email_verified=true) + adds the AD-sourced groups scope.
   property_mappings = [
@@ -165,7 +165,7 @@ resource "authentik_provider_oauth2" "guacamole" {
   client_id             = "guacamole"
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://remote.krg.ucsd.edu/" }]
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://remote.krg.ucsd.edu/" }]
   # std scopes + the AD-sourced `groups` scope so Guacamole receives the user's AD
   # group names (claim "groups"). Drives admin + per-connection access via matching
   # Guacamole user-groups (e.g. "Guacamole Admins" → ADMINISTER, "Waiter" → the
@@ -229,7 +229,7 @@ resource "authentik_provider_oauth2" "temporal" {
   client_id              = "temporal"
   authorization_flow     = data.authentik_flow.default_authorization.id
   invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://workflows.krg.ucsd.edu/auth/sso/callback" }]
+  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://workflows.krg.ucsd.edu/auth/sso/callback" }]
   property_mappings      = local.std_scopes
   signing_key            = data.authentik_certificate_key_pair.default.id
   sub_mode               = "hashed_user_id"
