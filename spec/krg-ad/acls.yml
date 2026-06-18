@@ -1,0 +1,32 @@
+# KRG.LOCAL Active Directory — delegated ACL grants (declarative source of truth).
+#
+# Scoped directory-permission delegations to SERVICE accounts (ADR 0010). These
+# are the AD equivalent of "the role gets exactly the rights it needs" — narrow
+# extended-rights ACEs, NOT broad group membership.
+#
+# Applied NON-AUTHORITATIVELY: the apply adds a missing ACE (samba-tool dsacl
+# set) but NEVER removes ACEs that aren't listed here. Removing a delegation is
+# destructive and stays a deliberate human action.
+#
+# `trustee`  — sAMAccountName of a service account (resolved to its objectSid at
+#              apply time; the SDDL ACE is keyed on the SID).
+# `right`    — symbolic right name; mapped to its control-access-right GUID by the
+#              apply (RIGHTS table in apply_ad.py). Today: reset-password.
+# `inherit`  — child-users (CI, applies to descendant user objects) | this-object.
+#
+# Discovery note (2026-06-17): a live `samba-tool dsacl get` showed NO custom
+# ACEs for authentik-bind on CN=Users or the domain root — i.e. the grant below
+# is currently MISSING, which is exactly why Authentik password write-back fails
+# with LDAPInsufficientAccessRightsResult (50). This file makes the fix IaC.
+
+acls:
+  - objectdn: "CN=Users,DC=krg,DC=local"
+    trustee: authentik-bind
+    right: reset-password # CR 00299570-246d-11d0-a768-00aa006e0529
+    inherit: child-users # CI — applies to user objects under CN=Users
+    reason: >-
+      Authentik self-service password change writes the new password back to AD
+      (unicodePwd replace) as the authentik-bind account. Resetting another
+      principal's password requires the Reset Password extended right; without it
+      Samba's acl module rejects the LDB_MODIFY with insufficientAccessRights
+      (50) and the flow surfaces "Failed to update user".

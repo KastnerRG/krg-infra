@@ -1,0 +1,54 @@
+---
+# krg_ad — converge KRG.LOCAL Active Directory structure to spec/krg-ad/*.yml by
+# wrapping samba-tool ON the domain controller (krg-ldap). Unlike the synology
+# subtree (DSM py3.8 forces raw/script hacks), krg-ldap is NixOS with a modern
+# python3, so this uses normal modules: parse the YAML spec on the control node,
+# ship each concern as a JSON plan, and run apply_ad.py against it.
+#
+# NON-AUTHORITATIVE (ADR 0010): the apply only ever ADDS groups / memberships /
+# ACEs and converges the password policy. It never deletes — human group
+# membership is roster's, and a destructive reconcile would wipe roster-set
+# members. See spec/krg-ad/README.md.
+#
+# PREREQ on krg-ldap: `python3` on PATH (nix/modules/samba-ad.nix adds it) so
+# ansible's modules + apply_ad.py's `#!/usr/bin/env python3` resolve. samba-tool
+# is already there (the DC package).
+
+- name: Load the declarative AD spec
+  ansible.builtin.include_vars:
+    file: "{{ item.file }}"
+    name: "{{ item.name }}"
+  loop:
+    - { file: "{{ krg_ad_password_policy_spec }}", name: ad_password_policy }
+    - { file: "{{ krg_ad_groups_spec }}", name: ad_groups }
+    - { file: "{{ krg_ad_service_accounts_spec }}", name: ad_service_accounts }
+    - { file: "{{ krg_ad_acls_spec }}", name: ad_acls }
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Ensure the plan staging dir exists on the DC (tmpfs)
+  ansible.builtin.file:
+    path: "{{ krg_ad_plan_dir }}"
+    state: directory
+    mode: "0700"
+  check_mode: false # a temp input dir, not managed state — create even in --check
+
+# One task per concern, in AD-safe order: policy first (harmless), groups before
+# service-account membership (a member's target group must exist), accounts
+# before acls (ACE trustees are resolved to SIDs, so the account must exist).
+- name: Stage + apply each AD concern
+  ansible.builtin.include_tasks: concern.yml
+  loop:
+    - { name: password-policy, plan: "{{ ad_password_policy }}" }
+    - { name: groups, plan: "{{ ad_groups }}" }
+    - { name: service-accounts, plan: "{{ ad_service_accounts }}" }
+    - { name: acls, plan: "{{ ad_acls }}" }
+  loop_control:
+    loop_var: concern
+    label: "{{ concern.name }}"
+
+- name: Remove the plan staging dir
+  ansible.builtin.file:
+    path: "{{ krg_ad_plan_dir }}"
+    state: absent
+  check_mode: false

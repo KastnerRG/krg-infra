@@ -1,0 +1,10 @@
+---
+# Declarative spec files consumed by this role (krg_ad_spec_dir is set in
+# group_vars/all.yml — the shared spec/krg-ad/ tree).
+krg_ad_password_policy_spec: "{{ krg_ad_spec_dir }}/password-policy.yml"
+krg_ad_groups_spec: "{{ krg_ad_spec_dir }}/groups.yml"
+krg_ad_service_accounts_spec: "{{ krg_ad_spec_dir }}/service-accounts.yml"
+krg_ad_acls_spec: "{{ krg_ad_spec_dir }}/acls.yml"
+
+# Where plan JSON is staged on the DC (tmpfs; structural data only, no secrets).
+krg_ad_plan_dir: /run/krg-ad

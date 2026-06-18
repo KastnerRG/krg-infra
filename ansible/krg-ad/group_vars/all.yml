@@ -1,0 +1,6 @@
+# Vars for the krg-ad subtree. Self-contained (so `rm -rf ansible/krg-ad/` is a
+# clean decommission) — anchor on inventory_dir and climb to the repo root rather
+# than depending on the sibling ansible/ subtree.
+#
+# inventory_dir resolves to <repo>/ansible/krg-ad; two dirnames = repo root.
+krg_ad_spec_dir: "{{ (inventory_dir | dirname) | dirname }}/spec/krg-ad"

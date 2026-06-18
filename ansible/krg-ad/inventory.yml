@@ -1,0 +1,21 @@
+# KRG.LOCAL domain controller(s). Kept here — NOT in the main
+# ansible/inventory/hosts.yml — so the whole AD-IaC surface is one
+# `rm -rf ansible/krg-ad/` away from gone (same isolation as ansible/synology/).
+#
+# krg-ldap is a NixOS host (VMID 100 on fabricant). We connect as the break-glass
+# krg-admin (key-only) and `become` root to run samba-tool. SSH to krg-ldap is
+# source-restricted to ucsd+ops, so this runs from the control node (krg-deploy)
+# or an ops workstation.
+#
+# Second DC (when the krg-ldap SPOF is removed): add it here. AD replicates, so
+# running the apply against either DC converges the forest — but pin one as the
+# write target to avoid racing replication.
+all:
+  children:
+    krg_ad:
+      hosts:
+        krg-ldap:
+          ansible_host: 137.110.161.109
+      vars:
+        ansible_user: krg-admin
+        ansible_python_interpreter: auto_silent
