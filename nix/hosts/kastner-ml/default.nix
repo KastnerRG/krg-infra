@@ -83,6 +83,9 @@
   # (e.g. "FishSense", "Acoustic Species ID", "Huggingface Users", the CSE237D course
   # group) or an "E4E" umbrella once the ~61 local accounts are migrated to KRG.LOCAL.
   krg.adClient = {
+    # AD domain member — verified joined 2026-06-18 (`getent Administrator` resolves).
+    # Explicit marker; base.nix defaults enable on.
+    enable = true;
     server = "krg-ldap.krg.local";
     serverIp = "137.110.161.109";
     allowedGroups = ["Domain Admins"];

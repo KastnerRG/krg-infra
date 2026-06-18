@@ -135,6 +135,21 @@ verify_oec_local() {
   return 1
 }
 
+# AD domain membership: a joined host's SSSD resolves the domain Administrator
+# account. A host CONFIGURED as a member (krg.adClient.enable = true) that can't
+# resolve it has a broken join/SSSD — fail the deploy. Try the realm-qualified name
+# first, then the short name (covers either use_fully_qualified_names setting, and
+# the DC's winbind default-domain form). Read-only.
+verify_ad() {
+  local target="$1" host="$2"
+  if ssh "${sshopts[@]}" "$target" "getent passwd 'Administrator@krg.local' >/dev/null 2>&1 || getent passwd Administrator >/dev/null 2>&1"; then
+    echo "OK: ${host} — AD domain Administrator resolves (member)"
+    return 0
+  fi
+  echo "FAILED: ${host} — krg.adClient.enable=true but the AD Administrator does not resolve (broken join/SSSD)"
+  return 1
+}
+
 # Fail-fast: stop on the first failed host. Order is dependency-first (vault/AD
 # before the services that use them), so a failure early means the dependents
 # would be deploying against a broken base — don't.
@@ -175,7 +190,41 @@ done
 # ...plus the control node itself (excluded from the rebuild loop above).
 verify_oec_local || oec_failed=1
 printf '\n::endgroup::\n'
-if [[ "$oec_failed" -ne 0 ]]; then
-  echo "FAILED: OEC security daemons not running on one or more hosts — deploy considered failed"
+
+# ── Verify AD domain membership on every host CONFIGURED as a member ──────────
+# Gate per host on krg.adClient.enable (read from the flake) so off-domain hosts
+# (krg-vault, krg-deploy today) are SKIPPED, not failed — and a host auto-joins
+# this gate the moment its config flips enable = true. Collected (not fail-fast)
+# so every offender shows, then the deploy fails if any member can't resolve the
+# domain Administrator.
+echo "::group::verify AD domain membership (getent Administrator)"
+ad_failed=0
+for host in "${ORDER[@]}"; do
+  member="$(nix eval "${FLAKE}#nixosConfigurations.${host}.config.krg.adClient.enable" 2>/dev/null || echo unknown)"
+  if [[ "$member" != "true" ]]; then
+    echo "SKIP: ${host} — krg.adClient.enable=${member} (off-domain by config)"
+    continue
+  fi
+  target="${USER_OVERRIDE[$host]:-$ADMIN}@${ADDR[$host]}"
+  verify_ad "$target" "$host" || ad_failed=1
+done
+# Control node (excluded from the rebuild loop) — verify locally if it's a member.
+deploy_member="$(nix eval "${FLAKE}#nixosConfigurations.krg-deploy.config.krg.adClient.enable" 2>/dev/null || echo unknown)"
+if [[ "$deploy_member" == "true" ]]; then
+  if getent passwd 'Administrator@krg.local' >/dev/null 2>&1 || getent passwd Administrator >/dev/null 2>&1; then
+    echo "OK: krg-deploy (local) — AD domain Administrator resolves (member)"
+  else
+    echo "FAILED: krg-deploy (local) — krg.adClient.enable=true but the AD Administrator does not resolve"
+    ad_failed=1
+  fi
+else
+  echo "SKIP: krg-deploy (local) — krg.adClient.enable=${deploy_member} (off-domain by config)"
+fi
+printf '\n::endgroup::\n'
+
+if [[ "$oec_failed" -ne 0 || "$ad_failed" -ne 0 ]]; then
+  [[ "$oec_failed" -ne 0 ]] && echo "FAILED: OEC security daemons not running on one or more hosts"
+  [[ "$ad_failed" -ne 0 ]] && echo "FAILED: AD membership broken on one or more member hosts"
+  echo "deploy considered failed"
   exit 1
 fi

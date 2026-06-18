@@ -30,8 +30,12 @@
     group: root
     mode: "0644"
 
+# --domain is load-bearing: without it adcli autodetects the host's DNS domain
+# (ucsd.edu) instead of the AD realm (krg.local) and always fails to find a DC, so
+# ad_joined would be wrongly false on a genuinely-joined host (observed on fabricant
+# 2026-06-18). Pin it to the realm.
 - name: Check current domain membership
-  ansible.builtin.command: adcli testjoin
+  ansible.builtin.command: adcli testjoin --domain {{ ad_domain }}
   register: ad_testjoin
   changed_when: false
   failed_when: false
@@ -128,4 +132,18 @@
     name: sssd
     enabled: true
     state: started
+  when: ad_joined | bool
+
+# Verify the join actually works: SSSD must resolve the domain Administrator account.
+# Fails the play (and the fleet deploy) if a host marked joined can't — a broken
+# keytab/SSSD. Read-only; mirrors the getent gate in deploy/deploy-nixos.sh for the
+# NixOS hosts so both layers prove AD membership the same way. Realm-qualified name
+# first, then the short name (winbind default-domain form). Hosts with ad_joined=false
+# are off-domain by config and skipped, not failed.
+- name: Verify AD membership (domain Administrator resolves)
+  ansible.builtin.shell: >-
+    getent passwd 'Administrator@krg.local' || getent passwd Administrator
+  register: krg_ad_admin_lookup
+  changed_when: false
+  failed_when: krg_ad_admin_lookup.rc != 0
   when: ad_joined | bool

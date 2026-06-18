@@ -158,12 +158,23 @@ group to exist in AD with members — also covered in
 
 ---
 
-## Status (2026-05-23)
+## Status (verified 2026-06-18)
+
+Verified 2026-06-18 by a read-only `getent passwd Administrator@krg.local` (falling
+back to the short `Administrator`) over SSH on each box — the **domain
+Administrator**, a durable built-in account, never a personal one. It's a strict
+probe on purpose: it needs a fresh DC fetch, so (unlike a previously-cached user) it
+won't pass on stale SSSD cache — it catches a member that has silently gone offline
+from the DC. The deploy workflow gates on the same probe per host
+(`deploy/deploy-nixos.sh`; the Proxmox layer via the `ad_client` role).
 
 | Host | Joined? |
 |---|---|
-| krg-ldap | ✅ provisioned + keytab exported (the DC) |
-| waiter | ✅ joined 2026-05-21 (`adcli --login-ccache`) |
-| fabricant | ⏳ pending (`-e ad_join_password=…`) + on-box validation |
-| krg-prod / e4e-prod | ⏳ pending (not yet deployed) |
-| krg-vault / krg-deploy | ⏳ pending — `krg.adClient.enable = false` until a keytab is provisioned |
+| krg-ldap | ✅ the DC (provisioned + keytab exported) — *is* the domain, not a member |
+| waiter | ✅ joined 2026-05-21 (`adcli --login-ccache`); Administrator resolves 2026-06-18 |
+| krg-prod | ✅ joined; Administrator resolves 2026-06-18 |
+| kastner-ml | ✅ joined; Administrator resolves 2026-06-18 |
+| fabricant | ⚠️ joined but **SSSD OFFLINE from the DC (2026-06-18)** — serves cached users only; Administrator does **not** resolve, `sssctl` reports Offline, `adcli` can't reach the DC. Needs a DC-connectivity fix (the `ad_client` `adcli testjoin` also lacked `--domain`, so it probed `ucsd.edu`). |
+| e4e-prod | ⏳ not deployed yet (unreachable) |
+| krg-vault | ❌ not joined — `krg.adClient.enable = false` (no keytab yet); see Case 1 |
+| krg-deploy | ❌ not joined — `krg.adClient.enable = false` (no keytab yet); see Case 1 |
