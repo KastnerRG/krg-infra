@@ -26,10 +26,14 @@
   krg.base.isVM = false;
 
   # --- userspace deltas from the compute profile (docs/kastner-ml-onboarding.md) ---
-  # HEADLESS: nobody uses RDP on this box, and it has no FPGA GUI tools, so drop the
-  # XFCE/xrdp desktop the compute profile hard-sets. (allowRDP tracks this, so 3389
-  # closes automatically.)
-  krg.xrdp.enable = lib.mkForce false;
+  # Remote desktop: kastner-ml users want a GUI session even though the box does NO
+  # FPGA work, so keep the compute profile's XFCE/xrdp desktop (the desktop is no
+  # longer FPGA-coupled — see profiles/compute.nix). Access is exclusively through the
+  # Guacamole gateway on krg-prod (clientless browser + Authentik SSO): the inherited
+  # krg.firewall.rdpSources restricts 3389 to 137.110.161.106, and allowRDP tracks
+  # krg.xrdp.enable, so the port opens only to the gateway. Inherits the profile
+  # default; left explicit to document the GUI requirement.
+  krg.xrdp.enable = true;
   # No IPMI/BMC on this workstation-class board (the old ansible left the IPMI
   # exporter commented out), so disable the exporter the compute profile enables.
   krg.ipmiExporter.enable = lib.mkForce false;

@@ -10,9 +10,9 @@ in {
   imports = [../users.nix];
 
   options.krg.xrdp = {
-    enable = mkEnableOption "XRDP remote desktop with XFCE (waiter compute nodes)";
+    enable = mkEnableOption "XRDP remote desktop with XFCE (any compute host; reached via the Guacamole gateway)";
 
-    # waiter xrdp/sesman.ini values
+    # xrdp/sesman.ini values
     maxSessions = mkOption {
       type = types.int;
       default = 50;
