@@ -330,8 +330,16 @@ in {
     # "+"-prefixed command) — exactly the privilege the reload needs. The
     # `cscli hub update` ExecStart still runs sandboxed as the crowdsec
     # user; only the reload is elevated.
+    #
+    # Use try-reload-or-restart, NOT reload: crowdsec.service defines no ExecReload,
+    # so `systemctl reload` fails with "Job type reload is not applicable for unit
+    # crowdsec.service" (status 3) → the oneshot fails and the deploy aborts AGAIN
+    # (run 27731137477, krg-vault). try-reload-or-restart reloads the unit if it
+    # supports reload and otherwise restarts it — either way crowdsec picks up the
+    # freshly-updated hub — and the `try-` form is a no-op when crowdsec isn't
+    # running, so it can never fail the activation.
     systemd.services.crowdsec-update-hub.serviceConfig.ExecStartPost =
-      lib.mkForce "+systemctl reload crowdsec.service";
+      lib.mkForce "+systemctl try-reload-or-restart crowdsec.service";
 
     systemd.tmpfiles.settings."10-crowdsec-seed-capi" = let
       credFile = config.services.crowdsec.settings.capi.credentialsFile;
