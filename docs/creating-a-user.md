@@ -197,6 +197,71 @@ getent passwd <username>           # last field shows the chosen shell where ins
 > The local break-glass admin (`krg-admin`/`e4e-admin`) is a files-NSS user, not SSSD,
 > so none of this touches it — its shell stays whatever `nix/users/admin.nix` sets.
 
+## Enabling self-service password reset (Authentik recovery flow)
+
+Authentik's "Forgot password?" flow (`terraform/authentik/recovery.tf`) lets a
+user reset their **actual AD password** via an emailed link — the LDAP source's
+`sync_users_password = true` (`terraform/authentik/ldap.tf`) writes the new
+password back to AD when the flow completes. This requires a **one-time AD-side
+delegation**, run once per forest (not per-user): without it, AD correctly
+refuses the writeback and the user sees "Failed to update user. Please try
+again later." on the reset page, with the real reason
+(`insufficient access rights ... insufficientAccessRights`) logged by
+`authentik_server`.
+
+AD models "reset someone else's password without knowing their current one" as
+a separate, privileged operation from an ordinary password *change* — gated
+behind the **User-Force-Change-Password** extended right (display name "Reset
+Password", GUID `00299570-246d-11d0-a768-00aa006e0529`, per
+[Microsoft's AD schema reference](https://learn.microsoft.com/en-us/windows/win32/adschema/r-user-force-change-password)).
+This is exactly the operation Authentik needs: the user proved their identity
+via the emailed token, not by typing their existing AD password.
+
+Grant it to the `authentik-bind` service account (`CN=authentik-bind,CN=Users,DC=KRG,DC=LOCAL`,
+the bind account `terraform/authentik/ldap.tf` uses) on the `Users` container,
+**on krg-ldap as root**:
+
+```bash
+# 1. Resolve authentik-bind's SID (samba-tool prints objectSid as a string)
+SID=$(sudo samba-tool user show authentik-bind | sed -n 's/^objectSid: //p')
+echo "$SID"   # sanity check — should look like S-1-5-21-...
+
+# 2. Grant Reset Password, inheritable to every user object under the container
+#    (CI = Container Inherit — without it the ACE sits on the container itself,
+#    which has no password, and grants nothing useful).
+sudo samba-tool dsacl set \
+  --objectdn="CN=Users,DC=KRG,DC=LOCAL" \
+  --sddl="(OA;CI;CR;00299570-246d-11d0-a768-00aa006e0529;;$SID)"
+
+# 3. Verify the ACE landed
+sudo samba-tool dsacl get --objectdn="CN=Users,DC=KRG,DC=LOCAL" | grep -A1 "$SID"
+```
+
+The SDDL ACE `(OA;CI;CR;<guid>;;<SID>)` breaks down as: **O**bject-specific
+**A**llow ACE, **C**ontainer-**I**nherit (propagates to every child object, not
+just the container itself), **C**ontrol-**R**ight (an extended right, not an
+ordinary attribute read/write), scoped to the named GUID (which right), granted
+to the trustee SID (which account). `samba-tool dsacl set --car=...` can't
+express this — its `--car` flag only covers a fixed set of DS-replication
+rights (change-rid, get-changes, etc.), not User-Force-Change-Password, so the
+raw `--sddl` form is required here.
+
+**Scope note:** since `samba-tool user create` (step 1 above) doesn't specify
+an OU, all human accounts *and* service accounts like `authentik-bind` itself
+share the flat `CN=Users` container — there's no OU split between them yet. So
+this grants `authentik-bind` reset rights over every object in that container,
+including other service accounts placed there later (e.g. `svc_roster` from
+`terraform/authentik/roster_secrets.tf`), not just human users. Narrowing this
+would require moving service accounts into their own OU — out of scope here.
+
+**Verify it actually works** (tests AD itself, not just that Authentik accepted
+the new password into its own internal store):
+
+```bash
+kinit <username>@KRG.LOCAL        # realm is case-sensitive — must be UPPERCASE
+# enter the NEW password — success means AD genuinely has it
+```
+
 ## Appendix: one-time schema extension
 
 AD ships no SSH-key attribute, so the OpenSSH-LPK schema must be added **once** to
@@ -270,3 +335,11 @@ sudo systemctl restart samba-ad-dc
   (`sudo sssctl domain-status KRG.LOCAL`). In RFC2307 mode (`idMapping = false`),
   it means the POSIX attrs are missing or the user's `gidNumber` doesn't match a
   group that has that `gidNumber`.
+- **Authentik password reset shows "Failed to update user. Please try again
+  later."**, and `authentik_server` logs `insufficient access rights ...
+  insufficientAccessRights` from `authentik_sources_ldap` — the one-time AD
+  delegation hasn't been granted yet; see
+  [Enabling self-service password reset](#enabling-self-service-password-reset-authentik-recovery-flow).
+- **`kinit user@KRG.local` → "KDC reply did not match expectations"** — the
+  realm is lowercase; Kerberos realms are case-sensitive and this forest is
+  `KRG.LOCAL` (uppercase). Not a password problem.

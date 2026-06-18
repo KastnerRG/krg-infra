@@ -9,7 +9,7 @@ resource "authentik_provider_oauth2" "e4e_nas" {
   client_id             = "e4e-nas"
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://e4e-nas.ucsd.edu:6021" }]
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://e4e-nas.ucsd.edu:6021" }]
   property_mappings     = local.std_scopes
   # RS256 signing key — DSM's SSO client verifies the ID token against jwks_uri.
   # Without a signing_key Authentik falls back to HS256 (symmetric) and serves an
@@ -58,7 +58,7 @@ resource "authentik_provider_oauth2" "garage_ui" {
   client_id          = "garage-ui"
   authorization_flow = data.authentik_flow.default_authorization.id
   invalidation_flow  = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris = [{ matching_mode = "strict",
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization",
   url = "https://s3-admin.e4e.ucsd.edu/auth/oidc/callback" }]
   property_mappings = concat(local.std_scopes,
   [authentik_property_mapping_provider_scope.groups.id])
@@ -88,7 +88,7 @@ resource "authentik_provider_oauth2" "fishsense_analytics" {
   client_id              = "fishsense-analytics"
   authorization_flow     = data.authentik_flow.default_authorization.id
   invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://analytics.fishsense.e4e.ucsd.edu/oauth-authorized/authentik" }]
+  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://analytics.fishsense.e4e.ucsd.edu/oauth-authorized/authentik" }]
   property_mappings      = local.std_scopes
   sub_mode               = "hashed_user_id"
   access_token_validity  = "minutes=60"
@@ -111,7 +111,7 @@ resource "authentik_provider_oauth2" "fishsense_oauth" {
   client_id              = "fishsense-oauth"
   authorization_flow     = data.authentik_flow.default_authorization.id
   invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", url = "https://fishsense.e4e.ucsd.edu/api/auth/callback/authentik" }]
+  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://fishsense.e4e.ucsd.edu/api/auth/callback/authentik" }]
   property_mappings      = local.std_scopes
   sub_mode               = "hashed_user_id"
   access_token_validity  = "minutes=60"
@@ -170,7 +170,7 @@ resource "authentik_provider_oauth2" "e4e_roster" {
   client_id             = "e4e-roster"
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris = [{ matching_mode = "strict", url = "https://roster.krg.ucsd.edu/auth/callback" }]
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://roster.krg.ucsd.edu/auth/callback" }]
   property_mappings     = local.std_scopes
   # RS256 signing key — without this Authentik uses HS256 + empty JWKS, which
   # broke after the 2026.2→2026.5 upgrade (same fix as guacamole/vaultwarden).
