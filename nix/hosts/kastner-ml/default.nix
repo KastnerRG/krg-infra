@@ -34,6 +34,15 @@
   # krg.xrdp.enable, so the port opens only to the gateway. Inherits the profile
   # default; left explicit to document the GUI requirement.
   krg.xrdp.enable = true;
+  # XRDP TLS cert from the lab PKI (krg.xrdp.tlsCert) — same as waiter: replaces the
+  # per-boot self-signed cert that breaks RDP cert-TOFU on each impermanence rollback.
+  # kastner-ml's vault-agent issues a `host` cert; the Guacamole gateway dials this box
+  # by IP, so the IP SAN is what it verifies. Needs the `kastner-ml` AppRole secret_id
+  # out-of-band (docs/pki-ad-integration.md). /var/lib/krg is persisted, so it survives.
+  krg.xrdp.tlsCert = {
+    enable = true;
+    ipSans = ["132.239.17.123"];
+  };
   # No IPMI/BMC on this workstation-class board (the old ansible left the IPMI
   # exporter commented out), so disable the exporter the compute profile enables.
   krg.ipmiExporter.enable = lib.mkForce false;

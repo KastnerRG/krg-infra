@@ -42,6 +42,26 @@ resource "vault_approle_auth_backend_role" "krg_prod" {
   token_max_ttl  = 86400
 }
 
+# XRDP compute hosts (waiter, kastner-ml): each box's vault-agent authenticates with
+# its own role to issue the `host` SERVER cert xrdp presents for RDP TLS (pki.tf). No
+# KV access — a box only mints its own short-lived cert. Per-host roles (not one shared)
+# so a compromised box can't impersonate another.
+resource "vault_approle_auth_backend_role" "waiter" {
+  backend        = vault_auth_backend.approle.path
+  role_name      = "waiter"
+  token_policies = [vault_policy.waiter.name]
+  token_ttl      = 3600
+  token_max_ttl  = 86400
+}
+
+resource "vault_approle_auth_backend_role" "kastner_ml" {
+  backend        = vault_auth_backend.approle.path
+  role_name      = "kastner-ml"
+  token_policies = [vault_policy.kastner_ml.name]
+  token_ttl      = 3600
+  token_max_ttl  = 86400
+}
+
 # ── Policies ───────────────────────────────────────────────────────────────────
 
 locals {
@@ -151,6 +171,32 @@ resource "vault_policy" "krg_prod" {
 
     # PKI: issue the Temporal frontend server cert (rules defined in pki.tf)
     ${local.pki_krg_prod_rules}
+  EOT
+}
+
+resource "vault_policy" "waiter" {
+  name   = "waiter"
+  policy = <<-EOT
+    # Allow vault-agent to renew its own token
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+
+    # PKI: issue waiter's host server cert for XRDP TLS (rules defined in pki.tf)
+    ${local.pki_xrdp_host_rules}
+  EOT
+}
+
+resource "vault_policy" "kastner_ml" {
+  name   = "kastner-ml"
+  policy = <<-EOT
+    # Allow vault-agent to renew its own token
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+
+    # PKI: issue kastner-ml's host server cert for XRDP TLS (rules defined in pki.tf)
+    ${local.pki_xrdp_host_rules}
   EOT
 }
 

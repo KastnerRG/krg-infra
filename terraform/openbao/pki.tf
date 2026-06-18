@@ -189,4 +189,16 @@ locals {
       capabilities = ["create", "update"]
     }
   EOT
+
+  # XRDP hosts (waiter, kastner-ml): each box's vault-agent mints the `host` SERVER
+  # cert xrdp presents for RDP TLS (krg.xrdp.tlsCert). Rendered to /run tmpfs and
+  # re-issued each boot; clients trust the CA root fleet-wide (profiles/base.nix), so
+  # the rotating leaf validates by chain. Same grant for every XRDP host — each has
+  # its own AppRole (main.tf) so a box can only mint its own cert.
+  pki_xrdp_host_rules = <<-EOT
+    # Issue the host's `host` SERVER cert (XRDP TLS; vault-agent renders it) — see pki.tf
+    path "pki_int/issue/host" {
+      capabilities = ["create", "update"]
+    }
+  EOT
 }
