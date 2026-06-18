@@ -69,7 +69,9 @@ resource "authentik_source_ldap" "samba_ad" {
   # write it back to AD. Was off (false) — that's why password changes didn't
   # propagate. Two prerequisites:
   #   - the `authentik-bind` account must have password-reset rights on
-  #     KRG.LOCAL user objects (grant on krg-ldap), else writeback silently fails;
+  #     KRG.LOCAL user objects — granted via the one-time `samba-tool dsacl set`
+  #     in docs/creating-a-user.md ("Enabling self-service password reset"),
+  #     else writeback silently fails with insufficientAccessRights;
   #   - Authentik allows this on exactly ONE LDAP source — now satisfied (the
   #     duplicate "KRG Active Directory" source was removed).
   sync_users_password = true
