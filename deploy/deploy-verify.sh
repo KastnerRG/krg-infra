@@ -96,14 +96,20 @@ if [[ "$VERIFY_AD" == "true" ]]; then
     fi
     verify_ad "$(target_for "$host")" "$host" || failed=1
   done
-  # Control node (excluded from the rebuild loop) — verify locally if it's a member.
+  # Control node (excluded from the rebuild loop) — verify locally if it's a member,
+  # but only as a WARNING, never fatal. krg-deploy is deliberately NOT rebuilt by this
+  # deploy (a self-switch would restart the github-runner mid-job); it converges its
+  # own AD join via the nightly system.autoUpgrade. So the push deploy CANNOT fix
+  # krg-deploy's membership — gating it fatally here would make the deploy un-green for
+  # a state this run doesn't own (ADR 0011: don't fail a gate on what the run can't
+  # converge). Report it so drift is visible, then let autoUpgrade settle it.
   deploy_member="$(nix eval "${FLAKE}#nixosConfigurations.krg-deploy.config.krg.adClient.enable" 2>/dev/null || echo unknown)"
   if [[ "$deploy_member" == "true" ]]; then
     if sudo adcli testjoin --domain krg.local >/dev/null 2>&1; then
       echo "OK: krg-deploy (local) — adcli testjoin validated (live DC member)"
     else
-      echo "FAILED: krg-deploy (local) — krg.adClient.enable=true but 'adcli testjoin --domain krg.local' failed"
-      failed=1
+      echo "WARN: krg-deploy (local) — krg.adClient.enable=true but 'adcli testjoin --domain krg.local' failed."
+      echo "      Not fatal: krg-deploy isn't rebuilt by this deploy; it converges via nightly autoUpgrade."
     fi
   else
     echo "SKIP: krg-deploy (local) — krg.adClient.enable=${deploy_member} (off-domain by config)"
@@ -113,15 +119,20 @@ if [[ "$VERIFY_AD" == "true" ]]; then
   # --- Proxmox hosts (Ansible layer / fabricant): the cross-layer gate ADR 0011
   # had deploy-ansible.sh defer out of its converge (it runs BEFORE krg-ldap's AD
   # firewall fix lands). Run the live machine-keytab check ad-hoc against the
-  # `proxmox` group — no converge, just the same `adcli testjoin` the ad_client
-  # role's assert runs — failing if a host has lost its join / can't reach the DC.
+  # `proxmox` group — failing if a host has lost its join / can't reach the DC.
   # ansible_user=root over SSH (inventory), so adcli reads the keytab directly.
+  # --domain-controller is pinned (matching the ad_client role's join + check): a
+  # Debian member's resolver is campus DNS, which doesn't serve the krg.local zone, so
+  # adcli's default DNS-SRV discovery fails ("couldn't find usable domain controller")
+  # even with the AD ports open — pinning the DC (resolved via the role's /etc/hosts
+  # entry) makes testjoin connect directly. krg-ldap.krg.local mirrors the role's
+  # ad_dc_host default.
   echo "::group::verify AD membership — Proxmox hosts (adcli testjoin)"
   if ! (
     cd "${REPO_ROOT}/ansible"
-    ansible proxmox -m ansible.builtin.command -a 'adcli testjoin --domain krg.local'
+    ansible proxmox -m ansible.builtin.command -a 'adcli testjoin --domain krg.local --domain-controller krg-ldap.krg.local'
   ); then
-    echo "FAILED: one or more Proxmox hosts failed 'adcli testjoin --domain krg.local' (lost join or DC unreachable)"
+    echo "FAILED: one or more Proxmox hosts failed 'adcli testjoin' (lost join or DC unreachable)"
     failed=1
   fi
   printf '\n::endgroup::\n'
