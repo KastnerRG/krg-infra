@@ -40,7 +40,7 @@ From the control node (krg-deploy): `DEPLOY_KRG_AD=true deploy/deploy-ansible.sh
   with `become` (sudo) — the break-glass admin. SSH to the DC is source-restricted
   to ucsd+ops, so run from in-fleet.
 - `python3` on `krg-ldap` (added by `nix/modules/samba-ad.nix`) for ansible's
-  modules + `apply_ad.py`. `samba-tool` is already present (the DC package).
+  modules + `apply_krg_ad.py`. `samba-tool` is already present (the DC package).
 
 ## Tests
 

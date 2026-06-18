@@ -3,7 +3,7 @@
 # wrapping samba-tool ON the domain controller (krg-ldap). Unlike the synology
 # subtree (DSM py3.8 forces raw/script hacks), krg-ldap is NixOS with a modern
 # python3, so this uses normal modules: parse the YAML spec on the control node,
-# ship each concern as a JSON plan, and run apply_ad.py against it.
+# ship each concern as a JSON plan, and run apply_krg_ad.py against it.
 #
 # NON-AUTHORITATIVE (ADR 0010): the apply only ever ADDS groups / memberships /
 # ACEs and converges the password policy. It never deletes — human group
@@ -11,7 +11,7 @@
 # members. See spec/krg-ad/README.md.
 #
 # PREREQ on krg-ldap: `python3` on PATH (nix/modules/samba-ad.nix adds it) so
-# ansible's modules + apply_ad.py's `#!/usr/bin/env python3` resolve. samba-tool
+# ansible's modules + apply_krg_ad.py's `#!/usr/bin/env python3` resolve. samba-tool
 # is already there (the DC package).
 
 - name: Load the declarative AD spec

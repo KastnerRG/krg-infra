@@ -11,7 +11,7 @@
 # `trustee`  — sAMAccountName of a service account (resolved to its objectSid at
 #              apply time; the SDDL ACE is keyed on the SID).
 # `right`    — symbolic right name; mapped to its control-access-right GUID by the
-#              apply (RIGHTS table in apply_ad.py). Today: reset-password.
+#              apply (RIGHTS table in apply_krg_ad.py). Today: reset-password.
 # `inherit`  — child-users (CI, applies to descendant user objects) | this-object.
 #
 # Discovery note (2026-06-17): a live `samba-tool dsacl get` showed NO custom

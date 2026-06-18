@@ -20,13 +20,13 @@ removed. Deleting an AD object stays a deliberate human action.
 
 ## How it runs
 
-[`files/apply_ad.py`](files/apply_ad.py) is a stdlib-only Python tool with one
+[`files/apply_krg_ad.py`](files/apply_krg_ad.py) is a stdlib-only Python tool with one
 subcommand per concern. The role parses the YAML spec on the control node, ships
 each concern as a JSON `--plan` to the DC (`/run/krg-ad/`, tmpfs, no secrets),
 and runs the script via the `script:` module. `--check` is threaded through so a
 dry run reports drift (`WOULD-CHANGE …`) without mutating the directory.
 
-Unit tests (mock `samba-tool`, no DC needed): `files/test_apply_ad.py` — picked
+Unit tests (mock `samba-tool`, no DC needed): `files/test_apply_krg_ad.py` — picked
 up by the repo `pytest ansible/ drift/` run.
 
 ## Deliberate limitations

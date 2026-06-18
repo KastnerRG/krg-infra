@@ -1,12 +1,17 @@
-"""Unit tests for apply_ad.py — pure logic + subcommand control flow (mocked samba-tool).
+"""Unit tests for apply_krg_ad.py — pure logic + subcommand flow (mocked samba-tool).
 
-Run: python3 -m pytest ansible/krg-ad/roles/krg_ad/files/test_apply_ad.py
+Run: python3 -m pytest ansible/krg-ad/roles/krg_ad/files/test_apply_krg_ad.py
 No directory / samba-tool access required; `run()` is monkeypatched.
+
+NB: module name is apply_krg_ad (not apply_ad) — ansible/synology/ already ships
+an unrelated apply_ad.py (DSM AD join), and pytest's rootdir import mode cannot
+collect two modules of the same basename. Aliased to apply_ad here so the body
+reads naturally.
 """
 
 import json
 
-import apply_ad
+import apply_krg_ad as apply_ad
 import pytest
 
 # Live sample captured from krg-ldap 2026-06-17 (read-only).
