@@ -4,6 +4,11 @@
   # relative symlinks and config bind-mounts below all point into the same
   # store derivation.
   composeDir = ../../docker-compose/krg-prod;
+  # The prometheus config dir as its OWN store path (hashed only on prometheus/*),
+  # so Prometheus is recreated on deploy only when ITS config changes — not on
+  # every krg-prod change. Bind-mounted into the prometheus container by store path
+  # (compose.grafana.yml ${PROM_CONFIG_DIR}) so config edits actually go live.
+  promConfig = ../../docker-compose/krg-prod/prometheus;
 in {
   imports = [
     ../../profiles/server.nix
@@ -50,11 +55,19 @@ in {
     "L+ /var/lib/krg/krg-prod/compose.mlflow.yml       - - - - ${composeDir}/compose.mlflow.yml"
 
     # Read-only config dirs: symlink from working dir → Nix store.
-    # Docker bind-mount follows symlinks so ./prometheus resolves to the store path.
-    # Use L+ (not L): plain L only creates a missing symlink and will NOT repoint an
-    # existing one, so on later deploys the link would stay stuck at an OLD store path
-    # and config/icon changes would never reach the host. L+ replaces it every switch.
-    "L+ /var/lib/krg/krg-prod/prometheus          - - - - ${composeDir}/prometheus"
+    # Docker bind-mount follows symlinks so ./blackbox-exporter resolves to the store
+    # path. Use L+ (not L): plain L only creates a missing symlink and will NOT
+    # repoint an existing one, so on later deploys the link would stay stuck at an
+    # OLD store path and config/icon changes would never reach the host. L+ replaces
+    # it every switch.
+    #
+    # NOTE: prometheus is NOT here — it's bind-mounted by store path via
+    # PROM_CONFIG_DIR (the systemd Environment below) so the container is recreated
+    # when prometheus.yml changes. A symlinked working-dir mount can't do that: docker
+    # resolves the symlink at container-create time, so repointing it leaves the
+    # RUNNING container on the old config until something force-recreates it. The same
+    # caveat applies to ./blackbox-exporter + ./grafana below (rarely-changed config;
+    # left as-is — apply the PROM_CONFIG_DIR trick to them if they start drifting).
     "L+ /var/lib/krg/krg-prod/blackbox-exporter   - - - - ${composeDir}/blackbox-exporter"
     "L+ /var/lib/krg/krg-prod/grafana             - - - - ${composeDir}/grafana"
 
@@ -172,6 +185,15 @@ in {
     after = ["openbao-agent.service"];
     requires = ["openbao-agent.service"];
   };
+
+  # Expose the prometheus config store path to `docker compose` for ${PROM_CONFIG_DIR}
+  # interpolation in compose.grafana.yml. Set on the SERVICE ENVIRONMENT (not via the
+  # stack's --env-file) on purpose: --env-file would shadow the working-dir .env the
+  # other stacks rely on for ${USER_ID}/${OIDC_*}/… — the service environment merges
+  # ON TOP of .env instead. When promConfig changes, this Environment line changes, so
+  # nixos-rebuild restarts krg-prod.service and `up -d` recreates Prometheus with the
+  # fresh config; when it doesn't change, the unit is stable and nothing restarts.
+  systemd.services.krg-prod.environment.PROM_CONFIG_DIR = "${promConfig}";
 
   # E4E Roster V3 — source lives at /var/lib/krg/e4e-roster (git-managed, not nix store).
   # Bootstrap: git clone https://github.com/UCSD-E4E/E4E-Roster-V3.git /var/lib/krg/e4e-roster
