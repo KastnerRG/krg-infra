@@ -309,6 +309,43 @@
         enabled: true
         state: started
 
+    # --- 9. Health gate (replicate the NixOS failure mode) --------------------
+    # On NixOS a CrowdSec service that can't come up fails `nixos-rebuild switch`
+    # (a failed unit fails activation), so a broken bouncer is caught loudly at
+    # deploy time. The Debian path used `systemd_service: state: started`, which
+    # returns success as soon as the unit has STARTED ONCE — so a bouncer that then
+    # crash-loops ("bouncer stream halted") is invisible to the deploy. That let the
+    # orphaned-key failure run silently for 9000+ restarts on fabricant. Replicate
+    # the NixOS behaviour: flush the pending restarts (so we judge the freshly
+    # (re)configured units, e.g. after a re-registration above), then FAIL the deploy
+    # if either service isn't actually `active`.
+    - name: Apply pending CrowdSec restarts before health-checking
+      ansible.builtin.meta: flush_handlers
+
+    - name: Verify the CrowdSec daemon is active (else fail the deploy)
+      ansible.builtin.systemd_service:
+        name: crowdsec
+      register: crowdsec_daemon_active
+      until: crowdsec_daemon_active.status.ActiveState == "active"
+      retries: 6
+      delay: 5
+      changed_when: false
+      failed_when: crowdsec_daemon_active.status.ActiveState != "active"
+
+    # A bouncer stuck in auto-restart reports ActiveState "activating"/"failed"
+    # here, never "active" — so the retry loop exhausts and the deploy fails (the
+    # signal that was missing when fabricant's bouncer crash-looped unnoticed).
+    # Querying with only `name` returns the unit status without changing anything.
+    - name: Verify the firewall bouncer is active, not crash-looping (else fail)
+      ansible.builtin.systemd_service:
+        name: crowdsec-firewall-bouncer
+      register: crowdsec_bouncer_active
+      until: crowdsec_bouncer_active.status.ActiveState == "active"
+      retries: 6
+      delay: 5
+      changed_when: false
+      failed_when: crowdsec_bouncer_active.status.ActiveState != "active"
+
 # When crowdsec_enabled is false on a host that was previously running
 # CrowdSec: stop + disable both services so the bouncer's iptables rules
 # don't race with whatever's replacing it (typically fail2ban during a
