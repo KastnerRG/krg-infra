@@ -151,6 +151,14 @@ jobs:
           # stays disabled in spec (#151) and mail deferred in group_vars (#163);
           # those are role-internal gates, not tag scoping.
           DEPLOY_SYNOLOGY: "true"
+          # Converge KRG.LOCAL Active Directory structure (ansible/krg-ad/, ADR
+          # 0010) too — its gate block already exists in deploy-ansible.sh, but
+          # without this flag the new subtree never runs in the fleet deploy. No
+          # secrets needed (structural only); the apply is non-authoritative
+          # (adds, never deletes) so it can't clobber roster-set human group
+          # membership. Requires krg-deploy to reach krg-ldap over SSH as
+          # krg-admin (host key in known_hosts) — same push model as fabricant.
+          DEPLOY_KRG_AD: "true"
         run: ./deploy/deploy-ansible.sh
 
       # Stages the campus-mandated OEC (Qualys + Trellix) installer to each host and
