@@ -18,14 +18,14 @@ resource "authentik_brand" "default" {
   domain  = "authentik-default"
   default = true
 
-  branding_title                    = "authentik"
-  branding_logo                     = "/static/dist/assets/icons/icon_left_brand.svg"
-  branding_favicon                  = "/static/dist/assets/icons/icon.png"
-  branding_default_flow_background  = "/static/dist/assets/images/flow_background.jpg"
+  branding_title                   = "authentik"
+  branding_logo                    = "/static/dist/assets/icons/icon_left_brand.svg"
+  branding_favicon                 = "/static/dist/assets/icons/icon.png"
+  branding_default_flow_background = "/static/dist/assets/images/flow_background.jpg"
 
   flow_authentication = "fed7617e-bad3-48ca-ad83-a8cda150b646"
-  flow_invalidation    = "01062aa2-97b3-4392-8487-7f89ce7955ba"
-  flow_user_settings   = "91a3ac41-505a-43be-a99e-e06444fe29cd"
+  flow_invalidation   = "01062aa2-97b3-4392-8487-7f89ce7955ba"
+  flow_user_settings  = "91a3ac41-505a-43be-a99e-e06444fe29cd"
 
   # The new addition — everything else above matches live state exactly.
   flow_recovery = authentik_flow.recovery.uuid
@@ -50,7 +50,7 @@ resource "authentik_brand" "default" {
 
 resource "authentik_stage_identification" "default_authentication" {
   name                      = "default-authentication-identification"
-  user_fields                = ["email", "username"]
+  user_fields               = ["email", "username"]
   case_insensitive_matching = true
   show_matched_user         = true
   pretend_user_exists       = true

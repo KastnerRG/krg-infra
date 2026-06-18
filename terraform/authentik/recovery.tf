@@ -29,21 +29,21 @@ resource "authentik_flow" "recovery" {
 }
 
 resource "authentik_stage_identification" "recovery" {
-  name                       = "Recovery — identify"
-  user_fields                = ["email", "username"]
-  case_insensitive_matching  = true
+  name                      = "Recovery — identify"
+  user_fields               = ["email", "username"]
+  case_insensitive_matching = true
   # Don't reveal whether a given email/username actually has an account —
   # avoids account enumeration via the recovery form.
-  show_matched_user          = false
-  pretend_user_exists        = true
+  show_matched_user   = false
+  pretend_user_exists = true
 }
 
 resource "authentik_stage_email" "recovery" {
-  name                 = "Recovery — send email"
-  use_global_settings  = true
-  subject              = "KRG password reset"
-  template             = "email/password_reset.html"
-  token_expiry         = "minutes=30"
+  name                = "Recovery — send email"
+  use_global_settings = true
+  subject             = "KRG password reset"
+  template            = "email/password_reset.html"
+  token_expiry        = "minutes=30"
 }
 
 # Same validation Authentik's own "create recovery flow" wizard generates — checks the
