@@ -160,21 +160,20 @@ group to exist in AD with members — also covered in
 
 ## Status (verified 2026-06-18)
 
-Verified 2026-06-18 by a read-only `getent passwd Administrator@krg.local` (falling
-back to the short `Administrator`) over SSH on each box — the **domain
-Administrator**, a durable built-in account, never a personal one. It's a strict
-probe on purpose: it needs a fresh DC fetch, so (unlike a previously-cached user) it
-won't pass on stale SSSD cache — it catches a member that has silently gone offline
-from the DC. The deploy workflow gates on the same probe per host
-(`deploy/deploy-nixos.sh`; the Proxmox layer via the `ad_client` role).
+Status as of 2026-06-18. Membership is gated at deploy time by
+`adcli testjoin --domain krg.local` — a live check of the host's **machine keytab**
+against the DC: it needs no user/admin/service account and bypasses the SSSD cache,
+so (unlike a `getent`, which serves a cached entry once looked up) it can't pass on
+stale cache and catches a member that has drifted offline. `deploy/deploy-nixos.sh`
+runs it per NixOS member; the Proxmox layer runs it via the `ad_client` role.
 
 | Host | Joined? |
 |---|---|
 | krg-ldap | ✅ the DC (provisioned + keytab exported) — *is* the domain, not a member |
-| waiter | ✅ joined 2026-05-21 (`adcli --login-ccache`); Administrator resolves 2026-06-18 |
-| krg-prod | ✅ joined; Administrator resolves 2026-06-18 |
-| kastner-ml | ✅ joined; Administrator resolves 2026-06-18 |
-| fabricant | ⚠️ joined but **SSSD OFFLINE from the DC (2026-06-18)** — serves cached users only; Administrator does **not** resolve, `sssctl` reports Offline, `adcli` can't reach the DC. Needs a DC-connectivity fix (the `ad_client` `adcli testjoin` also lacked `--domain`, so it probed `ucsd.edu`). |
+| waiter | ✅ joined 2026-05-21 (`adcli --login-ccache`); testjoin OK 2026-06-18 |
+| krg-prod | ✅ joined; testjoin OK 2026-06-18 |
+| kastner-ml | ✅ joined; testjoin OK 2026-06-18 |
+| krg-vault | ✅ joined 2026-06-18 (`adcli join`); `enable = true` lands via the `adclient-enable-vault-deploy` branch |
+| fabricant | ⚠️ joined but was **offline from the DC** — the DC's in-guest firewall (`samba-ad.nix` opens the AD ports to `sealab+machines+ops`) dropped it because fabricant wasn't in **`machines`**. **Fixed in this PR** (added `137.110.161.98` to `machines` in `trusted.json`); apply with a krg-ldap rebuild, then SSSD comes online. (Also fixed: `ad_client`'s `adcli testjoin` lacked `--domain`, so it probed `ucsd.edu`.) |
+| krg-deploy | ❌ not joined yet — `krg.adClient.enable = false`; join via the `adclient-enable-vault-deploy` branch |
 | e4e-prod | ⏳ not deployed yet (unreachable) |
-| krg-vault | ❌ not joined — `krg.adClient.enable = false` (no keytab yet); see Case 1 |
-| krg-deploy | ❌ not joined — `krg.adClient.enable = false` (no keytab yet); see Case 1 |
