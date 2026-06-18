@@ -45,6 +45,12 @@ ad_gpo_access_control: disabled
 ad_join_user: Administrator
 ad_join_password: ""
 
+# Deploy gate: when true the play FAILS on a host that isn't a working AD member
+# (`adcli testjoin --domain` failed). Default false so a FIRST bring-up (not joined
+# yet, no creds) stages config + warns instead of failing; the automated fleet deploy
+# (deploy/deploy-ansible.sh) sets this true to gate strictly.
+ad_require_joined: false
+
 ad_packages:
   - sssd
   - sssd-ad

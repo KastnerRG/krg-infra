@@ -56,7 +56,10 @@ if ! (
   # installed per-run — this matches the nightly ansible-apply service and avoids an
   # unpinned upstream pull on every deploy (non-reproducible). Pinning them and
   # managing the install via Nix so both paths share one set is tracked in #129.
-  ansible-playbook playbooks/site.yml -e "oec_installer=${OEC_INSTALLER}"
+  # ad_require_joined=true: gate the deploy on a working AD join (the ad_client role
+  # asserts `adcli testjoin --domain` per host). Strict on the automated path; manual
+  # first-bring-up runs omit it so an unjoined host stages config + warns instead.
+  ansible-playbook playbooks/site.yml -e "oec_installer=${OEC_INSTALLER}" -e ad_require_joined=true
 ); then
   echo "FAILED: ansible site.yml"
   printf '\n::endgroup::\n'

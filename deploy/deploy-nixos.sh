@@ -135,18 +135,21 @@ verify_oec_local() {
   return 1
 }
 
-# AD domain membership: a joined host's SSSD resolves the domain Administrator
-# account. A host CONFIGURED as a member (krg.adClient.enable = true) that can't
-# resolve it has a broken join/SSSD — fail the deploy. Try the realm-qualified name
-# first, then the short name (covers either use_fully_qualified_names setting, and
-# the DC's winbind default-domain form). Read-only.
+# AD domain membership: `adcli testjoin` authenticates the host's MACHINE keytab
+# against the DC — a LIVE check that needs no user/admin/service account and bypasses
+# the SSSD user cache (so, unlike a getent, it can't pass on a stale cached entry; it
+# catches a member that has silently gone offline from the DC). A host CONFIGURED as
+# a member (krg.adClient.enable = true) that fails it has lost its join or DC
+# connectivity — fail the deploy. --domain is load-bearing: without it adcli probes
+# the host's DNS domain (ucsd.edu), not the krg.local realm. sudo: testjoin reads the
+# root-only /etc/krb5.keytab (break-glass admin has sudoNoPassword).
 verify_ad() {
   local target="$1" host="$2"
-  if ssh "${sshopts[@]}" "$target" "getent passwd 'Administrator@krg.local' >/dev/null 2>&1 || getent passwd Administrator >/dev/null 2>&1"; then
-    echo "OK: ${host} — AD domain Administrator resolves (member)"
+  if ssh "${sshopts[@]}" "$target" 'sudo adcli testjoin --domain krg.local' >/dev/null 2>&1; then
+    echo "OK: ${host} — adcli testjoin validated (live DC member)"
     return 0
   fi
-  echo "FAILED: ${host} — krg.adClient.enable=true but the AD Administrator does not resolve (broken join/SSSD)"
+  echo "FAILED: ${host} — krg.adClient.enable=true but 'adcli testjoin --domain krg.local' failed (lost join or DC unreachable)"
   return 1
 }
 
@@ -195,9 +198,8 @@ printf '\n::endgroup::\n'
 # Gate per host on krg.adClient.enable (read from the flake) so off-domain hosts
 # (krg-vault, krg-deploy today) are SKIPPED, not failed — and a host auto-joins
 # this gate the moment its config flips enable = true. Collected (not fail-fast)
-# so every offender shows, then the deploy fails if any member can't resolve the
-# domain Administrator.
-echo "::group::verify AD domain membership (getent Administrator)"
+# so every offender shows, then the deploy fails if any member fails adcli testjoin.
+echo "::group::verify AD domain membership (adcli testjoin)"
 ad_failed=0
 for host in "${ORDER[@]}"; do
   member="$(nix eval "${FLAKE}#nixosConfigurations.${host}.config.krg.adClient.enable" 2>/dev/null || echo unknown)"
@@ -211,10 +213,10 @@ done
 # Control node (excluded from the rebuild loop) — verify locally if it's a member.
 deploy_member="$(nix eval "${FLAKE}#nixosConfigurations.krg-deploy.config.krg.adClient.enable" 2>/dev/null || echo unknown)"
 if [[ "$deploy_member" == "true" ]]; then
-  if getent passwd 'Administrator@krg.local' >/dev/null 2>&1 || getent passwd Administrator >/dev/null 2>&1; then
-    echo "OK: krg-deploy (local) — AD domain Administrator resolves (member)"
+  if sudo adcli testjoin --domain krg.local >/dev/null 2>&1; then
+    echo "OK: krg-deploy (local) — adcli testjoin validated (live DC member)"
   else
-    echo "FAILED: krg-deploy (local) — krg.adClient.enable=true but the AD Administrator does not resolve"
+    echo "FAILED: krg-deploy (local) — krg.adClient.enable=true but 'adcli testjoin --domain krg.local' failed"
     ad_failed=1
   fi
 else
