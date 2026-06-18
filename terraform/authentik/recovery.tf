@@ -84,7 +84,13 @@ resource "authentik_stage_prompt" "recovery" {
     authentik_stage_prompt_field.recovery_password.id,
     authentik_stage_prompt_field.recovery_password_repeat.id,
   ]
-  validation_policies = [authentik_policy_expression.recovery_password_match.id]
+  # Two validation policies run on submit: the new password must (1) match its
+  # confirmation and (2) meet the UCSD strength standard (length + breach +
+  # zxcvbn — password_policy.tf, ADR 0010 §4).
+  validation_policies = [
+    authentik_policy_expression.recovery_password_match.id,
+    authentik_policy_password.ucsd.id,
+  ]
 }
 
 resource "authentik_stage_user_write" "recovery" {
