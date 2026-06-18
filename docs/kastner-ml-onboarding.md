@@ -172,11 +172,12 @@ Contents:
      `cudatoolkit` + the container toolkit; with `nix-ld` that covers it. The
      Ubuntu box's apt `/usr/local/cuda` 12.6 install is deliberately **not**
      replicated — users get versioned CUDA via conda/pip wheels or containers.
-   - `krg.fpga.enable = false` (no FPGA hardware) and **`krg.xrdp.enable = false`**
-     — headless box. The Ubuntu box ships XFCE + xrdp, but **nobody uses RDP
-     today**, so the desktop is dropped (this matches the compute profile's own
-     logic: no FPGA GUI tools → no desktop). Overrides the `true` that
-     `compute.nix` currently hard-sets.
+   - `krg.fpga.enable = false` (no FPGA hardware) but **`krg.xrdp.enable = true`**
+     — kastner-ml users want a GUI session for visualization/IDE work even though
+     the box does no FPGA work. The XFCE/xrdp desktop is no longer coupled to FPGA
+     (it's the compute-profile default; see `profiles/compute.nix`), so it stays
+     enabled. Access is **only** through the Guacamole gateway on krg-prod — the
+     inherited `krg.firewall.rdpSources` restricts 3389 to `137.110.161.106`.
    - `krg.localCache` (`/local`, **quota 500G** — chosen over waiter's 1T because
      the 2 TB SSD also holds nix store + CUDA Docker images).
    - `krg.scratch` — **group-level** scratch, one area per E4E project group
@@ -213,7 +214,7 @@ sharing model onto the fleet's AD / ZFS / NFS patterns."
 | GPU driver | `nvidia-driver-580-open` | `krg.nvidia.openDriver` | same |
 | CUDA toolkit | full 12.6 in `/usr/local/cuda` | **none system-wide** (conda/containers + nix-ld) | **match waiter — no system toolkit** |
 | Container runtime | docker-ce + nvidia runtime | `krg.docker` (AD `Docker Users`) | same |
-| Desktop / RDP | XFCE + xrdp (3389) | xrdp coupled to FPGA | **drop — nobody uses RDP; headless** |
+| Desktop / RDP | XFCE + xrdp (3389) | xrdp (decoupled from FPGA) | **keep XFCE + xrdp** — GUI sessions via Guacamole; 3389 restricted to the gateway |
 | Monitoring | node/dcgm/docker + dead `:9000` | native exporters + dcgm 9400 | native; **drop `:9000`** ansible-deploy-monitor |
 | Firewall | ufw (exporters ← `132.239.95.67`) | CrowdSec + `monitoringPorts` | CrowdSec; reconcile scrape source w/ krg-prod |
 | Sec agents | Qualys + Trellix | same (base.nix) | same |
@@ -239,7 +240,9 @@ met by having system libs everywhere).
   `cudatoolkit` + `nvidia-container-toolkit`) + `nix-ld`. The point is **not**
   replicating the Ubuntu apt `/usr/local/cuda` 12.6 install; users get versioned
   CUDA via conda/pip wheels or containers.
-- **Desktop** — dropped; headless (no XRDP/XFCE), nobody uses RDP.
+- **Desktop** — **kept**: XFCE + xrdp, reached through the Guacamole gateway (the
+  desktop is decoupled from FPGA — no FPGA hardware needed for a GUI session). 3389
+  is source-restricted to the gateway (`137.110.161.106`); no direct RDP exposure.
 - **Impermanence** — yes (same as waiter: NFS `/home` + root `@blank` rollback).
 - **Scratch model** — **group-level**, scoped to **E4E project groups** (KRG
   doesn't use this box, so no KRG-lab scratch): each group gets a group-owned

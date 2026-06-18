@@ -79,10 +79,12 @@
   # FPGA/EDA tooling is OPT-IN, not a compute default: waiter does FPGA research,
   # but kml-class ML boxes don't use it. A host that needs it sets enable = true.
   krg.fpga.enable = lib.mkDefault false;
-  # The XRDP/XFCE desktop exists only to host the FPGA GUI tools
-  # (Vivado/Vitis/Questa), so it tracks FPGA: a headless compute box (FPGA off)
-  # gets no desktop.
-  krg.xrdp.enable = true;
+  # The XRDP/XFCE remote desktop is a compute-profile DEFAULT, NOT coupled to FPGA.
+  # It started life hosting the FPGA GUI tools (Vivado/Vitis/Questa) on waiter, but
+  # it's just as useful for GUI/visualization work on a GPU box with no FPGA — so it's
+  # offered to every compute host and a host opts out with `krg.xrdp.enable = false`.
+  # Access is always through the Guacamole gateway (rdpSources below), never direct RDP.
+  krg.xrdp.enable = lib.mkDefault true;
 
   # Native IPMI exporter systemd service (from waiter monitoring.yaml)
   krg.ipmiExporter.enable = true;
@@ -95,8 +97,8 @@
   # The installer archive is wired up in hosts/waiter/default.nix.
 
   # rdp_users is intentionally NOT here — the xrdp module creates and adds
-  # it only when the desktop is enabled (which tracks FPGA), so it's not blindly
-  # applied everywhere.
+  # it only when the desktop is enabled, so it's not blindly applied to a host
+  # that opted out of the desktop.
   krg.users.defaultGroups = ["docker" "cuda"];
 
   # waiter is physical, so base.nix keeps the NixOS firewall enabled.
