@@ -94,25 +94,33 @@ resource "authentik_stage_user_write" "recovery" {
 }
 
 resource "authentik_flow_stage_binding" "recovery_identification" {
-  target = authentik_flow.recovery.id
+  # authentik_flow's `id` is its SLUG ("default-recovery-flow"), not a UUID — the
+  # bindings API rejects that. `uuid` is the actual pk this endpoint needs.
+  target = authentik_flow.recovery.uuid
   stage  = authentik_stage_identification.recovery.id
   order  = 10
 }
 
 resource "authentik_flow_stage_binding" "recovery_email" {
-  target = authentik_flow.recovery.id
+  # authentik_flow's `id` is its SLUG ("default-recovery-flow"), not a UUID — the
+  # bindings API rejects that. `uuid` is the actual pk this endpoint needs.
+  target = authentik_flow.recovery.uuid
   stage  = authentik_stage_email.recovery.id
   order  = 20
 }
 
 resource "authentik_flow_stage_binding" "recovery_prompt" {
-  target = authentik_flow.recovery.id
+  # authentik_flow's `id` is its SLUG ("default-recovery-flow"), not a UUID — the
+  # bindings API rejects that. `uuid` is the actual pk this endpoint needs.
+  target = authentik_flow.recovery.uuid
   stage  = authentik_stage_prompt.recovery.id
   order  = 30
 }
 
 resource "authentik_flow_stage_binding" "recovery_user_write" {
-  target = authentik_flow.recovery.id
+  # authentik_flow's `id` is its SLUG ("default-recovery-flow"), not a UUID — the
+  # bindings API rejects that. `uuid` is the actual pk this endpoint needs.
+  target = authentik_flow.recovery.uuid
   stage  = authentik_stage_user_write.recovery.id
   order  = 40
 }
