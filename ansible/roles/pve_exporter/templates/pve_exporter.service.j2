@@ -1,0 +1,17 @@
+[Unit]
+Description=Prometheus PVE exporter (per-VM hypervisor metrics)
+# pve-cluster.service provides pmxcfs + the API the exporter queries.
+After=network-online.target pve-cluster.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ pve_exporter_user }}
+ExecStart={{ pve_exporter_venv }}/bin/pve_exporter \
+  --config.file {{ pve_exporter_config }} \
+  --web.listen-address {{ pve_exporter_listen_address }}:{{ pve_exporter_port }}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

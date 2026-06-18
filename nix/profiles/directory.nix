@@ -21,10 +21,9 @@
   # base.nix's default allowedTCPPorts; serviceHost=true routes it through
   # sshSources (ucsd + ops). The Proxmox perimeter (ansible proxmox_firewall →
   # 100.fw) is the additive outer layer.
-  krg.firewall = {
-    # node exporter (enabled in base.nix)
-    monitoringPorts = [9100];
-  };
+  # node-exporter's 9100 is opened to the monitoring host automatically by
+  # nix/modules/services/node-exporter.nix (issue #234); samba-ad.nix contributes
+  # the AD DC ports as sourcedPorts. No per-profile krg.firewall block needed here.
 
   # AD domain controller role for KRG. Realm/workgroup match the new forest;
   # see the "One-time provisioning" notes in modules/samba-ad.nix before deploy.

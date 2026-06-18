@@ -23,5 +23,11 @@ in {
       enable = true;
       inherit (cfg) port;
     };
+
+    # Open the scrape port to the Prometheus host wherever the exporter runs
+    # (issue #234) — same fleet-wide auto-wiring as node-exporter.nix, so a host
+    # with a BMC is reachable by the scraper without a per-host monitoringPorts
+    # entry. VMs don't enable this module (no BMC), so 9290 stays closed there.
+    krg.firewall.monitoringPorts = [cfg.port];
   };
 }

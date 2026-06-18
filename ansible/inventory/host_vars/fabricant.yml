@@ -35,6 +35,9 @@ zfs_limits:
 # client list below.
 proxmox_host_fw_rules:
   - "IN ACCEPT -source 137.110.161.67 -p tcp -dport 2049 -log nolog # NFSv4 (waiter)"
+  # prometheus-pve-exporter (pve_exporter role): scraped ONLY by the monitoring
+  # host (krg-prod, 137.110.161.106 = nix/networks/trusted.json monitoring_host).
+  - "IN ACCEPT -source 137.110.161.106 -p tcp -dport 9221 -log nolog # prometheus-pve-exporter (krg-prod)"
 
 # ── NFS exports ──────────────────────────────────────────────────────────────
 nfs_exports:

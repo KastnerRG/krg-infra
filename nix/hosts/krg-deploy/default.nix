@@ -16,12 +16,11 @@
     isVM = true;
   };
 
-  krg.firewall = {
-    # SSH (22) inherits from base.nix's default allowedTCPPorts = [22];
-    # serviceHost = true (also from base.nix default) restricts it to
-    # ucsd + ops via sshSources. node-exporter monitoring on 9100.
-    monitoringPorts = [9100];
-  };
+  # SSH (22) inherits from base.nix's default allowedTCPPorts = [22];
+  # serviceHost = true (also from base.nix default) restricts it to ucsd + ops
+  # via sshSources. node-exporter's 9100 is auto-opened to the monitoring host by
+  # nix/modules/services/node-exporter.nix (issue #234) — no krg.firewall block
+  # needed here.
 
   # OEC (Qualys + Trellix). krg-deploy is EXCLUDED from the push deploy's
   # stage+verify (deploy/deploy-nixos.sh — a self-rebuild would restart this

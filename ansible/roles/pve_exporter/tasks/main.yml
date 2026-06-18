@@ -1,0 +1,99 @@
+# prometheus-pve-exporter on the Proxmox host (issue #235).
+#
+# CROSS-REFERENCE: node/ipmi exporters live in roles/monitoring (in-guest view);
+# this is the hypervisor-side view (pve_* via the PVE API). Scrape source is
+# restricted by fabricant's host.fw (proxmox_host_fw_rules opens 9221 to the
+# monitoring host) — same pattern as the NFS port.
+- name: Install venv prerequisites
+  ansible.builtin.apt:
+    name:
+      - python3-venv
+      - python3-pip
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the unprivileged exporter system user
+  ansible.builtin.user:
+    name: "{{ pve_exporter_user }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Install prometheus-pve-exporter into a self-contained venv
+  ansible.builtin.pip:
+    name: "prometheus-pve-exporter=={{ pve_exporter_version }}"
+    virtualenv: "{{ pve_exporter_venv }}"
+    virtualenv_command: python3 -m venv
+  notify: Restart pve exporter
+
+- name: Ensure the config directory exists
+  ansible.builtin.file:
+    path: "{{ pve_exporter_config | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# --- PVE API identity (idempotent) ------------------------------------------
+- name: Ensure the PVE monitoring user exists
+  ansible.builtin.command: >-
+    pveum user add {{ pve_api_user }}
+    --comment "Prometheus PVE exporter (ansible pve_exporter role)"
+  register: _pve_user
+  changed_when: "'already exists' not in (_pve_user.stderr | default(''))"
+  failed_when: >-
+    _pve_user.rc != 0 and 'already exists' not in (_pve_user.stderr | default(''))
+
+- name: Grant the monitoring user read-only audit on the whole tree
+  ansible.builtin.command: "pveum aclmod / --users {{ pve_api_user }} --roles {{ pve_api_role }}"
+  changed_when: false # aclmod is idempotent but reports nothing; never flag as changed
+
+- name: Check whether the exporter config already holds a token
+  ansible.builtin.command: "grep -q token_value {{ pve_exporter_config }}"
+  register: _pve_token_present
+  changed_when: false
+  failed_when: false
+
+- name: Provision the API token + render config (only when the token is missing)
+  when: _pve_token_present.rc != 0
+  block:
+    - name: Drop any stale token of this name (ignore if absent)
+      ansible.builtin.command: "pveum user token remove {{ pve_api_user }} {{ pve_api_token_name }}"
+      register: _pve_token_rm
+      changed_when: _pve_token_rm.rc == 0
+      failed_when: false
+
+    - name: Mint the API token
+      ansible.builtin.command: >-
+        pveum user token add {{ pve_api_user }} {{ pve_api_token_name }}
+        --privsep 0 --output-format json
+      register: _pve_token_add
+      changed_when: true
+      no_log: true # stdout carries the token secret
+
+    - name: Render the exporter config with the freshly minted token
+      ansible.builtin.template:
+        src: pve.yml.j2
+        dest: "{{ pve_exporter_config }}"
+        owner: root
+        group: "{{ pve_exporter_user }}"
+        mode: "0640"
+      vars:
+        _pve_token_value: "{{ (_pve_token_add.stdout | from_json).value }}"
+      no_log: true # the rendered file contains the token secret
+      notify: Restart pve exporter
+
+- name: Install the pve_exporter systemd unit
+  ansible.builtin.template:
+    src: pve_exporter.service.j2
+    dest: /etc/systemd/system/pve_exporter.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable + start pve_exporter
+  ansible.builtin.systemd_service:
+    name: pve_exporter
+    enabled: true
+    state: started
+    daemon_reload: true

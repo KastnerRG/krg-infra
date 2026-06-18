@@ -81,8 +81,9 @@
     # considered + rejected (closed issue #89); HTTP-01 + publicPorts
     # opt-in is the long-term answer.
     publicPorts = [80]; # reason: ACME HTTP-01 (LE multi-perspective validators are global)
-    # Native node-exporter (9100), scraped from the monitoring host only. (The old
-    # 9000 "service exporter" was the Ansible deploy-monitor, gone under autoUpgrade.)
-    monitoringPorts = [9100];
+    # node-exporter's 9100 is opened to the monitoring host automatically by
+    # nix/modules/services/node-exporter.nix (issue #234) — no per-profile entry
+    # needed. (The old 9000 "service exporter" was the Ansible deploy-monitor,
+    # gone under autoUpgrade.)
   };
 }

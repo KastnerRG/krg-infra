@@ -119,10 +119,10 @@ in {
     # krg.oecQualysTrellix.installerArchive per host or they stay dormant.
     krg.oecQualysTrellix.enable = true;
 
-    # Prometheus node exporter on every machine (native systemd service).
-    # Hosts that run node_exporter another way override this — e.g. waiter's
-    # Docker monitoring stack binds 9100 on the host network, so compute.nix
-    # sets krg.nodeExporter.enable = false to avoid a port clash.
+    # Prometheus node exporter on every machine (native systemd service). It
+    # opens its scrape port (9100) to the monitoring host itself (issue #234,
+    # node-exporter.nix), so no per-host firewall entry is needed. A host that
+    # runs node_exporter another way can override this with mkForce.
     krg.nodeExporter.enable = mkDefault true;
 
     # Fail2ban is SUPERSEDED by the CrowdSec stack (krg.crowdsec, below).

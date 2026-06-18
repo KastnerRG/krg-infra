@@ -561,6 +561,18 @@
           "instant": true,
           "range": false,
           "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "sum by (instance, osversion) (label_replace(node_os_info{instance=~\"$instance\"}, \"osversion\", \"$1\", \"version\", \"(.*)\"))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "refId": "D"
         }
       ],
       "transformations": [
@@ -576,7 +588,8 @@
               "__name__": true,
               "job": true,
               "domainname": true,
-              "Value #A": true
+              "Value #A": true,
+              "Value #D": true
             },
             "renameByName": {
               "Value #B": "Uptime (s)",
@@ -584,7 +597,8 @@
               "nodename": "Host",
               "release": "Kernel",
               "sysname": "OS",
-              "machine": "Arch"
+              "machine": "Arch",
+              "osversion": "OS Version"
             }
           }
         }
