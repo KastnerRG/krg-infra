@@ -1,5 +1,16 @@
 admin_ssh_keys: []
+# Root login mode FROM the allowed sources (see ssh_root_allowed_sources). Root is
+# "no" globally; this is what the Match block re-permits. Key-only (prohibit-password).
 ssh_permit_root: "prohibit-password"
+# Source IPs/CIDRs from which key-only root SSH is re-permitted. EMPTY (default) =
+# the role keeps its prior behavior: PermitRootLogin = ssh_permit_root globally (no
+# source restriction). Set it (group_vars) to switch to "root OFF globally, allowed
+# only from these sources". The control node MUST be included or the Ansible push
+# (which connects as root) locks itself out on the next run.
+ssh_root_allowed_sources: []
+# Comment that uniquely identifies the deploy automation key inside admin_ssh_keys —
+# the ONLY key authorized for root when source-restriction is on. Humans are revoked.
+ssh_deploy_key_marker: "krg-admin@krg-deploy"
 ssh_restrict_algorithms: false
 # ed25519-only set, matching the NixOS guest policy (nix/profiles/base.nix).
 ssh_pubkey_algorithms: "ssh-ed25519,ssh-ed25519-cert-v01@openssh.com,sk-ssh-ed25519@openssh.com,sk-ssh-ed25519-cert-v01@openssh.com"
