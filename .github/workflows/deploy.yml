@@ -6,14 +6,15 @@ name: Deploy fleet
 # krg-deploy ansible-apply timer) into a push-triggered apply.
 #
 # GATED ON GREEN CI: this never runs on `push` directly. It runs after the
-# "Build NixOS configurations" (build.yml) and "Python unit tests" (tests.yml)
-# workflows COMPLETE on main, and the gate step below additionally confirms that
-# BOTH succeeded for the same commit before anything touches the fleet — a single
-# workflow_run event only tells us about one workflow, so we re-check both via the
-# API. A broken commit therefore never deploys.
+# "Build NixOS configurations" (build.yml), "Python unit tests" (tests.yml), and
+# "Lint" (lint.yml) workflows COMPLETE on main, and the gate step below
+# additionally confirms that ALL THREE succeeded for the same commit before
+# anything touches the fleet — a single workflow_run event only tells us about one
+# workflow, so we re-check all three via the API. A broken commit therefore never
+# deploys.
 on:
   workflow_run:
-    workflows: ["Build NixOS configurations", "Python unit tests"]
+    workflows: ["Build NixOS configurations", "Python unit tests", "Lint"]
     types: [completed]
 
 # One deploy at a time — a single control node means no concurrent applies
@@ -47,10 +48,10 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      # Confirm BOTH required CI workflows succeeded for THIS commit. If not (e.g.
-      # the other one is still running, or failed), skip the apply silently — when
-      # the other workflow finishes green it fires its own deploy run.
-      - name: Gate on green CI (both workflows)
+      # Confirm ALL required CI workflows succeeded for THIS commit. If not (e.g.
+      # another is still running, or failed), skip the apply silently — when the
+      # last required workflow finishes green it fires its own deploy run.
+      - name: Gate on green CI (all workflows)
         id: gate
         uses: actions/github-script@v9
         with:
@@ -69,7 +70,7 @@ jobs:
               return;
             }
 
-            const required = ["Build NixOS configurations", "Python unit tests"];
+            const required = ["Build NixOS configurations", "Python unit tests", "Lint"];
             // octokit's paginate AUTO-normalizes this endpoint and returns the
             // flattened workflow_runs array directly. Do NOT add a map fn like
             // (r) => r.data.workflow_runs: after normalization r.data is ALREADY the
@@ -100,12 +101,12 @@ jobs:
               return;
             }
 
-            // Exactly-once: deploy fires on the workflow_run of BOTH required
-            // workflows, so when both are already green the second event would
+            // Exactly-once: deploy fires on the workflow_run of EACH required
+            // workflow, so when all are already green the later events would
             // re-apply the same SHA. Only the run that completed LAST proceeds; the
-            // earlier event's deploy sees a newer sibling and skips. (When the first
-            // CI finishes, the other isn't green yet, so the ok-check above already
-            // skips — no deploy is lost.)
+            // earlier events' deploys see a newer sibling and skip. (Until the last
+            // CI finishes, the others aren't all green yet, so the ok-check above
+            // already skips — no deploy is lost.)
             const last = picked.slice().sort(
               (a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
             if (last && last.id !== context.payload.workflow_run.id) {
