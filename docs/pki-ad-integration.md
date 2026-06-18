@@ -15,27 +15,36 @@ Machines keep authenticating with **AppRole** (a host isn't an AD user); only
 
 ---
 
-## Offline / manual prerequisites (not IaC)
+## Prerequisites
 
-These can't flow through tofu/nix — they're AD objects and one-time material the
-config consumes. Do them first, in order.
+These consume AD objects + one-time material. The AD **objects** are declared as
+IaC in `spec/krg-ad/` and applied by the `krg-ad` role (ADR 0010); only the bind
+**password** is operator material (it lives in OpenBao, never in the repo).
 
 ### 1. Dedicated AD bind account for OpenBao
 
-Create a **read-only** service account in `KRG.LOCAL` (not a Domain Admin) that
-OpenBao binds as to search users/groups. This ties into the still-incomplete AD
-principal/group work (CLAUDE.md; memory `krg-local-ad-principals-pending`).
+A **read-only** bind account (`CN=svc-openbao,CN=Users,DC=krg,DC=local`, not a
+Domain Admin) that OpenBao binds as to search users/groups. It is **declared in
+IaC**: `spec/krg-ad/service-accounts.yml` (`svc-openbao`, `member_of: []` — a
+default authenticated principal can already read the directory, so it needs no
+group or ACL). The `krg-ad` apply **asserts the account exists** and fails with
+remediation if it doesn't — it never creates it or sets a password.
 
-- Suggested DN: `CN=svc-openbao,CN=Users,DC=krg,DC=local`
-- Give it a strong password; it needs only directory read.
+So the only by-hand step is creating the account once + storing its password:
+
+- Create the account on krg-ldap (out-of-band, as part of the AD principal work —
+  memory `krg-local-ad-principals-pending`) and store its password in OpenBao.
 - **Do not** put the password in a tfvars file or commit it. At apply time the
   operator exports it as `TF_VAR_ldap_bindpass` in their own shell.
 
 ### 2. Issuing groups exist in AD
 
-`var.pki_ad_group_roles` defaults to `Domain Admins` (already exists). For any
-other mapped group (e.g. `ARM-PDK`), create it in AD first, or the
-`vault_ldap_auth_backend_group` binding maps to nothing.
+`var.pki_ad_group_roles` defaults to `Domain Admins` (a builtin, always present)
+and `Temporal Users`. The latter is **declared in IaC** —
+`spec/krg-ad/groups.yml` — so the `krg-ad` apply creates it; the
+`vault_ldap_auth_backend_group` binding then maps to a real group. For any
+additional mapped group (e.g. `ARM-PDK`), add it to `spec/krg-ad/groups.yml`
+(don't hand-create it), then apply the `krg-ad` leg.
 
 ### 3. Give the DC a SAN-bearing LDAPS cert, then capture its CA
 
@@ -83,9 +92,13 @@ Re-run the SAN check after the swap — it must now show `DNS:krg-ldap.krg.local
 cert **with** a SAN and set `ldap_ca_cert` to that cert — but you'd redo this when
 moving to `pki_int`, so prefer issuing from `pki_int` now.)
 
-> **DNS prereq (separate fix):** krg-vault must resolve `krg-ldap.krg.local` for the
-> bind to even connect — its resolver had only campus DNS. Fixed by pointing
-> krg-vault at the DC (PR `fix/krg-vault-dc-resolver`); deploy that before applying.
+> **DNS prereq (already satisfied):** krg-vault must resolve `krg-ldap.krg.local` for
+> the bind to even connect — its resolver originally had only campus DNS. This is now
+> handled automatically: krg-vault is domain-joined (`krg.adClient.enable = true`), and
+> the adClient module prepends the DC (`137.110.161.109`) as krg-vault's primary
+> resolver (`sssd-ad-client.nix`, `networking.nameservers = mkBefore [serverIp]`).
+> Verified live: `getent hosts krg-ldap.krg.local` resolves on krg-vault. (The earlier
+> standalone PR `fix/krg-vault-dc-resolver`/#264 was **closed as superseded** by this.)
 
 ### 4. Export the CA root for fleet trust (layer C)
 
