@@ -118,7 +118,10 @@ in {
     # krb5 adds the Kerberos client tools (kinit/klist/kdestroy) — Samba ships
     # none, and the post-provision validation (kinit administrator@KRG.LOCAL,
     # see below) needs them. It reads the /etc/krb5.conf rendered above.
-    environment.systemPackages = [cfg.package pkgs.krb5];
+    # python3: the AD-IaC apply (ansible/krg-ad/, ADR 0010) runs apply_ad.py ON
+    # the DC, and ansible needs a target interpreter; samba-tool's own python is
+    # wrapped and not exposed as a general `python3` on PATH, so add it.
+    environment.systemPackages = [cfg.package pkgs.krb5 pkgs.python3];
 
     # Samba's internal DNS must own port 53 — get systemd-resolved out of the way
     # and resolve through the DC itself (with an upstream fallback pre-provision).

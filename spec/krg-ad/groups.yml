@@ -1,0 +1,60 @@
+# KRG.LOCAL Active Directory — group definitions (declarative source of truth).
+#
+# Seeded from the LIVE directory on krg-ldap (2026-06-17, read-only
+# `samba-tool group list` + `ldbsearch (objectClass=group)`). These are the
+# lab-created groups ONLY — the well-known/builtin AD groups (Domain Admins,
+# Account Operators, Enterprise Admins, CN=Builtin\*, …) are created by
+# `samba-tool domain provision` and are intentionally NOT listed here (the apply
+# never touches them).
+#
+# OWNERSHIP BOUNDARY (ADR 0010):
+#   * Group OBJECTS (existence, scope, category, description) — IaC, this file.
+#   * Group MEMBERSHIP of HUMAN accounts — roster (svc_roster), NOT here.
+#   * Group MEMBERSHIP of SERVICE accounts — IaC, in service-accounts.yml.
+# Consequently the apply is NON-AUTHORITATIVE on membership: it creates groups
+# but NEVER reconciles their member lists, so it can never delete a roster-set
+# human member. It also never deletes a group that is absent from this file
+# (drift is reported, not enforced) — deleting an AD group is destructive and
+# stays a deliberate human action.
+#
+# All live custom groups are Global Security groups (groupType -2147483646 =
+# 0x80000002), created flat under CN=Users (no custom OUs exist yet).
+#
+# `description` is applied ONLY at group-creation time (samba-tool group add
+# --description). Existing groups keep whatever description they have — the apply
+# does not rewrite it (would need ldbmodify; deliberately out of scope, see the
+# role README). Descriptions left blank below are ones whose purpose was not
+# verifiable from the repo at seeding time — fill them in before relying on them.
+
+container: "CN=Users,DC=krg,DC=local"
+scope: global # all live custom groups are global security groups
+category: security
+
+groups:
+  # --- Host / capability access groups (consumed by nix krg.adClient + ad-group-sync) ---
+  - { name: "Waiter", description: "Login access to the waiter compute host (krg.adClient.allowedGroups)" }
+  - { name: "GPU Users", description: "GPU device access on compute hosts (nvidia.nix cudaAccessGroups -> ad-group-sync)" }
+  - { name: "Docker Users", description: "docker daemon access on hosts (docker.nix accessGroups -> ad-group-sync)" }
+  - { name: "KastnerML", description: "Access to the kastner-ml host" }
+  - { name: "Guacamole Admins", description: "Apache Guacamole administrators" }
+
+  # --- Lab / org groups ---
+  - { name: "Kastner Research Group", description: "Kastner Research Group members; owns /scratch/krg (gid group)" }
+  - { name: "Kastner Research Group PhD Students", description: "KRG PhD students" }
+  - { name: "Engineers for Exploration", description: "Engineers for Exploration (E4E) members" }
+  - { name: "E4E Admin", description: "E4E administrators" }
+  - { name: "E4E Garage Admins", description: "E4E Garage (S3/object-store) administrators" }
+  - { name: "e4e-project-lead", description: "E4E project leads" }
+
+  # --- E4E project groups ---
+  - { name: "FishSense", description: "E4E FishSense project" }
+  - { name: "Smartfin", description: "E4E Smartfin project" }
+  - { name: "Acoustic Species", description: "E4E Acoustic Species ID project" }
+  - { name: "Mangrove Monitoring", description: "E4E Mangrove Monitoring project" }
+
+  # --- Needs confirmation (description intentionally omitted so the apply leaves them untouched) ---
+  # `MangroveMonitoring` (no space) co-exists with `Mangrove Monitoring` (with space) in the
+  # live directory — almost certainly a duplicate/typo. Listed so it is tracked, NOT auto-deleted
+  # (non-authoritative). Reconcile membership onto one, then delete the other BY HAND.
+  - { name: "MangroveMonitoring" } # TODO: dedupe vs "Mangrove Monitoring"
+  - { name: "fuzzy" } # TODO: confirm purpose/owner before documenting

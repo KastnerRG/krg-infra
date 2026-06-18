@@ -1,0 +1,30 @@
+---
+# Stage one concern's desired state as JSON on the DC, then run apply_krg_ad.py.
+# `concern` = { name: <subcommand>, plan: <parsed-spec-dict> }.
+#
+# The plan JSON holds only structural data (group/account/right names, policy
+# numbers) — NO secrets — so it's safe in /run. copy + script run with
+# check_mode:false and apply_krg_ad.py is passed --check in dry-run, so the script
+# itself decides drift vs mutation (it never writes the live directory under
+# --check).
+
+- name: "Stage plan JSON — {{ concern.name }}"
+  ansible.builtin.copy:
+    content: "{{ concern.plan | to_nice_json }}"
+    dest: "{{ krg_ad_plan_dir }}/{{ concern.name }}.json"
+    mode: "0600"
+  check_mode: false
+
+- name: "Apply via apply_krg_ad.py (samba-tool) — {{ concern.name }}"
+  ansible.builtin.script: >-
+    apply_krg_ad.py {{ concern.name }}
+    --plan {{ krg_ad_plan_dir }}/{{ concern.name }}.json
+    {{ '--check' if ansible_check_mode else '' }}
+  register: krg_ad_apply
+  check_mode: false # we drive dry-run via --check inside the script, not ansible's skip
+  changed_when: "'CHANGED' in krg_ad_apply.stdout or 'WOULD-CHANGE' in krg_ad_apply.stdout"
+  failed_when: "krg_ad_apply.rc != 0 or 'FAIL' in krg_ad_apply.stdout"
+
+- name: "Show apply result — {{ concern.name }}"
+  ansible.builtin.debug:
+    msg: "{{ krg_ad_apply.stdout_lines }}"

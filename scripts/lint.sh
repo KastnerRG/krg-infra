@@ -44,9 +44,10 @@ run "tflint" bash -c "cd '$root/terraform' && nix run nixpkgs#tflint -- --recurs
 # --- YAML (non-ansible: spec/, compose, workflows, test rig) ---------------
 run "yamllint" nix run nixpkgs#yamllint -- ansible/ spec/ nix/docker-compose/ .github/ test/
 
-# --- Ansible (two self-contained trees, each its own roles_path) -----------
-run "ansible-lint (ansible/)" bash -c 'cd ansible && nix run nixpkgs#ansible-lint -- -q --exclude synology'
+# --- Ansible (self-contained trees, each its own roles_path) ---------------
+run "ansible-lint (ansible/)" bash -c 'cd ansible && nix run nixpkgs#ansible-lint -- -q --exclude synology --exclude krg-ad'
 run "ansible-lint (ansible/synology/)" bash -c 'cd ansible/synology && nix run nixpkgs#ansible-lint -- -q'
+run "ansible-lint (ansible/krg-ad/)" bash -c 'cd ansible/krg-ad && nix run nixpkgs#ansible-lint -- -q'
 
 # --- Shell -----------------------------------------------------------------
 # Note: shfmt is intentionally NOT run as a formatter — it rewrites

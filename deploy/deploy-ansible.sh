@@ -151,3 +151,27 @@ else
   fi
   printf '\n::endgroup::\n'
 fi
+
+# ── KRG.LOCAL Active Directory structure (ansible/krg-ad/, ADR 0010) ─────────
+# Converges groups / service accounts / ACL delegations / password policy on
+# krg-ldap by wrapping samba-tool. Gated OFF by default (DEPLOY_KRG_AD=true) like
+# the synology apply — keep it off until spec/krg-ad/ reflects the intended live
+# state. NO secrets: the apply is structural only (it never creates a service
+# account or sets a password — those stay in OpenBao), so there's no AppRole
+# materialization here. Reaches krg-ldap over SSH as krg-admin (become root); the
+# apply is NON-AUTHORITATIVE (adds, never deletes) so it can't clobber roster-set
+# human group membership.
+if [[ "${DEPLOY_KRG_AD:-false}" != "true" ]]; then
+  echo "skip krg-ad: DEPLOY_KRG_AD!=true"
+else
+  echo "::group::ansible krg-ad (KRG.LOCAL Active Directory)"
+  if ! (
+    cd "${REPO_ROOT}/ansible/krg-ad"
+    ansible-playbook playbook.yml
+  ); then
+    echo "FAILED: ansible krg-ad"
+    printf '\n::endgroup::\n'
+    exit 1
+  fi
+  printf '\n::endgroup::\n'
+fi

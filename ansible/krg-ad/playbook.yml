@@ -1,0 +1,19 @@
+# KRG.LOCAL Active Directory — declarative structure via the krg_ad role.
+#
+# Converges groups, service accounts, ACL delegations, and the domain password
+# policy to spec/krg-ad/*.yml by wrapping samba-tool on krg-ldap. git is truth;
+# directory changes made by hand are drift (ADR 0001 / ADR 0010).
+#
+#   ansible-playbook playbook.yml --check --diff   # dry run (reports drift)
+#   ansible-playbook playbook.yml                  # converge
+#
+# Deliberately a SEPARATE play from the main site.yml (Debian/PVE) and from
+# ansible/synology/ (DSM) — krg-ldap is NixOS and the surface is samba-tool only.
+# Apply is NON-AUTHORITATIVE (adds, never deletes) so it can't clobber roster-set
+# human group membership. See ansible/krg-ad/README.md.
+- name: KRG.LOCAL Active Directory structure
+  hosts: krg_ad
+  become: true
+  gather_facts: false
+  roles:
+    - krg_ad
