@@ -123,6 +123,17 @@ in {
   options.krg.vaultAgent = {
     enable = mkEnableOption "OpenBao Agent secret rendering (AppRole → tmpfs)";
 
+    roleName = mkOption {
+      type = types.str;
+      default = config.networking.hostName;
+      description = ''
+        AppRole role_name this host authenticates as (terraform/openbao). The deploy
+        (deploy/deploy-nixos.sh) reads this to mint + stage the host's role-id +
+        secret-id before the switch, so the agent has its secret-zero. Defaults to the
+        hostname — the convention the tofu AppRoles follow (e.g. waiter, kastner-ml).
+      '';
+    };
+
     vaultAddr = mkOption {
       type = types.str;
       default = "https://krg-vault.ucsd.edu:8200";
@@ -139,8 +150,10 @@ in {
       type = types.str;
       default = "/var/lib/krg/openbao-agent/secret-id";
       description = ''
-        Path to the AppRole secret_id — the single on-box bootstrap credential.
-        Provisioned out-of-band (minted by the krg-deploy role), root-only (0400).
+        Path to the AppRole secret_id. Auto-staged before each switch by
+        deploy/deploy-nixos.sh: krg-deploy mints a fresh secret_id via its AppRole
+        and pushes it here root-only (0600). No longer hand-placed — only
+        krg-deploy's OWN secret-zero is provisioned out-of-band.
       '';
     };
 
