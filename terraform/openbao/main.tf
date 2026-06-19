@@ -92,13 +92,16 @@ locals {
 
   # Render the per-path rules as one string to interpolate into the policy heredoc
   # below (a single ${...} substitution — avoids %{for} directives fighting the
-  # <<- heredoc dedent). Full lifecycle on the data path (create/update on apply,
-  # read on refresh, delete on destroy) + metadata delete so the resource can be
-  # fully removed. Vault's HCL ignores the flat indentation of the rendered block.
+  # <<- heredoc dedent). Full lifecycle on BOTH the data and metadata paths
+  # (create/update on apply, read on refresh, delete on destroy). The metadata path
+  # needs create/update — NOT just read/delete — because the hashicorp/vault v5
+  # provider's vault_kv_secret_v2 manages custom_metadata, writing it with a
+  # `PUT secret/metadata/<p>` on every create/update (older OIDC secrets predate v5,
+  # so they never hit this). Vault's HCL ignores the flat indentation of the block.
   authentik_secret_rules = join("\n", flatten([
     for p in local.authentik_managed_secrets : [
       "path \"secret/data/${p}\" { capabilities = [\"create\", \"read\", \"update\", \"delete\"] }",
-      "path \"secret/metadata/${p}\" { capabilities = [\"read\", \"delete\"] }",
+      "path \"secret/metadata/${p}\" { capabilities = [\"create\", \"read\", \"update\", \"delete\"] }",
     ]
   ]))
 }
