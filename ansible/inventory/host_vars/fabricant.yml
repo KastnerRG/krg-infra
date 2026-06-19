@@ -59,7 +59,7 @@ proxmox_host_fw_rules:
 # cert, flip to `production` and re-run the play (the role re-orders with --force).
 proxmox_acme_enable: true
 proxmox_acme_domain: "fabricant.ucsd.edu"
-proxmox_acme_contact: "shperry@ucsd.edu"   # LE expiry notices (matches krg-vault's ACME contact)
+proxmox_acme_contact: "e4e@ucsd.edu"       # LE expiry notices (matches the Traefik ACME contact)
 proxmox_acme_environment: staging          # → production after staging validates
 
 # ── NFS exports ──────────────────────────────────────────────────────────────
