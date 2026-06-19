@@ -5,6 +5,14 @@
 #   - zfs_limits          pool capacity policy (cap VM storage)
 #   - proxmox_firewall    per-node host.fw (opens NFS tcp/2049 + ACME :80)
 #   - proxmox_acme        Let's Encrypt cert for the pveproxy web UI
+#   - ipmi_lan            enforce the BMC's static LAN IP in-band (ipmitool)
+
+# ── BMC LAN (IPMI) ───────────────────────────────────────────────────────────
+# fabricant's BMC static IP on the management VLAN, enforced in-band by the
+# ipmi_lan role (idempotent; only writes on drift). netmask defaults to /24 and
+# the gateway is left unmanaged (set ipmi_lan_netmask / ipmi_lan_gateway here to
+# change). Defining this var is what opts fabricant into the site.yml ipmi_lan play.
+ipmi_lan_address: "172.19.161.97"
 
 # ── ZFS pool ─────────────────────────────────────────────────────────────────
 # Confirmed via `zpool list` on fabricant: the only pool is `rpool` — a raidz1 over

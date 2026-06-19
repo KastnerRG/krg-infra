@@ -1,0 +1,40 @@
+---
+# Enforce the BMC's LAN config in-band so the BMC IP is git-truth, not a value
+# hand-set in the BMC web UI (IaC-strict). Mirrors nix/modules/hardware/ipmi-lan.nix.
+# Runs as root (become: true in the play), which can open the 0600 root:root
+# /dev/ipmi0 directly — unlike the non-root NixOS exporter.
+
+- name: Install ipmitool (in-band BMC access)
+  ansible.builtin.apt:
+    name: ipmitool
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Single idempotent pass: read each LAN field, write only on drift, and emit a
+# CHANGED marker so Ansible reports the task honestly (changed_when below). Labels
+# in `ipmitool lan print` contain spaces and "IP Address" is a prefix of "IP Address
+# Source", so the awk helper matches the whole key exactly.
+- name: Enforce BMC LAN config (static IP/netmask{{ ' /gateway' if ipmi_lan_gateway else '' }})
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ch={{ ipmi_lan_channel | quote }}
+    if [ ! -e /dev/ipmi0 ]; then echo "no-inband-device"; exit 0; fi
+    get() {
+      ipmitool lan print "$ch" 2>/dev/null | awk -F: -v k="$1" '
+        { key=$1; gsub(/^[ \t]+|[ \t]+$/,"",key);
+          if (key==k) { v=$2; for(i=3;i<=NF;i++) v=v":"$i;
+            gsub(/^[ \t]+|[ \t]+$/,"",v); print v; exit } }'
+    }
+    changed=0
+    [ "$(get 'IP Address Source')" = "Static Address" ] || { ipmitool lan set "$ch" ipsrc static; changed=1; }
+    [ "$(get 'IP Address')" = {{ ipmi_lan_address | quote }} ] || { ipmitool lan set "$ch" ipaddr {{ ipmi_lan_address | quote }}; changed=1; }
+    [ "$(get 'Subnet Mask')" = {{ ipmi_lan_netmask | quote }} ] || { ipmitool lan set "$ch" netmask {{ ipmi_lan_netmask | quote }}; changed=1; }
+    {% if ipmi_lan_gateway %}
+    [ "$(get 'Default Gateway IP')" = {{ ipmi_lan_gateway | quote }} ] || { ipmitool lan set "$ch" defgw ipaddr {{ ipmi_lan_gateway | quote }}; changed=1; }
+    {% endif %}
+    [ "$changed" = 1 ] && echo CHANGED || echo nochange
+  args:
+    executable: /bin/bash
+  register: ipmi_lan_result
+  changed_when: "'CHANGED' in ipmi_lan_result.stdout"

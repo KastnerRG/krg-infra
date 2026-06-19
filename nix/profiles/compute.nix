@@ -15,6 +15,7 @@
     ../modules/services/ipmi-exporter.nix
     ../modules/hardware/nvidia.nix
     ../modules/hardware/fpga.nix
+    ../modules/hardware/ipmi-lan.nix
     ../modules/desktop/xrdp.nix
     ../modules/nix-ld.nix
     ../users/admin.nix
