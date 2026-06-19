@@ -287,6 +287,30 @@ resource "authentik_property_mapping_provider_scope" "proxmox_groups" {
   EOT
 }
 
+# Proxmox-specific `profile` scope — the STOCK profile scope emits a `groups` claim
+# of raw AD group names ("Domain Admins", "Proxmox Admins", …). PVE rejects any
+# group id containing spaces ("openid group '…' contains invalid characters") and,
+# with groups-overwrite on, ends up removing the user from ALL groups — so nobody
+# becomes an admin. PVE always requests `profile` (for preferred_username), and that
+# stock `groups` claim OVERWRITES the PVE-safe one from proxmox_groups. This drop-in
+# replacement carries the same profile claims MINUS groups, so the only `groups`
+# claim left is the mapped one (proxmox-admins). Swapped in below in place of the
+# managed profile scope.
+resource "authentik_property_mapping_provider_scope" "proxmox_profile" {
+  name        = "OIDC Scope — profile (Proxmox, no groups claim)"
+  scope_name  = "profile"
+  description = "Standard profile claims without the raw-group-names `groups` claim (PVE gets PVE-safe groups from proxmox_groups)."
+  expression  = <<-EOT
+    return {
+        "name": request.user.name,
+        "given_name": request.user.name,
+        "preferred_username": request.user.username,
+        "nickname": request.user.username,
+        # Deliberately NO "groups" — see the resource comment above.
+    }
+  EOT
+}
+
 resource "authentik_provider_oauth2" "proxmox" {
   name                  = "Provider for Proxmox"
   client_id             = "proxmox"
@@ -301,8 +325,15 @@ resource "authentik_provider_oauth2" "proxmox" {
   # 7-type default only because they were created by an older provider version that
   # sent it; new ones must opt in. PVE uses the authorization-code flow (+ refresh).
   grant_types = ["authorization_code", "refresh_token"]
-  # std scopes + the PVE-id groups scope (above) so the realm can group-sync.
-  property_mappings = concat(local.std_scopes, [authentik_property_mapping_provider_scope.proxmox_groups.id])
+  # openid + email + the PROXMOX profile scope (stock profile minus the raw-groups
+  # claim, see proxmox_profile) + the PVE-id groups scope. NOT local.std_scopes —
+  # that pulls in the stock profile whose `groups` claim breaks PVE group-sync.
+  property_mappings = [
+    data.authentik_property_mapping_provider_scope.openid.id,
+    data.authentik_property_mapping_provider_scope.email.id,
+    authentik_property_mapping_provider_scope.proxmox_profile.id,
+    authentik_property_mapping_provider_scope.proxmox_groups.id,
+  ]
   # RS256 signing key — REQUIRED (PVE verifies the ID token against jwks_uri).
   signing_key = data.authentik_certificate_key_pair.default.id
   # PVE keys the user id on this claim (realm username-claim = username); a stable,
