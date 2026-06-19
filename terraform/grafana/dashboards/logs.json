@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "Log content (LogQL/Loki) for krg-prod. Grafana Alloy ships /var/log/*log and the systemd journal to Loki; the label set used here (job, unit, filename) comes straight from Alloy's config (nix/docker-compose/krg-prod/loki/config.alloy): job=\"varlogs\" for /var/log files and job=\"nixos_rebuild\" for the journal, with `unit` relabeled from the systemd unit. If a panel shows nothing, the label selector needs adjusting to the live stream labels (check Explore on the krg-loki-ds datasource).",
+  "description": "Log content (LogQL/Loki) for krg-prod. Grafana Alloy ships the systemd journal to Loki; the label set used here (job, unit) comes straight from Alloy's config (nix/docker-compose/krg-prod/loki/config.alloy): job=\"nixos_rebuild\" for the journal, with `unit` relabeled from the systemd unit. If a panel shows nothing, the label selector needs adjusting to the live stream labels (check Explore on the krg-loki-ds datasource).",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -204,7 +204,7 @@
     {
       "type": "timeseries",
       "title": "Log volume by job",
-      "description": "Lines/interval per Alloy job label (varlogs, nixos_rebuild).",
+      "description": "Lines/interval per Alloy job label (nixos_rebuild).",
       "datasource": {
         "type": "loki",
         "uid": "krg-loki-ds"
@@ -416,7 +416,7 @@
         "refresh": 2,
         "includeAll": true,
         "multi": true,
-        "allValue": ".*",
+        "allValue": ".+",
         "current": {
           "text": [
             "All"
