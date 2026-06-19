@@ -36,6 +36,19 @@
   roles:
     - pve_exporter
 
+# Web-UI SSO via Authentik OpenID Connect: a PVE realm + the proxmox-admins group
+# (Administrator on /), with membership group-synced from the Authentik `groups`
+# claim (AD "Proxmox Admins"). The realm step no-ops unless the Authentik client
+# secret is supplied — deploy/deploy-ansible.sh materializes it from OpenBao
+# (secret/krg-prod/proxmox-oidc) and passes pve_oidc_client_secret. The PAM realm
+# stays default, so SSO is opt-in and a directory outage can't lock admins out.
+# See docs/proxmox-sso.md.
+- name: Proxmox web-UI SSO (Authentik OIDC realm)
+  hosts: proxmox
+  become: true
+  roles:
+    - pve_oidc
+
 # Storage — exports backed by a ZFS dataset on the hypervisor's pool, plus the pool
 # capacity policy (cap VM storage so user data wins contention). Deliberately
 # host-scoped to `fabricant` (NOT the `proxmox` group): other PVE hosts must not

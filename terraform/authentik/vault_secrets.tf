@@ -123,5 +123,21 @@ resource "vault_kv_secret_v2" "guacamole_oidc" {
   })
 }
 
+# Proxmox — Authentik mints this client secret (brand new). Consumed by the PVE
+# OpenID Connect realm on fabricant (ansible pve_oidc role) as the realm
+# `client-key`. DSM-style delivery: krg-deploy reads it from OpenBao at apply time
+# (deploy/deploy-ansible.sh) and passes it to site.yml as an extra-var — fabricant
+# has no vault-agent. Path is under krg-prod/* for consistency with the other OIDC
+# entries even though the consumer is the hypervisor.
+resource "vault_kv_secret_v2" "proxmox_oidc" {
+  mount = "secret"
+  name  = "krg-prod/proxmox-oidc"
+  data_json = jsonencode({
+    client_id     = authentik_provider_oauth2.proxmox.client_id
+    client_secret = authentik_provider_oauth2.proxmox.client_secret
+    issuer_url    = "${var.authentik_url}/application/o/proxmox/"
+  })
+}
+
 # outpost token: retrieved manually from Admin → Outposts → View token after apply.
 # Store with: bao kv put secret/krg-prod/authentik-outpost-token token=<value>

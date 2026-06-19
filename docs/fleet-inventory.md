@@ -12,7 +12,7 @@ comments and per-host configs; this is the one table to update when they change.
 
 | Host | IP | FQDN | Role | Config layer | Hypervisor / kind | VMID |
 |---|---|---|---|---|---|---|
-| **fabricant** | 137.110.161.98 | fabricant.ucsd.edu | Proxmox VE hypervisor; NFS server | Ansible (`proxmox`) | physical | — |
+| **fabricant** | 137.110.161.98 | fabricant.ucsd.edu | Proxmox VE **9** hypervisor; NFS server | Ansible (`proxmox`) | physical | — |
 | **waiter** | 137.110.161.67 | waiter.ucsd.edu | GPU/FPGA compute (`compute` profile) | NixOS flake | physical | — |
 | **krg-ldap** | 137.110.161.109 | krg-ldap.ucsd.edu | Samba AD DC, `KRG.LOCAL` (`directory`) | NixOS flake | VM on fabricant | 100 |
 | **krg-vault** | 137.110.161.123 | krg-vault.ucsd.edu | OpenBao secrets manager (`base`) | NixOS flake | VM on fabricant | 101 |
