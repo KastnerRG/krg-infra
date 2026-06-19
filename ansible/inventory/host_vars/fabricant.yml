@@ -3,7 +3,8 @@
 # fabricant-scoped plays in playbooks/site.yml:
 #   - nfs_server          NFSv4 exports on rpool/nfs
 #   - zfs_limits          pool capacity policy (cap VM storage)
-#   - proxmox_firewall    per-node host.fw (opens NFS tcp/2049)
+#   - proxmox_firewall    per-node host.fw (opens NFS tcp/2049 + ACME :80)
+#   - proxmox_acme        Let's Encrypt cert for the pveproxy web UI
 
 # ── ZFS pool ─────────────────────────────────────────────────────────────────
 # Confirmed via `zpool list` on fabricant: the only pool is `rpool` — a raidz1 over
@@ -38,6 +39,28 @@ proxmox_host_fw_rules:
   # prometheus-pve-exporter (pve_exporter role): scraped ONLY by the monitoring
   # host (krg-prod, 137.110.161.106 = nix/networks/trusted.json monitoring_host).
   - "IN ACCEPT -source 137.110.161.106 -p tcp -dport 9221 -log nolog # prometheus-pve-exporter (krg-prod)"
+  # ACME HTTP-01 (proxmox_acme role) — Let's Encrypt cert for the pveproxy web UI.
+  # PVE opens a transient listener on :80 only during issuance/renewal; pveproxy
+  # itself stays on :8006 (restricted to ucsd+ops in cluster.fw). NO source
+  # restriction ON PURPOSE: LE does multi-perspective validation from US/EU/Asia
+  # validators with unpredictable source IPs — any allowlist risks breaking
+  # issuance/renewal (same reasoning as nix krg-vault's publicPorts=[80]). The only
+  # thing reachable on :80 is the /.well-known/acme-challenge path during a challenge.
+  - "IN ACCEPT -p tcp -dport 80 -log nolog # ACME HTTP-01 (Let's Encrypt; public, multi-perspective)"
+
+# ── Let's Encrypt cert for the PVE web UI (proxmox_acme role) ─────────────────
+# PVE-native ACME, HTTP-01 standalone. Issues + auto-renews (pve-daily-update) the
+# pveproxy cert for fabricant.ucsd.edu, replacing the self-signed default. The :80
+# challenge port is opened in proxmox_host_fw_rules above.
+#
+# STAGING-FIRST: this is set to `staging` so the first bring-up exercises the whole
+# flow against LE's rate-limit-free staging endpoint. The browser will warn (staging
+# chain isn't publicly trusted) — that's expected. Once the UI serves the staging
+# cert, flip to `production` and re-run the play (the role re-orders with --force).
+proxmox_acme_enable: true
+proxmox_acme_domain: "fabricant.ucsd.edu"
+proxmox_acme_contact: "shperry@ucsd.edu"   # LE expiry notices (matches krg-vault's ACME contact)
+proxmox_acme_environment: staging          # → production after staging validates
 
 # ── NFS exports ──────────────────────────────────────────────────────────────
 nfs_exports:

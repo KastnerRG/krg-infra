@@ -1,0 +1,45 @@
+# Proxmox-native Let's Encrypt cert for the PVE web UI (pveproxy on :8006).
+#
+# PVE has built-in ACME support (`pvenode acme …`): it obtains the cert, installs
+# it as the pveproxy cert, and AUTO-RENEWS it via the stock pve-daily-update timer
+# — no certbot/Traefik/nginx in front, and no renewal timer of ours. This role
+# just makes that config declarative + idempotent.
+#
+# CHALLENGE: HTTP-01 via the built-in `standalone` plugin. PVE spins up a transient
+# listener on port 80 only during issuance/renewal (pveproxy stays on 8006). So
+# port 80 must be open to the public internet — that rule lives in the host's
+# proxmox_host_fw_rules (host_vars), NOT here. DNS-01 would avoid the open port but
+# needs control of the ucsd.edu zone (UCSD ITS), which the lab doesn't have.
+#
+# Off by default — this is opt-in per host (the domain is host-specific). Enable +
+# set the domain/contact in host_vars/<host>.yml; the play in site.yml gates on it.
+proxmox_acme_enable: false
+
+# The FQDN the cert is issued for — MUST resolve publicly to this node and match the
+# name admins use to reach the UI. Set in host_vars (e.g. fabricant.ucsd.edu).
+proxmox_acme_domain: ""
+
+# Contact email for the ACME account (LE expiry notices land here). Set in host_vars.
+proxmox_acme_contact: ""
+
+# STAGING-FIRST. Let's Encrypt prod has hard rate limits (5 dup-certs/week); a
+# botched first run on the hypervisor shouldn't burn them. Bring up against
+# `staging`, confirm the UI serves the staging chain, THEN flip to `production`
+# (the role re-orders with --force on the switch). Staging and prod are SEPARATE
+# ACME accounts on separate directories — keyed by name below so the switch is clean.
+proxmox_acme_environment: staging   # staging | production
+
+proxmox_acme_directories:
+  staging: "https://acme-staging-v02.api.letsencrypt.org/directory"
+  production: "https://acme-v02.api.letsencrypt.org/directory"
+proxmox_acme_directory: "{{ proxmox_acme_directories[proxmox_acme_environment] }}"
+
+# One PVE ACME account per environment (distinct names → distinct account files
+# under /etc/pve/priv/acme/), so flipping environment selects the right account
+# instead of clashing with the existing one.
+proxmox_acme_account_name: "{{ proxmox_acme_environment }}"
+
+# Re-issue when the live pveproxy cert expires within this many days. Belt-and-
+# suspenders only — PVE's pve-daily-update already renews at ~30 days; this just
+# makes a manual re-run before then also re-order if needed.
+proxmox_acme_renew_before_days: 30

@@ -7,7 +7,7 @@ VMs — notably the `krg-ldap` AD DC.
 
 - Inventory: [`ansible/inventory/hosts.yml`](../ansible/inventory/hosts.yml) · [`host_vars/fabricant.yml`](../ansible/inventory/host_vars/fabricant.yml)
 - Plays: [`ansible/playbooks/site.yml`](../ansible/playbooks/site.yml)
-- Roles: [`nfs_server`](../ansible/roles/nfs_server) · [`zfs_limits`](../ansible/roles/zfs_limits) · [`proxmox_firewall`](../ansible/roles/proxmox_firewall)
+- Roles: [`nfs_server`](../ansible/roles/nfs_server) · [`zfs_limits`](../ansible/roles/zfs_limits) · [`proxmox_firewall`](../ansible/roles/proxmox_firewall) · [`proxmox_acme`](../ansible/roles/proxmox_acme)
 
 > **Related:** [waiter](waiter-topology.md) · [krg-ldap](krg-ldap-topology.md). `krg-prod`
 > (137.110.161.106) runs Prometheus; `waiter` (137.110.161.67) is the physical
@@ -119,6 +119,7 @@ flowchart TB
 | port | service | source | layer |
 |---|---|---|---|
 | 2049/tcp | NFSv4 | **waiter only** (137.110.161.67) | host.fw (first) |
+| 80/tcp | ACME HTTP-01 | **public** (LE multi-perspective) | host.fw (first) |
 | 22/tcp | SSH | `ucsd` + `ops` IPSets | cluster.fw |
 | 8006/tcp | PVE web UI | `ucsd` + `ops` IPSets | cluster.fw |
 | 9100/tcp | node-exporter | `krg-prod` (monitoring_host) | cluster.fw |
@@ -130,6 +131,14 @@ flowchart TB
 cluster's terminal `IN DROP` never shadows the NFS ACCEPT. IPSets (`public`,
 `sealab`, `ucsd`, `ops`) are templated from the shared
 [`nix/networks/trusted.json`](../nix/networks/trusted.json).
+
+> **Web-UI TLS:** the PVE UI (`pveproxy` :8006) serves a **Let's Encrypt** cert
+> for `fabricant.ucsd.edu`, obtained + auto-renewed by PVE-native ACME (the
+> [`proxmox_acme`](../ansible/roles/proxmox_acme) role) over **HTTP-01 standalone**.
+> Port 80 is the *only* publicly-open port — it carries the ACME challenge alone
+> (no source restriction, because LE validates from unpredictable IPs); the UI
+> itself stays locked to `ucsd` + `ops`. Bring-up is **staging-first**
+> (`proxmox_acme_environment` in `host_vars`), then flipped to `production`.
 
 > **Bootstrap dependency:** fabricant is an SSSD AD client of `krg-ldap`, which
 > runs as a VM **on fabricant itself** — so host identity depends on a guest it
