@@ -38,6 +38,7 @@ groups:
   - { name: "KastnerML", description: "Access to the kastner-ml host" }
   - { name: "Guacamole Admins", description: "Apache Guacamole administrators" }
   - { name: "Temporal Users", description: "May mint a lab-PKI client cert to reach the Temporal mTLS frontend (OpenBao ldap auth -> pki_int/issue/user; terraform/openbao var.pki_ad_group_roles)" }
+  - { name: "ARM PDK Access", description: "Read access to the export-controlled ARM PDK VeraCrypt vault on waiter (nix krg.armpdkVault.accessGroups -> ad-group-sync 'armpdk' group); membership is the ARM agreement/TCP authorized-user list" }
 
   # --- Lab / org groups ---
   - { name: "Kastner Research Group", description: "Kastner Research Group members; owns /scratch/krg (gid group)" }
