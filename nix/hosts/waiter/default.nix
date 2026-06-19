@@ -193,6 +193,15 @@
   # The /tools dataset is unaffected (modules/hardware/fpga.nix).
   krg.fpga.enable = true;
 
+  # BMC LAN config, enforced in-band (modules/hardware/ipmi-lan.nix). Declared
+  # here so the BMC's static IP is git-truth rather than hand-set in the BMC UI.
+  # netmask defaults to /24 and gateway is left unmanaged (flat management VLAN);
+  # set krg.ipmiLan.{netmask,gateway} here if that changes.
+  krg.ipmiLan = {
+    enable = true;
+    address = "172.19.161.11";
+  };
+
   # Login access: Domain Admins (infra admins — own-account login + sudo) PLUS the
   # "Waiter" AD group (this box's researchers). Overrides base.nix's Domain-Admins-only
   # default. Break-glass krg-admin (local) is unaffected. NOTE: the "Waiter" AD group

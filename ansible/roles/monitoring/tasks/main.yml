@@ -55,6 +55,19 @@
 - name: IPMI exporter
   when: monitoring_ipmi_exporter | bool
   block:
+    # The prometheus-community ipmi_exporter release binary is NOT statically
+    # bundled with freeipmi — it shells out to ipmimonitoring/bmc-info/ipmi-dcmi/
+    # ipmi-chassis at runtime. Without freeipmi every collector fails with
+    # "could not find inband device" and ipmi_up stays 0. (The NixOS counterpart
+    # bundles freeipmi in the package, so this has no nix equivalent.) The unit
+    # runs as root, so it can open the 0600 root:root /dev/ipmi0 directly.
+    - name: Install freeipmi (ipmi_exporter shells out to its CLI tools)
+      ansible.builtin.apt:
+        name: freeipmi
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
     - name: Download ipmi_exporter
       ansible.builtin.get_url:
         url: "https://github.com/prometheus-community/ipmi_exporter/releases/download/v{{ ipmi_exporter_version }}/ipmi_exporter-{{ ipmi_exporter_version }}.linux-amd64.tar.gz"

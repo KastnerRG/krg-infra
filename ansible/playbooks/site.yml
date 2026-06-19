@@ -75,3 +75,14 @@
   roles:
     - zfs_limits      # cap VM disk storage (rpool/data) so user/NFS data wins
     - nfs_server      # NFSv4 exports on rpool/nfs (home + scratch-krg)
+
+# BMC LAN config enforced in-band (ipmitool) so the hypervisor's BMC IP is
+# git-truth, not hand-set in the BMC UI. Host-scoped: the address is per-host
+# (ipmi_lan_address in host_vars) and the role runs only where it's defined.
+# Counterpart to the NixOS krg.ipmiLan module on the compute hosts.
+- name: BMC LAN config (fabricant only)
+  hosts: fabricant
+  become: true
+  roles:
+    - role: ipmi_lan
+      when: ipmi_lan_address is defined

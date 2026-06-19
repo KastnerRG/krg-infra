@@ -1,0 +1,10 @@
+---
+# BMC LAN (IPMI) network config, enforced in-band via ipmitool. Counterpart to the
+# NixOS krg.ipmiLan module (nix/modules/hardware/ipmi-lan.nix) — keep behavior
+# aligned. The address has NO default: set ipmi_lan_address per host in host_vars,
+# and the site.yml play only runs the role where it is defined.
+ipmi_lan_channel: 1
+ipmi_lan_netmask: "255.255.255.0"
+# Empty string = leave the BMC's default gateway untouched (correct when the
+# management VLAN is flat / scraped from the same subnet).
+ipmi_lan_gateway: ""

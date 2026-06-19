@@ -41,6 +41,7 @@ ansible/
     proxmox_firewall/         # PVE cluster.fw + per-guest <vmid>.fw + per-node host.fw (proxmox group)
     zfs_limits/               # quota/reservation on existing ZFS datasets (fabricant ONLY play)
     nfs_server/               # NFSv4 exports on ZFS datasets (fabricant ONLY play)
+    ipmi_lan/                 # enforce the BMC's static LAN IP in-band via ipmitool (fabricant ONLY play; nix counterpart: krg.ipmiLan)
 ```
 
 Every host gets the baseline by applying a single role, `base`, which composes

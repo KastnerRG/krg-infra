@@ -109,6 +109,7 @@
 
       nvidia = import ./modules/hardware/nvidia.nix;
       fpga = import ./modules/hardware/fpga.nix;
+      ipmi-lan = import ./modules/hardware/ipmi-lan.nix;
 
       xrdp = import ./modules/desktop/xrdp.nix;
     };
