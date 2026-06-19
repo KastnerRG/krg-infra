@@ -12,7 +12,6 @@ resource "authentik_outpost" "proxy" {
 
   protocol_providers = [
     authentik_provider_proxy.fishsense_orchestrator.id,
-    authentik_provider_proxy.qualcomm_docs.id,
     authentik_provider_proxy.guacamole_gate.id,
   ]
 
