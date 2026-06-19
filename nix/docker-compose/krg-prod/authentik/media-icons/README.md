@@ -60,4 +60,5 @@ scales down inside the square tile. Shared by the FishSense site and the
 FishSense Orchestrator (no orchestrator-specific logo exists).
 
 Not yet iconed (no clean off-the-shelf logo in dashboard-icons — follow-up):
-KRG Roster.
+KRG Roster; Label Studio (SaaS SSO app — no `label-studio`/`humansignal` entry in
+dashboard-icons as of 2026-06).
