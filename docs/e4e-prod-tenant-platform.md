@@ -108,10 +108,10 @@ krg.tenants.fishsense = {
   repo = "UCSD-E4E/fishsense-lite";        # repo-scoped runner registers here
   subtree = "fishsense.e4e.ucsd.edu";      # → rule ^(.+\.)?fishsense\.e4e\.ucsd\.edu$ (apex + descendants)
   hostnames = [                            # EXPLICIT SAN list for LE issuance
-    "fishsense.e4e.ucsd.edu"
-    "orchestrator.fishsense.e4e.ucsd.edu"
-    "workflows.fishsense.e4e.ucsd.edu"
-    "analytics.fishsense.e4e.ucsd.edu"
+    "fishsense.e4e.ucsd.edu"               # web portal
+    "orchestrator.fishsense.e4e.ucsd.edu"  # API
+    "analytics.fishsense.e4e.ucsd.edu"     # superset
+    # NB: no workflows.* — Temporal UI is krg-prod's workflows.krg.ucsd.edu
   ];
   deployDir = "/srv/fishsense";            # persistent runner checkout (in-VM)
   resources = { vcpu = 6; memMiB = 16384; diskGiB = 200; };
@@ -277,15 +277,18 @@ The platform substrate plus the coordinated repo-side changes we own:
 
 - **Drop its own Temporal** (`compose.temporal.yml`) → point workers at krg-prod
   Temporal (needs a `fishsense` namespace + client mTLS + cross-host gRPC on the
-  krg-prod side).
+  krg-prod side). Its Temporal UI is **superseded by krg-prod's
+  `workflows.krg.ucsd.edu`** — there is no `workflows.fishsense.e4e.ucsd.edu` on
+  this edge (drop the route + the SAN).
 - **Fix the stale OIDC issuer** `auth.fabricant.ucsd.edu` → `auth.krg.ucsd.edu`
   (temporal-ui + web `AUTH_AUTHENTIK_*`).
 - **Set** `DEPLOY_DIR` (e.g. `/srv/fishsense`), `USER_ID`/`GROUP_ID`; restore
   ops dirs (`pg_volumes/`, `worker_volumes/<svc>/config`, `temporal_volumes/certs`
   — though Temporal certs move to the krg-prod relationship, `.secrets/`).
-- Hostnames: `fishsense.`, `orchestrator.fishsense.`, `workflows.fishsense.`,
-  `analytics.fishsense.` (+ the `qcomm.docs.fabricant` static server, TBD whether
-  it stays).
+- Hostnames: `fishsense.` (web), `orchestrator.fishsense.` (API),
+  `analytics.fishsense.` (superset) — **not** `workflows.fishsense.` (Temporal UI
+  is krg-prod's `workflows.krg.ucsd.edu`) (+ the `qcomm.docs.fabricant` static
+  server, TBD whether it stays).
 - Note the upstream `ports: 5432:5432` on Postgres — `krg.docker.defaultPublishAddress`
   doesn't apply inside the VM, but the VM boundary contains it; confirm it isn't
   bound to the VM's external interface.
