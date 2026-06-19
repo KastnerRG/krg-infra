@@ -17,11 +17,12 @@
       are unset — set them in host_vars/<host>.yml.
 
 # --- ACME account (one per environment; idempotent on the account file) ---------
-# Account files live under /etc/pve/priv/acme/<name>.json (pmxcfs). Staging and prod
-# are distinct accounts so flipping the environment selects the right one cleanly.
+# Account files live under /etc/pve/priv/acme/<name> (pmxcfs) — NO .json extension
+# (verified on PVE 9: the files are `production` / `staging`). Staging and prod are
+# distinct accounts so flipping the environment selects the right one cleanly.
 - name: Check whether the ACME account is already registered
   ansible.builtin.stat:
-    path: "/etc/pve/priv/acme/{{ proxmox_acme_account_name }}.json"
+    path: "/etc/pve/priv/acme/{{ proxmox_acme_account_name }}"
   register: _acme_account
 
 - name: Register the ACME account
@@ -35,7 +36,13 @@
       --directory {{ proxmox_acme_directory }}
     stdin: "y\n"
   when: not _acme_account.stat.exists
-  changed_when: true
+  register: _acme_register
+  # Tolerate a concurrent/pre-existing account so a wrong stat can't fail the run
+  # (the account file is the source of truth; "already exists" means it's there).
+  changed_when: "'already exists' not in (_acme_register.stderr | default(''))"
+  failed_when: >-
+    _acme_register.rc is defined and _acme_register.rc != 0
+    and 'already exists' not in (_acme_register.stderr | default(''))
 
 # --- Node ACME config: which account + domains, via the standalone (HTTP-01) plugin
 - name: Read the node's current ACME config
