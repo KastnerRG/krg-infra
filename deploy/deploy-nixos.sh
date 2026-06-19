@@ -97,6 +97,68 @@ stage_oec() {
       "
 }
 
+# ── OpenBao vault-agent secret-zero (krg.vaultAgent hosts) ───────────────────
+# A host running krg.vaultAgent (waiter/kastner-ml XRDP cert from pki_int; krg-prod
+# Guacamole/Temporal secrets) needs its AppRole role-id + secret-id ON BOX BEFORE
+# the switch, or openbao-agent can't authenticate and its dependent units (xrdp, the
+# compose stacks) fail to start. krg-deploy mints + stages them here — same
+# before-the-switch pattern as the OEC archive — using the SAME AppRole the
+# tofu/ansible legs use (granted role-id read + secret-id create in
+# terraform/openbao). NOTHING is hand-placed or committed: the role-id is read and a
+# secret-id freshly minted per deploy, pushed over ssh STDIN so the secret never
+# lands on argv/ps/logs. This replaces the manual "mint a secret-id and scp it"
+# bootstrap (ADR 0009 per-host secret-zero) for every vault-agent host.
+export VAULT_ADDR="${VAULT_ADDR:-https://krg-vault.ucsd.edu:8200}"
+_va_role_id_file="${OPENBAO_ROLE_ID_FILE:-/var/lib/krg-admin/.secrets/openbao-role-id}"
+_va_secret_id_file="${OPENBAO_SECRET_ID_FILE:-/var/lib/krg-admin/.secrets/openbao-secret-id}"
+# Log in with krg-deploy's own AppRole (its secret-zero IS hand-placed — the one
+# bootstrap that can't be automated away). Empty token => staging fails closed for
+# any vault-agent host below (and is a no-op for hosts that don't use the agent).
+VAULT_TOKEN=""
+if [[ -r "$_va_role_id_file" && -r "$_va_secret_id_file" ]]; then
+  VAULT_TOKEN="$(bao write -field=token auth/approle/login \
+    role_id="$(< "$_va_role_id_file")" secret_id="$(< "$_va_secret_id_file")" 2>/dev/null || true)"
+fi
+export VAULT_TOKEN
+
+# Write <stdin> to a root-owned file at <target>:<path> with <mode> — content via ssh
+# STDIN only (never argv). Pre-creates the dir + the file (sets mode/owner), then tee
+# writes the bytes (tee keeps the existing file's mode/owner).
+push_root_file() { # <target> <path> <mode>   (content on stdin)
+  local target="$1" path="$2" mode="$3" dir
+  dir="$(dirname "$path")"
+  # shellcheck disable=SC2029  # paths are local constants; expand client-side intentionally
+  ssh "${sshopts[@]}" "$target" "
+      set -e
+      sudo install -d -m 0700 -o root -g root '${dir}'
+      sudo install -m '${mode}' -o root -g root /dev/null '${path}'
+      sudo tee '${path}' >/dev/null
+    "
+}
+
+# Stage <host>'s vault-agent secret-zero if it uses krg.vaultAgent (else no-op).
+# Fatal for that host if staging fails — don't switch a box whose agent will fail to
+# authenticate (mirrors the OEC precondition).
+stage_vault_secret_zero() {
+  local host="$1" target="$2" enabled rolename ridfile sidfile rid sid
+  enabled="$(nix eval "${FLAKE}#nixosConfigurations.${host}.config.krg.vaultAgent.enable" 2>/dev/null || echo false)"
+  [[ "$enabled" == "true" ]] || return 0
+  if [[ -z "$VAULT_TOKEN" ]]; then
+    echo "  FAILED: ${host} uses krg.vaultAgent but the control node has no OpenBao AppRole creds (${_va_role_id_file} / ${_va_secret_id_file})"
+    return 1
+  fi
+  rolename="$(nix eval --raw "${FLAKE}#nixosConfigurations.${host}.config.krg.vaultAgent.roleName" 2>/dev/null)" || return 1
+  ridfile="$(nix eval --raw "${FLAKE}#nixosConfigurations.${host}.config.krg.vaultAgent.roleIdFile" 2>/dev/null)" || return 1
+  sidfile="$(nix eval --raw "${FLAKE}#nixosConfigurations.${host}.config.krg.vaultAgent.secretIdFile" 2>/dev/null)" || return 1
+  rid="$(bao read -field=role_id "auth/approle/role/${rolename}/role-id" 2>/dev/null)" \
+    || { echo "  FAILED: ${host} — cannot read role-id for AppRole '${rolename}' (apply terraform/openbao so the role exists)"; return 1; }
+  sid="$(bao write -f -field=secret_id "auth/approle/role/${rolename}/secret-id" 2>/dev/null)" \
+    || { echo "  FAILED: ${host} — cannot mint secret-id for AppRole '${rolename}'"; return 1; }
+  printf '%s' "$rid" | push_root_file "$target" "$ridfile" 0644 || return 1
+  printf '%s' "$sid" | push_root_file "$target" "$sidfile" 0600 || return 1
+  echo "  staged vault-agent secret-zero for ${host} (AppRole ${rolename})"
+}
+
 # Fail-fast: stop on the first failed host. Order is dependency-first (vault/AD
 # before the services that use them), so a failure early means the dependents
 # would be deploying against a broken base — don't.
@@ -108,6 +170,13 @@ for host in "${ORDER[@]}"; do
   # oneshot finds it and enrolls on the same run.
   if ! stage_oec "$target"; then
     echo "FAILED: ${host} — could not stage OEC installer; stopping"
+    printf '\n::endgroup::\n'
+    exit 1
+  fi
+  # Stage the vault-agent secret-zero (no-op unless the host uses krg.vaultAgent) so
+  # openbao-agent can authenticate on this same switch.
+  if ! stage_vault_secret_zero "$host" "$target"; then
+    echo "FAILED: ${host} — could not stage vault-agent secret-zero; stopping"
     printf '\n::endgroup::\n'
     exit 1
   fi

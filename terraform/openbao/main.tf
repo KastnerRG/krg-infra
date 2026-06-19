@@ -153,6 +153,13 @@ resource "vault_policy" "krg_deploy" {
     path "auth/approle/role/+/secret-id" {
       capabilities = ["create", "update"]
     }
+
+    # Read role_ids (non-secret) so deploy-nixos.sh can stage a vault-agent host's
+    # secret-zero (role-id + a freshly-minted secret-id) before the switch — see
+    # deploy/deploy-nixos.sh stage_vault_secret_zero + nix krg.vaultAgent.
+    path "auth/approle/role/+/role-id" {
+      capabilities = ["read"]
+    }
   EOT
 }
 
