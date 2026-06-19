@@ -70,7 +70,7 @@ resource "authentik_property_mapping_provider_saml" "label_studio_last_name" {
 resource "authentik_property_mapping_provider_saml" "label_studio_groups" {
   name       = "Label Studio — Groups"
   saml_name  = "Groups"
-  expression = "return [group.name for group in request.user.ak_groups.all()]"
+  expression = "return [group.name for group in request.user.groups.all()]"
 }
 
 # ── SAML provider ───────────────────────────────────────────────────────────────

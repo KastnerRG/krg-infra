@@ -267,7 +267,7 @@ resource "authentik_application" "temporal" {
 # names the generic `groups` scope (applications_e4e.tf) returns. Today the only
 # mapping is AD "Proxmox Admins" → PVE "proxmox-admins"; extend the dict to grant
 # other AD groups a different PVE role (pair each new id with an ACL in the
-# pve_oidc role). NOTE: nested AD groups are NOT expanded here — `ak_groups` is the
+# pve_oidc role). NOTE: nested AD groups are NOT expanded here — `groups` is the
 # user's DIRECT Authentik groups, so "Domain Admins" nested inside "Proxmox Admins"
 # only counts if the LDAP sync flattens it; otherwise add the human (or Domain
 # Admins) to "Proxmox Admins" directly. See docs/proxmox-sso.md.
@@ -280,7 +280,7 @@ resource "authentik_property_mapping_provider_scope" "proxmox_groups" {
     pve_group_map = {
         "Proxmox Admins": "proxmox-admins",
     }
-    names = {group.name for group in request.user.ak_groups.all()}
+    names = {group.name for group in request.user.groups.all()}
     return {
         "groups": [pve_id for ad_name, pve_id in pve_group_map.items() if ad_name in names],
     }
