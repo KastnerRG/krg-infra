@@ -49,6 +49,20 @@
   roles:
     - pve_oidc
 
+# Let's Encrypt cert for the PVE web UI (pveproxy :8006) via PVE-native ACME,
+# HTTP-01 standalone. Opt-in per host (the cert domain is host-specific): runs only
+# where proxmox_acme_enable is true, with domain/contact/environment in host_vars.
+# Port 80 (the HTTP-01 challenge) is opened by the proxmox_firewall play ABOVE
+# (proxmox_host_fw_rules), so it's in place before this orders. Renewal is PVE's own
+# pve-daily-update timer — nothing scheduled here. STAGING-FIRST: bring up against LE
+# staging, verify, then flip proxmox_acme_environment=production and re-run.
+- name: Proxmox web-UI TLS (Let's Encrypt via PVE ACME)
+  hosts: proxmox
+  become: true
+  roles:
+    - role: proxmox_acme
+      when: proxmox_acme_enable | default(false)
+
 # Storage — exports backed by a ZFS dataset on the hypervisor's pool, plus the pool
 # capacity policy (cap VM storage so user data wins contention). Deliberately
 # host-scoped to `fabricant` (NOT the `proxmox` group): other PVE hosts must not
