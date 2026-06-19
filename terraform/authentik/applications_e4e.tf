@@ -49,7 +49,7 @@ resource "authentik_property_mapping_provider_scope" "groups" {
   description = "User's Authentik groups (AD-synced); consumed by app role gates (e.g. garage-ui)."
   expression  = <<-EOT
     return {
-      "groups": [group.name for group in request.user.ak_groups.all()],
+      "groups": [group.name for group in request.user.groups.all()],
     }
   EOT
 }
