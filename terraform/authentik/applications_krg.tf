@@ -35,7 +35,7 @@ resource "authentik_application" "grafana" {
   meta_launch_url   = "https://monitoring.krg.ucsd.edu"
   meta_description  = "KRG lab metrics and dashboards"
   meta_icon         = "krg-icons/grafana.svg"
-  group             = "KRG"
+  group             = "KRG Services"
 }
 
 # ── Outline ────────────────────────────────────────────────────────────────────
@@ -59,7 +59,7 @@ resource "authentik_application" "outline" {
   meta_launch_url   = "https://wiki.fabricant.ucsd.edu"
   meta_description  = "KRG lab wiki and documentation"
   meta_icon         = "krg-icons/outline.svg"
-  group             = "KRG"
+  group             = "KRG Services"
 }
 
 # ── MLflow ─────────────────────────────────────────────────────────────────────
@@ -83,7 +83,7 @@ resource "authentik_application" "mlflow" {
   meta_launch_url   = "https://mlflow.krg.ucsd.edu"
   meta_description  = "ML experiment tracking"
   meta_icon         = "krg-icons/mlflow.svg"
-  group             = "KRG"
+  group             = "KRG Services"
 }
 
 # ── Vaultwarden ──────────────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ resource "authentik_application" "vaultwarden" {
   meta_launch_url  = "https://vaultwarden.krg.ucsd.edu/#/sso?identifier=00000000-01DC-01DC-01DC-000000000000"
   meta_description = "KRG lab password manager"
   meta_icon        = "krg-icons/vaultwarden.svg"
-  group            = "KRG"
+  group            = "Access & Security"
 }
 
 # ── Guacamole ────────────────────────────────────────────────────────────────────
@@ -189,7 +189,7 @@ resource "authentik_application" "guacamole" {
   meta_launch_url   = "https://remote.krg.ucsd.edu"
   meta_description  = "Remote desktop / SSH gateway"
   meta_icon         = "krg-icons/guacamole.svg"
-  group             = "KRG"
+  group             = "Access & Security"
 }
 
 # OUTER forward-auth gate. A SEPARATE Authentik application from the OIDC one above
@@ -244,7 +244,7 @@ resource "authentik_application" "temporal" {
   meta_launch_url   = "https://workflows.krg.ucsd.edu"
   meta_description  = "KRG lab workflow engine"
   meta_icon         = "krg-icons/temporal.svg"
-  group             = "KRG"
+  group             = "KRG Services"
   open_in_new_tab   = true
 }
 
@@ -312,6 +312,6 @@ resource "authentik_application" "proxmox" {
   meta_launch_url   = "https://fabricant.ucsd.edu:8006"
   meta_description  = "Proxmox VE hypervisor management"
   meta_icon         = "krg-icons/proxmox.svg"
-  group             = "KRG"
+  group             = "Infrastructure"
   open_in_new_tab   = true
 }

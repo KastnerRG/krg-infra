@@ -27,6 +27,7 @@ resource "authentik_application" "e4e_nas" {
   meta_launch_url   = "https://e4e-nas.ucsd.edu:6021"
   meta_description  = "E4E network-attached storage"
   meta_icon         = "krg-icons/synology.svg"
+  group             = "E4E Storage"
 }
 
 # ── Garage UI (Noooste/garage-ui admin/data browser) ──────────────────────────
@@ -73,12 +74,15 @@ resource "authentik_provider_oauth2" "garage_ui" {
 }
 
 resource "authentik_application" "garage_ui" {
-  name              = "Garage UI"
+  # Display name only — slug/client_id stay "garage-ui" (load-bearing: issuer URL
+  # + OpenBao secret path secret/e4e-nas/garage-ui-oidc, see vault_secrets.tf).
+  name              = "E4E Garage UI"
   slug              = "garage-ui"
   protocol_provider = authentik_provider_oauth2.garage_ui.id
   meta_launch_url   = "https://s3-admin.e4e.ucsd.edu"
   meta_description  = "Garage S3 bucket/key admin + object browser"
   meta_icon         = "krg-icons/garage.svg"
+  group             = "E4E Storage"
 }
 
 # ── FishSense Analytics (Superset) ────────────────────────────────────────────
@@ -119,10 +123,11 @@ resource "authentik_provider_oauth2" "fishsense_oauth" {
 }
 
 resource "authentik_application" "fishsense_oauth" {
-  name              = "FishSense"
+  name              = "E4E FishSense"
   slug              = "fishsense-oauth"
   protocol_provider = authentik_provider_oauth2.fishsense_oauth.id
   meta_launch_url   = "https://fishsense.e4e.ucsd.edu"
+  meta_icon         = "krg-icons/fishsense.svg"
   group             = "FishSense"
 }
 
@@ -142,25 +147,10 @@ resource "authentik_application" "fishsense_orchestrator" {
   slug              = "fishsense-orchestrator"
   protocol_provider = authentik_provider_proxy.fishsense_orchestrator.id
   meta_launch_url   = "https://orchestrator.fishsense.e4e.ucsd.edu"
-  group             = "FishSense"
-}
-
-# ── Qualcomm Docs (proxy) ─────────────────────────────────────────────────────
-
-resource "authentik_provider_proxy" "qualcomm_docs" {
-  name               = "Provider for Qualcomm Docs"
-  authorization_flow = data.authentik_flow.default_authorization.id
-  invalidation_flow  = data.authentik_flow.default_invalidation.id
-  external_host      = "https://qcomm.docs.fabricant.ucsd.edu"
-  mode               = "forward_single"
-}
-
-resource "authentik_application" "qualcomm_docs" {
-  name              = "Qualcomm Docs"
-  slug              = "qualcomm-docs"
-  protocol_provider = authentik_provider_proxy.qualcomm_docs.id
-  meta_launch_url   = "https://qcomm.docs.fabricant.ucsd.edu"
-  group             = "Qualcomm"
+  # Reuse the FishSense brand mark — no orchestrator-specific logo exists (same
+  # pattern as guacamole_gate reusing guacamole.svg).
+  meta_icon = "krg-icons/fishsense.svg"
+  group     = "FishSense"
 }
 
 # ── KRG Roster ────────────────────────────────────────────────────────────────
@@ -186,5 +176,5 @@ resource "authentik_application" "e4e_roster" {
   protocol_provider = authentik_provider_oauth2.e4e_roster.id
   meta_launch_url   = "https://roster.krg.ucsd.edu/login"
   meta_description  = "KRG lab roster and account management"
-  group             = "KRG"
+  group             = "Infrastructure"
 }
