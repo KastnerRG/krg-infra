@@ -1,0 +1,72 @@
+# Proxmox VE web-UI SSO via Authentik OpenID Connect. Two halves:
+#   1. The PVE permission target (group + ACL) — always reconciled; cheap and
+#      independent of the secret, so it converges even on a `--check`/local run.
+#   2. The OpenID Connect realm — only when the Authentik client secret is supplied
+#      (deploy/deploy-ansible.sh materializes it from OpenBao); otherwise no-op.
+#
+# pveum writes to /etc/pve (the cluster filesystem), so the group/ACL/realm are
+# cluster-wide, not per-node. Idempotency follows the pve_exporter role's pattern:
+# tolerate "already exists", treat reconciles as not-changed where pveum reports
+# nothing.
+
+# ── 1. Permission target: the admin group + its ACL ─────────────────────────────
+- name: Ensure the PVE SSO-admin group exists
+  ansible.builtin.command: >-
+    pveum group add {{ pve_oidc_admin_pve_group }}
+    --comment "Proxmox SSO admins (ansible pve_oidc); membership synced from the Authentik groups claim"
+  register: _pve_grp
+  changed_when: "'already exists' not in (_pve_grp.stderr | default(''))"
+  failed_when: >-
+    _pve_grp.rc != 0 and 'already exists' not in (_pve_grp.stderr | default(''))
+
+- name: Grant the SSO-admin group its role on the whole tree
+  ansible.builtin.command: >-
+    pveum aclmod / --groups {{ pve_oidc_admin_pve_group }} --roles {{ pve_oidc_admin_pve_role }}
+  changed_when: false # aclmod is idempotent but reports nothing; never flag as changed
+
+# ── 2. The OpenID Connect realm (only when the client secret is supplied) ────────
+- name: Configure the Authentik OpenID Connect realm
+  when: (pve_oidc_client_secret | default('') | length) > 0
+  block:
+    # Build the option list once and reuse for add + modify (modify takes the same
+    # flags minus --type). no_log: the list carries --client-key.
+    - name: Build the realm option arguments
+      ansible.builtin.set_fact:
+        _pve_realm_opts: >-
+          {{
+            ['--issuer-url', pve_oidc_issuer_url,
+             '--client-id', pve_oidc_client_id,
+             '--client-key', pve_oidc_client_secret,
+             '--username-claim', pve_oidc_username_claim,
+             '--scopes', pve_oidc_scopes,
+             '--autocreate', (pve_oidc_autocreate | int | string),
+             '--default', (pve_oidc_default_realm | int | string),
+             '--comment', 'KRG Authentik SSO (managed by ansible pve_oidc)']
+            + (['--groups-claim', 'groups', '--groups-overwrite', '1', '--groups-autocreate', '0']
+               if pve_oidc_groups_sync else [])
+          }}
+      no_log: true
+
+    - name: List existing realms
+      ansible.builtin.command: pveum realm list --output-format json
+      register: _pve_realms
+      changed_when: false
+      check_mode: false # read-only; must run even under --check so the branch below resolves
+
+    - name: Add the OpenID Connect realm (when absent)
+      ansible.builtin.command:
+        argv: "{{ ['pveum', 'realm', 'add', pve_oidc_realm, '--type', 'openid'] + _pve_realm_opts }}"
+      when: pve_oidc_realm not in (_pve_realms.stdout | from_json | map(attribute='realm') | list)
+      no_log: true # argv carries --client-key
+      changed_when: true
+
+    # Reconcile when present — re-pushes every flag incl. a rotated --client-key.
+    # changed_when: false because the stored secret isn't read back (pveum realm
+    # list omits it), so we can't detect drift; this unconditional sync is how a
+    # rotated Authentik secret propagates without flapping the nightly timer.
+    - name: Reconcile the existing OpenID Connect realm (when present)
+      ansible.builtin.command:
+        argv: "{{ ['pveum', 'realm', 'modify', pve_oidc_realm] + _pve_realm_opts }}"
+      when: pve_oidc_realm in (_pve_realms.stdout | from_json | map(attribute='realm') | list)
+      no_log: true
+      changed_when: false

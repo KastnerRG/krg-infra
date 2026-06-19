@@ -32,6 +32,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPLOY_SSH_KEY="${DEPLOY_SSH_KEY:-/var/lib/krg-admin/.ssh/id_ed25519}"
 [[ -f "$DEPLOY_SSH_KEY" ]] && export ANSIBLE_PRIVATE_KEY_FILE="${ANSIBLE_PRIVATE_KEY_FILE:-$DEPLOY_SSH_KEY}"
 
+# OpenBao address — exported once here (not per-subshell) so the AppRole logins in
+# both the site.yml and synology blocks below inherit it from the same source.
+export VAULT_ADDR="${VAULT_ADDR:-https://krg-vault.ucsd.edu:8200}"
+
 # ── OEC (campus-mandated Qualys + Trellix) ──────────────────────────────────
 # Same credentialed archive + policy as the NixOS layer (deploy-nixos.sh): the
 # agents are mandatory on every host, so a missing archive is fatal — never a
@@ -47,11 +51,47 @@ if [[ ! -r "$OEC_INSTALLER" ]]; then
   exit 1
 fi
 
+SYNOLOGY_TAGS="${SYNOLOGY_TAGS:-}"   # empty = full playbook (entire NAS); set e.g. synology_garage to narrow
+role_id_file="${OPENBAO_ROLE_ID_FILE:-/var/lib/krg-admin/.secrets/openbao-role-id}"
+secret_id_file="${OPENBAO_SECRET_ID_FILE:-/var/lib/krg-admin/.secrets/openbao-secret-id}"
+
 echo "::group::ansible site.yml (Proxmox hosts)"
 # if ! (...) so set -e can't exit before ::endgroup:: — keeps the Actions log group
 # closed on failure (same pattern as deploy-nixos.sh / deploy-tofu.sh).
 if ! (
   cd "${REPO_ROOT}/ansible"
+
+  # --- Materialize the Proxmox OIDC realm secret from OpenBao ----------------
+  # The pve_oidc role configures fabricant's PVE OpenID Connect realm; its
+  # `client-key` is the Authentik-minted secret at secret/krg-prod/proxmox-oidc
+  # (written by terraform/authentik). fabricant has no vault-agent, so — exactly
+  # like the synology block below — krg-deploy AppRole-reads it here and passes it
+  # as a short-lived 0600 extra-vars file (never on argv/log; shredded on exit).
+  # GRACEFUL: if the AppRole creds aren't provisioned, skip the OIDC vars — the
+  # pve_oidc role no-ops on an empty secret (same model as oec_installer), so the
+  # rest of the baseline still applies. Reads need the secret/data/krg-prod/proxmox-oidc
+  # capability on the krg-deploy AppRole (terraform/openbao/main.tf).
+  pve_oidc_args=()
+  if [[ -r "$role_id_file" && -r "$secret_id_file" ]]; then
+    VAULT_TOKEN="$(bao write -field=token auth/approle/login \
+      role_id="$(< "$role_id_file")" secret_id="$(< "$secret_id_file")")" \
+      || { echo "FATAL: OpenBao AppRole login failed"; exit 1; }
+    export VAULT_TOKEN
+    if pve_oidc_json="$(bao kv get -format=json secret/krg-prod/proxmox-oidc 2>/dev/null)"; then
+      umask 077
+      pve_vars_file="$(mktemp -t pve-oidc-vars.XXXXXX.json)"
+      trap 'shred -u "$pve_vars_file" 2>/dev/null || rm -f "$pve_vars_file"' EXIT
+      jq -n --argjson o "$(jq '.data.data' <<<"$pve_oidc_json")" \
+        '{ pve_oidc_client_id: $o.client_id, pve_oidc_client_secret: $o.client_secret, pve_oidc_issuer_url: $o.issuer_url }' \
+        > "$pve_vars_file"
+      pve_oidc_args=(-e @"$pve_vars_file")
+    else
+      echo "note: secret/krg-prod/proxmox-oidc not readable yet — pve_oidc realm step will no-op (run terraform/authentik first)"
+    fi
+  else
+    echo "note: OpenBao AppRole creds not provisioned — pve_oidc realm step will no-op (see docs/krg-deploy-ansible-setup.md)"
+  fi
+
   # Collections (ansible/requirements.yml) are provisioned ON the control node, not
   # installed per-run — this matches the nightly ansible-apply service and avoids an
   # unpinned upstream pull on every deploy (non-reproducible). Pinning them and
@@ -65,17 +105,13 @@ if ! (
   # CONVERGES in warn-mode (the ad_client role stages config + warns when not joined);
   # the strict membership gate runs ONCE, for the whole fleet, in the final verify
   # phase (deploy/deploy-verify.sh), AFTER the firewall has landed.
-  ansible-playbook playbooks/site.yml -e "oec_installer=${OEC_INSTALLER}"
+  ansible-playbook playbooks/site.yml -e "oec_installer=${OEC_INSTALLER}" "${pve_oidc_args[@]}"
 ); then
   echo "FAILED: ansible site.yml"
   printf '\n::endgroup::\n'
   exit 1
 fi
 printf '\n::endgroup::\n'
-
-SYNOLOGY_TAGS="${SYNOLOGY_TAGS:-}"   # empty = full playbook (entire NAS); set e.g. synology_garage to narrow
-role_id_file="${OPENBAO_ROLE_ID_FILE:-/var/lib/krg-admin/.secrets/openbao-role-id}"
-secret_id_file="${OPENBAO_SECRET_ID_FILE:-/var/lib/krg-admin/.secrets/openbao-secret-id}"
 
 if [[ "${DEPLOY_SYNOLOGY:-false}" != "true" ]]; then
   echo "skip synology: DEPLOY_SYNOLOGY!=true"
@@ -97,8 +133,7 @@ else
     # in-playbook vault lookup (the synology subtree stays zero-prereq). Reads
     # require the secret/data/e4e-nas/* capability on the krg-deploy AppRole
     # (terraform/openbao/main.tf). Secrets never hit argv or the log; the file
-    # is mode-0600 (umask) and shredded on exit.
-    export VAULT_ADDR="${VAULT_ADDR:-https://krg-vault.ucsd.edu:8200}"
+    # is mode-0600 (umask) and shredded on exit. VAULT_ADDR is exported at the top.
 
     # AppRole login → short-lived token (kept in env, never on argv).
     VAULT_TOKEN="$(bao write -field=token auth/approle/login \

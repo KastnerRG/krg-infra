@@ -85,6 +85,7 @@ locals {
     "krg-prod/guacamole",
     "krg-prod/temporal-oidc",
     "krg-prod/temporal",
+    "krg-prod/proxmox-oidc",
     "e4e-nas/garage-ui-oidc",
     "e4e-nas/dsm-sso-oidc",
   ]

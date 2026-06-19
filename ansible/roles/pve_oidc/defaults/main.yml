@@ -1,0 +1,41 @@
+# PVE web-UI SSO via Authentik OpenID Connect (issue: Proxmox SSO).
+#
+# Configures a PVE OpenID Connect realm pointing at the Authentik `proxmox`
+# application (terraform/authentik). PVE is the OIDC client; on each login it
+# reads the `groups` claim and sets the user's PVE group membership (PVE 8.2
+# group-sync), so AD group "Proxmox Admins" → PVE group `proxmox-admins` →
+# Administrator on `/`. See docs/proxmox-sso.md.
+#
+# The break-glass PAM realm stays the DEFAULT login realm (pve_oidc_default_realm
+# = false): SSO is opt-in via the realm dropdown, so a directory/Authentik outage
+# never locks admins out of the hypervisor.
+
+pve_oidc_realm: "authentik" # realm id in /etc/pve/domains.cfg (cluster-wide)
+pve_oidc_issuer_url: "https://auth.krg.ucsd.edu/application/o/proxmox/"
+pve_oidc_client_id: "proxmox"
+
+# Authentik-minted client secret. EMPTY by default: the realm step no-ops unless a
+# secret is supplied (same model as oec_installer), so `--check`/local runs and a
+# control node without OpenBao creds still converge the rest. The CD path
+# (deploy/deploy-ansible.sh) AppRole-reads it from secret/krg-prod/proxmox-oidc and
+# passes it (plus client_id/issuer_url) as extra-vars.
+pve_oidc_client_secret: ""
+
+# PVE username-claim selector: `username` maps to the token's preferred_username
+# (Authentik's profile scope → the AD sAMAccountName). `subject` or `email` also
+# valid. autocreate makes the PVE user object on first successful login.
+pve_oidc_username_claim: "username"
+pve_oidc_scopes: "openid email profile"
+pve_oidc_autocreate: true
+pve_oidc_default_realm: false # keep PAM the default; SSO is opt-in via the dropdown
+
+# Group-sync (PVE 8.2+). When on, the realm reads the `groups` claim and OVERWRITES
+# the user's PVE group membership each login (groups-autocreate off — we pre-create
+# the admin group below with its ACL). Set false on a pre-8.2 PVE (then grant ACL
+# another way). The Authentik proxmox_groups scope emits PVE-safe ids.
+pve_oidc_groups_sync: true
+
+# The PVE group SSO admins land in, and the role it gets on `/`. Pre-created here
+# (with the ACL) so group-sync only has to populate membership.
+pve_oidc_admin_pve_group: "proxmox-admins"
+pve_oidc_admin_pve_role: "Administrator"

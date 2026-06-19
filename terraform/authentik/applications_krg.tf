@@ -249,29 +249,69 @@ resource "authentik_application" "temporal" {
 }
 
 # ── Proxmox ────────────────────────────────────────────────────────────────────
-# Commented out — Proxmox auth is currently managed via Ansible/PVE realm config.
-# Uncomment when ready to bring SSO login to the PVE web UI under IaC.
+# SSO login to the PVE web UI (https://fabricant.ucsd.edu:8006). PVE's OpenID
+# Connect realm (ansible pve_oidc role) is the client; it verifies the ID token
+# against jwks_uri, so this carries an RS256 signing_key — without it Authentik
+# falls back to HS256 + an empty JWKS → "Invalid ID token" (the failure
+# guacamole/vaultwarden/temporal/garage-ui hit).
 #
-# resource "authentik_provider_oauth2" "proxmox" {
-#   name               = "Provider for Proxmox"
-#   client_id          = "proxmox"
-#   authorization_flow = data.authentik_flow.default_authorization.id
-#   invalidation_flow  = data.authentik_flow.default_invalidation.id
-#   redirect_uris = [
-#     "https://fabricant.ucsd.edu:8006",
-#     "https://synthesis.ucsd.edu:8006",
-#   ]
-#   property_mappings      = local.std_scopes
-#   sub_mode               = "user_email"
-#   access_token_validity  = "hours=1"
-#   refresh_token_validity = "days=30"
-# }
-#
-# resource "authentik_application" "proxmox" {
-#   name              = "Proxmox"
-#   slug              = "proxmox"
-#   protocol_provider = authentik_provider_oauth2.proxmox.id
-#   meta_launch_url   = "https://fabricant.ucsd.edu:8006"
-#   meta_description  = "Proxmox VE hypervisor management"
-#   group             = "Virtual Machines"
-# }
+# Permission model: PVE 8.2 group-sync (realm `groups-claim`) reads the `groups`
+# claim and sets the user's PVE group membership on every login; the pve_oidc role
+# pre-creates a PVE group `proxmox-admins` with Administrator on `/`. PVE group ids
+# can't contain spaces, so the AD group name ("Proxmox Admins") can't be emitted
+# raw — the proxmox-specific scope below maps it to the PVE-safe id `proxmox-admins`.
+# Membership in the AD group is the only gate: a non-member who completes SSO is
+# autocreated as a PVE user with NO ACL (can authenticate, sees nothing).
+
+# Proxmox-specific `groups` scope: emits PVE-safe group ids, NOT the raw AD group
+# names the generic `groups` scope (applications_e4e.tf) returns. Today the only
+# mapping is AD "Proxmox Admins" → PVE "proxmox-admins"; extend the dict to grant
+# other AD groups a different PVE role (pair each new id with an ACL in the
+# pve_oidc role). NOTE: nested AD groups are NOT expanded here — `ak_groups` is the
+# user's DIRECT Authentik groups, so "Domain Admins" nested inside "Proxmox Admins"
+# only counts if the LDAP sync flattens it; otherwise add the human (or Domain
+# Admins) to "Proxmox Admins" directly. See docs/proxmox-sso.md.
+resource "authentik_property_mapping_provider_scope" "proxmox_groups" {
+  name        = "OIDC Scope — groups (Proxmox PVE ids)"
+  scope_name  = "groups"
+  description = "Maps AD groups to PVE-safe group ids for PVE realm group-sync."
+  expression  = <<-EOT
+    # AD group name -> PVE groupid (must match PVE's [A-Za-z0-9._-]+ groupid rule).
+    pve_group_map = {
+        "Proxmox Admins": "proxmox-admins",
+    }
+    names = {group.name for group in request.user.ak_groups.all()}
+    return {
+        "groups": [pve_id for ad_name, pve_id in pve_group_map.items() if ad_name in names],
+    }
+  EOT
+}
+
+resource "authentik_provider_oauth2" "proxmox" {
+  name                  = "Provider for Proxmox"
+  client_id             = "proxmox"
+  authorization_flow    = data.authentik_flow.default_authorization.id
+  invalidation_flow     = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://fabricant.ucsd.edu:8006" }]
+  # std scopes + the PVE-id groups scope (above) so the realm can group-sync.
+  property_mappings = concat(local.std_scopes, [authentik_property_mapping_provider_scope.proxmox_groups.id])
+  # RS256 signing key — REQUIRED (PVE verifies the ID token against jwks_uri).
+  signing_key = data.authentik_certificate_key_pair.default.id
+  # PVE keys the user id on this claim (realm username-claim = username); a stable,
+  # human-readable subject. sub itself stays the opaque per-user id.
+  sub_mode               = "user_username"
+  access_token_validity  = "minutes=60"
+  refresh_token_validity = "days=30"
+}
+
+resource "authentik_application" "proxmox" {
+  name = "Proxmox"
+  # slug is load-bearing: the realm issuer-url embeds /application/o/proxmox/.
+  slug              = "proxmox"
+  protocol_provider = authentik_provider_oauth2.proxmox.id
+  meta_launch_url   = "https://fabricant.ucsd.edu:8006"
+  meta_description  = "Proxmox VE hypervisor management"
+  meta_icon         = "krg-icons/proxmox.svg"
+  group             = "KRG"
+  open_in_new_tab   = true
+}
