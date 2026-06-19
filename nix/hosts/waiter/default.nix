@@ -215,6 +215,16 @@
   krg.adClient.enable = true;
   krg.adClient.allowedGroups = ["Domain Admins" "Waiter"];
 
+  # Technology control plan: the ARM PDK engineers and everyone who can sudo must use
+  # waiter's desktop ONLY over an auditable SSH tunnel, never the one-click Guacamole
+  # browser RDP. Guacamole can't enforce this (its admins are superusers), so the gate
+  # lives in xrdp's auth and keys on the RDP source IP — Guacamole arrives from krg-prod
+  # (krg.firewall.rdpSources, inherited as gatewayDeny.sources), the SSH tunnel from
+  # loopback. "ARM PDK Access" plus krg.adClient.sudoGroups (Domain Admins) plus local
+  # wheel are denied from the gateway origin; everyone else keeps clientless RDP.
+  # On-box validation (PAM_RHOST) + caveats: docs/arm-pdk-tcp.md.
+  krg.xrdp.gatewayDeny.enable = true;
+
   networking = {
     hostName = "waiter";
     domain = "ucsd.edu";
