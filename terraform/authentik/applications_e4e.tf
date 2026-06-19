@@ -105,7 +105,7 @@ resource "authentik_application" "fishsense_analytics" {
   protocol_provider = authentik_provider_oauth2.fishsense_analytics.id
   meta_launch_url   = "https://analytics.fishsense.e4e.ucsd.edu"
   meta_icon         = "krg-icons/apache-superset.svg"
-  group             = "FishSense"
+  group             = "E4E FishSense"
 }
 
 # ── FishSense OAuth (main site) ───────────────────────────────────────────────
@@ -123,12 +123,12 @@ resource "authentik_provider_oauth2" "fishsense_oauth" {
 }
 
 resource "authentik_application" "fishsense_oauth" {
-  name              = "E4E FishSense"
+  name              = "FishSense"
   slug              = "fishsense-oauth"
   protocol_provider = authentik_provider_oauth2.fishsense_oauth.id
   meta_launch_url   = "https://fishsense.e4e.ucsd.edu"
   meta_icon         = "krg-icons/fishsense.svg"
-  group             = "FishSense"
+  group             = "E4E FishSense"
 }
 
 # ── FishSense Orchestrator (proxy) ────────────────────────────────────────────
@@ -150,7 +150,7 @@ resource "authentik_application" "fishsense_orchestrator" {
   # Reuse the FishSense brand mark — no orchestrator-specific logo exists (same
   # pattern as guacamole_gate reusing guacamole.svg).
   meta_icon = "krg-icons/fishsense.svg"
-  group     = "FishSense"
+  group     = "E4E FishSense"
 }
 
 # ── KRG Roster ────────────────────────────────────────────────────────────────

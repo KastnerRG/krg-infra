@@ -42,7 +42,7 @@ owner — used here only to label first-party links to those services).
 | `synology.svg`        | E4E NAS (Synology)   | `synology`               |
 | `garage.svg`          | E4E Garage UI        | `garage`                 |
 | `apache-superset.svg` | FishSense Analytics  | `apache-superset`        |
-| `fishsense.svg`       | E4E FishSense (+ Orchestrator) | (UCSD-E4E asset)² |
+| `fishsense.svg`       | FishSense (+ Orchestrator) | (UCSD-E4E asset)² |
 | `vaultwarden.svg`     | Vaultwarden          | `vaultwarden`            |
 | `guacamole.svg`       | Guacamole            | `apache-guacamole`       |
 | `temporal.svg`        | Temporal             | (Temporal brand assets)¹ |
@@ -56,7 +56,7 @@ that reads poorly.
 ² `fishsense.svg` is the FishSense project's own logo (the `fishsense-lite-web`
 public asset, github.com/UCSD-E4E/fishsense-lite), not dashboard-icons — a
 first-party mark for a first-party app. It's a wide wordmark (207×123), so it
-scales down inside the square tile. Shared by the E4E FishSense site and the
+scales down inside the square tile. Shared by the FishSense site and the
 FishSense Orchestrator (no orchestrator-specific logo exists).
 
 Not yet iconed (no clean off-the-shelf logo in dashboard-icons — follow-up):
