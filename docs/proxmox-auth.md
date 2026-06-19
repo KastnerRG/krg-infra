@@ -79,6 +79,22 @@ Then in a browser: `https://fabricant.ucsd.edu:8006` → realm **krg** → log i
 `proxmox-admins` member → full admin. In the **app**: add the server, realm `krg`,
 same credentials.
 
+## Migration cleanup (from the OIDC era)
+
+Terraform destroys the Authentik OIDC provider/scopes/secret on apply. The PVE side
+needs a hand:
+
+- The **OIDC `authentik` realm** is removed automatically by the `pve_ad` role
+  (after the AD realm is in place).
+- The **stale local `proxmox-admins` group + its ACL** (created by the old
+  `pve_oidc` role) are **NOT** auto-removed — the new *synced* admin group may share
+  that id depending on PVE's naming, so deleting blindly could nuke the new group.
+  After confirming the synced id differs (e.g. `proxmox-admins-krg`):
+  ```bash
+  pveum acl list | grep proxmox          # confirm which group each ACL points at
+  pveum group delete proxmox-admins      # the OLD local group only — NOT proxmox-admins-krg
+  ```
+
 ## Notes
 
 - `--verify 0` encrypts (LDAPS) but does not verify the DC cert. Once the lab CA

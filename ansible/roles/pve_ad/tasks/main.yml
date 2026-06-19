@@ -73,6 +73,26 @@
         --roles {{ pve_ad_admin_role }}
       changed_when: false # aclmod is idempotent and reports nothing
 
+    # ── Migration cleanup: retire the OIDC realm this replaces ───────────────────
+    # Safe + idempotent — the 'authentik' realm name is ours and distinct from the
+    # 'krg' AD realm. Runs only AFTER the AD realm + sync + ACL above succeed, so
+    # OIDC is never torn down before AD is in place. Ansible (unlike terraform)
+    # doesn't auto-remove what a deleted role created, so do it explicitly.
+    #
+    # NOT removed here: the OLD local PVE group `proxmox-admins` (created by the
+    # former pve_oidc role). The new SYNCED admin group may share that id depending
+    # on PVE's sync naming (the ⚠ in defaults) — deleting it could nuke the new
+    # group. Remove the stale local group by hand once you've confirmed the synced
+    # id (docs/proxmox-auth.md).
+    - name: Remove the superseded OIDC realm
+      ansible.builtin.command: pveum realm delete authentik
+      register: _pve_old_realm
+      changed_when: _pve_old_realm.rc == 0
+      failed_when: >-
+        _pve_old_realm.rc != 0
+        and 'does not exist' not in (_pve_old_realm.stderr | default(''))
+        and 'no such realm' not in (_pve_old_realm.stderr | lower | default(''))
+
     # ── Periodic re-sync (membership changes in AD propagate within the cadence) ──
     - name: Install the realm-sync service + timer
       ansible.builtin.template:
