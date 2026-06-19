@@ -74,22 +74,43 @@ Admins") **directly** to "Proxmox Admins" in AD. Verify with the token inspector
 
 ## Apply
 
+**Order matters — and the realm converges on the *second* pass.** Two ordering
+facts bite if ignored (both were hit on the first rollout, PR #294):
+
+- **OpenBao before Authentik.** The `krg-deploy` AppRole policy is enumerated, not
+  `secret/krg-prod/*` (#187), so it can't write a *new* path until the `openbao`
+  target adds it — otherwise the Authentik write-back 403s ("permission denied"
+  on `secret/data/krg-prod/proxmox-oidc"). The `openbao` target is **not** in the
+  push-CD `TOFU_TARGETS` (it provisions OpenBao's own auth), so it's a **manual,
+  privileged** apply that must run first.
+- **Ansible runs before OpenTofu in a single deploy pass.** The fleet pipeline is
+  Phase 1 = Ansible (`pve_oidc`, *consumes* the secret) → Phase 3 = OpenTofu
+  (`authentik`, *creates* the secret). So the realm can't be created in the same
+  deploy that first writes the secret — `pve_oidc` no-ops (empty secret) that pass
+  and creates the realm on the **next** Ansible run. Same eventual-consistency as
+  grafana-needs-authentik-first.
+
 ```bash
-# 1. Authentik: mint the client + write the secret to OpenBao
-cd terraform/authentik && tofu apply        # (CD: deploy/deploy-tofu.sh)
+# 1. (privileged, manual — NOT push-CD) add the policy path so the AppRole may write it
+TOFU_TARGETS=openbao TOFU_OPENBAO_TOKEN="<privileged token>" \
+  TOFU_STATE_PASSPHRASE="<same as the Actions secret>" ./deploy/deploy-tofu.sh
 
-# 2. OpenBao policy (only when first adding the path)
-cd terraform/openbao  && tofu apply
+# 2. Authentik: mint the client + WRITE secret/krg-prod/proxmox-oidc to OpenBao
+cd terraform/authentik && tofu apply        # (CD: deploy/deploy-tofu.sh, TOFU_TARGETS includes authentik)
+#    verify it landed:  bao kv get secret/krg-prod/proxmox-oidc
 
-# 3. PVE realm on fabricant — picks up the secret from OpenBao automatically
-ansible-playbook ansible/playbooks/site.yml --tags pve_oidc --check   # dry run
-# CD path (materializes the secret from OpenBao for you):
-#   DEPLOY ... deploy/deploy-ansible.sh
+# 3. PVE realm on fabricant — Ansible reads the secret from OpenBao and runs
+#    `pveum realm add`. Must run AFTER step 2 (see the second ordering note above);
+#    in a full fleet deploy that means a second convergence, or run the leg directly:
+DEPLOY_... ./deploy/deploy-ansible.sh
+# dry run / scoped:  ansible-playbook ansible/playbooks/site.yml --tags pve_oidc --check
 ```
 
-If step 3 runs before step 1 (or without OpenBao AppRole creds), the realm step
-**no-ops** — only the `proxmox-admins` group + ACL are created — and logs a `note:`.
-Re-run after the secret exists.
+If step 3 runs before the secret exists (or without OpenBao AppRole creds), the
+realm step **no-ops** — only the `proxmox-admins` group + ACL are created — and
+logs a `note:`. The login dropdown won't show **authentik** until the realm is
+actually created; re-run the Ansible leg once `bao kv get
+secret/krg-prod/proxmox-oidc` succeeds.
 
 ## Validate
 
