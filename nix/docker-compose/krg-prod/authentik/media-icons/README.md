@@ -47,6 +47,7 @@ owner — used here only to label first-party links to those services).
 | `guacamole.svg`       | Guacamole            | `apache-guacamole`       |
 | `temporal.svg`        | Temporal             | (Temporal brand assets)¹ |
 | `proxmox.svg`         | Proxmox              | `proxmox`                |
+| `label-studio.svg`    | Label Studio         | (HumanSignal asset)³     |
 
 ¹ `temporal.svg` is Temporal's official "Symbol (dark)" mark from the Temporal
 brand assets, not dashboard-icons. Note it's a near-black (`#141414`) glyph — fine
@@ -59,6 +60,10 @@ first-party mark for a first-party app. It's a wide wordmark (207×123), so it
 scales down inside the square tile. Shared by the FishSense site and the
 FishSense Orchestrator (no orchestrator-specific logo exists).
 
+³ `label-studio.svg` is Label Studio's official "Heidi the opossum" mascot mark
+(`images/heartex_icon_opossum_green.svg` from github.com/HumanSignal/label-studio,
+the project's de-facto app/favicon icon), not dashboard-icons — dashboard-icons has
+no `label-studio`/`humansignal` entry as of 2026-06. Square (156×156), clean vector.
+
 Not yet iconed (no clean off-the-shelf logo in dashboard-icons — follow-up):
-KRG Roster; Label Studio (SaaS SSO app — no `label-studio`/`humansignal` entry in
-dashboard-icons as of 2026-06).
+KRG Roster.

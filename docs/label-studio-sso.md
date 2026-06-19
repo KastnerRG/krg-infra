@@ -90,9 +90,8 @@ order:
 - **IdP-initiated** login is not wired (the tile sends users to Label Studio, which
   SP-initiates). To enable true IdP-initiated SSO later, set `default_relay_state` on
   the provider and confirm Label Studio accepts unsolicited responses.
-- **No app icon** yet — dashboard-icons has no `label-studio`/`humansignal` entry
-  (2026-06); tracked in the media-icons README "Not yet iconed" list. Drop a
-  `label-studio.svg` there and set `meta_icon` when one lands.
+- **App icon** is Label Studio's "Heidi the opossum" mascot mark, vendored from the
+  HumanSignal repo (dashboard-icons has no entry) — see the media-icons README.
 - **Deprovisioning:** SAML SSO authenticates but doesn't deprovision — removing a
   user from AD stops new logins but doesn't disable their Label Studio account.
   Label Studio Enterprise also supports SCIM for lifecycle; out of scope here.
