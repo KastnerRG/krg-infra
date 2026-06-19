@@ -219,8 +219,9 @@ highest-fiddle part of bring-up — validate across reboots before go-live.
   HTTP-01; staging-first; ~60-day renewal; **on-demand TLS forbidden** (ADR 0008
   issuance invariant).
 - **Internal TLS:** **reuses the existing lab OpenBao PKI** — root → `pki_int`
-  intermediate (#241), generalized to a fleet CA with generic `host`/`user`
-  issuing roles + fleet-wide CA trust in `base.nix` (#259). Each tenant VM's
+  intermediate (#241), now a fleet CA with generic `host`/`user` issuing roles +
+  the committed fleet-wide CA trust anchor — **all on main** (#259/#289/#290,
+  ADR 0009). Each tenant VM's
   inner Traefik gets a server cert from `pki_int/issue/host`, rendered +
   auto-rotated by its vault-agent — the **same pattern as the waiter XRDP cert
   (#260)**: a per-consumer AppRole granting `pki_int/issue/host`, `secret_id` on
@@ -242,8 +243,12 @@ highest-fiddle part of bring-up — validate across reboots before go-live.
   token) just before the runner (re)registers, writing it to the `tokenFile` the
   vault-agent path provides. `services.github-runners` consumes that token file;
   the ephemeral nature is the module's concern. Rotating the App key is an
-  OpenBao change; the only operator-placed secret stays the per-tenant AppRole
-  `secret_id` (secret-zero). **krg-deploy migrates to this same pattern** — its
+  OpenBao change. The per-tenant secret-zero (role-id + secret-id) is
+  **auto-staged by the deploy** (#291 / ADR 0009 — `deploy-nixos.sh` mints + pushes
+  it for any `krg.vaultAgent` host, over ssh STDIN), not hand-placed; the open
+  work is extending that staging to reach the **nested microVM** vault-agents
+  (the host brokers it into each guest's persisted path). **krg-deploy migrates to
+  this same App pattern** — its
   current hand-placed `/var/lib/krg-admin/.secrets/github-runner-token` (the
   deferred manual file) is retired in the same effort.
 
@@ -260,8 +265,8 @@ highest-fiddle part of bring-up — validate across reboots before go-live.
    resources, AppRole path); `nix flake check`; deploy the platform host.
 5. **Runner:** install the org's GitHub App on the tenant repo; the in-VM
    oneshot mints the registration token from the App key (OpenBao) and the
-   repo-scoped `github-runner` comes online. Only the AppRole `secret_id` is
-   operator-placed (secret-zero).
+   repo-scoped `github-runner` comes online. The AppRole secret-zero is
+   deploy-staged (#291 / ADR 0009), not hand-placed.
 6. **Repo side:** the tenant repo sets `DEPLOY_DIR`/`USER_ID`/`GROUP_ID`,
    bootstraps its ops dirs, and points at central Authentik + Temporal.
 7. **Deploy:** first `auto-deploy/*` merge runs `docker compose up` in the VM.
@@ -296,9 +301,16 @@ The platform substrate plus the coordinated repo-side changes we own:
       `host` (prerequisite for the nested microvm.nix fleet).
 - [ ] microvm.nix as a flake input (cloud-hypervisor backend); per-tenant zvol;
       host bridge networking + inter-VM firewall.
-- [ ] PKI: **reuse** the existing lab CA (#241/#259) — add per-tenant AppRoles +
-      an edge client-cert role + vault-agent render targets (pattern: #260). No
-      new CA; build stacked on #259 (fleet CA trust + `host` role).
+- [ ] PKI: **reuse** the lab CA — now on main (#259/#289/#290, ADR 0009). Add
+      per-tenant AppRoles + an edge client-cert role + vault-agent render targets
+      (pattern: #260). No new CA, no longer blocked on an in-flight PR.
+- [ ] **Extend secret-zero auto-staging (#291) to nested microVMs.** Today
+      `deploy-nixos.sh` stages role-id/secret-id only to `--target-host` machines;
+      tenant VMs are nested guests — the e4e-prod host must broker each tenant's
+      secret-zero into the guest's persisted `openbao-agent` path.
+- [ ] Map the e4e-prod deploy onto **ADR 0011**'s phased pipeline (per-tenant tofu
+      AppRoles = config phase, before the host's tenant vault-agents render; tenant
+      gates → phase 4 verify).
 - [ ] krg-prod Temporal: `fishsense` namespace, client-cert issuance, cross-host
       gRPC exposure + firewall.
 - [ ] Per-VM monitoring (node/cadvisor → prometheus_network) and whether tenant
