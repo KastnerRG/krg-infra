@@ -27,7 +27,13 @@ pve_oidc_client_secret: ""
 # (Authentik's profile scope → the AD sAMAccountName). `subject` or `email` also
 # valid. autocreate makes the PVE user object on first successful login.
 pve_oidc_username_claim: "username"
-pve_oidc_scopes: "openid email profile"
+# Requested OIDC scopes. `groups` is REQUIRED for group-sync below: PVE only
+# receives the `groups` claim if it asks for the `groups` scope, and the proxmox
+# provider's groups mapping (terraform/authentik) is keyed on that scope. Without
+# it the claim is absent and `groups-overwrite` wipes the user's PVE groups every
+# login → nobody lands in proxmox-admins → no admin. (openid is implied/prepended
+# by PVE; listed for clarity.)
+pve_oidc_scopes: "openid email profile groups"
 pve_oidc_autocreate: true
 pve_oidc_default_realm: true # pre-select Authentik on the login screen (PAM still in the dropdown)
 
