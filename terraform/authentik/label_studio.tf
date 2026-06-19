@@ -114,9 +114,7 @@ resource "authentik_application" "label_studio" {
   # reliable SaaS flow). New tab since it leaves the lab domain.
   meta_launch_url  = "https://app.heartex.com/"
   meta_description = "Data annotation / labeling (Label Studio Enterprise)"
-  # No clean off-the-shelf logo in dashboard-icons yet — tracked in the media-icons
-  # README "Not yet iconed" list. Add meta_icon = "krg-icons/label-studio.svg" once
-  # one lands.
-  group           = "KRG Services"
-  open_in_new_tab = true
+  meta_icon        = "krg-icons/label-studio.svg"
+  group            = "KRG Services"
+  open_in_new_tab  = true
 }
