@@ -1,0 +1,53 @@
+# Proxmox VE login via a native Active Directory realm against krg-ldap (KRG.LOCAL).
+#
+# Replaces the OIDC realm (pve_oidc): OIDC can't serve the Proxmox mobile/CLI apps
+# (no browser redirect), and PVE's AD realm does group→role sync NATIVELY (no
+# Authentik claim mapping). Users log in with their KRG.LOCAL account in the web UI
+# AND the apps; the AD group `proxmox-admins` is synced into PVE and ACL'd
+# Administrator. PAM stays the break-glass realm. See docs/proxmox-auth.md.
+#
+# Many values below want on-box verification at first bring-up (marked ⚠) — PVE's
+# AD sync naming/filters can't be dry-run from CI.
+
+pve_ad_realm: "krg" # realm id in /etc/pve/domains.cfg (cluster-wide)
+pve_ad_domain: "KRG.LOCAL"
+pve_ad_server1: "krg-ldap.ucsd.edu"
+pve_ad_server2: "" # second DC once it exists (krg-ldap SPOF removal); empty = unset
+pve_ad_base_dn: "DC=KRG,DC=LOCAL"
+
+# Transport: ldaps (636, confirmed open from fabricant) so the bind password isn't
+# sent in clear. verify=false until the lab CA is trusted on fabricant — encrypted
+# but unauthenticated, matching Authentik's current LDAP posture. Flip to true +
+# install the CA (capath) once the lab PKI root is on the box.
+pve_ad_mode: "ldaps" # ldap | ldap+starttls | ldaps
+pve_ad_verify: false
+
+# Read-only bind account for directory search during sync (login binds as the end
+# user, not this). Object declared in spec/krg-ad/service-accounts.yml (svc-pve).
+pve_ad_bind_dn: "CN=svc-pve,CN=Users,DC=KRG,DC=LOCAL"
+# Password from OpenBao (secret/krg-prod/pve-ad-bind), materialized by
+# deploy/deploy-ansible.sh. EMPTY by default → the whole realm block no-ops (same
+# model as oec_installer / the old pve_oidc), so --check / local runs converge the
+# rest without it.
+pve_ad_bind_password: ""
+
+pve_ad_default_realm: true # pre-select AD on the PVE login screen (PAM stays in the dropdown)
+
+# ── Group sync → admin ──────────────────────────────────────────────────────────
+# Scope the sync to the admin group + its members so PVE doesn't mirror the whole
+# directory. Standard AD filters; relax/widen at bring-up if a member doesn't sync.
+pve_ad_admin_ad_group: "proxmox-admins" # space-free (PVE groupids can't have spaces)
+pve_ad_group_filter: "(&(objectClass=group)(cn=proxmox-admins))"
+pve_ad_user_filter: "(&(objectCategory=person)(objectClass=user)(memberOf=CN=proxmox-admins,CN=Users,DC=KRG,DC=LOCAL))"
+pve_ad_sync_scope: "both" # users | groups | both
+pve_ad_sync_enable_new: true # enable newly-synced users/groups
+
+# ⚠ PVE names a synced group "<cn>-<realm>". For cn=proxmox-admins + realm=krg that
+# is `proxmox-admins-krg`. VERIFY on-box after the first sync (`pveum group list`)
+# and correct this if PVE uses a different convention — the ACL targets this id.
+pve_ad_admin_pve_group: "proxmox-admins-krg"
+pve_ad_admin_role: "Administrator"
+pve_ad_admin_acl_path: "/"
+
+# Re-sync membership periodically (AD changes propagate). systemd timer cadence.
+pve_ad_sync_on_calendar: "*:0/30" # every 30 minutes
