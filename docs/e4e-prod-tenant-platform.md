@@ -108,10 +108,10 @@ krg.tenants.fishsense = {
   repo = "UCSD-E4E/fishsense-lite";        # repo-scoped runner registers here
   subtree = "fishsense.e4e.ucsd.edu";      # → rule ^(.+\.)?fishsense\.e4e\.ucsd\.edu$ (apex + descendants)
   hostnames = [                            # EXPLICIT SAN list for LE issuance
-    "fishsense.e4e.ucsd.edu"
-    "orchestrator.fishsense.e4e.ucsd.edu"
-    "workflows.fishsense.e4e.ucsd.edu"
-    "analytics.fishsense.e4e.ucsd.edu"
+    "fishsense.e4e.ucsd.edu"               # web portal
+    "orchestrator.fishsense.e4e.ucsd.edu"  # API
+    "analytics.fishsense.e4e.ucsd.edu"     # superset
+    # NB: no workflows.* — Temporal UI is krg-prod's workflows.krg.ucsd.edu
   ];
   deployDir = "/srv/fishsense";            # persistent runner checkout (in-VM)
   resources = { vcpu = 6; memMiB = 16384; diskGiB = 200; };
@@ -219,8 +219,9 @@ highest-fiddle part of bring-up — validate across reboots before go-live.
   HTTP-01; staging-first; ~60-day renewal; **on-demand TLS forbidden** (ADR 0008
   issuance invariant).
 - **Internal TLS:** **reuses the existing lab OpenBao PKI** — root → `pki_int`
-  intermediate (#241), generalized to a fleet CA with generic `host`/`user`
-  issuing roles + fleet-wide CA trust in `base.nix` (#259). Each tenant VM's
+  intermediate (#241), now a fleet CA with generic `host`/`user` issuing roles +
+  the committed fleet-wide CA trust anchor — **all on main** (#259/#289/#290,
+  ADR 0009). Each tenant VM's
   inner Traefik gets a server cert from `pki_int/issue/host`, rendered +
   auto-rotated by its vault-agent — the **same pattern as the waiter XRDP cert
   (#260)**: a per-consumer AppRole granting `pki_int/issue/host`, `secret_id` on
@@ -242,8 +243,12 @@ highest-fiddle part of bring-up — validate across reboots before go-live.
   token) just before the runner (re)registers, writing it to the `tokenFile` the
   vault-agent path provides. `services.github-runners` consumes that token file;
   the ephemeral nature is the module's concern. Rotating the App key is an
-  OpenBao change; the only operator-placed secret stays the per-tenant AppRole
-  `secret_id` (secret-zero). **krg-deploy migrates to this same pattern** — its
+  OpenBao change. The per-tenant secret-zero (role-id + secret-id) is
+  **auto-staged by the deploy** (#291 / ADR 0009 — `deploy-nixos.sh` mints + pushes
+  it for any `krg.vaultAgent` host, over ssh STDIN), not hand-placed; the open
+  work is extending that staging to reach the **nested microVM** vault-agents
+  (the host brokers it into each guest's persisted path). **krg-deploy migrates to
+  this same App pattern** — its
   current hand-placed `/var/lib/krg-admin/.secrets/github-runner-token` (the
   deferred manual file) is retired in the same effort.
 
@@ -260,8 +265,8 @@ highest-fiddle part of bring-up — validate across reboots before go-live.
    resources, AppRole path); `nix flake check`; deploy the platform host.
 5. **Runner:** install the org's GitHub App on the tenant repo; the in-VM
    oneshot mints the registration token from the App key (OpenBao) and the
-   repo-scoped `github-runner` comes online. Only the AppRole `secret_id` is
-   operator-placed (secret-zero).
+   repo-scoped `github-runner` comes online. The AppRole secret-zero is
+   deploy-staged (#291 / ADR 0009), not hand-placed.
 6. **Repo side:** the tenant repo sets `DEPLOY_DIR`/`USER_ID`/`GROUP_ID`,
    bootstraps its ops dirs, and points at central Authentik + Temporal.
 7. **Deploy:** first `auto-deploy/*` merge runs `docker compose up` in the VM.
@@ -272,15 +277,18 @@ The platform substrate plus the coordinated repo-side changes we own:
 
 - **Drop its own Temporal** (`compose.temporal.yml`) → point workers at krg-prod
   Temporal (needs a `fishsense` namespace + client mTLS + cross-host gRPC on the
-  krg-prod side).
+  krg-prod side). Its Temporal UI is **superseded by krg-prod's
+  `workflows.krg.ucsd.edu`** — there is no `workflows.fishsense.e4e.ucsd.edu` on
+  this edge (drop the route + the SAN).
 - **Fix the stale OIDC issuer** `auth.fabricant.ucsd.edu` → `auth.krg.ucsd.edu`
   (temporal-ui + web `AUTH_AUTHENTIK_*`).
 - **Set** `DEPLOY_DIR` (e.g. `/srv/fishsense`), `USER_ID`/`GROUP_ID`; restore
   ops dirs (`pg_volumes/`, `worker_volumes/<svc>/config`, `temporal_volumes/certs`
   — though Temporal certs move to the krg-prod relationship, `.secrets/`).
-- Hostnames: `fishsense.`, `orchestrator.fishsense.`, `workflows.fishsense.`,
-  `analytics.fishsense.` (+ the `qcomm.docs.fabricant` static server, TBD whether
-  it stays).
+- Hostnames: `fishsense.` (web), `orchestrator.fishsense.` (API),
+  `analytics.fishsense.` (superset) — **not** `workflows.fishsense.` (Temporal UI
+  is krg-prod's `workflows.krg.ucsd.edu`) (+ the `qcomm.docs.fabricant` static
+  server, TBD whether it stays).
 - Note the upstream `ports: 5432:5432` on Postgres — `krg.docker.defaultPublishAddress`
   doesn't apply inside the VM, but the VM boundary contains it; confirm it isn't
   bound to the VM's external interface.
@@ -296,9 +304,16 @@ The platform substrate plus the coordinated repo-side changes we own:
       `host` (prerequisite for the nested microvm.nix fleet).
 - [ ] microvm.nix as a flake input (cloud-hypervisor backend); per-tenant zvol;
       host bridge networking + inter-VM firewall.
-- [ ] PKI: **reuse** the existing lab CA (#241/#259) — add per-tenant AppRoles +
-      an edge client-cert role + vault-agent render targets (pattern: #260). No
-      new CA; build stacked on #259 (fleet CA trust + `host` role).
+- [ ] PKI: **reuse** the lab CA — now on main (#259/#289/#290, ADR 0009). Add
+      per-tenant AppRoles + an edge client-cert role + vault-agent render targets
+      (pattern: #260). No new CA, no longer blocked on an in-flight PR.
+- [ ] **Extend secret-zero auto-staging (#291) to nested microVMs.** Today
+      `deploy-nixos.sh` stages role-id/secret-id only to `--target-host` machines;
+      tenant VMs are nested guests — the e4e-prod host must broker each tenant's
+      secret-zero into the guest's persisted `openbao-agent` path.
+- [ ] Map the e4e-prod deploy onto **ADR 0011**'s phased pipeline (per-tenant tofu
+      AppRoles = config phase, before the host's tenant vault-agents render; tenant
+      gates → phase 4 verify).
 - [ ] krg-prod Temporal: `fishsense` namespace, client-cert issuance, cross-host
       gRPC exposure + firewall.
 - [ ] Per-VM monitoring (node/cadvisor → prometheus_network) and whether tenant

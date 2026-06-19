@@ -118,10 +118,14 @@ to that project's VM.
 
 The runner's registration credential is a **GitHub App** (one per GitHub org —
 `UCSD-E4E`, `KastnerRG` — installed on the tenant repos; key in OpenBao, a short-
-lived registration token minted in-VM, **no long-lived PATs**). The only
-operator-placed secret is the per-tenant AppRole `secret_id` (secret-zero); the
-rest is vault-agent-rendered. **krg-deploy migrates to this same pattern**,
-retiring its deferred hand-placed `github-runner-token` file.
+lived registration token minted in-VM, **no long-lived PATs**). The per-tenant
+AppRole secret-zero (role-id + secret-id) is **auto-staged by the deploy**
+(#291 / [ADR 0009](0009-lab-internal-pki-ad.md): `deploy-nixos.sh` mints + pushes
+it for any `krg.vaultAgent` host), not hand-placed — the open work is extending
+that staging to reach the **nested microVM** vault-agents (the host brokers
+secret-zero into each guest's persisted path). Everything else is
+vault-agent-rendered. **krg-deploy migrates to this same App pattern**, retiring
+its deferred hand-placed `github-runner-token` file.
 
 ### 4. Edge: LE-terminate at the platform, re-encrypt to tenants over OpenBao PKI
 
@@ -246,17 +250,16 @@ footprint negligible (see "CA source" below for why LE, not InCommon).
 
 - e4e-prod gains a per-tenant microVM fleet (microvm.nix as a flake input), a
   platform edge Traefik, and the `krg.tenants` module.
-- **The internal CA already exists — reuse, don't rebuild.** The lab OpenBao PKI
-  (`pki_root` → `pki_int`, #241) is generalized into a fleet CA with generic
-  `host`/`user` issuing roles + **fleet-wide CA trust in `base.nix`** by #259, and
-  the "vault-agent issues a TLS leaf from the PKI" pattern is proven by the waiter
-  XRDP cert (#260: per-consumer AppRole → `pki_int/issue/host` → rendered to
-  `/run`, secret_id on a persisted path). e4e-prod **reuses `pki_int/issue/host`**
-  for tenant-VM inner-Traefik server certs and the existing `temporal-client`-style
-  client-role pattern for the edge's mTLS leg. **Net-new is small:** per-tenant
-  AppRoles + an edge client-cert role + vault-agent render targets — *not* a new
-  CA. **This work stacks on #259** (fleet CA trust + the `host` role) and follows
-  #260's pattern; see `docs/pki-ad-integration.md`.
+- **The internal CA already exists on main — reuse, don't rebuild.** The lab
+  OpenBao PKI (`pki_root` → `pki_int`, #241) is now a fleet CA with generic
+  `host`/`user` issuing roles + AD authz (#259, #289) and the **committed
+  fleet-wide CA trust anchor** (#290) — all merged, recorded in
+  [ADR 0009](0009-lab-internal-pki-ad.md). The "vault-agent issues a TLS leaf"
+  pattern is proven and on main (waiter XRDP, #260). e4e-prod **reuses
+  `pki_int/issue/host`** for tenant-VM inner-Traefik server certs and a
+  `temporal-client`-style client role for the edge mTLS leg. **Net-new is small:**
+  per-tenant AppRoles + an edge client-cert role + vault-agent render targets —
+  *not* a new CA, and no longer blocked on an in-flight PR.
 - **Adding a hostname is a 3-actor act**, only the middle one automatable: CNAME
   ticket (external) → edge SAN added + re-issued (platform) → tenant adds the
   service+label (self-service in-VM). Routing stays stable (subtree match).
@@ -267,6 +270,13 @@ footprint negligible (see "CA source" below for why LE, not InCommon).
   appliance-like and need not AD-join; revisit per-VM monitoring).
 - The `isolation` knob means this ADR is **not** a forever-commitment to
   microVMs for every tenant — it's the default boundary, overridable per tenant.
+- **Deploy fits [ADR 0011](0011-cross-layer-deploy-ordering.md)'s phased
+  pipeline**, not a parallel ordering: the per-tenant OpenBao AppRoles/policies
+  (OpenTofu) are *phase 0/3 config* that must exist before the e4e-prod *phase 2*
+  vault-agents render (the explicit OpenTofu→NixOS edge 0011 names); tenant
+  health/SSO gates live in *phase 4 verify*. The edge's ACME `:80` reuses the
+  krg-vault pattern — globally public (LE multi-perspective validation forbids
+  source-restriction), challenge-path only.
 
 ## CA source — Let's Encrypt (InCommon rejected)
 
@@ -285,6 +295,8 @@ endpoint, switching is a config change — but manual-approval InCommon is not a
 candidate.
 
 Related: ADR 0001 (git as source of truth), ADR 0005 (repo integration /
-OpenTofu / krg-deploy as control node), `docs/e4e-prod-tenant-platform.md`
-(the companion design doc), `docs/pki-ad-integration.md` (the lab PKI this builds
-on — #241/#259, vault-agent issuance pattern #260), `docs/krg-prod-iac.md`.
+OpenTofu / krg-deploy as control node), ADR 0009 (lab-internal PKI + per-host
+secret-zero — the CA + vault-agent bootstrap this reuses), ADR 0011 (cross-layer
+deploy ordering — the phased pipeline this slots into),
+`docs/e4e-prod-tenant-platform.md` (the companion design doc),
+`docs/pki-ad-integration.md`, `docs/krg-prod-iac.md`.
