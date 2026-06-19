@@ -37,6 +37,14 @@ jobs:
         # v21+ defaults to Determinate Nix; keep upstream Nix (current behavior).
         with:
           determinate: false
+          # Add the community CUDA binary cache so the heavy NVIDIA/CUDA paths
+          # (waiter, kastner-ml) are fetched from cuda-maintainers instead of
+          # being pulled through the rate-limited GitHub Actions cache. fallback
+          # = build locally rather than abort if a substituter drops mid-run.
+          extra-conf: |
+            extra-substituters = https://cuda-maintainers.cachix.org
+            extra-trusted-public-keys = cuda-maintainers.cachix.org-1:0dq3bujKpuEPMCX6U4WylrUDZ9JyUG0VpVZa7CNfq5E=
+            fallback = true
 
       - uses: DeterminateSystems/magic-nix-cache-action@v14
 
@@ -85,12 +93,35 @@ jobs:
         # v21+ defaults to Determinate Nix; keep upstream Nix (current behavior).
         with:
           determinate: false
+          # Add the community CUDA binary cache so the heavy NVIDIA/CUDA paths
+          # (waiter, kastner-ml) are fetched from cuda-maintainers instead of
+          # being pulled through the rate-limited GitHub Actions cache. fallback
+          # = build locally rather than abort if a substituter drops mid-run.
+          extra-conf: |
+            extra-substituters = https://cuda-maintainers.cachix.org
+            extra-trusted-public-keys = cuda-maintainers.cachix.org-1:0dq3bujKpuEPMCX6U4WylrUDZ9JyUG0VpVZa7CNfq5E=
+            fallback = true
 
       - uses: DeterminateSystems/magic-nix-cache-action@v14
 
+      # Retry the build to ride out transient substituter flakes. The GitHub
+      # Actions cache (via magic-nix-cache) is rate-limited under parallel host
+      # jobs (HTTP 418 "ResourceExhausted") and cache.nixos.org occasionally
+      # 416s mid-download; when both get disabled in the same window, paths that
+      # can only be substituted fail with "no substituter can build it" and the
+      # whole closure cascades. --keep-going + --fallback let Nix build the few
+      # stranded paths locally instead of aborting, and the loop retries the
+      # rare case where that still trips. waiter (largest closure) hit this most.
       - name: Build ${{ matrix.host }}
         run: |
-          nix build \
-            ./nix#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel \
-            --no-link \
-            --print-build-logs
+          for attempt in 1 2 3; do
+            nix build \
+              ./nix#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel \
+              --no-link \
+              --print-build-logs \
+              --keep-going \
+              --fallback && exit 0
+            echo "::warning::build attempt $attempt for ${{ matrix.host }} failed (likely a transient cache flake); retrying"
+            sleep 30
+          done
+          exit 1
