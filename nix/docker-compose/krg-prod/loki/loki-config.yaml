@@ -7,11 +7,14 @@ server:
 
 common:
   instance_addr: 127.0.0.1
-  path_prefix: /tmp/loki
+  # /loki is the persistent bind mount (./loki/loki-data, see compose.grafana.yml).
+  # Chunks + index MUST live here, not the container-ephemeral /tmp, or ingested
+  # logs are lost on every container recreate (the WAL already used /loki/wal).
+  path_prefix: /loki
   storage:
     filesystem:
-      chunks_directory: /tmp/loki/chunks
-      rules_directory: /tmp/loki/rules
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
   replication_factor: 1
   ring:
     kvstore:
