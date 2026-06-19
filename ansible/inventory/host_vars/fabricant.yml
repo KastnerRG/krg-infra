@@ -84,3 +84,25 @@ nfs_exports:
       "com.sun:auto-snapshot:hourly": "false"
     clients:
       - { host: "137.110.161.67", options: "rw,sync,no_subtree_check,no_root_squash" }   # waiter (autotier cold tier)
+
+  # Export-controlled ARM PDK — the SINGLE canonical VeraCrypt container (armpdk.hc)
+  # lives here on rpool/nfs/armpdk and is the at-rest encrypted store the ARM TCP
+  # requires. waiter mounts this READ-ONLY (nix krg.armpdkVault) and veracrypt-mounts
+  # the .hc read-only; an admin supplies the passphrase (VaultWarden, admin-only) at
+  # mount time. See docs/arm-pdk-veracrypt.md.
+  #
+  # READ-ONLY + root_squash: waiter only READS the encrypted blob (a read-only veracrypt
+  # mount never writes back), so there's no need for rw or no_root_squash here — keep it
+  # least-privilege (the encryption, not these perms, is the confidentiality boundary).
+  # The .hc itself is created/updated out-of-band by an admin on fabricant (runbook),
+  # NOT by the client. recordsize=1M suits the one large container file; daily+ snapshots
+  # give NDA-data recoverability without churning on a blob that changes rarely.
+  - name: armpdk
+    fsid: 13
+    dataset_props:
+      recordsize: "1M"
+      "com.sun:auto-snapshot": "true"
+      "com.sun:auto-snapshot:frequent": "false"
+      "com.sun:auto-snapshot:hourly": "false"
+    clients:
+      - { host: "137.110.161.67", options: "ro,sync,no_subtree_check,root_squash" }   # waiter (read-only PDK store)
