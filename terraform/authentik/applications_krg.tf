@@ -275,15 +275,19 @@ resource "authentik_property_mapping_provider_scope" "proxmox_groups" {
   name        = "OIDC Scope — groups (Proxmox PVE ids)"
   scope_name  = "groups"
   description = "Maps AD groups to PVE-safe group ids for PVE realm group-sync."
-  expression  = <<-EOT
-    # AD group name -> PVE groupid (must match PVE's [A-Za-z0-9._-]+ groupid rule).
-    pve_group_map = {
-        "Proxmox Admins": "proxmox-admins",
-    }
-    names = {group.name for group in request.user.groups.all()}
-    return {
-        "groups": [pve_id for ad_name, pve_id in pve_group_map.items() if ad_name in names],
-    }
+  # Use ONLY constructs Authentik's evaluator is known to handle: a plain list
+  # comprehension + an `if` (same shape as the stock profile mapping and groups.tf's
+  # group_superuser). The earlier version used a SET comprehension and a
+  # `dict.items()` comprehension; the evaluator silently returned an empty result
+  # (no error logged) → PVE got no groups → group-sync wiped membership. To grant
+  # another AD group a PVE role, add another `if … append(…)` block here (and a
+  # matching ACL in the pve_oidc role). PVE groupids must match [A-Za-z0-9._-]+.
+  expression = <<-EOT
+    group_names = [group.name for group in request.user.groups.all()]
+    groups = []
+    if "Proxmox Admins" in group_names:
+        groups.append("proxmox-admins")
+    return {"groups": groups}
   EOT
 }
 
