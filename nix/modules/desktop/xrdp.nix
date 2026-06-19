@@ -116,6 +116,11 @@ in {
           {
             destination = "/run/xrdp-tls/bundle.pem";
             perms = "0640";
+            # xrdp runs as the unprivileged `xrdp` user and must traverse this dir to
+            # read the split cert/key. The default 0750 root:root dir locks it out, so
+            # open traversal (the documented non-root-reader case). The files inside
+            # stay 0640 root:xrdp, so contents remain group-gated.
+            dirPerms = "0755";
             contents = ''
               {{- with secret "pki_int/issue/host" ${certSecretArgs} }}
               {{ .Data.certificate }}
