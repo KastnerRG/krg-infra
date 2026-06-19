@@ -40,9 +40,9 @@
 # (Administrator on /), with membership group-synced from the Authentik `groups`
 # claim (AD "Proxmox Admins"). The realm step no-ops unless the Authentik client
 # secret is supplied — deploy/deploy-ansible.sh materializes it from OpenBao
-# (secret/krg-prod/proxmox-oidc) and passes pve_oidc_client_secret. The PAM realm
-# stays default, so SSO is opt-in and a directory outage can't lock admins out.
-# See docs/proxmox-sso.md.
+# (secret/krg-prod/proxmox-oidc) and passes pve_oidc_client_secret. Authentik is the
+# pre-selected default realm, but PAM stays in the dropdown so break-glass logins
+# survive a directory outage. See docs/proxmox-sso.md.
 - name: Proxmox web-UI SSO (Authentik OIDC realm)
   hosts: proxmox
   become: true

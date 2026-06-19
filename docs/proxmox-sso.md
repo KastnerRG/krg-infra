@@ -4,10 +4,12 @@ Single sign-on for the Proxmox VE web UI (`https://fabricant.ucsd.edu:8006`) via
 Authentik, so hypervisor admins log in with their KRG.LOCAL AD account instead of
 a PVE-local password. Greenfield — no prior PVE OIDC config is migrated.
 
-The local **PAM** realm stays the **default** login realm: SSO is opt-in via the
-realm dropdown on the login screen, and the break-glass `root@pam` / `krg-admin`
-accounts always work. A directory or Authentik outage therefore can never lock
-admins out of the hypervisor.
+**Authentik is the default login realm** (the login screen pre-selects it). This
+only changes the *pre-selection* — the realm dropdown still lists **Linux PAM**, so
+the break-glass `root@pam` / `krg-admin` accounts are always reachable by switching
+the selector. During a directory/Authentik outage an admin just picks PAM manually;
+nobody is locked out of the hypervisor. (Set `pve_oidc_default_realm: false` to make
+PAM the pre-selected default instead.)
 
 ## Layers
 
