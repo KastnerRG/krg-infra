@@ -293,6 +293,14 @@ resource "authentik_provider_oauth2" "proxmox" {
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://fabricant.ucsd.edu:8006" }]
+  # Allowed OAuth2 grant types. MUST be set explicitly: the goauthentik provider
+  # (>= 2026.x) only sends grant_types when non-empty and the Authentik API then
+  # defaults a NEW provider to an EMPTY set — so an unset grant_types makes every
+  # authorize request fail "Invalid grant_type for provider" → "The request is
+  # otherwise malformed" (the PVE SSO bug). Older KRG providers carry the legacy
+  # 7-type default only because they were created by an older provider version that
+  # sent it; new ones must opt in. PVE uses the authorization-code flow (+ refresh).
+  grant_types = ["authorization_code", "refresh_token"]
   # std scopes + the PVE-id groups scope (above) so the realm can group-sync.
   property_mappings = concat(local.std_scopes, [authentik_property_mapping_provider_scope.proxmox_groups.id])
   # RS256 signing key — REQUIRED (PVE verifies the ID token against jwks_uri).
