@@ -6,9 +6,11 @@
 # group-sync), so AD group "Proxmox Admins" → PVE group `proxmox-admins` →
 # Administrator on `/`. See docs/proxmox-sso.md.
 #
-# The break-glass PAM realm stays the DEFAULT login realm (pve_oidc_default_realm
-# = false): SSO is opt-in via the realm dropdown, so a directory/Authentik outage
-# never locks admins out of the hypervisor.
+# Authentik is the DEFAULT login realm (pve_oidc_default_realm = true): the login
+# screen pre-selects it. This does NOT remove the other realms — Linux PAM stays in
+# the dropdown, so break-glass `root@pam` / `krg-admin` is always reachable by
+# switching the selector. During an Authentik/AD outage an admin just picks PAM
+# manually; nobody is locked out of the hypervisor.
 
 pve_oidc_realm: "authentik" # realm id in /etc/pve/domains.cfg (cluster-wide)
 pve_oidc_issuer_url: "https://auth.krg.ucsd.edu/application/o/proxmox/"
@@ -27,7 +29,7 @@ pve_oidc_client_secret: ""
 pve_oidc_username_claim: "username"
 pve_oidc_scopes: "openid email profile"
 pve_oidc_autocreate: true
-pve_oidc_default_realm: false # keep PAM the default; SSO is opt-in via the dropdown
+pve_oidc_default_realm: true # pre-select Authentik on the login screen (PAM still in the dropdown)
 
 # Group-sync (PVE 8.2+). When on, the realm reads the `groups` claim and OVERWRITES
 # the user's PVE group membership each login (groups-autocreate off — we pre-create
