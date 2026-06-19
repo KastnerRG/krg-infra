@@ -53,14 +53,16 @@ proxmox_host_fw_rules:
 # pveproxy cert for fabricant.ucsd.edu, replacing the self-signed default. The :80
 # challenge port is opened in proxmox_host_fw_rules above.
 #
-# STAGING-FIRST: this is set to `staging` so the first bring-up exercises the whole
-# flow against LE's rate-limit-free staging endpoint. The browser will warn (staging
-# chain isn't publicly trusted) — that's expected. Once the UI serves the staging
-# cert, flip to `production` and re-run the play (the role re-orders with --force).
+# STAGING-FIRST: brought up against LE's rate-limit-free staging endpoint, the UI
+# served the staging chain, so this is now flipped to `production` for a publicly-
+# trusted cert. On the staging→production switch the role registers the prod ACME
+# account and re-orders with --force (the staging cert isn't "expiring", but its
+# issuer marks it as the wrong environment, so it's replaced). To roll back to
+# staging, set this to `staging` and re-run.
 proxmox_acme_enable: true
 proxmox_acme_domain: "fabricant.ucsd.edu"
 proxmox_acme_contact: "e4e@ucsd.edu"       # LE expiry notices (matches the Traefik ACME contact)
-proxmox_acme_environment: staging          # → production after staging validates
+proxmox_acme_environment: production        # real Let's Encrypt (staging validated first)
 
 # ── NFS exports ──────────────────────────────────────────────────────────────
 nfs_exports:
