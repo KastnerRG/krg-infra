@@ -1,0 +1,114 @@
+# Proxmox VE Active Directory realm + group-sync → admin ACL.
+#
+# Realm config + sync write to /etc/pve (cluster filesystem), so they're
+# cluster-wide. The whole thing no-ops unless the bind password is supplied
+# (deploy-ansible.sh materializes it from OpenBao) — so `--check`/local runs and a
+# control node without OpenBao creds still converge the rest of the baseline.
+- name: Configure the Proxmox AD realm
+  when: (pve_ad_bind_password | default('') | length) > 0
+  block:
+    # One option list for add + modify. For an AD realm the only add-only flag is
+    # --type (modify accepts domain/server/bind/etc.), so — unlike the OIDC realm —
+    # no flag needs splitting out. no_log: carries --password.
+    - name: Build the AD realm option arguments
+      ansible.builtin.set_fact:
+        _pve_ad_opts: >-
+          {{
+            ['--domain', pve_ad_domain,
+             '--server1', pve_ad_server1,
+             '--mode', pve_ad_mode,
+             '--verify', (pve_ad_verify | int | string),
+             '--base_dn', pve_ad_base_dn,
+             '--bind_dn', pve_ad_bind_dn,
+             '--password', pve_ad_bind_password,
+             '--default', (pve_ad_default_realm | int | string),
+             '--comment', 'KRG Active Directory (managed by ansible pve_ad)',
+             '--filter', pve_ad_user_filter,
+             '--group_filter', pve_ad_group_filter,
+             '--sync-defaults-options', ('enable-new=' + (pve_ad_sync_enable_new | int | string))]
+            + (['--server2', pve_ad_server2] if (pve_ad_server2 | length) > 0 else [])
+          }}
+      no_log: true
+
+    - name: List existing realms
+      ansible.builtin.command: pveum realm list --output-format json
+      register: _pve_realms
+      changed_when: false
+      check_mode: false # read-only; must run under --check so the branch below resolves
+
+    - name: Add the AD realm (when absent)
+      ansible.builtin.command:
+        argv: "{{ ['pveum', 'realm', 'add', pve_ad_realm, '--type', 'ad'] + _pve_ad_opts }}"
+      when: pve_ad_realm not in (_pve_realms.stdout | from_json | map(attribute='realm') | list)
+      no_log: true # argv carries --password
+      changed_when: true
+
+    # Reconcile when present — re-pushes every flag incl. a rotated --password.
+    # changed_when: false: the stored password isn't read back, so we can't detect
+    # drift; this unconditional sync is how a rotated bind password propagates.
+    - name: Reconcile the existing AD realm (when present)
+      ansible.builtin.command:
+        argv: "{{ ['pveum', 'realm', 'modify', pve_ad_realm] + _pve_ad_opts }}"
+      when: pve_ad_realm in (_pve_realms.stdout | from_json | map(attribute='realm') | list)
+      no_log: true
+      changed_when: false
+
+    # Sync now so the admin group + its members exist as PVE principals before we
+    # ACL the group. Output is non-secret (counts of added/updated) — keep it
+    # visible; it's the main bring-up signal.
+    - name: Sync the realm (users + groups)
+      ansible.builtin.command: >-
+        pveum realm sync {{ pve_ad_realm }}
+        --scope {{ pve_ad_sync_scope }}
+        --enable-new {{ pve_ad_sync_enable_new | int }}
+      changed_when: true
+
+    # Grant the synced admin group Administrator. The group only exists after the
+    # sync above. failed_when surfaces the real cause (e.g. the synced group id
+    # differs from pve_ad_admin_pve_group — see the ⚠ in defaults).
+    - name: Grant the AD admin group its role on the tree
+      ansible.builtin.command: >-
+        pveum aclmod {{ pve_ad_admin_acl_path }}
+        --groups {{ pve_ad_admin_pve_group }}
+        --roles {{ pve_ad_admin_role }}
+      changed_when: false # aclmod is idempotent and reports nothing
+
+    # ── Migration cleanup: retire the OIDC realm this replaces ───────────────────
+    # Safe + idempotent — the 'authentik' realm name is ours and distinct from the
+    # 'krg' AD realm. Runs only AFTER the AD realm + sync + ACL above succeed, so
+    # OIDC is never torn down before AD is in place. Ansible (unlike terraform)
+    # doesn't auto-remove what a deleted role created, so do it explicitly.
+    #
+    # NOT removed here: the OLD local PVE group `proxmox-admins` (created by the
+    # former pve_oidc role). The new SYNCED admin group may share that id depending
+    # on PVE's sync naming (the ⚠ in defaults) — deleting it could nuke the new
+    # group. Remove the stale local group by hand once you've confirmed the synced
+    # id (docs/proxmox-auth.md).
+    - name: Remove the superseded OIDC realm
+      ansible.builtin.command: pveum realm delete authentik
+      register: _pve_old_realm
+      changed_when: _pve_old_realm.rc == 0
+      failed_when: >-
+        _pve_old_realm.rc != 0
+        and 'does not exist' not in (_pve_old_realm.stderr | default(''))
+        and 'no such realm' not in (_pve_old_realm.stderr | lower | default(''))
+
+    # ── Periodic re-sync (membership changes in AD propagate within the cadence) ──
+    - name: Install the realm-sync service + timer
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - pve-realm-sync.service
+        - pve-realm-sync.timer
+      notify: Reload systemd
+
+    - name: Enable + start the realm-sync timer
+      ansible.builtin.systemd_service:
+        name: pve-realm-sync.timer
+        enabled: true
+        state: started
+        daemon_reload: true

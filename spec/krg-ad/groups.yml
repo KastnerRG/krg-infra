@@ -37,7 +37,14 @@ groups:
   - { name: "Docker Users", description: "docker daemon access on hosts (docker.nix accessGroups -> ad-group-sync)" }
   - { name: "KastnerML", description: "Access to the kastner-ml host" }
   - { name: "Guacamole Admins", description: "Apache Guacamole administrators" }
-  - { name: "Proxmox Admins", description: "Administrator on the Proxmox VE web UI via Authentik OIDC SSO (terraform/authentik proxmox provider -> PVE proxmox-admins group; ansible pve_oidc). Nest \"Domain Admins\" in here to give hypervisor SSH admins the UI too." }
+  # Space-FREE name on purpose: PVE's AD-realm sync rejects group ids with spaces
+  # ([A-Za-z0-9._-]+), so a "Proxmox Admins" group would be skipped on sync. The
+  # ansible pve_ad role syncs this group from KRG.LOCAL into PVE and ACLs it
+  # Administrator on /. Add hypervisor admins as DIRECT members (PVE sync does not
+  # expand nested groups). RENAME NOTE: the old "Proxmox Admins" group (OIDC era) is
+  # retired — rename it to this in AD (preserves membership) or move members over,
+  # then delete the old one by hand (this apply is non-authoritative; it won't).
+  - { name: "proxmox-admins", description: "Administrator on the Proxmox VE web UI + apps via the PVE Active Directory realm (ansible pve_ad). Direct members only." }
   - { name: "Temporal Users", description: "May mint a lab-PKI client cert to reach the Temporal mTLS frontend (OpenBao ldap auth -> pki_int/issue/user; terraform/openbao var.pki_ad_group_roles)" }
 
   # --- Lab / org groups ---

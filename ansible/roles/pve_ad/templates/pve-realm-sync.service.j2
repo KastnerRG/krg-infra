@@ -1,0 +1,10 @@
+# Managed by ansible (pve_ad role). Re-sync the KRG AD realm into PVE so group
+# membership changes in AD propagate. Triggered by pve-realm-sync.timer.
+[Unit]
+Description=Sync the {{ pve_ad_realm }} Active Directory realm into Proxmox
+After=pve-cluster.service
+Wants=pve-cluster.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pveum realm sync {{ pve_ad_realm }} --scope {{ pve_ad_sync_scope }} --enable-new {{ pve_ad_sync_enable_new | int }}

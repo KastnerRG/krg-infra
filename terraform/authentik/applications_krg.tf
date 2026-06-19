@@ -249,112 +249,24 @@ resource "authentik_application" "temporal" {
 }
 
 # ── Proxmox ────────────────────────────────────────────────────────────────────
-# SSO login to the PVE web UI (https://fabricant.ucsd.edu:8006). PVE's OpenID
-# Connect realm (ansible pve_oidc role) is the client; it verifies the ID token
-# against jwks_uri, so this carries an RS256 signing_key — without it Authentik
-# falls back to HS256 + an empty JWKS → "Invalid ID token" (the failure
-# guacamole/vaultwarden/temporal/garage-ui hit).
+# LINK-ONLY tile (no provider). Proxmox auth does NOT go through Authentik OIDC —
+# the PVE web UI + the Proxmox mobile/CLI apps can't do the OIDC browser-redirect
+# flow, so login is handled by a native PVE Active Directory realm against krg-ldap
+# (ansible `pve_ad` role; AD group `proxmox-admins` → Administrator). This tile just
+# keeps Proxmox visible+clickable on the Authentik dashboard (the lab launcher):
+# clicking opens the PVE UI, where the user signs in with their KRG.LOCAL account.
 #
-# Permission model: PVE 8.2 group-sync (realm `groups-claim`) reads the `groups`
-# claim and sets the user's PVE group membership on every login; the pve_oidc role
-# pre-creates a PVE group `proxmox-admins` with Administrator on `/`. PVE group ids
-# can't contain spaces, so the AD group name ("Proxmox Admins") can't be emitted
-# raw — the proxmox-specific scope below maps it to the PVE-safe id `proxmox-admins`.
-# Membership in the AD group is the only gate: a non-member who completes SSO is
-# autocreated as a PVE user with NO ACL (can authenticate, sees nothing).
-
-# Proxmox-specific `groups` scope: emits PVE-safe group ids, NOT the raw AD group
-# names the generic `groups` scope (applications_e4e.tf) returns. Today the only
-# mapping is AD "Proxmox Admins" → PVE "proxmox-admins"; extend the dict to grant
-# other AD groups a different PVE role (pair each new id with an ACL in the
-# pve_oidc role). NOTE: nested AD groups are NOT expanded here — `groups` is the
-# user's DIRECT Authentik groups, so "Domain Admins" nested inside "Proxmox Admins"
-# only counts if the LDAP sync flattens it; otherwise add the human (or Domain
-# Admins) to "Proxmox Admins" directly. See docs/proxmox-sso.md.
-resource "authentik_property_mapping_provider_scope" "proxmox_groups" {
-  name        = "OIDC Scope — groups (Proxmox PVE ids)"
-  scope_name  = "groups"
-  description = "Maps AD groups to PVE-safe group ids for PVE realm group-sync."
-  # Use ONLY constructs Authentik's evaluator is known to handle: a plain list
-  # comprehension + an `if` (same shape as the stock profile mapping and groups.tf's
-  # group_superuser). The earlier version used a SET comprehension and a
-  # `dict.items()` comprehension; the evaluator silently returned an empty result
-  # (no error logged) → PVE got no groups → group-sync wiped membership. To grant
-  # another AD group a PVE role, add another `if … append(…)` block here (and a
-  # matching ACL in the pve_oidc role). PVE groupids must match [A-Za-z0-9._-]+.
-  expression = <<-EOT
-    group_names = [group.name for group in request.user.groups.all()]
-    groups = []
-    if "Proxmox Admins" in group_names:
-        groups.append("proxmox-admins")
-    return {"groups": groups}
-  EOT
-}
-
-# Proxmox-specific `profile` scope — the STOCK profile scope emits a `groups` claim
-# of raw AD group names ("Domain Admins", "Proxmox Admins", …). PVE rejects any
-# group id containing spaces ("openid group '…' contains invalid characters") and,
-# with groups-overwrite on, ends up removing the user from ALL groups — so nobody
-# becomes an admin. PVE always requests `profile` (for preferred_username), and that
-# stock `groups` claim OVERWRITES the PVE-safe one from proxmox_groups. This drop-in
-# replacement carries the same profile claims MINUS groups, so the only `groups`
-# claim left is the mapped one (proxmox-admins). Swapped in below in place of the
-# managed profile scope.
-resource "authentik_property_mapping_provider_scope" "proxmox_profile" {
-  name        = "OIDC Scope — profile (Proxmox, no groups claim)"
-  scope_name  = "profile"
-  description = "Standard profile claims without the raw-group-names `groups` claim (PVE gets PVE-safe groups from proxmox_groups)."
-  expression  = <<-EOT
-    return {
-        "name": request.user.name,
-        "given_name": request.user.name,
-        "preferred_username": request.user.username,
-        "nickname": request.user.username,
-        # Deliberately NO "groups" — see the resource comment above.
-    }
-  EOT
-}
-
-resource "authentik_provider_oauth2" "proxmox" {
-  name                  = "Provider for Proxmox"
-  client_id             = "proxmox"
-  authorization_flow    = data.authentik_flow.default_authorization.id
-  invalidation_flow     = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://fabricant.ucsd.edu:8006" }]
-  # Allowed OAuth2 grant types. MUST be set explicitly: the goauthentik provider
-  # (>= 2026.x) only sends grant_types when non-empty and the Authentik API then
-  # defaults a NEW provider to an EMPTY set — so an unset grant_types makes every
-  # authorize request fail "Invalid grant_type for provider" → "The request is
-  # otherwise malformed" (the PVE SSO bug). Older KRG providers carry the legacy
-  # 7-type default only because they were created by an older provider version that
-  # sent it; new ones must opt in. PVE uses the authorization-code flow (+ refresh).
-  grant_types = ["authorization_code", "refresh_token"]
-  # openid + email + the PROXMOX profile scope (stock profile minus the raw-groups
-  # claim, see proxmox_profile) + the PVE-id groups scope. NOT local.std_scopes —
-  # that pulls in the stock profile whose `groups` claim breaks PVE group-sync.
-  property_mappings = [
-    data.authentik_property_mapping_provider_scope.openid.id,
-    data.authentik_property_mapping_provider_scope.email.id,
-    authentik_property_mapping_provider_scope.proxmox_profile.id,
-    authentik_property_mapping_provider_scope.proxmox_groups.id,
-  ]
-  # RS256 signing key — REQUIRED (PVE verifies the ID token against jwks_uri).
-  signing_key = data.authentik_certificate_key_pair.default.id
-  # PVE keys the user id on this claim (realm username-claim = username); a stable,
-  # human-readable subject. sub itself stays the opaque per-user id.
-  sub_mode               = "user_username"
-  access_token_validity  = "minutes=60"
-  refresh_token_validity = "days=30"
-}
-
+# An application with no `protocol_provider` is a plain launch-URL bookmark — that's
+# intentional here. See docs/proxmox-auth.md. (History: this was an OIDC app; the
+# Authentik provider/scopes/secret were removed when auth moved to the AD realm —
+# the goauthentik 2026.5 grant_types/ak_groups/evaluator quirks made OIDC group-sync
+# more trouble than it was worth, and OIDC never served the apps anyway.)
 resource "authentik_application" "proxmox" {
-  name = "Proxmox"
-  # slug is load-bearing: the realm issuer-url embeds /application/o/proxmox/.
-  slug              = "proxmox"
-  protocol_provider = authentik_provider_oauth2.proxmox.id
-  meta_launch_url   = "https://fabricant.ucsd.edu:8006"
-  meta_description  = "Proxmox VE hypervisor management"
-  meta_icon         = "krg-icons/proxmox.svg"
-  group             = "Infrastructure"
-  open_in_new_tab   = true
+  name             = "Proxmox"
+  slug             = "proxmox"
+  meta_launch_url  = "https://fabricant.ucsd.edu:8006"
+  meta_description = "Proxmox VE hypervisor management"
+  meta_icon        = "krg-icons/proxmox.svg"
+  group            = "Infrastructure"
+  open_in_new_tab  = true
 }

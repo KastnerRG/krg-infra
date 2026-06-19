@@ -61,35 +61,34 @@ echo "::group::ansible site.yml (Proxmox hosts)"
 if ! (
   cd "${REPO_ROOT}/ansible"
 
-  # --- Materialize the Proxmox OIDC realm secret from OpenBao ----------------
-  # The pve_oidc role configures fabricant's PVE OpenID Connect realm; its
-  # `client-key` is the Authentik-minted secret at secret/krg-prod/proxmox-oidc
-  # (written by terraform/authentik). fabricant has no vault-agent, so — exactly
-  # like the synology block below — krg-deploy AppRole-reads it here and passes it
-  # as a short-lived 0600 extra-vars file (never on argv/log; shredded on exit).
-  # GRACEFUL: if the AppRole creds aren't provisioned, skip the OIDC vars — the
-  # pve_oidc role no-ops on an empty secret (same model as oec_installer), so the
-  # rest of the baseline still applies. Reads need the secret/data/krg-prod/proxmox-oidc
-  # capability on the krg-deploy AppRole (terraform/openbao/main.tf).
-  pve_oidc_args=()
+  # --- Materialize the Proxmox AD-realm bind password from OpenBao -----------
+  # The pve_ad role configures fabricant's PVE Active Directory realm; its bind
+  # account (svc-pve) password lives at secret/krg-prod/pve-ad-bind (seeded
+  # MANUALLY — svc-pve is an AD service account, not minted by tofu). fabricant has
+  # no vault-agent, so — like the synology block below — krg-deploy AppRole-reads it
+  # here and passes it as a short-lived 0600 extra-vars file (never on argv/log;
+  # shredded on exit). GRACEFUL: if the AppRole creds aren't provisioned, or the
+  # secret isn't seeded, skip the var — the pve_ad realm step no-ops on an empty
+  # password (same model as oec_installer). Reads need the
+  # secret/data/krg-prod/pve-ad-bind capability on the krg-deploy AppRole
+  # (terraform/openbao/main.tf).
+  pve_ad_args=()
   if [[ -r "$role_id_file" && -r "$secret_id_file" ]]; then
     VAULT_TOKEN="$(bao write -field=token auth/approle/login \
       role_id="$(< "$role_id_file")" secret_id="$(< "$secret_id_file")")" \
       || { echo "FATAL: OpenBao AppRole login failed"; exit 1; }
     export VAULT_TOKEN
-    if pve_oidc_json="$(bao kv get -format=json secret/krg-prod/proxmox-oidc 2>/dev/null)"; then
+    if pve_ad_pw="$(bao kv get -field=password secret/krg-prod/pve-ad-bind 2>/dev/null)"; then
       umask 077
-      pve_vars_file="$(mktemp -t pve-oidc-vars.XXXXXX.json)"
+      pve_vars_file="$(mktemp -t pve-ad-vars.XXXXXX.json)"
       trap 'shred -u "$pve_vars_file" 2>/dev/null || rm -f "$pve_vars_file"' EXIT
-      jq -n --argjson o "$(jq '.data.data' <<<"$pve_oidc_json")" \
-        '{ pve_oidc_client_id: $o.client_id, pve_oidc_client_secret: $o.client_secret, pve_oidc_issuer_url: $o.issuer_url }' \
-        > "$pve_vars_file"
-      pve_oidc_args=(-e @"$pve_vars_file")
+      jq -n --arg pw "$pve_ad_pw" '{ pve_ad_bind_password: $pw }' > "$pve_vars_file"
+      pve_ad_args=(-e @"$pve_vars_file")
     else
-      echo "note: secret/krg-prod/proxmox-oidc not readable yet — pve_oidc realm step will no-op (run terraform/authentik first)"
+      echo "note: secret/krg-prod/pve-ad-bind not readable yet — pve_ad realm step will no-op (seed the svc-pve password; see docs/proxmox-auth.md)"
     fi
   else
-    echo "note: OpenBao AppRole creds not provisioned — pve_oidc realm step will no-op (see docs/krg-deploy-ansible-setup.md)"
+    echo "note: OpenBao AppRole creds not provisioned — pve_ad realm step will no-op (see docs/krg-deploy-ansible-setup.md)"
   fi
 
   # Collections (ansible/requirements.yml) are provisioned ON the control node, not
@@ -105,7 +104,7 @@ if ! (
   # CONVERGES in warn-mode (the ad_client role stages config + warns when not joined);
   # the strict membership gate runs ONCE, for the whole fleet, in the final verify
   # phase (deploy/deploy-verify.sh), AFTER the firewall has landed.
-  ansible-playbook playbooks/site.yml -e "oec_installer=${OEC_INSTALLER}" "${pve_oidc_args[@]}"
+  ansible-playbook playbooks/site.yml -e "oec_installer=${OEC_INSTALLER}" "${pve_ad_args[@]}"
 ); then
   echo "FAILED: ansible site.yml"
   printf '\n::endgroup::\n'

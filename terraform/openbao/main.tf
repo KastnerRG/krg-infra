@@ -85,7 +85,6 @@ locals {
     "krg-prod/guacamole",
     "krg-prod/temporal-oidc",
     "krg-prod/temporal",
-    "krg-prod/proxmox-oidc",
     "e4e-nas/garage-ui-oidc",
     "e4e-nas/dsm-sso-oidc",
   ]
@@ -140,6 +139,15 @@ resource "vault_policy" "krg_deploy" {
     # secret, also consumed by the LDAP outpost on krg-prod), so it needs an explicit
     # scoped read here — secret/krg-prod/* is NOT blanket-readable (#187).
     path "secret/data/krg-prod/authentik-ldap" {
+      capabilities = ["read"]
+    }
+
+    # Read the PVE Active Directory realm bind-account (svc-pve) password. krg-deploy
+    # runs the `pve_ad` ansible role against fabricant; the hypervisor has no
+    # vault-agent, so deploy/deploy-ansible.sh AppRole-reads this and passes it as an
+    # extra-var to configure the AD realm's bind. Seeded MANUALLY (svc-pve is an AD
+    # service account, not minted here). Read-only, single path (#187).
+    path "secret/data/krg-prod/pve-ad-bind" {
       capabilities = ["read"]
     }
 
