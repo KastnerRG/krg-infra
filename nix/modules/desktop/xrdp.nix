@@ -147,6 +147,11 @@ in {
             cd /run/xrdp-tls
             ${pkgs.gawk}/bin/awk '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/' bundle.pem > cert.pem
             ${pkgs.gawk}/bin/awk '/-BEGIN [A-Z ]*PRIVATE KEY-/,/-END [A-Z ]*PRIVATE KEY-/' bundle.pem > key.pem
+            # awk runs as root, so the split files land root:root. The xrdp daemon
+            # drops to the unprivileged `xrdp` user/group, so it must own the group
+            # to read its own key — without this, TLS init fails and every RDP
+            # connection (Guacamole or SSH-tunneled) dies during negotiation.
+            chown root:xrdp cert.pem key.pem
             chmod 0640 cert.pem key.pem
           '';
         };
