@@ -5,8 +5,12 @@ ARM agreement and a **Technology Control Plan (TCP)**. This document is the runb
 for the *storage* side of that plan — the encrypted-at-rest VeraCrypt volume and its
 read-only mount on `waiter` — and maps each TCP sentence to where it is enforced.
 
-The *access* side (RDP forced through an auditable SSH tunnel, key-only SSH) is
-implemented separately and cross-referenced below.
+The *access* side (RDP forced through an auditable SSH tunnel, key-only SSH) is the
+companion control in [arm-pdk-tcp.md](arm-pdk-tcp.md) — `krg.xrdp.gatewayDeny`. Both
+halves are enforced for `waiter` and gate on the same AD group, `ARM PDK Access`
+(declared in `spec/krg-ad/groups.yml`); they bridge it into *different* local groups
+via `krg.adGroupSync` — `armpdk` here (vault read access), `armpdk-rdp-deny` there (the
+RDP deny set = `ARM PDK Access` ∪ sudoers ∪ wheel).
 
 ## TCP → implementation mapping
 
@@ -17,7 +21,7 @@ implemented separately and cross-referenced below.
 | "password is securely stored in a self-hosted VaultWarden … restricted to system administrators only" | The passphrase is **never on the box** and **never in git**. It lives in the admin-only VaultWarden collection; an admin supplies it interactively at mount time. The mount tooling reads it from the tty / `systemd-ask-password` and never writes it to disk. |
 | "mounted read-only by system administrators on system boot and remains mounted" | `krg.armpdkVault` (`nix/modules/security/armpdk-vault.nix`): `armpdk-mount` (or `systemctl start armpdk-vault`) run by an admin after each boot; mounts `--read-only` and stays mounted. No on-box key → no unattended auto-mount, by design. |
 | "Access is restricted to authorized users through Linux group permissions … segregated access" | Mountpoint `/opt/arm-pdk` and the volume's own root dir are `root:armpdk 0750`. `armpdk` is a fixed-GID local group; AD `ARM PDK Access` members are bridged into it by `krg.adGroupSync`. |
-| "remote … via SSH or RDP, RDP requiring TLS … tunneled over SSH … SSH restricted to public key" | `krg.xrdp.gatewayDeny` (`nix/modules/desktop/xrdp.nix`, PR #240) forces privileged/PDK users' RDP through a loopback SSH tunnel; xrdp TLS uses the lab-CA cert from `pki_int` (vault-agent); SSH is key-only (`ssh_hardening`). |
+| "remote … via SSH or RDP, RDP requiring TLS … tunneled over SSH … SSH restricted to public key" | `krg.xrdp.gatewayDeny` (`nix/modules/desktop/xrdp.nix`; see [arm-pdk-tcp.md](arm-pdk-tcp.md)) forces privileged/PDK users' RDP through a loopback SSH tunnel; xrdp TLS uses the lab-CA cert from `pki_int` (vault-agent); SSH is key-only (`ssh_hardening`). |
 | "should not be used in open or public spaces …" | Operational / physical control — not enforceable in software. |
 
 ## Architecture

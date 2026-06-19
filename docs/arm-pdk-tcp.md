@@ -6,6 +6,12 @@ an **auditable SSH tunnel** (key-based, logged), never via the one-click Guacamo
 browser RDP. This documents the technical control that enforces that, what it does
 *not* cover, and the on-box step needed before it can be trusted.
 
+This is the **access** half of the ARM TCP. The **storage** half — the export-controlled
+PDK encrypted at rest in a read-only VeraCrypt vault — is in
+[arm-pdk-veracrypt.md](arm-pdk-veracrypt.md). Both gate on the AD group `ARM PDK Access`
+(declared in `spec/krg-ad/groups.yml`); this control also folds in sudoers + `wheel`
+(see below).
+
 ## Who is gated
 
 The deny set is **`ARM PDK Access` ∪ everyone who can sudo**:
