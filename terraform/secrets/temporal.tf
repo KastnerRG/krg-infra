@@ -14,6 +14,14 @@
 resource "random_password" "temporal_db" {
   length  = 32
   special = false
+  # `tofu import` sets `result` but can't capture generation inputs — it defaults
+  # `special` to true, which (force-new) would REPLACE the resource and rotate the
+  # live DB password (postgres lockout). Ignore input drift: this is a generate-ONCE
+  # value, and a live DB password must never silently rotate from a config tweak.
+  # (The OIDC client_secret below intentionally has NO such guard — it rotates.)
+  lifecycle {
+    ignore_changes = [special]
+  }
 }
 
 resource "vault_kv_secret_v2" "temporal" {
