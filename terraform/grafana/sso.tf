@@ -1,7 +1,7 @@
 # Read the OIDC credentials written by the authentik workspace.
 data "vault_kv_secret_v2" "grafana_oidc" {
   mount = "secret"
-  name  = "krg-prod/grafana-oidc"
+  name  = "krg-prod/authentik-managed/grafana-oidc"
 }
 
 # Configure Grafana generic OAuth SSO via Authentik.

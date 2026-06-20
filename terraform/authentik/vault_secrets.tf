@@ -8,12 +8,12 @@
 #     local /var/lib/krg/krg-prod/.secrets/*.env files at container start.
 #     The vault entries here are staged for future vault-agent/template
 #     rendering of those files; until then they must be populated manually
-#     (e.g. `bao kv get -field=client_secret secret/krg-prod/outline-oidc`
+#     (e.g. `bao kv get -field=client_secret secret/krg-prod/authentik-managed/outline-oidc`
 #     into the matching .secrets file).
 
 resource "vault_kv_secret_v2" "grafana_oidc" {
   mount = "secret"
-  name  = "krg-prod/grafana-oidc"
+  name  = "krg-prod/authentik-managed/grafana-oidc"
   data_json = jsonencode({
     client_id     = authentik_provider_oauth2.grafana.client_id
     client_secret = authentik_provider_oauth2.grafana.client_secret
@@ -23,7 +23,7 @@ resource "vault_kv_secret_v2" "grafana_oidc" {
 
 resource "vault_kv_secret_v2" "outline_oidc" {
   mount = "secret"
-  name  = "krg-prod/outline-oidc"
+  name  = "krg-prod/authentik-managed/outline-oidc"
   data_json = jsonencode({
     client_id     = authentik_provider_oauth2.outline.client_id
     client_secret = authentik_provider_oauth2.outline.client_secret
@@ -33,7 +33,7 @@ resource "vault_kv_secret_v2" "outline_oidc" {
 
 resource "vault_kv_secret_v2" "mlflow_oidc" {
   mount = "secret"
-  name  = "krg-prod/mlflow-oidc"
+  name  = "krg-prod/authentik-managed/mlflow-oidc"
   data_json = jsonencode({
     client_id     = authentik_provider_oauth2.mlflow.client_id
     client_secret = authentik_provider_oauth2.mlflow.client_secret
@@ -43,7 +43,7 @@ resource "vault_kv_secret_v2" "mlflow_oidc" {
 
 resource "vault_kv_secret_v2" "roster_oidc" {
   mount = "secret"
-  name  = "krg-prod/roster-oidc"
+  name  = "krg-prod/authentik-managed/roster-oidc"
   data_json = jsonencode({
     client_id     = authentik_provider_oauth2.e4e_roster.client_id
     client_secret = authentik_provider_oauth2.e4e_roster.client_secret
@@ -56,7 +56,7 @@ resource "vault_kv_secret_v2" "roster_oidc" {
 # /var/lib/krg/krg-prod/.secrets/vaultwarden.env; see docs/vaultwarden-sso.md).
 resource "vault_kv_secret_v2" "vaultwarden_oidc" {
   mount = "secret"
-  name  = "krg-prod/vaultwarden-oidc"
+  name  = "krg-prod/authentik-managed/vaultwarden-oidc"
   data_json = jsonencode({
     client_id     = authentik_provider_oauth2.vaultwarden.client_id
     client_secret = authentik_provider_oauth2.vaultwarden.client_secret
@@ -69,7 +69,7 @@ resource "vault_kv_secret_v2" "vaultwarden_oidc" {
 # the temporal-ui compose service (krg.vaultAgent in nix/hosts/krg-prod/default.nix).
 resource "vault_kv_secret_v2" "temporal_oidc" {
   mount = "secret"
-  name  = "krg-prod/temporal-oidc"
+  name  = "krg-prod/authentik-managed/temporal-oidc"
   data_json = jsonencode({
     client_id     = authentik_provider_oauth2.temporal.client_id
     client_secret = authentik_provider_oauth2.temporal.client_secret
@@ -115,7 +115,7 @@ resource "vault_kv_secret_v2" "dsm_sso_oidc" {
 # value Guacamole actually needs (the Postgres password) is in guacamole_secrets.tf.
 resource "vault_kv_secret_v2" "guacamole_oidc" {
   mount = "secret"
-  name  = "krg-prod/guacamole-oidc"
+  name  = "krg-prod/authentik-managed/guacamole-oidc"
   data_json = jsonencode({
     client_id     = authentik_provider_oauth2.guacamole.client_id
     client_secret = authentik_provider_oauth2.guacamole.client_secret

@@ -131,7 +131,7 @@ materialize() { # <target>
       # authentik target's write-back; grafana-admin is seeded manually.
       [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping grafana" >&2; return 1; }
       _kv secret/krg-prod/grafana-admin password >/dev/null || return 1
-      _kv secret/krg-prod/grafana-oidc client_id >/dev/null || return 1
+      _kv secret/krg-prod/authentik-managed/grafana-oidc client_id >/dev/null || return 1
       ;;
     authentik)
       [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping authentik" >&2; return 1; }

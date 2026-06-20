@@ -63,22 +63,22 @@ if ! (
 
   # --- Materialize the Proxmox LDAP-realm bind creds from OpenBao ------------
   # The pve_ldap role configures fabricant's PVE LDAP realm (Authentik outpost); its
-  # bind account (svc-pve-ldap) lives at secret/krg-prod/proxmox-ldap-bind, WRITTEN
-  # by terraform/authentik (the Authentik service-account password). fabricant has
+  # bind account (svc-pve-ldap) lives at secret/krg-prod/authentik-managed/proxmox-ldap-bind,
+  # WRITTEN by terraform/authentik (the Authentik service-account password). fabricant has
   # no vault-agent, so — like the synology block below — krg-deploy AppRole-reads it
   # here and passes bind_dn + password as a short-lived 0600 extra-vars file (never
   # on argv/log; shredded on exit). GRACEFUL: if the AppRole creds aren't
   # provisioned, or the secret isn't written yet (run terraform/authentik first),
   # skip the vars — the pve_ldap realm step no-ops on an empty password (same model
-  # as oec_installer). Reads are covered by the authentik_managed_secrets caps on the
-  # krg-deploy AppRole (terraform/openbao/main.tf).
+  # as oec_installer). Reads are covered by the authentik-managed write-back glob on
+  # the krg-deploy AppRole (terraform/openbao/main.tf).
   pve_ldap_args=()
   if [[ -r "$role_id_file" && -r "$secret_id_file" ]]; then
     VAULT_TOKEN="$(bao write -field=token auth/approle/login \
       role_id="$(< "$role_id_file")" secret_id="$(< "$secret_id_file")")" \
       || { echo "FATAL: OpenBao AppRole login failed"; exit 1; }
     export VAULT_TOKEN
-    if pve_ldap_json="$(bao kv get -format=json secret/krg-prod/proxmox-ldap-bind 2>/dev/null)"; then
+    if pve_ldap_json="$(bao kv get -format=json secret/krg-prod/authentik-managed/proxmox-ldap-bind 2>/dev/null)"; then
       umask 077
       pve_vars_file="$(mktemp -t pve-ldap-vars.XXXXXX.json)"
       trap 'shred -u "$pve_vars_file" 2>/dev/null || rm -f "$pve_vars_file"' EXIT
@@ -86,7 +86,7 @@ if ! (
         '{ pve_ldap_bind_dn: $o.bind_dn, pve_ldap_bind_password: $o.password }' > "$pve_vars_file"
       pve_ldap_args=(-e @"$pve_vars_file")
     else
-      echo "note: secret/krg-prod/proxmox-ldap-bind not readable yet — pve_ldap realm step will no-op (run terraform/authentik first; see docs/proxmox-auth.md)"
+      echo "note: secret/krg-prod/authentik-managed/proxmox-ldap-bind not readable yet — pve_ldap realm step will no-op (run terraform/authentik first; see docs/proxmox-auth.md)"
     fi
   else
     echo "note: OpenBao AppRole creds not provisioned — pve_ldap realm step will no-op (see docs/krg-deploy-ansible-setup.md)"
