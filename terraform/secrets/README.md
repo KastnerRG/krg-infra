@@ -35,19 +35,25 @@ failure"; we just guarantee the secret exists before the consumer runs.
 Two modes:
 
 - **DB passwords — PRESERVE** (postgres set them at init; rotating locks out the live
-  DB). Import the existing value so the first apply is a no-op:
+  DB). Import only the **`random_password`** (the value to preserve). Do **not** import
+  the `vault_kv_secret_v2` — its import introspects the mount via `sys/`, which the
+  krg-deploy AppRole policy doesn't grant ("no mount found"); the KV entry is simply
+  re-asserted with the same value on apply (a no-op new version). `random_password`
+  import is the local `random` provider — no Vault, works with the AppRole:
   ```bash
-  # On krg-deploy, krg-deploy AppRole VAULT_TOKEN exported, in terraform/secrets:
+  # On krg-deploy, in terraform/secrets:
   tofu import random_password.temporal_db "$(bao kv get -field=db_password secret/krg-prod/authentik-managed/temporal)"
-  tofu import vault_kv_secret_v2.temporal   secret/krg-prod/authentik-managed/temporal
+  tofu plan   # CONFIRM random_password.temporal_db => No changes (value preserved)
   ```
 - **OIDC `client_secret`s — ROTATE** (no import). The first apply mints a fresh value
   and writes it; `terraform/authentik` sets the same value on the provider in the same
   run, and the consumer re-renders — so Authentik + consumer converge within the run.
 
 ### Apply order (one-time)
-1. `terraform/secrets`: run the imports above, then **`tofu plan` and confirm the
-   `temporal` db_password shows NO change** (import worked) before apply. Apply.
+1. `terraform/secrets`: run the `random_password` import above, then **`tofu plan` and
+   confirm `random_password.temporal_db` shows NO change** (preserved) before apply.
+   The two `vault_kv_secret_v2` + the OIDC `random_password` show as creates (the KV
+   re-assert is a same-value no-op; the OIDC secret is the intended rotation). Apply.
 2. `terraform/authentik`: applies the `removed {}` drops (no destroy) + sets
    `client_secret` from the data source. **Gate:** `tofu plan` must show the temporal
    provider's `client_secret` *updating in place* — **not** a resource replace and
