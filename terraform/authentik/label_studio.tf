@@ -13,11 +13,13 @@
 # the IdP metadata we hand it.
 
 locals {
-  # SP endpoints copied from Label Studio (Organization → SSO & SAML). This org
-  # reports the SAME URL for the ACS and the Audience/EntityID. Non-secret — these
-  # are exchanged in SAML metadata and carry only the org id; see
-  # docs/label-studio-sso.md.
-  label_studio_acs_url  = "https://app.heartex.com/saml/96b41ce87868c7da174b3593c2555d6231c878916f25d806bff2e3330d5b722c3cefcf4da5ecc2836a424f32e0d460181f9a34d54e8eb59210b86ef04a068f7c/acs"
+  # SP endpoints copied from Label Studio (Organization → SSO & SAML → SAML config).
+  # This org reports the SAME URL for the ACS and the Audience/EntityID. Non-secret —
+  # exchanged in SAML metadata, carries only the org id; see docs/label-studio-sso.md.
+  # NOTE: this token is regenerated if the SSO connection is re-created in Label
+  # Studio — it MUST match the ACS URL currently shown in the SP config, or Authentik
+  # posts the assertion to the wrong recipient and the audience restriction fails.
+  label_studio_acs_url  = "https://app.heartex.com/saml/db9c7ce021d82b5b6af146e98237efcdfc3b3d31120f4eb0544da35afb514578e55388e10de3eb848c6439f2276448d3b7940764da15497d7216b288d2e548c3/acs"
   label_studio_audience = local.label_studio_acs_url
 }
 
