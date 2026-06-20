@@ -124,7 +124,7 @@ stack won't start.
 
 Some values already exist (skip them): `secret/krg-prod/grafana-admin`
 (field `password`, also used by the grafana tofu provider) and the
-authentik-generated `secret/krg-prod/vaultwarden-oidc`.
+authentik-generated `secret/krg-prod/authentik-managed/vaultwarden-oidc`.
 
 The rest are **LIVE** values — seed them at their *current* values, do **not**
 regenerate (rotating `secret_key` invalidates Authentik sessions; rotating the

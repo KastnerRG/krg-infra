@@ -54,7 +54,7 @@ with lib; let
         description = ''
           OpenBao Agent (consul-template) template body. KV-v2 reads use the
           `secret/data/<path>` form and fields under `.Data.data`, e.g.
-          `{{ with secret "secret/data/krg-prod/guacamole" }}...{{ .Data.data.db_password }}...{{ end }}`.
+          `{{ with secret "secret/data/krg-prod/authentik-managed/guacamole" }}...{{ .Data.data.db_password }}...{{ end }}`.
         '';
       };
     };

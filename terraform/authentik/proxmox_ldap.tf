@@ -93,10 +93,11 @@ resource "authentik_rbac_permission_user" "ldap_search" {
 }
 
 # Bind creds for PVE — read by deploy/deploy-ansible.sh (krg-deploy AppRole) and
-# passed to the pve_ldap role. Path enumerated in terraform/openbao/main.tf.
+# passed to the pve_ldap role. Under the authentik-managed write-back sub-path,
+# covered by the glob in terraform/openbao/main.tf (no per-path policy entry).
 resource "vault_kv_secret_v2" "proxmox_ldap_bind" {
   mount = "secret"
-  name  = "krg-prod/proxmox-ldap-bind"
+  name  = "krg-prod/authentik-managed/proxmox-ldap-bind"
   data_json = jsonencode({
     bind_dn  = "cn=${authentik_user.svc_pve_ldap.username},ou=users,${local.proxmox_ldap_base_dn}"
     base_dn  = local.proxmox_ldap_base_dn

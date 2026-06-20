@@ -25,15 +25,16 @@ PVE and granted **Administrator** on `/`. The local **PAM** realm stays break-gl
 - **terraform/authentik/proxmox_ldap.tf** — the `authentik_provider_ldap`, its
   application, a dedicated **LDAP outpost**, the read-only bind service account
   `svc-pve-ldap` (+ its `search_full_directory` permission), and the bind creds
-  written to `secret/krg-prod/proxmox-ldap-bind`.
+  written to `secret/krg-prod/authentik-managed/proxmox-ldap-bind`.
 - **nix/docker-compose/krg-prod/compose.authentik.yml** — the `authentik_ldap`
   outpost container (`ghcr.io/goauthentik/ldap`), publishing **6636 (LDAPS)** /
   3389, its token rendered from OpenBao via `krg.vaultAgent`
   (`authentik-ldap-outpost-token.env`). **⚠ This runtime is a SEPARATE, LATER change
   — see "Bring-up order" — because its token doesn't exist until the outpost is
   created, and the fail-closed agent can't tolerate a missing secret.**
-- **terraform/openbao** — `krg-deploy` may read/write `krg-prod/proxmox-ldap-bind`
-  (authentik-managed set).
+- **terraform/openbao** — `krg-deploy` may read/write `krg-prod/authentik-managed/*`
+  (one glob covers proxmox-ldap-bind + every other authentik-generated secret; no
+  per-path policy entry, no openbao apply when a new app is added).
 - **ansible/roles/pve_ldap** — configures the PVE LDAP realm on fabricant, syncs,
   ACLs the synced group, runs a `pve-realm-sync` timer. Materialized creds from
   OpenBao by `deploy/deploy-ansible.sh`.
@@ -48,7 +49,7 @@ service + its vault-agent token template) **must not ship in the same change as 
 terraform that creates the outpost** — deploy them in this order:
 
 1. **terraform/authentik apply** → creates the LDAP provider/app/outpost + bind
-   account + writes `secret/krg-prod/proxmox-ldap-bind`. (Safe — no NixOS dependency.)
+   account + writes `secret/krg-prod/authentik-managed/proxmox-ldap-bind`. (Safe — no NixOS dependency.)
 2. **Retrieve the outpost token** (Admin → Outposts → "authentik LDAP Outpost" →
    View token) and **seed it**:
    ```
@@ -77,7 +78,7 @@ permission, and the synced PVE group id are assumptions until validated. Do this
    ```bash
    ldapsearch -H ldaps://krg-prod.ucsd.edu:6636 -o tls_reqcert=never \
      -D "cn=svc-pve-ldap,ou=users,DC=krg,DC=ucsd,DC=edu" \
-     -w "$(bao kv get -field=password secret/krg-prod/proxmox-ldap-bind)" \
+     -w "$(bao kv get -field=password secret/krg-prod/authentik-managed/proxmox-ldap-bind)" \
      -b "DC=krg,DC=ucsd,DC=edu" "(cn=proxmox-admins)"
    ```
    - Confirm the **base_dn**, the **group DN** (`ou=groups,…`), the **username

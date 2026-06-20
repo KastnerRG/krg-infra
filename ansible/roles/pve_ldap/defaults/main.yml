@@ -21,7 +21,7 @@ pve_ldap_verify: false # outpost cert not trusted on fabricant yet — encrypted
 pve_ldap_base_dn: "DC=krg,DC=ucsd,DC=edu" # matches the LDAP provider's base_dn
 
 # Bind/search account (Authentik service account svc-pve-ldap). bind_dn + password
-# come from OpenBao (secret/krg-prod/proxmox-ldap-bind, written by
+# come from OpenBao (secret/krg-prod/authentik-managed/proxmox-ldap-bind, written by
 # terraform/authentik) via deploy/deploy-ansible.sh. EMPTY → the realm step no-ops
 # (so --check / local runs converge the rest).
 pve_ldap_bind_dn: ""

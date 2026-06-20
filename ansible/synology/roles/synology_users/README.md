@@ -34,7 +34,7 @@ map (`-e @secrets.yml` / ansible-vault today) — never from the spec.
 
 **Forward direction (per issue #75):** the eventual source is **OpenBao** at
 `secret/e4e-nas/users/<name>` (KV-v2, same convention as
-`secret/krg-prod/grafana-oidc` in [`../../../../terraform/grafana/sso.tf`](../../../../terraform/grafana/sso.tf)).
+`secret/krg-prod/authentik-managed/grafana-oidc` in [`../../../../terraform/grafana/sso.tf`](../../../../terraform/grafana/sso.tf)).
 A vault-agent template on `krg-deploy` would render those values into
 `synology_user_passwords` at run time. Until that lands, ansible-vault is the
 bridge. **Note:** the SHA-512 hash in `nix/keys/admin-passwords.json#e4e-admin`

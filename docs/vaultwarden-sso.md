@@ -47,7 +47,7 @@ Decide the mechanism when Phase 2 lands — do not hand-click it as the fix.
 Two things people mean by "Terraform for Vaultwarden":
 
 1. **The SSO integration (what this deployment uses, included in this PR).** The
-   Authentik OIDC provider/application + the OpenBao `krg-prod/vaultwarden-oidc`
+   Authentik OIDC provider/application + the OpenBao `krg-prod/authentik-managed/vaultwarden-oidc`
    secret, in `terraform/authentik/applications_krg.tf` + `vault_secrets.tf`. This
    is the only Terraform we add.
 
@@ -86,7 +86,7 @@ mirroring the **garage-ui** pattern (groups scope + RS256 signing key):
   ID token against `jwks_uri`, else Authentik falls back to HS256 + empty JWKS →
   "Invalid ID token").
 - [`terraform/authentik/vault_secrets.tf`](../terraform/authentik/vault_secrets.tf)
-  — `vault_kv_secret_v2.vaultwarden_oidc` at `krg-prod/vaultwarden-oidc`.
+  — `vault_kv_secret_v2.vaultwarden_oidc` at `krg-prod/authentik-managed/vaultwarden-oidc`.
 
 Apply with the rest of `terraform/authentik/` (`tofu apply`); the client secret
 lands in OpenBao, from which it's pulled into `.secrets/vaultwarden.env` (below).
@@ -98,7 +98,7 @@ lands in OpenBao, from which it's pulled into `.secrets/vaultwarden.env` (below)
 
 ```
 ADMIN_TOKEN=<argon2 hash>     # `vaultwarden hash` (or argon2 a strong password) — gates /admin
-SSO_CLIENT_SECRET=<secret>    # bao kv get -field=client_secret secret/krg-prod/vaultwarden-oidc
+SSO_CLIENT_SECRET=<secret>    # bao kv get -field=client_secret secret/krg-prod/authentik-managed/vaultwarden-oidc
 ```
 
 `DOMAIN`, `SSO_ENABLED`, `SSO_AUTHORITY`, `SSO_CLIENT_ID`, `SSO_SCOPES`,

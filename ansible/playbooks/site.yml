@@ -41,7 +41,7 @@
 # FLATTENS nested AD groups, so members via the nested Domain Admins appear as
 # direct members PVE can sync (raw AD can't expand nesting). Works in the web UI AND
 # the apps (plain bind). The realm step no-ops unless the bind password is supplied —
-# deploy/deploy-ansible.sh materializes it from OpenBao (secret/krg-prod/proxmox-ldap-bind)
+# deploy/deploy-ansible.sh materializes it from OpenBao (secret/krg-prod/authentik-managed/proxmox-ldap-bind)
 # and passes pve_ldap_bind_dn / pve_ldap_bind_password. LDAP is the pre-selected
 # default realm; PAM stays in the dropdown for break-glass. Authentik keeps a link
 # tile to the PVE UI (the lab dashboard). See docs/proxmox-auth.md.

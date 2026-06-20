@@ -71,7 +71,7 @@ services:
       # web.env = POSTGRESQL_PASSWORD ONLY. The webapp must NOT see the legacy
       # POSTGRES_PASSWORD (db.env) — both set trips the image's legacy-variable
       # migration and leaves postgresql-password empty. Rendered by the OpenBao
-      # Agent from secret/krg-prod/guacamole. tmpfs; never on disk.
+      # Agent from secret/krg-prod/authentik-managed/guacamole. tmpfs; never on disk.
       - /run/krg/guacamole/web.env
     depends_on:
       guacamole_postgres:

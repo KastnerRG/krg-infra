@@ -17,7 +17,7 @@ resource "random_password" "guacamole_db" {
 
 resource "vault_kv_secret_v2" "guacamole" {
   mount = "secret"
-  name  = "krg-prod/guacamole"
+  name  = "krg-prod/authentik-managed/guacamole"
   data_json = jsonencode({
     db_password = random_password.guacamole_db.result
   })

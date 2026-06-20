@@ -17,7 +17,7 @@ resource "random_password" "temporal_db" {
 
 resource "vault_kv_secret_v2" "temporal" {
   mount = "secret"
-  name  = "krg-prod/temporal"
+  name  = "krg-prod/authentik-managed/temporal"
   data_json = jsonencode({
     db_password = random_password.temporal_db.result
   })
