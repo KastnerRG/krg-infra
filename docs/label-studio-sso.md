@@ -3,7 +3,7 @@
 **Status: parked 2026-06-20. Label Studio is NOT SSO-integrated.** The Authentik
 SAML provider/application and its app icon were removed (the integration that drove
 them was backed out). This doc is kept as the diagnosis so the next attempt starts
-from where we stopped, not from zero.
+from where we stopped, not from zero. **Tracking issue: #326.**
 
 Label Studio Enterprise is the hosted HumanSignal / Heartex SaaS at
 `app.heartex.com` — only the IdP half (a SAML provider on `auth.krg.ucsd.edu`) ever
