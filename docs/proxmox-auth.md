@@ -23,9 +23,11 @@ PVE and granted **Administrator** on `/`. The local **PAM** realm stays break-gl
 ## Layers
 
 - **terraform/authentik/proxmox_ldap.tf** — the `authentik_provider_ldap`, its
-  application, a dedicated **LDAP outpost**, the read-only bind service account
-  `svc-pve-ldap` (+ its `search_full_directory` permission), and the bind creds
-  written to `secret/krg-prod/authentik-managed/proxmox-ldap-bind`.
+  application, a dedicated **LDAP outpost**, the bind service account `svc-pve-ldap`
+  (made a member of the built-in **`authentik Admins`** superuser group so it can
+  search the full directory — see the note below on why not the scoped
+  `search_full_directory` permission), and the bind creds written to
+  `secret/krg-prod/authentik-managed/proxmox-ldap-bind`.
 - **nix/docker-compose/krg-prod/compose.authentik.yml** — the `authentik_ldap`
   outpost container (`ghcr.io/goauthentik/ldap`), publishing **6636 (LDAPS)** /
   3389, its token rendered from OpenBao via `krg.vaultAgent`
@@ -85,9 +87,12 @@ permission, and the synced PVE group id are assumptions until validated. Do this
      attribute** (`cn` vs `uid`), and that `proxmox-admins` lists the 6 members.
    - Adjust `pve_ldap_user_attr` / `pve_ldap_*_filter` / `pve_ldap_group_dn` in the
      role to match, if needed.
-   - If the search returns *nothing*, the bind account lacks the search permission —
-     check the `authentik_rbac_permission_user` codename
-     (`authentik_providers_ldap.search_full_directory`) applied cleanly.
+   - If the search returns *nothing*, the bind account can't see the directory —
+     confirm `svc-pve-ldap` is in the **`authentik Admins`** group (Admin → Directory →
+     Users → svc-pve-ldap → Groups). It's put there by `proxmox_ldap.tf` because the
+     scoped `search_full_directory` permission can't be assigned via IaC on our version
+     (goauthentik/authentik#18562 — the RBAC permission-assign API 405s even for admin).
+     Narrow back to the scoped permission once that's fixed.
 4. **Firewall:** 6636 is published on all interfaces and bypasses the in-guest
    firewall (Docker DNAT via FORWARD). Restrict the source to fabricant
    (137.110.161.98) with a `DOCKER-USER`/nftables FORWARD rule on krg-prod — the
