@@ -263,7 +263,7 @@
     {
       "type": "stat",
       "title": "Sensors in non-OK state",
-      "description": "",
+      "description": "Excludes \"PSUx Detect\" sensors: waiter's consumer-class power supplies expose no IPMI telemetry, so the BMC's presence SDR sits permanently Critical (a phantom, not a real fault).",
       "datasource": {
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
@@ -322,7 +322,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "count(ipmi_sensor_state{instance=~\"$instance\"} > 0) or vector(0)",
+          "expr": "count(ipmi_sensor_state{instance=~\"$instance\", name!~\"PSU[0-9]+ Detect\"} > 0) or vector(0)",
           "legendFormat": "state",
           "instant": false,
           "range": true,
