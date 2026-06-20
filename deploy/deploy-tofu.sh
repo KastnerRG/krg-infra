@@ -223,8 +223,19 @@ for t in "${TARGETS[@]}"; do
     chmod 700 "$state_dir"   # owner-only even if it pre-existed with looser perms
     export TF_DATA_DIR="${state_dir}/.terraform"   # provider cache off the ephemeral checkout
     tofu -chdir="$dir" init -input=false
-    tofu -chdir="$dir" apply -auto-approve -input=false \
-         -state="${state_dir}/terraform.tfstate"
+    # TOFU_PLAN_ONLY: dry-run a target against its REAL (encrypted, persistent) state
+    # without applying — for validating a change before it lands. It still reads the
+    # encrypted state (so the passphrase guard above applies) but never writes it.
+    # Do NOT run a bare `tofu plan` by hand in the target dir: that uses empty local
+    # state and reports "create everything", which is meaningless (and dangerous to
+    # apply). Always go through this so the real -state + TF_ENCRYPTION are wired.
+    if [[ -n "${TOFU_PLAN_ONLY:-}" ]]; then
+      tofu -chdir="$dir" plan -input=false \
+           -state="${state_dir}/terraform.tfstate"
+    else
+      tofu -chdir="$dir" apply -auto-approve -input=false \
+           -state="${state_dir}/terraform.tfstate"
+    fi
   ) || rc=$?
   printf '\n::endgroup::\n'
   if [[ $rc -ne 0 ]]; then
