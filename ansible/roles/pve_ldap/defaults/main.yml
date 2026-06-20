@@ -1,0 +1,52 @@
+# Proxmox VE login via an Authentik LDAP outpost (NOT raw krg-ldap, NOT OIDC).
+#
+# PVE binds an LDAP realm against the Authentik LDAP outpost on krg-prod
+# (compose authentik_ldap, terraform/authentik/proxmox_ldap.tf). Authentik
+# FLATTENS nested AD groups, so members of `proxmox-admins` via the nested
+# `Domain Admins` appear as DIRECT members in the outpost's view — which PVE can
+# sync and ACL. Works in the web UI AND the apps (plain bind). PAM stays
+# break-glass. See docs/proxmox-auth.md.
+#
+# ⚠ Many values need on-box confirmation against the running outpost (the exact
+# tree/attrs Authentik serves, the username attribute, the filters). Marked ⚠ —
+# validate with `ldapsearch` against the outpost before trusting them.
+
+pve_ldap_realm: "krg" # realm id in /etc/pve/domains.cfg (cluster-wide)
+pve_ldap_server1: "krg-prod.ucsd.edu" # the Authentik LDAP outpost host
+pve_ldap_server2: ""
+pve_ldap_port: 6636 # LDAPS published by the outpost
+pve_ldap_mode: "ldaps" # ldap | ldap+starttls | ldaps
+pve_ldap_verify: false # outpost cert not trusted on fabricant yet — encrypted, unverified
+
+pve_ldap_base_dn: "DC=krg,DC=ucsd,DC=edu" # matches the LDAP provider's base_dn
+
+# Bind/search account (Authentik service account svc-pve-ldap). bind_dn + password
+# come from OpenBao (secret/krg-prod/proxmox-ldap-bind, written by
+# terraform/authentik) via deploy/deploy-ansible.sh. EMPTY → the realm step no-ops
+# (so --check / local runs converge the rest).
+pve_ldap_bind_dn: ""
+pve_ldap_bind_password: ""
+
+# ⚠ The attribute holding the login username in Authentik's LDAP tree. Authentik
+# serves users as cn=<username>; confirm via ldapsearch and adjust if it's `uid`.
+pve_ldap_user_attr: "cn"
+
+pve_ldap_default_realm: true # pre-select on the PVE login screen; PAM stays in the dropdown
+
+# ── Group sync → admin ──────────────────────────────────────────────────────────
+# Authentik tree: users under ou=users, groups under ou=groups. The flattened
+# proxmox-admins group has the real members (incl. nested Domain Admins).
+pve_ldap_admin_ldap_group: "proxmox-admins"
+pve_ldap_group_dn: "ou=groups,DC=krg,DC=ucsd,DC=edu"
+pve_ldap_group_filter: "(&(objectClass=group)(cn=proxmox-admins))"
+pve_ldap_user_filter: "(&(objectClass=user)(memberOf=cn=proxmox-admins,ou=groups,DC=krg,DC=ucsd,DC=edu))"
+pve_ldap_sync_scope: "both"
+pve_ldap_sync_enable_new: true
+
+# ⚠ PVE names a synced group "<cn>-<realm>" → proxmox-admins-krg. Confirm after the
+# first sync (`pveum group list`); the ACL targets this id.
+pve_ldap_admin_pve_group: "proxmox-admins-krg"
+pve_ldap_admin_role: "Administrator"
+pve_ldap_admin_acl_path: "/"
+
+pve_ldap_sync_on_calendar: "*:0/30" # re-sync membership every 30 min

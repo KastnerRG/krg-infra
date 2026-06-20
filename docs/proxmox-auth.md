@@ -1,105 +1,106 @@
-# Proxmox VE authentication (Active Directory realm)
+# Proxmox VE authentication (Authentik LDAP outpost)
 
-Login to the Proxmox web UI **and the Proxmox mobile/CLI apps** uses a native PVE
-**Active Directory realm** against the lab DC (`krg-ldap`, `KRG.LOCAL`). Users sign
-in with their KRG.LOCAL account; the AD group **`proxmox-admins`** is synced into
-PVE and granted **Administrator** on `/`. The local **PAM** realm stays as
-break-glass (`root@pam` / `krg-admin`).
+Login to the Proxmox web UI **and the Proxmox mobile/CLI apps** uses a PVE **LDAP
+realm** bound to an **Authentik LDAP outpost** (not raw krg-ldap, not OIDC). Users
+sign in with their KRG.LOCAL account; the group **`proxmox-admins`** is synced into
+PVE and granted **Administrator** on `/`. The local **PAM** realm stays break-glass
+(`root@pam` / `krg-admin`).
 
-> **Why not OIDC/Authentik?** The Proxmox apps (and any non-browser client) can't do
-> the OIDC redirect flow, and PVE's AD realm does group→role sync natively — no
-> Authentik claim mapping (which, on goauthentik 2026.5, hit a chain of
-> grant_types / `ak_groups` / evaluator quirks). Authentik still shows a **link
-> tile** for Proxmox (the lab dashboard) — clicking it opens the PVE UI — but it is
-> **not** in the auth path.
+## Why this shape
+
+- **OIDC is out** because the Proxmox apps can't do the browser-redirect flow. LDAP
+  is a plain bind, so the apps work.
+- **Through Authentik (not raw AD)** because Authentik's LDAP source **flattens
+  nested groups**: `Domain Admins` is nested in `proxmox-admins`, and Authentik
+  presents the 6 Domain-Admins members as **direct** members of `proxmox-admins`.
+  PVE can't expand nesting itself (it reads a group's direct `member` and skips
+  sub-groups), so it reads the already-flattened directory the outpost serves. This
+  keeps membership clean: drop someone from Domain Admins → Authentik re-syncs →
+  gone from `proxmox-admins`, no flatten-job provenance headaches.
+- **Authentik stays the lab dashboard** via the provider-less link tile
+  (`applications_krg.tf`); the outpost is the auth backend.
 
 ## Layers
 
-- **`ansible/roles/pve_ad/`** — configures the `krg` AD realm on fabricant
-  (`pveum realm add --type ad …`), runs `pveum realm sync`, ACLs the synced admin
-  group, and installs a `pve-realm-sync` systemd timer. Wired into the `proxmox`
-  play in `playbooks/site.yml`. The bind password is materialized from OpenBao by
-  `deploy/deploy-ansible.sh` (fabricant has no vault-agent).
-- **`spec/krg-ad/`** — `groups.yml` declares the space-free `proxmox-admins` group;
-  `service-accounts.yml` declares the read-only bind account **`svc-pve`**.
-- **`terraform/openbao/`** — `krg-deploy` may **read** `secret/krg-prod/pve-ad-bind`
-  (the svc-pve password). The old `krg-prod/proxmox-oidc` managed path is removed.
-- **`terraform/authentik/`** — the `proxmox` application is now a **provider-less
-  link tile** (icon + launch URL only). The OIDC provider/scopes/secret are removed.
+- **terraform/authentik/proxmox_ldap.tf** — the `authentik_provider_ldap`, its
+  application, a dedicated **LDAP outpost**, the read-only bind service account
+  `svc-pve-ldap` (+ its `search_full_directory` permission), and the bind creds
+  written to `secret/krg-prod/proxmox-ldap-bind`.
+- **nix/docker-compose/krg-prod/compose.authentik.yml** — the `authentik_ldap`
+  outpost container (`ghcr.io/goauthentik/ldap`), publishing **6636 (LDAPS)** /
+  3389. Its token renders from OpenBao via `krg.vaultAgent`
+  (`authentik-ldap-outpost-token.env`).
+- **terraform/openbao** — `krg-deploy` may read/write `krg-prod/proxmox-ldap-bind`
+  (authentik-managed set).
+- **ansible/roles/pve_ldap** — configures the PVE LDAP realm on fabricant, syncs,
+  ACLs the synced group, runs a `pve-realm-sync` timer. Materialized creds from
+  OpenBao by `deploy/deploy-ansible.sh`.
 
-## Realm config (what the role sets)
+## ⚠ Bring-up — values that can only be confirmed against the running outpost
 
-```
-pveum realm add krg --type ad \
-  --domain KRG.LOCAL --server1 krg-ldap.ucsd.edu \
-  --mode ldaps --verify 0 \                # 636 confirmed open; verify off until the lab CA is trusted
-  --base_dn DC=KRG,DC=LOCAL \
-  --bind_dn CN=svc-pve,CN=Users,DC=KRG,DC=LOCAL --password <svc-pve> \
-  --default 1 \                            # pre-select AD; PAM stays in the dropdown
-  --filter '(&(objectCategory=person)(objectClass=user)(memberOf=CN=proxmox-admins,CN=Users,DC=KRG,DC=LOCAL))' \
-  --group_filter '(&(objectClass=group)(cn=proxmox-admins))' \
-  --sync-defaults-options enable-new=1
-```
+The exact tree/attributes Authentik's LDAP outpost serves, the bind/search
+permission, and the synced PVE group id are assumptions until validated. Do this
+**before** trusting the realm:
 
-The sync filters scope PVE to the admin group + its members so the whole directory
-isn't mirrored. Login binds as the **end user** (not svc-pve); svc-pve is only for
-the directory search during sync.
-
-## Prerequisites / operator steps (one-time)
-
-1. **AD group** — rename the old `Proxmox Admins` group to **`proxmox-admins`** in
-   AD (preserves membership), or create it and move members. PVE group ids can't
-   contain spaces, so a spaced name is skipped on sync. Add hypervisor admins as
-   **direct** members (PVE sync does not expand nested groups).
-2. **Bind account** — create `svc-pve` in AD (read-only is enough; a normal
-   authenticated principal can read users/groups) and seed its password:
+1. Apply `terraform/authentik`, then **retrieve the LDAP outpost token** (Admin →
+   Outposts → "authentik LDAP Outpost" → View token) and seed it:
    ```
-   bao kv put secret/krg-prod/pve-ad-bind password=<svc-pve password>
+   bao kv put secret/krg-prod/authentik-ldap-outpost-token token=<value>
    ```
-3. **OpenBao policy** — apply the `openbao` target (privileged) so `krg-deploy` can
-   read that path: `TOFU_TARGETS=openbao TOFU_OPENBAO_TOKEN=… ./deploy/deploy-tofu.sh`.
-4. **Deploy** — `deploy/deploy-ansible.sh` (or the fleet deploy) configures the
-   realm, runs the first sync, and ACLs the group.
+2. `nixos-rebuild` krg-prod so the `authentik_ldap` container starts and the token
+   renders. Confirm it connects (Admin → Outposts shows it healthy).
+3. **`ldapsearch` against the outpost** (from fabricant) with the bind account to
+   learn the real tree:
+   ```bash
+   ldapsearch -H ldaps://krg-prod.ucsd.edu:6636 -o tls_reqcert=never \
+     -D "cn=svc-pve-ldap,ou=users,DC=krg,DC=ucsd,DC=edu" \
+     -w "$(bao kv get -field=password secret/krg-prod/proxmox-ldap-bind)" \
+     -b "DC=krg,DC=ucsd,DC=edu" "(cn=proxmox-admins)"
+   ```
+   - Confirm the **base_dn**, the **group DN** (`ou=groups,…`), the **username
+     attribute** (`cn` vs `uid`), and that `proxmox-admins` lists the 6 members.
+   - Adjust `pve_ldap_user_attr` / `pve_ldap_*_filter` / `pve_ldap_group_dn` in the
+     role to match, if needed.
+   - If the search returns *nothing*, the bind account lacks the search permission —
+     check the `authentik_rbac_permission_user` codename
+     (`authentik_providers_ldap.search_full_directory`) applied cleanly.
+4. **Firewall:** 6636 is published on all interfaces and bypasses the in-guest
+   firewall (Docker DNAT via FORWARD). Restrict the source to fabricant
+   (137.110.161.98) with a `DOCKER-USER`/nftables FORWARD rule on krg-prod — the
+   same open item as dcgm 9400 (CLAUDE.md "Docker published-port firewall bypass").
 
-## Bring-up verification (⚠ can't be dry-run from CI)
+## Apply
 
-```bash
-# on fabricant:
-pveum realm list                       # 'krg', type ad
-pveum realm sync krg --dry-run 1       # see what would sync; confirm proxmox-admins + members appear
-pveum group list                       # find the synced group id (expected: proxmox-admins-krg)
-pveum acl list | grep -i proxmox       # '/  Administrator  group  <synced-group>'
-```
+1. `terraform/authentik` apply → provider/app/outpost/service-account + bind secret.
+2. Seed the outpost token (above) → `nixos-rebuild` krg-prod (container up).
+3. Validate with `ldapsearch` (above); fix any ⚠ filter/attr mismatch.
+4. `deploy/deploy-ansible.sh` → the PVE LDAP realm + sync + ACL. After the first
+   sync, confirm the synced group id and set `pve_ldap_admin_pve_group` if it isn't
+   `proxmox-admins-krg`:
+   ```bash
+   pveum realm list                # 'krg', type ldap
+   pveum group list                # the synced group id
+   pveum user list | grep @krg     # the 6 members
+   pveum acl list | grep proxmox   # / Administrator -> <synced group>
+   ```
+5. Log in — realm `krg`, KRG.LOCAL username + password, in the browser and the app.
 
-If the synced group id is **not** `proxmox-admins-krg`, set
-`pve_ad_admin_pve_group` in the role to the real id and re-run (the ACL targets it).
-If a member doesn't sync, check the `--filter` (member resolution / nested groups).
+## Migration cleanup (from the raw-AD-realm attempt)
 
-Then in a browser: `https://fabricant.ucsd.edu:8006` → realm **krg** → log in with a
-`proxmox-admins` member → full admin. In the **app**: add the server, realm `krg`,
-same credentials.
-
-## Migration cleanup (from the OIDC era)
-
-Terraform destroys the Authentik OIDC provider/scopes/secret on apply. The PVE side
-needs a hand:
-
-- The **OIDC `authentik` realm** is removed automatically by the `pve_ad` role
-  (after the AD realm is in place).
-- The **stale local `proxmox-admins` group + its ACL** (created by the old
-  `pve_oidc` role) are **NOT** auto-removed — the new *synced* admin group may share
-  that id depending on PVE's naming, so deleting blindly could nuke the new group.
-  After confirming the synced id differs (e.g. `proxmox-admins-krg`):
-  ```bash
-  pveum acl list | grep proxmox          # confirm which group each ACL points at
-  pveum group delete proxmox-admins      # the OLD local group only — NOT proxmox-admins-krg
-  ```
+The `pve_ldap` role deletes any leftover `krg` realm of the wrong type (`ad`) and
+the old OIDC `authentik` realm automatically. By hand, retire the raw-AD bind
+account if it was created: delete `svc-pve` in AD and remove
+`secret/krg-prod/pve-ad-bind` from OpenBao (both superseded by the Authentik
+`svc-pve-ldap` service account). The stale local PVE group `proxmox-admins` (if the
+AD-realm sync ever created one) — confirm vs the synced id before deleting.
 
 ## Notes
 
-- `--verify 0` encrypts (LDAPS) but does not verify the DC cert. Once the lab CA
-  root is trusted on fabricant, set `pve_ad_verify: true` (+ `--capath`).
-- `pve_ad_server2` is reserved for the second DC (krg-ldap SPOF removal); set it
-  when that DC exists so realm sync/login fail over.
-- Rotating the svc-pve password: update `secret/krg-prod/pve-ad-bind` and re-run the
-  Ansible leg — the realm reconcile re-pushes `--password` every run.
+- `verify 0` (PVE) + `tls_reqcert=never` (ldapsearch): LDAPS encrypts but doesn't
+  verify the outpost cert until the lab CA is trusted on fabricant. Flip
+  `pve_ldap_verify: true` (+ capath / the outpost cert) once it is.
+- Rotating the bind password: re-run `terraform/authentik` (regenerates
+  `random_password.svc_pve_ldap` → updates the Authentik account + the vault secret),
+  then the Ansible leg re-pushes it to the realm.
+- MFA is **off** (password-only). To require it later, set `mfa_support = true` on
+  the LDAP provider (users then append a TOTP code / use an app-password).
