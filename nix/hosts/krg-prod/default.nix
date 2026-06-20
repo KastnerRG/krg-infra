@@ -399,6 +399,19 @@ in {
         '';
       }
 
+      # LDAP outpost token — the authentik_ldap container (compose.authentik.yml).
+      # Seed manually after the LDAP outpost applies (Admin → Outposts → View token):
+      #   bao kv put secret/krg-prod/authentik-ldap-outpost-token token=<value>
+      {
+        destination = "/run/krg/krg-prod/authentik-ldap-outpost-token.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik-ldap-outpost-token" }}
+          AUTHENTIK_TOKEN={{ .Data.data.token }}
+          {{- end }}
+        '';
+      }
+
       # ── Grafana ──────────────────────────────────────────────────────────────
       # Admin password — the `grafana_e4eadmin_password` docker secret (bare value).
       # Same path the terraform/grafana provider authenticates with (field `password`).

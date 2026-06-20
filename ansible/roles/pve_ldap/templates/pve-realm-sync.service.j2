@@ -1,0 +1,10 @@
+# Managed by ansible (pve_ldap role). Re-sync the KRG Authentik LDAP realm into PVE
+# so group-membership changes propagate. Triggered by pve-realm-sync.timer.
+[Unit]
+Description=Sync the {{ pve_ldap_realm }} Authentik LDAP realm into Proxmox
+After=pve-cluster.service
+Wants=pve-cluster.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pveum realm sync {{ pve_ldap_realm }} --scope {{ pve_ldap_sync_scope }} --enable-new {{ pve_ldap_sync_enable_new | int }}

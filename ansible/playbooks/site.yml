@@ -36,19 +36,20 @@
   roles:
     - pve_exporter
 
-# Login via a native PVE Active Directory realm against krg-ldap (KRG.LOCAL): the
-# AD group `proxmox-admins` is synced into PVE and ACL'd Administrator on /. Works
-# in the web UI AND the Proxmox apps (OIDC couldn't — no browser redirect). The
-# realm step no-ops unless the bind password is supplied — deploy/deploy-ansible.sh
-# materializes it from OpenBao (secret/krg-prod/pve-ad-bind) and passes
-# pve_ad_bind_password. AD is the pre-selected default realm; PAM stays in the
-# dropdown for break-glass. Authentik keeps a link tile to the PVE UI (the lab
-# dashboard) but is NOT in the auth path. See docs/proxmox-auth.md.
-- name: Proxmox login (Active Directory realm)
+# Login via a PVE LDAP realm bound to the Authentik LDAP outpost (krg-prod). The
+# group `proxmox-admins` is synced into PVE and ACL'd Administrator on /. Authentik
+# FLATTENS nested AD groups, so members via the nested Domain Admins appear as
+# direct members PVE can sync (raw AD can't expand nesting). Works in the web UI AND
+# the apps (plain bind). The realm step no-ops unless the bind password is supplied —
+# deploy/deploy-ansible.sh materializes it from OpenBao (secret/krg-prod/proxmox-ldap-bind)
+# and passes pve_ldap_bind_dn / pve_ldap_bind_password. LDAP is the pre-selected
+# default realm; PAM stays in the dropdown for break-glass. Authentik keeps a link
+# tile to the PVE UI (the lab dashboard). See docs/proxmox-auth.md.
+- name: Proxmox login (Authentik LDAP realm)
   hosts: proxmox
   become: true
   roles:
-    - pve_ad
+    - pve_ldap
 
 # Let's Encrypt cert for the PVE web UI (pveproxy :8006) via PVE-native ACME,
 # HTTP-01 standalone. Opt-in per host (the cert domain is host-specific): runs only

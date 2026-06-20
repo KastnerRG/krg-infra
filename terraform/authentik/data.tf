@@ -9,6 +9,12 @@ data "authentik_flow" "default_invalidation" {
   slug = "default-provider-invalidation-flow"
 }
 
+# Authentication flow — the LDAP provider's bind_flow (validates the user's
+# password on bind). Present in every fresh install.
+data "authentik_flow" "default_authentication" {
+  slug = "default-authentication-flow"
+}
+
 # ── OIDC scope mappings ────────────────────────────────────────────────────────
 
 data "authentik_property_mapping_provider_scope" "openid" {
