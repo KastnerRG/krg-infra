@@ -112,7 +112,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "ipmi_up{instance=~\"$instance\"}",
+          "expr": "max by (instance) (ipmi_up{instance=~\"$instance\"})",
           "legendFormat": "{{instance}}",
           "instant": false,
           "range": true,
