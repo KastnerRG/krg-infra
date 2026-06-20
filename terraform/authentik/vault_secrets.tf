@@ -64,17 +64,24 @@ resource "vault_kv_secret_v2" "vaultwarden_oidc" {
   })
 }
 
-# Temporal — Authentik mints this client secret (brand new). The OpenBao Agent on
-# krg-prod renders it to /run/krg/temporal/ui.env as TEMPORAL_AUTH_CLIENT_SECRET for
-# the temporal-ui compose service (krg.vaultAgent in nix/hosts/krg-prod/default.nix).
-resource "vault_kv_secret_v2" "temporal_oidc" {
+# Temporal's OIDC client secret is now MINTED by the early terraform/secrets workspace
+# (so it exists before the fail-closed krg-prod vault-agent renders it). This workspace
+# no longer writes it — it READS it back to set on the provider (see the data source +
+# `client_secret =` on authentik_provider_oauth2.temporal in applications_krg.tf). The
+# `removed` block drops the old writer from state without destroying the live KV entry
+# (terraform/secrets owns + rotates it). See terraform/secrets/README.md.
+removed {
+  from = vault_kv_secret_v2.temporal_oidc
+  lifecycle {
+    destroy = false
+  }
+}
+
+# Read the Temporal OIDC client_secret minted by terraform/secrets, to set on the
+# provider below. krg-deploy's policy already grants read on authentik-managed/* .
+data "vault_kv_secret_v2" "temporal_oidc" {
   mount = "secret"
   name  = "krg-prod/authentik-managed/temporal-oidc"
-  data_json = jsonencode({
-    client_id     = authentik_provider_oauth2.temporal.client_id
-    client_secret = authentik_provider_oauth2.temporal.client_secret
-    issuer_url    = "${var.authentik_url}/application/o/temporal/"
-  })
 }
 
 # garage-ui — the ONLY garage secret tofu generates (Authentik mints it; brand
