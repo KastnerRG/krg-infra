@@ -1,97 +1,86 @@
-# Label Studio Enterprise SSO (Authentik SAML)
+# Label Studio Enterprise SSO — PARKED (not integrated)
 
-Single sign-on for our **hosted** Label Studio Enterprise org (HumanSignal /
-Heartex SaaS at `app.heartex.com`) via Authentik, so labelers log in with their
-KRG.LOCAL AD account instead of a Label-Studio-local password.
+**Status: parked 2026-06-20. Label Studio is NOT SSO-integrated.** The Authentik
+SAML provider/application and its app icon were removed (the integration that drove
+them was backed out). This doc is kept as the diagnosis so the next attempt starts
+from where we stopped, not from zero.
 
-Unlike the other KRG apps, Label Studio is **not self-hosted on krg-prod** — it's
-someone else's SaaS. So the integration splits cleanly in two:
+Label Studio Enterprise is the hosted HumanSignal / Heartex SaaS at
+`app.heartex.com` — only the IdP half (a SAML provider on `auth.krg.ucsd.edu`) ever
+lived in this repo; the SP half is configured in Label Studio's own org UI.
 
-- **IdP side (ours, IaC):** the SAML provider + application on
-  `auth.krg.ucsd.edu`, in `terraform/authentik/label_studio.tf`.
-- **SP side (Label Studio's UI):** uploading our metadata, choosing the attribute
-  preset, and mapping groups → roles. There is **no API / Terraform provider** for
-  a Heartex org's SSO config, so this half is a UI runbook — genuinely external to
-  this repo, the same category as publishing a DNS CNAME. Capturing the SP values
-  (ACS URL / Audience) is *discovery*; clicking through the wizard to enter our
-  metadata is the only IaC-strict-exempt step here because the SP isn't a machine
-  we manage.
+## Why it's parked
 
-SAML (not OIDC) on purpose: it's Label Studio Enterprise's documented, best-trodden
-SSO path and stores no client secret on our side.
+We built the full SAML integration and got the IdP side working end-to-end, but
+**Label Studio's ACS returns HTTP 500 on an assertion we proved is valid**, and we
+could not see their server-side error. That's a Label-Studio-side failure we can't
+diagnose or fix without HumanSignal support's logs (fileable by an org admin — it
+goes to the vendor, not the org owner) or org-owner involvement. Rather than leave a
+half-working SSO app/tile in Authentik, the integration was removed until someone can
+pull those logs.
 
-## Authentik side (IaC)
+## What was proven working (IdP side is correct)
 
-`terraform/authentik/label_studio.tf`:
-- `authentik_provider_saml.label_studio` — assertion-signed with the default
-  self-signed keypair (`data.authentik_certificate_key_pair.default`); HTTP-POST
-  binding; `acs_url`/`audience` from `locals.label_studio_acs_url` (inlined).
-- Five SAML attribute statements emitting exactly what Label Studio's **default**
-  preset reads:
+- Authentik authenticates the user, signs the assertion (RSA-SHA256), and POSTs it.
+- The decoded assertion is valid: `Destination` and `Audience` match the SP's ACS,
+  `Issuer` matches the IdP metadata `entityID`, and all four attributes
+  (`Email`, `FirstName`, `LastName`, `Groups`) are present and correctly named —
+  Label Studio's attribute-mapping screen showed all four **Mapped ✓**.
+- `auth.krg.ucsd.edu` and its metadata are publicly reachable (verified from two
+  non-UCSD vantages), so it's **not** a firewall/reachability problem.
 
-  | SAML `Name` | value (Authentik expression)                       |
-  |-------------|----------------------------------------------------|
-  | NameID      | `request.user.email` (subject)                     |
-  | `Email`     | `request.user.email`                               |
-  | `FirstName` | first token of `request.user.name`                 |
-  | `LastName`  | rest of `request.user.name`                        |
-  | `Groups`    | `[g.name for g in request.user.ak_groups.all()]`   |
+## What was ruled out as the cause of the 500
 
-- `authentik_application.label_studio` — slug **`label-studio`** (load-bearing: the
-  metadata/SSO URLs embed it), dashboard tile → `app.heartex.com`.
+- **Email domain / ownership** — we did NOT claim the shared `ucsd.edu` domain (the
+  lab doesn't own it; claiming it on the multi-tenant SaaS would capture SSO routing
+  for all of UCSD). A lab-owned subdomain (`krg.ucsd.edu`) satisfied the wizard's
+  "verify a domain" gate instead.
+- **Metadata loading** — the slug metadata URL (`…/application/saml/label-studio/metadata/`)
+  302-redirects and heartex's loader won't follow it. Use the **direct** URL
+  (`…/api/v3/providers/saml/<pk>/metadata/?download`) or upload the XML file.
+- **ACS/audience mismatch** — heartex regenerates the per-org ACS token whenever the
+  SSO connection is re-created; the provider's `acs_url`/`audience` must track the
+  current value. (A stale token 404s; a URL typo also 404'd during testing.)
+- **Issuer mismatch** — assertion `Issuer` matched the metadata `entityID`.
+- **The `Groups` list** — the user was in 17 AD groups; trimming the `Groups`
+  attribute to one group did **not** clear the 500.
+- **Org-owner self-SSO** — the tester is an org admin, not the owner, so this isn't
+  the founding-account-self-link case.
 
-The slug fixes the URLs you hand Label Studio:
-- **Metadata URL:** `https://auth.krg.ucsd.edu/api/v3/providers/saml/<pk>/metadata/?download`
-  (or grab it from the provider page in the Authentik admin UI — *Providers → Provider
-  for Label Studio Enterprise → Download metadata / Copy download URL*).
-- **SSO (redirect) URL:** `https://auth.krg.ucsd.edu/application/saml/label-studio/sso/binding/redirect/`
+## The two remaining unknowns (both inside Label Studio)
 
-### SP endpoints
+- **IdP-initiated is likely unsupported.** Authentik's IdP-initiated URL
+  (`…/sso/binding/init/`) POSTs an *unsolicited* assertion (no `InResponseTo`);
+  Label Studio 500s on it, which many SaaS SPs do by design.
+- **SP-initiated dies before producing an assertion.** Starting from
+  `app.heartex.com` → "Log in with SSO" → company domain `krg.ucsd.edu` failed
+  before ever reaching Authentik on the last attempts — a heartex-side step we can't
+  see into.
 
-The org's ACS URL / Audience are **committed inline** in `label_studio.tf`
-(`locals.label_studio_acs_url`) — they're non-secret endpoint URLs in the same
-class as every other service URL in this layer (they carry only the org id, are
-exchanged in SAML metadata, and grant nothing without the IdP signing key). This
-org reports the **same URL for both** the ACS and the Audience/EntityID. If you
-ever rotate the org or it splits them, edit that local.
+Two oddities for support to check against their 500 logs: the assertion's
+`AuthnInstant` was ~2 days stale (Authentik reused an old session), and
+`AuthnContextClassRef` was `MobileOneFactorContract`.
 
-## Bring-up order (chicken-and-egg)
+## How to resume
 
-The SP needs our IdP metadata and the IdP needs the SP's ACS URL, so do it in this
-order:
+1. Get HumanSignal support to read the ACS 500's stack trace (note the failure
+   timestamp; offer them the full base64 `SAMLResponse`). That ends the guessing.
+2. Re-add the IdP side: restore `terraform/authentik/label_studio.tf` (a SAML
+   provider + application + the `Email`/`FirstName`/`LastName`/`Groups` attribute
+   mappings) from this PR's revert, set `acs_url`/`audience` to the **current** ACS
+   token, add the app icon back, and `tofu apply`.
+3. Consider trimming the `Groups` mapping to Label-Studio-relevant groups only
+   (`startswith("Label Studio")`) regardless — don't over-share the full AD
+   directory with a third-party SaaS.
+4. Confirm with support whether the SP-initiated flow (company domain
+   `krg.ucsd.edu`) is the supported entry point, since IdP-initiated appears not to
+   be.
 
-1. **Label Studio → copy SP values.** In the org, *Organization → SSO & SAML*. Copy
-   the **Assertion Consumer Service (ACS) URL** (and the **Audience/EntityID** —
-   Label Studio uses the same URL unless it shows a distinct one). This is read-only
-   discovery.
-2. **Authentik → apply.** `tofu apply` in `terraform/authentik/` (the ACS URL is
-   already committed inline). This mints the provider and its metadata. If the ACS
-   URL/Audience you copied differs from the committed `locals.label_studio_acs_url`,
-   update that local first.
-3. **Label Studio → upload our metadata.** Back in *Organization → SSO & SAML*,
-   provide the Authentik **metadata URL** (or paste the XML). Select the **default**
-   attribute preset (so it reads `Email` / `FirstName` / `LastName` / `Groups`) — if
-   you must pick a different preset, change the `saml_name`s in
-   `label_studio.tf` to match and re-apply.
-4. **Label Studio → group → role mapping.** Map the AD group **names** emitted in
-   `Groups` to Label Studio org roles / workspaces / projects. The names must match
-   the AD group names byte-for-byte (see `groups.tf` — groups are AD-sourced; create
-   them with `samba-tool` on krg-ldap, not as local Authentik groups).
-5. **Test.** From the Authentik dashboard tile (→ `app.heartex.com`, SP-initiated
-   SSO back to us), and directly via Label Studio's **Login URL**. Confirm a fresh
-   AD user lands with the expected role from their group mapping.
+## Related, intentionally left in place
 
-## Notes / gotchas
-
-- **First/last name** come from a whitespace split of the single Authentik display
-  name (`request.user.name`); they only populate the Label Studio display name —
-  identity is the email. If the AD sync ever lands `givenName`/`sn` into
-  `request.user.attributes`, switch those two expressions to read them.
-- **IdP-initiated** login is not wired (the tile sends users to Label Studio, which
-  SP-initiates). To enable true IdP-initiated SSO later, set `default_relay_state` on
-  the provider and confirm Label Studio accepts unsolicited responses.
-- **App icon** is Label Studio's "Heidi the opossum" mascot mark, vendored from the
-  HumanSignal repo (dashboard-icons has no entry) — see the media-icons README.
-- **Deprovisioning:** SAML SSO authenticates but doesn't deprovision — removing a
-  user from AD stops new logins but doesn't disable their Label Studio account.
-  Label Studio Enterprise also supports SCIM for lifecycle; out of scope here.
+- The **`Label Studio Admins`** AD group (`spec/krg-ad/groups.yml`) is kept — it
+  already exists in the live directory and is the role gate for whenever SSO is
+  revisited. (Removing it from the spec would only create drift; the apply never
+  deletes groups anyway.)
+- Label Studio's e4e-nas storage (`spec/e4e-nas/`: the `label_studio` share and its
+  Hyper Backup job) is unrelated to SSO and untouched.
