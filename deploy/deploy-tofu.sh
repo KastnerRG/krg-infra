@@ -180,6 +180,13 @@ materialize() { # <target>
       fi
       export VAULT_TOKEN="$TOFU_OPENBAO_TOKEN"   # override the AppRole token, this subshell only
       ;;
+    secrets)
+      # terraform/secrets GENERATES the krg-prod secrets and writes them to OpenBao via
+      # the vault provider (VAULT_ADDR + the AppRole VAULT_TOKEN already exported above).
+      # No TF_VAR_* and nothing to pre-read — it only writes. Runs EARLY (before the
+      # NixOS members that consume the secrets); see terraform/secrets/README.md.
+      [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping secrets" >&2; return 1; }
+      ;;
     *)
       echo "  no materialization rule for ${1} — skipping" >&2
       return 1
