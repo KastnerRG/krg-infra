@@ -223,6 +223,27 @@ for t in "${TARGETS[@]}"; do
     chmod 700 "$state_dir"   # owner-only even if it pre-existed with looser perms
     export TF_DATA_DIR="${state_dir}/.terraform"   # provider cache off the ephemeral checkout
     tofu -chdir="$dir" init -input=false
+    # TOFU_IMPORT: one-time, value-preserving state adoptions before plan/apply. Each
+    # line is "ADDR KVPATH FIELD" — the script reads FIELD from KVPATH in OpenBao
+    # (VAULT_TOKEN already set) and `tofu import`s it into ADDR, adopting an existing
+    # live value WITHOUT rotating it (e.g. a DB password when generation moves to
+    # terraform/secrets). Reading from OpenBao keeps the secret out of the caller's
+    # shell/env. Idempotent: an ADDR already in state is skipped. Runs against the
+    # real -state + TF_ENCRYPTION, so no hand-rolled encryption dance.
+    if [[ -n "${TOFU_IMPORT:-}" ]]; then
+      while read -r imp_addr imp_path imp_field; do
+        [[ -z "$imp_addr" ]] && continue
+        if tofu -chdir="$dir" state list -state="${state_dir}/terraform.tfstate" 2>/dev/null \
+             | grep -qxF "$imp_addr"; then
+          echo "  import: ${imp_addr} already in state — skipping"
+          continue
+        fi
+        imp_val="$(_kv "$imp_path" "$imp_field")" \
+          || { echo "  import: cannot read ${imp_path} (${imp_field}) — skipping ${imp_addr}" >&2; continue; }
+        tofu -chdir="$dir" import -input=false -state="${state_dir}/terraform.tfstate" \
+             "$imp_addr" "$imp_val"
+      done <<< "$TOFU_IMPORT"
+    fi
     # TOFU_PLAN_ONLY: dry-run a target against its REAL (encrypted, persistent) state
     # without applying — for validating a change before it lands. It still reads the
     # encrypted state (so the passphrase guard above applies) but never writes it.
