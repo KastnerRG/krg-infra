@@ -28,13 +28,36 @@ PVE and granted **Administrator** on `/`. The local **PAM** realm stays break-gl
   written to `secret/krg-prod/proxmox-ldap-bind`.
 - **nix/docker-compose/krg-prod/compose.authentik.yml** — the `authentik_ldap`
   outpost container (`ghcr.io/goauthentik/ldap`), publishing **6636 (LDAPS)** /
-  3389. Its token renders from OpenBao via `krg.vaultAgent`
-  (`authentik-ldap-outpost-token.env`).
+  3389, its token rendered from OpenBao via `krg.vaultAgent`
+  (`authentik-ldap-outpost-token.env`). **⚠ This runtime is a SEPARATE, LATER change
+  — see "Bring-up order" — because its token doesn't exist until the outpost is
+  created, and the fail-closed agent can't tolerate a missing secret.**
 - **terraform/openbao** — `krg-deploy` may read/write `krg-prod/proxmox-ldap-bind`
   (authentik-managed set).
 - **ansible/roles/pve_ldap** — configures the PVE LDAP realm on fabricant, syncs,
   ACLs the synced group, runs a `pve-realm-sync` timer. Materialized creds from
   OpenBao by `deploy/deploy-ansible.sh`.
+
+## Bring-up order (load-bearing — don't reorder)
+
+The LDAP outpost token is a **manual artifact** that only exists once the outpost is
+created, and the krg-prod `krg.vaultAgent` is **fail-closed** (one missing secret
+fails the whole render → the entire krg-prod stack won't start). The fleet deploy
+also runs NixOS **before** OpenTofu. So the runtime (the `authentik_ldap` compose
+service + its vault-agent token template) **must not ship in the same change as the
+terraform that creates the outpost** — deploy them in this order:
+
+1. **terraform/authentik apply** → creates the LDAP provider/app/outpost + bind
+   account + writes `secret/krg-prod/proxmox-ldap-bind`. (Safe — no NixOS dependency.)
+2. **Retrieve the outpost token** (Admin → Outposts → "authentik LDAP Outpost" →
+   View token) and **seed it**:
+   ```
+   bao kv put secret/krg-prod/authentik-ldap-outpost-token token=<value>
+   ```
+3. **Only now** land the runtime change (re-add the `authentik_ldap` compose service
+   + the `authentik-ldap-outpost-token.env` vault-agent template) and `nixos-rebuild`
+   krg-prod — the secret exists, so the fail-closed agent renders cleanly.
+4. Validate (below), then `deploy/deploy-ansible.sh` for the PVE realm.
 
 ## ⚠ Bring-up — values that can only be confirmed against the running outpost
 
