@@ -303,6 +303,10 @@ in {
           TEMPORAL_AUTH_CLIENT_SECRET={{ .Data.data.client_secret }}
           {{- end }}
         '';
+        # OIDC secret rotates → reload temporal-ui so it picks up the new env (Compose
+        # won't recreate it on an env-content change). Fires only when this render
+        # actually changes; deploy/deploy-nixos.sh re-runs the agent each switch.
+        reloadCommand = "${pkgs.docker}/bin/docker restart temporal-ui";
       }
 
       # Temporal frontend mTLS (the lab-internal CA in terraform/openbao/pki.tf).
@@ -442,6 +446,10 @@ in {
           SSO_CLIENT_SECRET={{ .Data.data.client_secret | replaceAll "$" "$$" }}
           {{- end }}
         '';
+        # The OIDC client_secret rotates → reload vaultwarden to pick up the new env.
+        # (ADMIN_TOKEN above is operator-seeded and stable; a client_secret rotation is
+        # the only change that fires this.) Fires only on an actual render change.
+        reloadCommand = "${pkgs.docker}/bin/docker restart vaultwarden";
       }
     ];
   };
