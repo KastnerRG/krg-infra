@@ -70,9 +70,13 @@ Folded into `spec/krg-ad/password-policy.yml` (applied via
 
 - **Passwords do not expire** (`max_pwd_age = 0`; was 42 days). Mandatory periodic
   rotation is deprecated guidance — it drives users to weaker, predictably-
-  incremented secrets without reducing compromise (NIST SP 800-63B §5.1.1.2:
-  rotate on evidence of compromise, not on a clock). Service accounts benefit
-  most: a silently-expired `authentik-bind`/`svc_roster` breaks SSO/roster.
+  incremented secrets without reducing compromise. NIST SP 800-63B §5.1.1.2:
+  verifiers "SHOULD NOT require memorized secrets to be changed arbitrarily" but
+  "SHALL force a change if there is evidence of compromise"
+  ([NIST 800-63 FAQ](https://pages.nist.gov/800-63-FAQ/), "Is password expiration
+  no longer recommended?"). UCSD's standard is silent on expiry, so never-expire is
+  compliant, not a deviation. Service accounts benefit most: a silently-expired
+  `authentik-bind`/`svc_roster` breaks SSO/roster.
 - **UCSD AD password standard**: minimum length **12** (was 7), **complexity on**
   (≥3 of 4 character categories + not-username), history 24 ("different from
   previous"). Source: UCSD Blink "Password Security"
@@ -114,6 +118,13 @@ today, but the mandate is not *fully* satisfied (breach screening, local account
 UX) until that policy lands. This ADR owns the AD half and the requirement on the
 Authentik half.
 
+> **Update (2026-06-21):** the Authentik half has since landed —
+> `terraform/authentik/password_policy.tf` (length ≥12 + HaveIBeenPwned breach +
+> zxcvbn, bound to the recovery and change-password flows). The cross-layer
+> obligation recorded above is now closed; both layers together meet the UCSD
+> mandate, and local (non-AD) accounts are covered. ADR 0013 makes the
+> Authentik-first federation posture this depends on an explicit decision.
+
 ## Consequences
 
 - The first concrete payoff: the `authentik-bind` *Reset Password* delegation
@@ -146,8 +157,10 @@ Authentik half.
 
 ## Out of scope / follow-ups
 
-- **Authentik password-strength + breach policy** — owed in `terraform/authentik/`
-  (decision 4); the UCSD mandate isn't fully met until it lands.
+- ~~**Authentik password-strength + breach policy** — owed in `terraform/authentik/`
+  (decision 4); the UCSD mandate isn't fully met until it lands.~~ **Done
+  (2026-06-21):** landed as `terraform/authentik/password_policy.tf` (see the §4
+  update note).
 - **Account lockout policy** — live threshold is 0 (off). AD/Kerberos lockout
   enables targeted user-DoS, and SSH is already covered by fail2ban + key-only
   auth behind a source-restricted perimeter; left as a deliberate future decision
