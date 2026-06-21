@@ -45,8 +45,13 @@ services:
       OIDC_CLIENT_ID: mlflow
       OIDC_DISCOVERY_URL: "https://auth.krg.ucsd.edu/application/o/mlflow/.well-known/openid-configuration"
       OIDC_REDIRECT_URI: "https://mlflow.krg.ucsd.edu/callback"
-      # Must include `groups` so Authentik emits the AD-group claim the gates below match.
-      OIDC_SCOPE: "openid,email,profile,groups"
+      # SPACE-separated (OAuth2 spec form), NOT comma: authlib does scope.split() on
+      # whitespace and only generates the OIDC nonce when "openid" is a resulting list
+      # element. A comma-joined string is one opaque token → no nonce → authlib never
+      # parses the id_token into userinfo → the login fails with "No user information
+      # received". Must include `groups` so Authentik emits the AD-group claim the
+      # access gates below match.
+      OIDC_SCOPE: "openid email profile groups"
       # AD-sourced Authentik groups (spec/krg-ad/groups.yml). Members of "MLflow Users"
       # get standard access; "MLflow Admins" get admin.
       OIDC_GROUP_NAME: "MLflow Users"
