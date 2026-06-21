@@ -37,12 +37,15 @@ resource "authentik_provider_ldap" "proxmox" {
 
 # Application backing the LDAP provider. No launch URL / group — it's NOT a
 # dashboard tile (the provider-less `proxmox` app in applications_krg.tf is the
-# tile). Authentik requires an application per provider.
+# tile). Authentik requires an application per provider. Access is gated by the
+# policy bindings at the bottom of this file (REQUIRED for LDAP binds — see there);
+# policy_engine_mode "any" so those bindings are OR'd (the app default, pinned).
 resource "authentik_application" "proxmox_ldap" {
-  name              = "Proxmox LDAP"
-  slug              = "proxmox-ldap"
-  protocol_provider = authentik_provider_ldap.proxmox.id
-  meta_description  = "LDAP directory for the Proxmox VE realm (not a user-facing app)"
+  name               = "Proxmox LDAP"
+  slug               = "proxmox-ldap"
+  protocol_provider  = authentik_provider_ldap.proxmox.id
+  meta_description   = "LDAP directory for the Proxmox VE realm (not a user-facing app)"
+  policy_engine_mode = "any"
 }
 
 # Dedicated LDAP outpost. LDAP can't use the embedded/proxy outpost — it needs its
@@ -89,6 +92,10 @@ resource "random_password" "svc_pve_ldap" {
 # Tradeoff: superuser is broader than search-only; acceptable for a dedicated bind
 # account whose password lives only in OpenBao (krg-prod/proxmox-ldap-bind) + a 0600
 # extra-vars file on fabricant. NARROW back to search_full_directory once #18562 is fixed.
+#
+# NOTE: superuser governs search BREADTH (whole tree vs self), but is NOT sufficient to
+# BIND at all — since 2025.4 the LDAP outpost also requires the principal to have ACCESS
+# to the application (the policy bindings at the bottom of this file). Both are needed.
 data "authentik_group" "authentik_admins" {
   name          = "authentik Admins"
   include_users = false # don't pull the whole member list into tofu state
@@ -116,4 +123,38 @@ resource "vault_kv_secret_v2" "proxmox_ldap_bind" {
     base_dn  = local.proxmox_ldap_base_dn
     password = random_password.svc_pve_ldap.result
   })
+}
+
+# ── Application access — REQUIRED for any LDAP bind ──────────────────────────────
+# Since Authentik 2025.4 the LDAP outpost authorizes BINDS against the LDAP
+# application's policy bindings: per the docs, "any user authorized to access the
+# LDAP provider's application can search the directory." With NO bindings, even a
+# superuser bind is rejected with LDAP "insufficient access (50)" — exactly what
+# blocked PVE login here (goauthentik/authentik#14518). is_superuser / the "Search
+# full LDAP directory" permission is NOT sufficient on its own anymore; explicit
+# application access is.
+#
+# TWO binds happen during one PVE login, so BOTH principals need app access:
+#   1. svc-pve-ldap binds + searches for the user        → binding on the account
+#   2. PVE re-binds AS the end user with their password   → binding on proxmox-admins
+# The app's policy_engine_mode = "any" (above) OR's these, so a principal is
+# authorized if it's the bind account OR a proxmox-admins member.
+
+# The login users — the (flattened) proxmox-admins group Authentik serves. Synced
+# from AD via the LDAP source, so it exists independently of this config.
+data "authentik_group" "proxmox_admins" {
+  name          = "proxmox-admins"
+  include_users = false # don't pull the member list into tofu state
+}
+
+resource "authentik_policy_binding" "proxmox_ldap_app_users" {
+  target = authentik_application.proxmox_ldap.uuid
+  group  = data.authentik_group.proxmox_admins.id
+  order  = 0
+}
+
+resource "authentik_policy_binding" "proxmox_ldap_app_bind_account" {
+  target = authentik_application.proxmox_ldap.uuid
+  user   = authentik_user.svc_pve_ldap.id
+  order  = 10
 }
