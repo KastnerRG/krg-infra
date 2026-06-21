@@ -98,12 +98,22 @@ permission, and the synced PVE group id are assumptions until validated. Do this
      attribute** (`cn` vs `uid`), and that `proxmox-admins` lists the 6 members.
    - Adjust `pve_ldap_user_attr` / `pve_ldap_*_filter` / `pve_ldap_group_dn` in the
      role to match, if needed.
-   - If the search returns *nothing*, the bind account can't see the directory —
+   - If the bind itself fails with **`ldap_bind: Insufficient access (50)`** (authenticated
+     — else it'd be `49` — but not authorized): the principal lacks **access to the LDAP
+     application**. Since Authentik 2025.4 the outpost authorizes binds against the
+     application's **policy bindings**, and superuser / `search_full_directory` is NOT
+     sufficient on its own (goauthentik/authentik#14518). `proxmox_ldap.tf` binds BOTH
+     `svc-pve-ldap` (search) and the `proxmox-admins` group (logins) to the app with
+     `policy_engine_mode = "any"`. If a *user* can't log in but `svc-pve-ldap` works,
+     confirm they're in `proxmox-admins` (which is bound to the app).
+   - If the search *binds* but returns *nothing*, the bind account can't SEARCH the tree —
      confirm `svc-pve-ldap` is in the **`authentik Admins`** group (Admin → Directory →
-     Users → svc-pve-ldap → Groups). It's put there by `proxmox_ldap.tf` because the
-     scoped `search_full_directory` permission can't be assigned via IaC on our version
-     (goauthentik/authentik#18562 — the RBAC permission-assign API 405s even for admin).
-     Narrow back to the scoped permission once that's fixed.
+     Users → svc-pve-ldap → Groups; toggle "Hide service-accounts" OFF to see it). It's
+     put there by `proxmox_ldap.tf` because the scoped `search_full_directory` permission
+     can't be assigned via IaC on our version (goauthentik/authentik#18562 — the RBAC
+     permission-assign API 405s even for admin). Narrow back to the scoped permission once
+     that's fixed. (App access governs whether you can BIND; superuser governs search
+     BREADTH — both are required.)
 4. **Firewall — TWO independent layers, don't conflate them:**
    - **Proxmox perimeter (`<vmid>.fw`, REQUIRED for login).** krg-prod's per-guest
      firewall (`ansible/roles/proxmox_firewall/files/krg-prod.fw`, VMID 103) is
