@@ -82,24 +82,10 @@ locals {
   authentik_managed_secrets = [
     "e4e-nas/garage-ui-oidc",
     "e4e-nas/dsm-sso-oidc",
-
-    # TRANSITIONAL — the pre-migration FLAT krg-prod paths. Kept ONLY so tofu may
-    # DESTROY them while terraform/authentik moves each secret to
-    # krg-prod/authentik-managed/<name> (a name change = create-new + delete-old, and
-    # the delete needs the old path covered). Drop this whole block in the cleanup PR
-    # once the migration applies have run and the old paths are deleted.
-    "krg-prod/grafana-oidc",
-    "krg-prod/outline-oidc",
-    "krg-prod/mlflow-oidc",
-    "krg-prod/roster-oidc",
-    "krg-prod/roster",
-    "krg-prod/roster-ldap",
-    "krg-prod/vaultwarden-oidc",
-    "krg-prod/guacamole-oidc",
-    "krg-prod/guacamole",
-    "krg-prod/temporal-oidc",
-    "krg-prod/temporal",
-    "krg-prod/proxmox-ldap-bind",
+    # (The transitional pre-migration FLAT krg-prod paths are gone: #323 moved every
+    # krg-prod generated secret to krg-prod/authentik-managed/<name> — now covered by
+    # the glob below — and the old flat paths were destroyed in that apply. This list
+    # is back to just the two e4e-nas secrets that stay enumerated.)
   ]
 
   # Globbable sub-paths the authentik target writes its GENERATED secrets under. One
