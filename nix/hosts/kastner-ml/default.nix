@@ -87,17 +87,18 @@
   # primary resolver (the module puts serverIp in /etc/hosts + prepends it to
   # nameservers) — otherwise SSSD can't resolve the krg.local SRV records.
   #
-  # allowedGroups gates who may SSH in. Locked to Domain Admins for now (fail-safe)
-  # until the E4E groups are created in AD. TODO(AD): add the E4E project/lab groups
-  # (e.g. "FishSense", "Acoustic Species ID", "Huggingface Users", the CSE237D course
-  # group) or an "E4E" umbrella once the ~61 local accounts are migrated to KRG.LOCAL.
+  # allowedGroups gates who may SSH in. The E4E groups now exist in AD (the ~61 local
+  # accounts have been migrated to KRG.LOCAL) — "kastnerml" is the box-specific access
+  # group, "engineers for exploration" the broader E4E umbrella for project leads/staff
+  # who need the box without being a "kastnerml" member proper. Domain Admins stays for
+  # break-glass directory admin access.
   krg.adClient = {
     # AD domain member — verified joined 2026-06-18 (`getent Administrator` resolves).
     # Explicit marker; base.nix defaults enable on.
     enable = true;
     server = "krg-ldap.krg.local";
     serverIp = "137.110.161.109";
-    allowedGroups = ["Domain Admins"];
+    allowedGroups = ["Domain Admins" "kastnerml"];
   };
 
   # scratchpool holds the group scratch datasets, imported via krg.scratch's fileSystems
