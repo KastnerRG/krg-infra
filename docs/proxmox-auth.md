@@ -28,12 +28,21 @@ PVE and granted **Administrator** on `/`. The local **PAM** realm stays break-gl
   search the full directory — see the note below on why not the scoped
   `search_full_directory` permission), and the bind creds written to
   `secret/krg-prod/authentik-managed/proxmox-ldap-bind`.
+- **terraform/authentik/outpost_tokens.tf** — mints the LDAP outpost's API token in
+  IaC (an `authentik_token` for the outpost's service account, `retrieve_key`) and
+  writes it to OpenBao at `secret/krg-prod/authentik-managed/ldap-outpost-token`
+  (under the krg-deploy write-back glob — no openbao policy change). No manual
+  "View token" step.
 - **nix/docker-compose/krg-prod/compose.authentik.yml** — the `authentik_ldap`
   outpost container (`ghcr.io/goauthentik/ldap`), publishing **6636 (LDAPS)** /
   3389, its token rendered from OpenBao via `krg.vaultAgent`
-  (`authentik-ldap-outpost-token.env`). **⚠ This runtime is a SEPARATE, LATER change
-  — see "Bring-up order" — because its token doesn't exist until the outpost is
-  created, and the fail-closed agent can't tolerate a missing secret.**
+  (`authentik-ldap-outpost-token.env`). Because the token is minted in **phase 3**
+  (`outpost_tokens.tf`) — AFTER the **phase 2** krg.vaultAgent render — this one
+  render is **non-fail-closed** (`errorOnMissingKey = false`): on a from-scratch
+  deploy the path is briefly empty (an empty token fails LOUDLY at the outpost, never
+  silently), and `deploy/deploy-rerender-secrets.sh` re-renders krg-prod after phase
+  3 so it converges in one run. Steady state (token present) is identical to
+  fail-closed.
 - **terraform/openbao** — `krg-deploy` may read/write `krg-prod/authentik-managed/*`
   (one glob covers proxmox-ldap-bind + every other authentik-generated secret; no
   per-path policy entry, no openbao apply when a new app is added).
@@ -41,26 +50,30 @@ PVE and granted **Administrator** on `/`. The local **PAM** realm stays break-gl
   ACLs the synced group, runs a `pve-realm-sync` timer. Materialized creds from
   OpenBao by `deploy/deploy-ansible.sh`.
 
-## Bring-up order (load-bearing — don't reorder)
+## Bring-up order (handled by the phased deploy — no manual seeding)
 
-The LDAP outpost token is a **manual artifact** that only exists once the outpost is
-created, and the krg-prod `krg.vaultAgent` is **fail-closed** (one missing secret
-fails the whole render → the entire krg-prod stack won't start). The fleet deploy
-also runs NixOS **before** OpenTofu. So the runtime (the `authentik_ldap` compose
-service + its vault-agent token template) **must not ship in the same change as the
-terraform that creates the outpost** — deploy them in this order:
+The LDAP outpost token only exists once the outpost is created in Authentik
+(`authentik_token.key` is provider-read-only — Authentik mints it), which happens in
+the OpenTofu phase. The fleet deploy runs NixOS (**phase 2**) before OpenTofu
+(**phase 3**), so on a from-scratch deploy the token isn't in OpenBao yet when
+krg-prod's `krg.vaultAgent` renders. The DAG fix handles this WITHOUT manual
+seeding:
 
-1. **terraform/authentik apply** → creates the LDAP provider/app/outpost + bind
-   account + writes `secret/krg-prod/authentik-managed/proxmox-ldap-bind`. (Safe — no NixOS dependency.)
-2. **Retrieve the outpost token** (Admin → Outposts → "authentik LDAP Outpost" →
-   View token) and **seed it**:
-   ```
-   bao kv put secret/krg-prod/authentik-ldap-outpost-token token=<value>
-   ```
-3. **Only now** land the runtime change (re-add the `authentik_ldap` compose service
-   + the `authentik-ldap-outpost-token.env` vault-agent template) and `nixos-rebuild`
-   krg-prod — the secret exists, so the fail-closed agent renders cleanly.
-4. Validate (below), then `deploy/deploy-ansible.sh` for the PVE realm.
+1. **Phase 2** — krg-prod `nixos-rebuild`. The outpost-token render is
+   **non-fail-closed** (`errorOnMissingKey = false`), so the (empty) env file renders
+   and the krg-prod stack comes up; the `authentik_ldap` container starts but can't
+   connect yet (empty token — visibly offline in Admin → Outposts).
+2. **Phase 3** — `terraform/authentik` apply. Creates the provider/app/outpost +
+   `svc-pve-ldap` bind account, and `outpost_tokens.tf` mints the outpost API token
+   and writes it to `secret/krg-prod/authentik-managed/ldap-outpost-token`.
+3. **Phase 3.5** — `deploy/deploy-rerender-secrets.sh` re-runs openbao-agent on
+   krg-prod: the token now renders, and the render's `reloadCommand` restarts
+   `authentik_ldap` so it connects. The whole thing converges in **one** deploy run.
+4. **Phase 4 / Ansible** — validate (below), then `deploy/deploy-ansible.sh` for the
+   PVE realm.
+
+Steady state (every deploy after the first) is unremarkable: the token is already in
+OpenBao, so phase 2 renders it immediately and phase 3.5 is a no-op.
 
 ## ⚠ Bring-up — values that can only be confirmed against the running outpost
 
@@ -68,13 +81,11 @@ The exact tree/attributes Authentik's LDAP outpost serves, the bind/search
 permission, and the synced PVE group id are assumptions until validated. Do this
 **before** trusting the realm:
 
-1. Apply `terraform/authentik`, then **retrieve the LDAP outpost token** (Admin →
-   Outposts → "authentik LDAP Outpost" → View token) and seed it:
-   ```
-   bao kv put secret/krg-prod/authentik-ldap-outpost-token token=<value>
-   ```
-2. `nixos-rebuild` krg-prod so the `authentik_ldap` container starts and the token
-   renders. Confirm it connects (Admin → Outposts shows it healthy).
+1. Apply `terraform/authentik` (mints the outpost + its token →
+   `secret/krg-prod/authentik-managed/ldap-outpost-token`), then re-render krg-prod
+   (`deploy/deploy-rerender-secrets.sh`, or the deploy's phase 3.5) so the token
+   lands and `authentik_ldap` restarts. Confirm it connects (Admin → Outposts shows
+   it healthy). No manual token seeding.
 3. **`ldapsearch` against the outpost** (from fabricant) with the bind account to
    learn the real tree:
    ```bash
@@ -100,8 +111,10 @@ permission, and the synced PVE group id are assumptions until validated. Do this
 
 ## Apply
 
-1. `terraform/authentik` apply → provider/app/outpost/service-account + bind secret.
-2. Seed the outpost token (above) → `nixos-rebuild` krg-prod (container up).
+1. `terraform/authentik` apply → provider/app/outpost/service-account + bind secret +
+   the outpost token (`outpost_tokens.tf`).
+2. `deploy/deploy-rerender-secrets.sh` (or phase 3.5) → token renders, `authentik_ldap`
+   restarts and connects.
 3. Validate with `ldapsearch` (above); fix any ⚠ filter/attr mismatch.
 4. `deploy/deploy-ansible.sh` → the PVE LDAP realm + sync + ACL. After the first
    sync, confirm the synced group id and set `pve_ldap_admin_pve_group` if it isn't

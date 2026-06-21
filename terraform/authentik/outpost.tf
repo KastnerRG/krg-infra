@@ -1,10 +1,8 @@
-# Proxy outpost — the authentik_proxy container on krg-prod registers here.
-# Token flow today is MANUAL (no vault-agent/template wiring yet):
-#   1. After apply, retrieve the token from Admin → Outposts → "View token"
-#   2. (optional) Mirror it into vault for the future automated flow:
-#        bao kv put secret/krg-prod/authentik-outpost-token token=<value>
-#   3. Populate /var/lib/krg/krg-prod/.secrets/authentik_traefik_token.env
-#      manually (AUTHENTIK_TOKEN=<token>) so the compose stack picks it up.
+# Proxy outpost — the authentik_proxy container on krg-prod registers here. Its API
+# token is minted in IaC by outpost_tokens.tf (alongside the LDAP outpost's) and
+# written to secret/krg-prod/authentik-managed/proxy-outpost-token; krg.vaultAgent
+# renders it for the container. No manual "View token" step. (See the ⚠ CUTOVER note
+# in outpost_tokens.tf for the one-time migration off the old pre-glob path.)
 
 resource "authentik_outpost" "proxy" {
   name = "authentik Proxy Outpost"

@@ -46,11 +46,10 @@ resource "authentik_application" "proxmox_ldap" {
 }
 
 # Dedicated LDAP outpost. LDAP can't use the embedded/proxy outpost — it needs its
-# own container (ghcr.io/goauthentik/ldap), run manually in the krg-prod compose
-# stack. Token retrieval is MANUAL, same as the proxy outpost (outpost.tf): after
-# apply, Admin → Outposts → "View token", store at
-# secret/krg-prod/authentik-ldap-outpost-token, render to the env file the
-# container reads.
+# own container (ghcr.io/goauthentik/ldap), run in the krg-prod compose stack. Its
+# API token is minted in IaC and written to OpenBao by outpost_tokens.tf (no manual
+# "View token" step); krg.vaultAgent renders it into the env file the container
+# reads from secret/krg-prod/authentik-managed/ldap-outpost-token.
 resource "authentik_outpost" "ldap" {
   name               = "authentik LDAP Outpost"
   type               = "ldap"

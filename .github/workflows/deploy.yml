@@ -240,6 +240,20 @@ jobs:
           TOFU_TARGETS: "authentik grafana e4e-nas temporal"
         run: ./deploy/deploy-tofu.sh
 
+      # ── phase 3.5: reconcile phase-3-generated secrets into their consumers ────
+      # Almost every generated secret is self-minted early (phase 1.5) and already
+      # present when the fail-closed vault-agent renders in phase 2. The lone
+      # exception is an Authentik OUTPOST token: authentik_token.key is read-only
+      # (Authentik mints it), so it can only exist after phase 3's
+      # terraform/authentik apply — those renders (proxy + ldap) are the ones allowed
+      # to be empty at phase 2 (errorOnMissingKey = false). This re-runs openbao-agent
+      # on krg-prod so the now-present tokens render and the reloadCommands restart the
+      # outpost containers — a from-scratch deploy converges both outposts in ONE run.
+      # Best-effort (warns, never fails the deploy): steady state is a no-op.
+      - name: Phase 3.5 — reconcile generated secrets (outpost tokens)
+        if: success() && steps.gate.outputs.ok == 'true'
+        run: ./deploy/deploy-rerender-secrets.sh
+
       # ── phase 4: verify (all health/membership gates, once) ───────────────────
       # The SINGLE verification phase — runs AFTER every layer has converged, for the
       # whole fleet: OEC daemons (Qualys + Trellix) on every host + the control node,

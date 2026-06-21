@@ -172,8 +172,10 @@ in {
   # openbao-agent and fails closed if bao is sealed/unreachable at boot (the same
   # contract Guacamole already has). See krg.vaultAgent for the render list and
   # docs/openbao-bringup.md "Seed the krg-prod stack secrets" for the one-time
-  # seeding of the LIVE values (SECRET_KEY, DB passwords, outpost token, admin
-  # token) — these are seeded at their current values, NOT regenerated.
+  # seeding of the LIVE values (SECRET_KEY, DB passwords, admin token) — these are
+  # seeded at their current values, NOT regenerated. (BOTH outpost tokens — proxy
+  # and LDAP — are NOT hand-seeded: terraform/authentik/outpost_tokens.tf mints them
+  # and writes them under the authentik-managed/* glob.)
   #
   # Guacamole + Temporal are include'd into this project (compose.yml) and also take
   # NO .secrets/ file — their Postgres passwords and Temporal's OIDC client secret
@@ -391,25 +393,57 @@ in {
           {{- end }}
         '';
       }
-      # Proxy outpost token (Admin → Outposts → View token). LIVE: must match the
-      # token Authentik issued for the embedded outpost.
+      # Proxy outpost token — consumed by the authentik_proxy container
+      # (forward-auth for guacamole/fishsense). MINTED IN IaC by
+      # terraform/authentik/outpost_tokens.tf (same pattern as the LDAP outpost
+      # below); written to secret/krg-prod/authentik-managed/proxy-outpost-token.
+      # errorOnMissingKey = false + the `if` guard + reloadCommand for the same
+      # reason as the LDAP render: the token is generated in phase 3, after this
+      # phase-2 render. See outpost_tokens.tf for the one-time cutover note (the old
+      # pre-glob path secret/krg-prod/authentik-outpost-token is now orphaned).
       {
         destination = "/run/krg/krg-prod/authentik-outpost-token.env";
         perms = "0640";
+        errorOnMissingKey = false;
         contents = ''
-          {{- with secret "secret/data/krg-prod/authentik-outpost-token" }}
+          {{- with secret "secret/data/krg-prod/authentik-managed/proxy-outpost-token" }}
+          {{- if .Data.data.token }}
           AUTHENTIK_TOKEN={{ .Data.data.token }}
           {{- end }}
+          {{- end }}
         '';
+        reloadCommand = "${pkgs.docker}/bin/docker restart authentik_proxy";
       }
 
-      # (The LDAP-outpost token render is intentionally NOT here yet. This agent is
-      # FAIL-CLOSED — a missing secret fails the whole oneshot and takes the entire
-      # krg-prod stack down — so a template may only be added AFTER its secret is
-      # seeded. The LDAP outpost token is a manual artifact retrieved AFTER the
-      # outpost is created by terraform/authentik (a later deploy phase than this
-      # NixOS one), so it lands in a follow-up once seeded — together with the
-      # authentik_ldap compose service. See docs/proxmox-auth.md "bring-up order".)
+      # LDAP outpost token — consumed by the authentik_ldap container
+      # (compose.authentik.yml) so PVE's LDAP realm has something to bind against.
+      # MINTED IN IaC: terraform/authentik/outpost_tokens.tf creates an api token for
+      # the outpost's service account and writes it here (no manual "View token").
+      #
+      # errorOnMissingKey = false — the ONE non-fail-closed render on krg-prod. The
+      # token is generated in phase 3, AFTER this phase-2 render, so on a from-scratch
+      # deploy this path is briefly empty; an empty AUTHENTIK_TOKEN makes the outpost
+      # fail LOUDLY (offline in Admin → Outposts, PVE bind fails) — never silently
+      # wrong — and deploy/deploy-rerender-secrets.sh re-renders krg-prod after phase 3
+      # so it converges in one run. The `if` guard renders an EMPTY file (not the
+      # literal `<no value>`) while the token is absent, so the compose env_file still
+      # exists and the stack comes up. Steady state (token present) is identical to
+      # fail-closed. The reloadCommand restarts the outpost when the token first lands
+      # / rotates (Compose won't recreate it on an env-content change). See
+      # docs/proxmox-auth.md and outpost_tokens.tf for the full rationale.
+      {
+        destination = "/run/krg/krg-prod/authentik-ldap-outpost-token.env";
+        perms = "0640";
+        errorOnMissingKey = false;
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik-managed/ldap-outpost-token" }}
+          {{- if .Data.data.token }}
+          AUTHENTIK_TOKEN={{ .Data.data.token }}
+          {{- end }}
+          {{- end }}
+        '';
+        reloadCommand = "${pkgs.docker}/bin/docker restart authentik_ldap";
+      }
 
       # ── Grafana ──────────────────────────────────────────────────────────────
       # Admin password — the `grafana_e4eadmin_password` docker secret (bare value).

@@ -140,5 +140,5 @@ resource "vault_kv_secret_v2" "guacamole_oidc" {
 # Directory realm; the bind-account password lives at secret/krg-prod/pve-ad-bind,
 # seeded manually and read by the ansible pve_ad role. See docs/proxmox-auth.md.)
 
-# outpost token: retrieved manually from Admin → Outposts → View token after apply.
-# Store with: bao kv put secret/krg-prod/authentik-outpost-token token=<value>
+# Outpost tokens (proxy + ldap) are minted in IaC by outpost_tokens.tf and written
+# under the authentik-managed/* glob — no manual "View token" step here anymore.
