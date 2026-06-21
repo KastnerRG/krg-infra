@@ -145,10 +145,10 @@ bao kv put secret/krg-prod/authentik \
   postgresql_password="$(grep '^AUTHENTIK_POSTGRESQL__PASSWORD=' authentik_admin_password.env | cut -d= -f2-)" \
   postgres_admin_password="$(cat authentik_postgres_admin_password.txt)"
 
-# Authentik embedded-outpost token (the value in authentik_traefik_token.env,
-# AUTHENTIK_TOKEN=...). If lost, re-read it in Authentik: Admin → Outposts → View token.
-bao kv put secret/krg-prod/authentik-outpost-token \
-  token="$(grep '^AUTHENTIK_TOKEN=' authentik_traefik_token.env | cut -d= -f2-)"
+# NB: the Authentik outpost tokens (proxy + LDAP) are NO LONGER hand-seeded here —
+# terraform/authentik/outpost_tokens.tf mints them and writes them under
+# secret/krg-prod/authentik-managed/{proxy,ldap}-outpost-token. The old pre-glob
+# path secret/krg-prod/authentik-outpost-token is orphaned (delete it if you like).
 
 # Vaultwarden /admin argon2 hash (the ADMIN_TOKEN line in vaultwarden.env).
 bao kv put secret/krg-prod/vaultwarden \
@@ -156,8 +156,10 @@ bao kv put secret/krg-prod/vaultwarden \
 ```
 
 After seeding, deploy krg-prod. Once the stack is healthy on bao-rendered
-secrets, the `.secrets/` files for these three are dead and can be removed
-(keep `outline_secrets.env` + `mlflow.env` until those stacks are migrated).
+secrets, the `.secrets/` files for these (authentik + vaultwarden, plus the now-
+obsolete `authentik_traefik_token.env` — the proxy outpost token is IaC-minted)
+are dead and can be removed (keep `outline_secrets.env` + `mlflow.env` until those
+stacks are migrated).
 
 ## Backup & recovery
 

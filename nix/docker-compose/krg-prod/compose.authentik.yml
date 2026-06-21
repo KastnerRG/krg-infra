@@ -181,10 +181,13 @@ services:
       AUTHENTIK_HOST: https://auth.krg.ucsd.edu
       AUTHENTIK_INSECURE: "false"
     env_file:
-      # AUTHENTIK_TOKEN=<ldap outpost token> — rendered from OpenBao
-      # (secret/krg-prod/authentik-ldap-outpost-token) by krg.vaultAgent. Retrieve
-      # after the outpost applies (Admin → Outposts → View token) and seed it BEFORE
-      # this deploys (the agent is fail-closed). See docs/proxmox-auth.md.
+      # AUTHENTIK_TOKEN=<ldap outpost token> — minted in IaC by
+      # terraform/authentik/outpost_tokens.tf, written to OpenBao
+      # (secret/krg-prod/authentik-managed/ldap-outpost-token) and rendered here by
+      # krg.vaultAgent. No manual "View token" step. On a from-scratch deploy the
+      # token is minted in phase 3 (after this phase-2 render), so the render is
+      # non-fail-closed and the file may be briefly empty — the deploy re-renders
+      # after phase 3 to converge. See docs/proxmox-auth.md.
       - /run/krg/krg-prod/authentik-ldap-outpost-token.env
     ports:
       - "0.0.0.0:6636:6636" # LDAPS — PVE binds here (ldaps, verify off until the CA is trusted)

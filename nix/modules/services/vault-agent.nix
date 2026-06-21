@@ -57,6 +57,25 @@ with lib; let
           `{{ with secret "secret/data/krg-prod/authentik-managed/guacamole" }}...{{ .Data.data.db_password }}...{{ end }}`.
         '';
       };
+      errorOnMissingKey = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Fail the (whole) agent render when this template's secret/field is absent.
+          Defaults TRUE — the fail-closed contract: a missing secret takes the
+          dependent stack down rather than starting it with an empty value (no
+          silent drift). Set FALSE only for a secret that is structurally
+          GENERATED AFTER this render runs and whose absence fails LOUDLY at the
+          consumer (not silently) — the lone case is an Authentik OUTPOST token:
+          authentik_token.key is minted in phase 3 (terraform/authentik), AFTER
+          this phase-2 render, so on a from-scratch deploy the path is briefly
+          empty; an empty outpost token makes the outpost visibly fail to connect
+          (Admin → Outposts + login failure), and deploy/deploy-rerender-secrets.sh
+          re-renders after phase 3 to converge in one run. Guard the template body
+          with `{{ if .Data.data.<field> }}…{{ end }}` so a missing field yields an
+          EMPTY file, not the literal `<no value>`.
+        '';
+      };
       reloadCommand = mkOption {
         type = types.str;
         default = "";
@@ -85,7 +104,7 @@ with lib; let
         source               = "${pkgs.writeText "openbao-agent-tmpl" r.contents}"
         destination          = "${r.destination}"
         perms                = "${r.perms}"
-        error_on_missing_key = true
+        error_on_missing_key = ${boolToString r.errorOnMissingKey}
         ${optionalString (r.reloadCommand != "") ''command = "${pkgs.writeShellScript "openbao-agent-reload" "${r.reloadCommand} || true"}"''}
       }
     '')
