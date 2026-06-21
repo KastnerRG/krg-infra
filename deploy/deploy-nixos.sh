@@ -190,5 +190,17 @@ for host in "${ORDER[@]}"; do
     exit 1
   fi
   echo "OK: ${host}"
+  # Re-run the vault-agent so a ROTATED secret (the KV value changed, but the agent's
+  # unit didn't, so `switch` left the oneshot alone) is re-rendered, and each render's
+  # reloadCommand fires for the consumer whose secret actually changed. Best-effort: a
+  # failed re-render leaves the prior /run files in place (consumers keep the last-good
+  # secret), so WARN rather than fail the deploy.
+  if [[ "$(nix eval "${FLAKE}#nixosConfigurations.${host}.config.krg.vaultAgent.enable" 2>/dev/null || echo false)" == "true" ]]; then
+    if ssh -o BatchMode=yes "$target" sudo systemctl restart openbao-agent; then
+      echo "  re-rendered vault-agent secrets on ${host}"
+    else
+      echo "  WARN: vault-agent re-render failed on ${host} — consumers keep prior secrets; check 'systemctl status openbao-agent'" >&2
+    fi
+  fi
   printf '\n::endgroup::\n'
 done

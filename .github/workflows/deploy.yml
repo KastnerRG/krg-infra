@@ -183,6 +183,21 @@ jobs:
           DEPLOY_KRG_AD: "true"
         run: ./deploy/deploy-ansible.sh
 
+      # ── phase 1.5: secrets (OpenTofu — early, BEFORE the consumers) ────────────
+      # terraform/secrets GENERATES the krg-prod secrets the fail-closed krg.vaultAgent
+      # renders in phase 2, so it MUST run before phase 2 — the whole point of the DAG
+      # fix: generation precedes consumption (terraform/secrets/README.md). It depends
+      # only on OpenBao (krg-vault, phase 0) + the krg-deploy AppRole — no running
+      # service — so it slots in here. Steady state is a no-op (the secrets already
+      # exist); a missing AppRole / unseeded target skips gracefully. openbao itself
+      # stays manual (privileged bootstrap token), as in phase 3.
+      - name: Phase 1.5 — secrets (OpenTofu)
+        if: success() && steps.gate.outputs.ok == 'true'
+        env:
+          TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
+          TOFU_TARGETS: "secrets"
+        run: ./deploy/deploy-tofu.sh
+
       # ── phase 2: systems (NixOS members) ──────────────────────────────────────
       # The remaining hosts now that the substrate exists: krg-prod (the services
       # OpenTofu configures in phase 3) and the compute boxes, which mount /home from
