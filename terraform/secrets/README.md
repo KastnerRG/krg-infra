@@ -26,9 +26,15 @@ krg-vault (P0) → terraform/openbao (privileged) → terraform/secrets → NixO
 No fail-open / optional secrets — the invariant stays "declared state or visible
 failure"; we just guarantee the secret exists before the consumer runs.
 
-> **Pilot:** this PR moves only **temporal** (it has both a DB password and a
-> `client_secret`) to validate the pattern + the diff-stability gate below. The
-> remaining apps follow in the sweep PR once the gate is confirmed.
+## Which secrets live here
+
+Only the secrets a **fail-closed P2 consumer** (the krg-prod `krg.vaultAgent`) renders
+need to be generated early — those are the ones that can fail-close the stack. Today:
+**temporal** (db + oidc), **guacamole** (db; its OIDC is implicit-flow, no secret),
+**vaultwarden** (oidc). The rest (`grafana-oidc`, outline, mlflow, roster,
+`guacamole-oidc`, the e4e-nas pair, `proxmox-ldap-bind`) are consumed at tofu-time or by
+graceful ansible — they can't fail-close the stack, so they stay in `terraform/authentik`.
+**Rule:** when a secret becomes a vault-agent (P2) consumer, move it here.
 
 ## Migration (one-time, per secret)
 
@@ -42,11 +48,12 @@ Two modes:
   is wired and the value is read from OpenBao (never your shell). Format per line:
   `ADDR KVPATH FIELD`.
   ```bash
-  # On krg-deploy. PLAN_ONLY first to confirm the import preserved the value:
+  # On krg-deploy. PLAN_ONLY first to confirm each import preserved the value.
+  # One ADDR/KVPATH/FIELD line per DB password (temporal already migrated):
   TOFU_TARGETS=secrets TOFU_STATE_PASSPHRASE='<passphrase>' TOFU_PLAN_ONLY=1 \
-    TOFU_IMPORT="random_password.temporal_db secret/krg-prod/authentik-managed/temporal db_password" \
+    TOFU_IMPORT="random_password.guacamole_db secret/krg-prod/authentik-managed/guacamole db_password" \
     ./deploy/deploy-tofu.sh
-  # CONFIRM: random_password.temporal_db => No changes (value preserved)
+  # CONFIRM: random_password.guacamole_db => No changes (value preserved)
   ```
 - **OIDC `client_secret`s — ROTATE** (no import). The first apply mints a fresh value
   and writes it; `terraform/authentik` sets the same value on the provider in the same

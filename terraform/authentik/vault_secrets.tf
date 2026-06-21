@@ -51,17 +51,23 @@ resource "vault_kv_secret_v2" "roster_oidc" {
   })
 }
 
-# Vaultwarden — Authentik mints this client secret (brand new). Consumed by the
-# compose service as SSO_CLIENT_SECRET (populated into
-# /var/lib/krg/krg-prod/.secrets/vaultwarden.env; see docs/vaultwarden-sso.md).
-resource "vault_kv_secret_v2" "vaultwarden_oidc" {
+# Vaultwarden's OIDC client secret is now MINTED by the early terraform/secrets
+# workspace (it's a fail-closed P2 consumer: krg-prod vault-agent renders it as
+# SSO_CLIENT_SECRET). This workspace READS it back to set on the provider below. The
+# `removed` block drops the old writer from state without destroying the live KV entry
+# (terraform/secrets owns + rotates it). See terraform/secrets/README.md.
+removed {
+  from = vault_kv_secret_v2.vaultwarden_oidc
+  lifecycle {
+    destroy = false
+  }
+}
+
+# Read the Vaultwarden OIDC client_secret minted by terraform/secrets, to set on the
+# provider below. krg-deploy's policy already grants read on authentik-managed/* .
+data "vault_kv_secret_v2" "vaultwarden_oidc" {
   mount = "secret"
   name  = "krg-prod/authentik-managed/vaultwarden-oidc"
-  data_json = jsonencode({
-    client_id     = authentik_provider_oauth2.vaultwarden.client_id
-    client_secret = authentik_provider_oauth2.vaultwarden.client_secret
-    issuer_url    = "${var.authentik_url}/application/o/vaultwarden/"
-  })
 }
 
 # Temporal's OIDC client secret is now MINTED by the early terraform/secrets workspace

@@ -114,8 +114,11 @@ resource "authentik_property_mapping_provider_scope" "vaultwarden_email" {
 }
 
 resource "authentik_provider_oauth2" "vaultwarden" {
-  name                  = "Provider for Vaultwarden"
+  name = "Provider for Vaultwarden"
+  # client_secret is minted by terraform/secrets and read back here (it must exist
+  # before the fail-closed krg-prod vault-agent renders it); client_id stays static.
   client_id             = "vaultwarden"
+  client_secret         = data.vault_kv_secret_v2.vaultwarden_oidc.data["client_secret"]
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://vaultwarden.krg.ucsd.edu/identity/connect/oidc-signin" }]
