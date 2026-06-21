@@ -24,15 +24,73 @@ locals {
 }
 
 resource "authentik_provider_ldap" "proxmox" {
-  name        = "Provider for Proxmox LDAP"
-  base_dn     = local.proxmox_ldap_base_dn
-  bind_flow   = data.authentik_flow.default_authentication.id
+  name    = "Provider for Proxmox LDAP"
+  base_dn = local.proxmox_ldap_base_dn
+  # Bind against a DEDICATED password-only flow (below), NOT the default
+  # authentication flow. The default flow includes an Authenticator Validation (MFA)
+  # stage, and an LDAP bind can't satisfy WebAuthn/passkeys (only TOTP/static/Duo) —
+  # a user with a passkey (passkey.tf) fails the bind with "no compatible
+  # authenticator class found / failed to execute flow". PVE is password-only by
+  # decision, so ldap_bind has no MFA stage. RESOURCE flow → reference `.uuid`, not
+  # `.id` (which is the slug; the providers API wants the pk — same lesson as the
+  # flow_stage_bindings).
+  bind_flow   = authentik_flow.ldap_bind.uuid
   unbind_flow = data.authentik_flow.default_invalidation.id
   # mfa_support DEFAULTS TO true — explicitly off (password-only, per the auth
-  # decision). Flip to true later to require TOTP (append code / app-password).
+  # decision). The ldap_bind flow also has no MFA stage, so this is belt-and-braces.
   mfa_support = false
   # bind_mode/search_mode left at the provider default ("direct") so each bind +
   # search is validated live against Authentik.
+}
+
+# ── Dedicated bind flow (password-only, NO MFA) ─────────────────────────────────
+# The LDAP outpost executes this flow to authenticate every bind (the search account
+# AND each end user). It mirrors the default authentication flow MINUS the MFA stage:
+# Identification (by username) → Password (inline) → User Login. See the bind_flow
+# note on the provider above for WHY. Pattern mirrors passkey.tf/recovery.tf; bindings
+# target the flow's `.uuid` (its `.id` is the slug, which the bindings API rejects).
+resource "authentik_flow" "ldap_bind" {
+  name           = "Proxmox LDAP bind"
+  title          = "KRG LDAP Authentication"
+  slug           = "krg-ldap-bind"
+  designation    = "authentication"
+  authentication = "require_unauthenticated"
+}
+
+# Password stage — backends MUST include the LDAP source backend: PVE users are
+# AD-synced (their password lives in KRG.LOCAL, not Authentik's DB), so the password
+# is validated against the LDAP source. Inbuilt covers any local Authentik accounts.
+resource "authentik_stage_password" "ldap_bind" {
+  name = "krg-ldap-bind-password"
+  backends = [
+    "authentik.core.auth.InbuiltBackend",
+    "authentik.sources.ldap.auth.LDAPBackend",
+  ]
+}
+
+# Identify by username (the cn the outpost extracts from the bind DN, e.g.
+# c.crutchfield.642); the password is collected + validated INLINE via password_stage,
+# exactly like the default flow's identification stage.
+resource "authentik_stage_identification" "ldap_bind" {
+  name           = "krg-ldap-bind-identification"
+  user_fields    = ["username"]
+  password_stage = authentik_stage_password.ldap_bind.id
+}
+
+resource "authentik_stage_user_login" "ldap_bind" {
+  name = "krg-ldap-bind-login"
+}
+
+resource "authentik_flow_stage_binding" "ldap_bind_identification" {
+  target = authentik_flow.ldap_bind.uuid
+  stage  = authentik_stage_identification.ldap_bind.id
+  order  = 10
+}
+
+resource "authentik_flow_stage_binding" "ldap_bind_login" {
+  target = authentik_flow.ldap_bind.uuid
+  stage  = authentik_stage_user_login.ldap_bind.id
+  order  = 20
 }
 
 # Application backing the LDAP provider. No launch URL / group — it's NOT a
