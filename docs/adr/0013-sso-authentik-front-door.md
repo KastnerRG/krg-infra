@@ -39,20 +39,29 @@ LDAP-outpost) and brokers them back to one AD-backed identity. The mental model:
 
 ### 2. Federation order — Authentik first, direct-AD second
 
-A service authenticates through **Authentik** (OIDC/SAML) wherever it can. Binding
-**directly** to AD (native LDAP/Kerberos/AD realm) is the *fallback*, used only
-when a service genuinely can't go through Authentik:
+A service authenticates through **Authentik** wherever it can. Binding **directly**
+to AD (Kerberos/LDAP/SSSD against the DC) is the *fallback*, used only when a
+service genuinely can't go through Authentik. "Through Authentik" is broader than
+OIDC — Authentik also fronts AD over **LDAP via its LDAP outpost**, so even a
+client that can't do the browser redirect still routes through the front door:
 
-- **Authentik (preferred):** web apps and anything that speaks OIDC/SAML — Grafana,
-  Outline, MLflow, Label Studio, Vaultwarden, Fleet's admin console, etc. One
-  login, one MFA surface, one place to revoke.
-- **Direct AD (fallback only):** infrastructure that has no Authentik path —
-  host SSSD logins (`krg.adClient`), Proxmox's native AD realm
-  ([[proxmox-uses-ad-realm-not-oidc]]), NFS/SMB, Samba/Kerberos. These bind AD
-  directly because the protocol layer can't be brokered, not by preference.
+- **Authentik — OIDC/SAML (preferred):** web apps that speak the browser flow —
+  Grafana, Outline, MLflow, Label Studio, Vaultwarden, Fleet's admin console, etc.
+  One login, one MFA surface, one place to revoke.
+- **Authentik — LDAP outpost:** clients that can only do a plain LDAP bind, *still
+  through Authentik, not raw AD*. **Proxmox VE** is the case
+  ([[proxmox-uses-ad-realm-not-oidc]], `docs/proxmox-auth.md`): its PVE LDAP realm
+  binds the Authentik **LDAP outpost** (`terraform/authentik/proxmox_ldap.tf`),
+  because the PVE apps can't do OIDC's redirect *and* because the outpost flattens
+  nested AD groups PVE can't expand itself. The outpost is Authentik serving AD over
+  LDAP — front door, not fallback.
+- **Direct AD (true fallback only):** protocol-level identity with no Authentik
+  path at all — host SSSD logins (`krg.adClient`), NFS/SMB, Samba/Kerberos. These
+  bind the DC directly because the protocol can't be brokered, not by preference.
 
-Favoring Authentik gives a single entry point into everything and keeps the
-per-service blast radius small; direct-AD bindings are minimized, not multiplied.
+Favoring Authentik — OIDC where possible, the LDAP outpost where not — gives a
+single entry point into everything and keeps the per-service blast radius small;
+direct-to-DC bindings are minimized, not multiplied.
 
 ### 3. New-service obligation (the gate)
 
@@ -80,7 +89,11 @@ with local accounts because nothing said otherwise" is no longer a valid outcome
   get an Authentik-local account, authorized **explicitly per application**, with
   **no** AD group membership and therefore no host/compute/storage reach. Minimal
   trust by construction: the account can reach exactly the app(s) it was granted
-  and nothing else.
+  and nothing else. Onboarding is an **Authentik invitation flow** (an admin sends
+  a scoped invite; the collaborator self-enrolls into a local account) — not AD
+  provisioning, and not an open self-signup. That flow is **not yet built** (see
+  follow-ups); until it exists, there is no collaborator-onboarding path, which is
+  the safe default.
 
 This refines 0010: "every human is an AD account" holds for **members**; web-only
 collaborators are the deliberately-scoped exception that minimal-trust justifies.
@@ -127,10 +140,13 @@ hatch.
 
 ## Out of scope / follow-ups
 
-- **Authentik-local collaborator pattern in IaC.** Decision 4 sets the policy; the
-  concrete `terraform/authentik/` shape for external accounts + per-app grants
-  (and where their minimal authorization is declared) is a follow-up, owned by the
-  SSO effort ([[terraform-openbao-authentik-hands-off]]).
+- **Authentik invitation flow for collaborators.** Decision 4 sets the policy; the
+  mechanism — an Authentik **invitation/enrollment flow** that mints a minimal-trust
+  local account from an admin-issued, app-scoped invite (no AD write, no open
+  self-signup) — still needs building in `terraform/authentik/`, along with where a
+  collaborator's per-app authorization is declared. Owned by the SSO effort
+  ([[terraform-openbao-authentik-hands-off]]). No collaborator can be onboarded
+  until it lands.
 - **Authentik password-strength/breach policy** — **now landed**
   (`terraform/authentik/password_policy.tf`: length ≥12 + HIBP breach + zxcvbn,
   bound to the recovery and change-password flows), closing ADR 0010 §4. It is the
