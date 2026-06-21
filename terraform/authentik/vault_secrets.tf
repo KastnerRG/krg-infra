@@ -4,12 +4,15 @@
 #   - terraform/grafana/ DOES read grafana-oidc from vault programmatically
 #     (data "vault_kv_secret_v2" in grafana/sso.tf — wired through to the
 #     grafana_sso_settings resource).
-#   - Outline, MLflow, and any other compose-stack consumer still read from
+#   - Outline (and any other not-yet-migrated compose-stack consumer) still reads from
 #     local /var/lib/krg/krg-prod/.secrets/*.env files at container start.
 #     The vault entries here are staged for future vault-agent/template
 #     rendering of those files; until then they must be populated manually
 #     (e.g. `bao kv get -field=client_secret secret/krg-prod/authentik-managed/outline-oidc`
 #     into the matching .secrets file).
+#   - MLflow is now a fail-closed P2 (vault-agent) consumer, so its OIDC secret moved
+#     to the early terraform/secrets workspace (mlflow.tf) — see the removed{}+data
+#     block below, mirroring temporal/vaultwarden.
 
 resource "vault_kv_secret_v2" "grafana_oidc" {
   mount = "secret"
@@ -31,14 +34,24 @@ resource "vault_kv_secret_v2" "outline_oidc" {
   })
 }
 
-resource "vault_kv_secret_v2" "mlflow_oidc" {
+# MLflow's OIDC client secret is now MINTED by the early terraform/secrets workspace
+# (it's a fail-closed P2 consumer: krg-prod vault-agent renders it as OIDC_CLIENT_SECRET
+# into /run/krg/mlflow/mlflow.env). This workspace READS it back to set on the provider
+# (see the data source + `client_secret =` on authentik_provider_oauth2.mlflow in
+# applications_krg.tf). The `removed` block drops the old writer from state without
+# destroying the live KV entry (terraform/secrets owns it). See terraform/secrets/README.md.
+removed {
+  from = vault_kv_secret_v2.mlflow_oidc
+  lifecycle {
+    destroy = false
+  }
+}
+
+# Read the MLflow OIDC client_secret minted by terraform/secrets, to set on the
+# provider below. krg-deploy's policy already grants read on authentik-managed/* .
+data "vault_kv_secret_v2" "mlflow_oidc" {
   mount = "secret"
   name  = "krg-prod/authentik-managed/mlflow-oidc"
-  data_json = jsonencode({
-    client_id     = authentik_provider_oauth2.mlflow.client_id
-    client_secret = authentik_provider_oauth2.mlflow.client_secret
-    issuer_url    = "${var.authentik_url}/application/o/mlflow/"
-  })
 }
 
 resource "vault_kv_secret_v2" "roster_oidc" {
