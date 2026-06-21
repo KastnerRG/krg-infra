@@ -71,6 +71,7 @@ in {
     "L+ /var/lib/krg/krg-prod/compose.temporal.yml     - - - - ${composeDir}/compose.temporal.yml"
     "L+ /var/lib/krg/krg-prod/compose.outline.yml      - - - - ${composeDir}/compose.outline.yml"
     "L+ /var/lib/krg/krg-prod/compose.mlflow.yml       - - - - ${composeDir}/compose.mlflow.yml"
+    "L+ /var/lib/krg/krg-prod/compose.fleet.yml        - - - - ${composeDir}/compose.fleet.yml"
 
     # Read-only config dirs: symlink from working dir → Nix store.
     # Docker bind-mount follows symlinks so ./blackbox-exporter resolves to the store
@@ -132,6 +133,13 @@ in {
     "L+ /var/lib/krg/krg-prod/mlflow/config                 - - - - ${composeDir}/mlflow/config"
     "L+ /var/lib/krg/krg-prod/mlflow/initdb                 - - - - ${composeDir}/mlflow/initdb"
 
+    # Fleet (ADR 0012): read-only non-secret config from the store; MySQL data is
+    # writable and owned by the mysql:8.4 image's uid (999). The fleet/ dir itself is
+    # root:docker like the other config parents. Secrets live in .secrets/fleet.env.
+    "d  /var/lib/krg/krg-prod/fleet                         0750 root   docker -"
+    "L+ /var/lib/krg/krg-prod/fleet/fleet.env               - - - - ${composeDir}/fleet/fleet.env"
+    "d  /var/lib/krg/krg-prod/fleet/mysql                   0750 999  999  -"
+
     # Grafana, Prometheus data (writable)
     "d  /var/lib/krg/krg-prod/grafana-storage               0750 1000 1000 -"
     # Prometheus is the odd one out: unlike grafana/loki (which we pin to uid 1000),
@@ -190,6 +198,11 @@ in {
   # Still hand-placed in /var/lib/krg/krg-prod/.secrets/ (not yet migrated; currently
   # disabled in compose.yml):
   #   outline_secrets.env               (SECRET_KEY, UTILS_SECRET, OIDC_CLIENT_SECRET, DATABASE_URL, ...)
+  #   fleet.env                         (Fleet/MDM — ADR 0012; see docs/fleet-mdm.md):
+  #     MYSQL_ROOT_PASSWORD=...          (mysql root)
+  #     MYSQL_PASSWORD=...               (the `fleet` DB-role password)
+  #     FLEET_MYSQL_PASSWORD=...         (MUST equal MYSQL_PASSWORD — Fleet connects as `fleet`)
+  #     FLEET_SERVER_PRIVATE_KEY=...     (>=32 random chars; encrypts MDM assets at rest — losing it bricks MDM)
   #
   # Also create /var/lib/krg/krg-prod/.env with:
   #   USER_ID=<UID of the account that owns the working directory>
