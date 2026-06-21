@@ -33,6 +33,12 @@ Consequences).
 
 ## Decision
 
+- **Scope: lab-owned equipment only.** Personally-owned (BYOD) devices are **never
+  enrolled.** An MDM control plane — remote wipe/lock, config enforcement, key escrow —
+  is only appropriate for hardware the lab owns; restricting enrollment to lab-owned
+  devices structurally avoids the privacy/overreach problems of managing personal
+  hardware. (Personal devices that need lab *web-app* SSO still get it via Authentik in
+  a browser — no enrollment required.)
 - **The lab owns the endpoint control plane.** It enforces device config and can
   lock/wipe a stolen device itself, rather than deferring control to campus Intune.
 - **FDE-first.** Full-disk encryption with a **boot secret** (BitLocker / FileVault /
