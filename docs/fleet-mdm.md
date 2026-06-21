@@ -17,9 +17,15 @@ Runs as part of the krg-prod compose project (`compose.fleet.yml`, `include:`-d 
 `compose.yml`), behind Traefik with Let's Encrypt TLS:
 
 - `fleet` — the server (`fleet serve`), plain HTTP `:8080`, TLS terminated at Traefik.
-- `fleet_mysql` (MySQL 8.4) + `fleet_redis` (Redis) on the private `fleet` network.
+- `fleet_mysql` (MySQL 8.4) + `fleet_valkey` (Valkey) on the private `fleet` network.
 - `fleet_migrate` — one-shot `fleet prepare db` that the server waits on
   (`service_completed_successfully`); idempotent, runs on every `up`.
+
+**Datastore choices.** Fleet uses MySQL extensively and only *experimentally* supports
+MariaDB (formal support tracked in fleetdm/fleet #27400, #31288) — so the DB stays
+**MySQL 8.4** (the Fleet-tested LTS) until MariaDB is supported. The cache is
+**Valkey** (`valkey/valkey`), which Fleet documents as its *recommended*
+Redis-compatible cache; it's wire-compatible, so `FLEET_REDIS_ADDRESS` is unchanged.
 
 ## Secrets
 

@@ -29,10 +29,13 @@ services:
     networks:
       - fleet
 
-  fleet_redis:
-    image: redis:8.8
+  # Valkey, not Redis: Fleet documents Valkey as its recommended Redis-compatible
+  # cache, and it's the community/LF fork (Redis went SSPL) — same FOSS lean as the
+  # repo's OpenTofu/Garage choices. Wire-compatible, so FLEET_REDIS_ADDRESS is unchanged.
+  fleet_valkey:
+    image: valkey/valkey:9.1
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
       timeout: 30s
       retries: 3
@@ -64,7 +67,7 @@ services:
     depends_on:
       fleet_mysql:
         condition: service_healthy
-      fleet_redis:
+      fleet_valkey:
         condition: service_started
       fleet_migrate:
         condition: service_completed_successfully
