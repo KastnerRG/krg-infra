@@ -104,10 +104,19 @@ permission, and the synced PVE group id are assumptions until validated. Do this
      scoped `search_full_directory` permission can't be assigned via IaC on our version
      (goauthentik/authentik#18562 — the RBAC permission-assign API 405s even for admin).
      Narrow back to the scoped permission once that's fixed.
-4. **Firewall:** 6636 is published on all interfaces and bypasses the in-guest
-   firewall (Docker DNAT via FORWARD). Restrict the source to fabricant
-   (137.110.161.98) with a `DOCKER-USER`/nftables FORWARD rule on krg-prod — the
-   same open item as dcgm 9400 (CLAUDE.md "Docker published-port firewall bypass").
+4. **Firewall — TWO independent layers, don't conflate them:**
+   - **Proxmox perimeter (`<vmid>.fw`, REQUIRED for login).** krg-prod's per-guest
+     firewall (`ansible/roles/proxmox_firewall/files/krg-prod.fw`, VMID 103) is
+     default-deny and must explicitly **ACCEPT 6636 from fabricant** — without it the
+     VM drops PVE's bind and login fails with "can't contact LDAP server" surfaced as
+     a generic **401** (this bit us: the outpost was healthy but unreachable). The
+     rule is `IN ACCEPT -p tcp -dport 6636 -source 137.110.161.98`.
+   - **In-guest Docker bypass (still open, hardening).** Docker publishes 6636 on all
+     interfaces and DNATs past the in-guest nftables INPUT (FORWARD path), so the port
+     is world-reachable on `krg-prod:6636` regardless of the perimeter rule above.
+     Restrict it to fabricant with a `DOCKER-USER`/nftables FORWARD rule on krg-prod —
+     same open item as dcgm 9400 (CLAUDE.md "Docker published-port firewall bypass").
+     The perimeter rule is the access control today; this closes the bypass.
 
 ## Apply
 
