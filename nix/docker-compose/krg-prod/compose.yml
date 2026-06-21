@@ -8,9 +8,9 @@ include:
   # one project: one stack, one bao dependency, easier to reason about.
   - compose.guacamole.yml
   - compose.temporal.yml
+  - compose.mlflow.yml
   # Temporarily disabled — bring up once verified.
   # - compose.outline.yml
-  # - compose.mlflow.yml
 
 services:
   traefik:
@@ -67,11 +67,11 @@ services:
           - monitoring.krg.ucsd.edu
           - roster.krg.ucsd.edu
           - vaultwarden.krg.ucsd.edu
+          - mlflow.krg.ucsd.edu
           # Aliases for the temporarily-disabled stacks — re-enable alongside their
           # compose includes above:
           # - docs.krg.ucsd.edu
           # - github.roster.krg.ucsd.edu
-          # - mlflow.krg.ucsd.edu
           # s3 (s3.krg.ucsd.edu) is served by the fabricant hypervisor's storage
           # pool, not krg-prod's Traefik — see docs/fleet-inventory.md.
           # fishsense/smartfin APIs (api.fishsense / api.smartfin) move to e4e-prod.

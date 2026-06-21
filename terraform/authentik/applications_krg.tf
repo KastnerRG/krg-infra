@@ -65,12 +65,22 @@ resource "authentik_application" "outline" {
 # ── MLflow ─────────────────────────────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "mlflow" {
-  name                   = "Provider for MLflow"
-  client_id              = "mlflow"
-  authorization_flow     = data.authentik_flow.default_authorization.id
-  invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://mlflow.krg.ucsd.edu/callback" }]
-  property_mappings      = local.std_scopes
+  name = "Provider for MLflow"
+  # client_secret is minted by terraform/secrets and read back here (it must exist
+  # before the fail-closed krg-prod vault-agent renders it); client_id stays static.
+  client_id             = "mlflow"
+  client_secret         = data.vault_kv_secret_v2.mlflow_oidc.data["client_secret"]
+  authorization_flow    = data.authentik_flow.default_authorization.id
+  invalidation_flow     = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://mlflow.krg.ucsd.edu/callback" }]
+  # std_scopes + the AD-sourced groups scope: mlflow-oidc-auth gates access on the
+  # `groups` claim (OIDC_GROUP_NAME / OIDC_ADMIN_GROUP_NAME = the "MLflow Users" /
+  # "MLflow Admins" AD groups). Without this scope the claim is absent → nobody authorizes.
+  property_mappings = concat(local.std_scopes, [authentik_property_mapping_provider_scope.groups.id])
+  # RS256 signing key — mlflow-oidc-auth (authlib) verifies the ID token against the
+  # provider's jwks_uri. Without it Authentik falls back to HS256 + empty JWKS →
+  # "Invalid ID token" (the same failure garage-ui/vaultwarden/temporal hit).
+  signing_key            = data.authentik_certificate_key_pair.default.id
   sub_mode               = "user_username"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
