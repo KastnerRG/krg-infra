@@ -34,10 +34,16 @@ pve_ldap_user_attr: "cn"
 pve_ldap_default_realm: true # pre-select on the PVE login screen; PAM stays in the dropdown
 
 # ── Group sync → admin ──────────────────────────────────────────────────────────
-# Authentik tree: users under ou=users, groups under ou=groups. The flattened
-# proxmox-admins group has the real members (incl. nested Domain Admins).
+# Authentik serves groups at cn=<g>,ou=groups,<base>, BUT there is no `ou=groups`
+# CONTAINER entry to search *from* — a group search BASED at `ou=groups,<base>`
+# resolves nothing, so PVE's group pass found 0 groups, never read proxmox-admins'
+# `member` list, and never linked members → "you are not an administrator" even
+# after a clean login + sync (the USER pass works because PVE searches users from
+# base_dn = the root). So search groups from the ROOT (base_dn); the
+# cn=proxmox-admins group_filter still pins it to exactly that group — the per-user
+# ou=virtual-groups entries have different cns and can't match.
 pve_ldap_admin_ldap_group: "proxmox-admins"
-pve_ldap_group_dn: "ou=groups,DC=krg,DC=ucsd,DC=edu"
+pve_ldap_group_dn: "DC=krg,DC=ucsd,DC=edu" # base_dn, NOT ou=groups (no container to search from)
 pve_ldap_group_filter: "(&(objectClass=group)(cn=proxmox-admins))"
 pve_ldap_user_filter: "(&(objectClass=user)(memberOf=cn=proxmox-admins,ou=groups,DC=krg,DC=ucsd,DC=edu))"
 pve_ldap_sync_scope: "both"
