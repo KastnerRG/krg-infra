@@ -7,4 +7,10 @@ Wants=pve-cluster.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/pveum realm sync {{ pve_ldap_realm }} --scope {{ pve_ldap_sync_scope }} --enable-new {{ pve_ldap_sync_enable_new | int }}
+# Resolve `pveum` via PATH, not a hardcoded absolute path: on PVE it lives in
+# /usr/sbin (NOT /usr/bin), and the layout can vary by version. /usr/bin/env is the
+# absolute first token systemd's ExecStart requires, and systemd's default PATH
+# includes /usr/sbin — so this finds pveum wherever it is. (The hardcoded
+# /usr/bin/pveum silently failed every run: "203/EXEC ... No such file or directory",
+# so the periodic membership sync never actually ran.)
+ExecStart=/usr/bin/env pveum realm sync {{ pve_ldap_realm }} --scope {{ pve_ldap_sync_scope }} --enable-new {{ pve_ldap_sync_enable_new | int }}
