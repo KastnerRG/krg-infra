@@ -31,9 +31,11 @@ PVE and granted **Administrator** on `/`. The local **PAM** realm stays break-gl
 - **nix/docker-compose/krg-prod/compose.authentik.yml** — the `authentik_ldap`
   outpost container (`ghcr.io/goauthentik/ldap`), publishing **6636 (LDAPS)** /
   3389, its token rendered from OpenBao via `krg.vaultAgent`
-  (`authentik-ldap-outpost-token.env`). **⚠ This runtime is a SEPARATE, LATER change
-  — see "Bring-up order" — because its token doesn't exist until the outpost is
-  created, and the fail-closed agent can't tolerate a missing secret.**
+  (`authentik-ldap-outpost-token.env`). **⚠ The fail-closed agent can't tolerate a
+  missing secret, so the outpost token MUST be seeded in OpenBao BEFORE this deploys
+  (Admin → Outposts → "authentik LDAP Outpost" → View token →
+  `bao kv put secret/krg-prod/authentik-ldap-outpost-token token=<value>`). Deploying
+  the container/render before seeding takes the whole krg-prod stack down.**
 - **terraform/openbao** — `krg-deploy` may read/write `krg-prod/authentik-managed/*`
   (one glob covers proxmox-ldap-bind + every other authentik-generated secret; no
   per-path policy entry, no openbao apply when a new app is added).

@@ -1,5 +1,6 @@
 x-authentik-image: &authentik-image ghcr.io/goauthentik/server:2026.5.3
 x-authentik-proxy-image: &authentik-proxy-image ghcr.io/goauthentik/proxy:2026.5.3
+x-authentik-ldap-image: &authentik-ldap-image ghcr.io/goauthentik/ldap:2026.5.3
 
 services:
   postgres_authentik:
@@ -162,12 +163,35 @@ services:
       - authentik
       - traefik_proxy
 
-  # NOTE: the LDAP outpost container (authentik_ldap, for the Proxmox PVE LDAP realm)
-  # is intentionally NOT here yet. Its AUTHENTIK_TOKEN comes from a vault-agent render
-  # of a MANUAL outpost token that only exists AFTER terraform/authentik creates the
-  # outpost — and that agent is fail-closed, so adding the render before the secret
-  # is seeded takes the whole krg-prod stack down. The container + its token render
-  # land together in a follow-up, after the token is seeded. See docs/proxmox-auth.md.
+  # LDAP outpost — serves the (flattened) directory that the Proxmox PVE LDAP realm
+  # binds against (terraform/authentik/proxmox_ldap.tf). Its own container + token,
+  # like authentik_proxy. Unlike the proxy outpost it is NOT fronted by Traefik —
+  # PVE on fabricant connects straight to the published LDAPS port.
+  #
+  # ⚠ FIREWALL: 6636 is published on all interfaces so fabricant can reach it, but
+  # Docker's publish bypasses the in-guest nftables INPUT (it DNATs via FORWARD), so
+  # this is world-reachable on krg-prod:6636 until a DOCKER-USER/FORWARD rule
+  # restricts the source to fabricant (137.110.161.98) — same open item as dcgm 9400
+  # (see CLAUDE.md "Docker published-port firewall bypass"). The bind is auth-gated
+  # and LDAPS-encrypted, but lock the source down at bring-up.
+  authentik_ldap:
+    image: *authentik-ldap-image
+    container_name: authentik_ldap
+    environment:
+      AUTHENTIK_HOST: https://auth.krg.ucsd.edu
+      AUTHENTIK_INSECURE: "false"
+    env_file:
+      # AUTHENTIK_TOKEN=<ldap outpost token> — rendered from OpenBao
+      # (secret/krg-prod/authentik-ldap-outpost-token) by krg.vaultAgent. Retrieve
+      # after the outpost applies (Admin → Outposts → View token) and seed it BEFORE
+      # this deploys (the agent is fail-closed). See docs/proxmox-auth.md.
+      - /run/krg/krg-prod/authentik-ldap-outpost-token.env
+    ports:
+      - "0.0.0.0:6636:6636" # LDAPS — PVE binds here (ldaps, verify off until the CA is trusted)
+      - "0.0.0.0:3389:3389" # LDAP (plain) — kept for debugging; prefer 6636
+    restart: unless-stopped
+    networks:
+      - authentik
 
 secrets:
   authentik_postgres_admin_password:

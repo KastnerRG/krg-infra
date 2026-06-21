@@ -403,13 +403,21 @@ in {
         '';
       }
 
-      # (The LDAP-outpost token render is intentionally NOT here yet. This agent is
-      # FAIL-CLOSED — a missing secret fails the whole oneshot and takes the entire
-      # krg-prod stack down — so a template may only be added AFTER its secret is
-      # seeded. The LDAP outpost token is a manual artifact retrieved AFTER the
-      # outpost is created by terraform/authentik (a later deploy phase than this
-      # NixOS one), so it lands in a follow-up once seeded — together with the
-      # authentik_ldap compose service. See docs/proxmox-auth.md "bring-up order".)
+      # LDAP outpost token — consumed by the authentik_ldap container
+      # (compose.authentik.yml) so PVE's LDAP realm has something to bind against.
+      # MANUAL artifact: retrieve after the outpost applies (Admin → Outposts →
+      # "authentik LDAP Outpost" → View token) and seed it BEFORE this deploys — the
+      # agent is FAIL-CLOSED, so a missing token takes the whole krg-prod stack down:
+      #   bao kv put secret/krg-prod/authentik-ldap-outpost-token token=<value>
+      {
+        destination = "/run/krg/krg-prod/authentik-ldap-outpost-token.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik-ldap-outpost-token" }}
+          AUTHENTIK_TOKEN={{ .Data.data.token }}
+          {{- end }}
+        '';
+      }
 
       # ── Grafana ──────────────────────────────────────────────────────────────
       # Admin password — the `grafana_e4eadmin_password` docker secret (bare value).
