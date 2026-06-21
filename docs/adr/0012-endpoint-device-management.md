@@ -66,11 +66,18 @@ Consequences).
   entire theft defense. Accepted gap: do not lend NixOS for work that requires a
   remote-wipe guarantee.
 - **Apple Watch is unmanageable** by any MDM (governed only via its paired iPhone).
-- **Intune coordination:** a loaner that touches the trusted campus net must still
-  enroll in Intune → **dual management** on that subset. Do **not** also run the
-  `oec_qualys_trellix` role on Intune-managed laptops — Intune delivers Qualys/Trellix
-  there (the laptop analogue of ADR 0006). The OEC role stays scoped to NixOS servers,
-  Proxmox hosts, and the Synology appliance.
+- **Intune coordination — no dual-MDM exists.** No OS lets two MDMs hold the
+  management channel at once; a device is MDM-enrolled in **either** Fleet **or**
+  Intune, never both. The only coexistence is **Intune-MDM + Fleet's osquery agent**
+  (an agent, not MDM — works on macOS/Windows; iOS/Android have no osquery, so they
+  are strictly either/or). The mandate only bites devices on **UCSD-PROTECTED/wired**,
+  so the policy is: **default a loaner to Fleet MDM on eduroam** (Intune-exempt → lab
+  keeps full control incl. remote wipe); only if a device genuinely needs
+  UCSD-PROTECTED does it fall to **Intune-MDM + Fleet-osquery-only**, where the lab
+  keeps *visibility* but Intune — not the lab — holds the wipe/config control on that
+  device. On any Intune-managed device, do **not** also run the `oec_qualys_trellix`
+  role — Intune delivers Qualys/Trellix there (the laptop analogue of ADR 0006); the
+  OEC role stays scoped to NixOS servers, Proxmox hosts, and the Synology appliance.
 - **New artifacts:** a krg-prod Fleet compose stack (Traefik + Authentik SSO), a
   `fleetctl gitops` config layer (E4E-scoped teams/policies/profiles), and
   `profiles/laptop.nix`. Fleet MDM bring-up (APNs cert + Apple Business Manager for
