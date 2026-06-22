@@ -34,16 +34,26 @@ pve_ldap_user_attr: "cn"
 pve_ldap_default_realm: true # pre-select on the PVE login screen; PAM stays in the dropdown
 
 # ── Group sync → admin ──────────────────────────────────────────────────────────
-# Authentik serves groups at cn=<g>,ou=groups,<base>, BUT there is no `ou=groups`
-# CONTAINER entry to search *from* — a group search BASED at `ou=groups,<base>`
-# resolves nothing, so PVE's group pass found 0 groups, never read proxmox-admins'
-# `member` list, and never linked members → "you are not an administrator" even
-# after a clean login + sync (the USER pass works because PVE searches users from
-# base_dn = the root). So search groups from the ROOT (base_dn); the
-# cn=proxmox-admins group_filter still pins it to exactly that group — the per-user
-# ou=virtual-groups entries have different cns and can't match.
+# Authentik tree: users under ou=users, groups under ou=groups.
+#
+# group_classes is PINNED (not PVE's default) — this is THE fix for "group syncs but
+# stays empty → you are not an administrator". PVE's group sync ANDs group_filter
+# with (|(objectclass=<c>)...) over group_classes, and the Authentik LDAP outpost
+# returns ZERO results for the WHOLE filter if any (objectclass=<c>) term names a
+# class it doesn't know — instead of treating that term as merely false. PVE's
+# default group_classes is `groupOfNames, group, univentionGroup, ipausergroup`; the
+# FreeIPA/Univention classes (univentionGroup, ipausergroup) the Authentik group
+# lacks poisoned the search → 0 groups → proxmox-admins-krg never got its members →
+# the "/ Administrator" ACL applied to nobody. Pin to ONLY classes Authentik's group
+# carries. (The USER pass was unaffected: PVE's default user_classes —
+# inetorgperson/posixaccount/person/user — are all present on Authentik users.)
+# Verified by ldapsearch: PVE's filter matches with these two classes and returns 0
+# the moment univentionGroup/ipausergroup are added. group_dn = ou=groups IS a valid
+# search base (confirmed); the per-user ou=virtual-groups entries can't match the
+# cn=proxmox-admins filter.
 pve_ldap_admin_ldap_group: "proxmox-admins"
-pve_ldap_group_dn: "DC=krg,DC=ucsd,DC=edu" # base_dn, NOT ou=groups (no container to search from)
+pve_ldap_group_dn: "ou=groups,DC=krg,DC=ucsd,DC=edu"
+pve_ldap_group_classes: "group, groupOfNames"
 pve_ldap_group_filter: "(&(objectClass=group)(cn=proxmox-admins))"
 pve_ldap_user_filter: "(&(objectClass=user)(memberOf=cn=proxmox-admins,ou=groups,DC=krg,DC=ucsd,DC=edu))"
 pve_ldap_sync_scope: "both"

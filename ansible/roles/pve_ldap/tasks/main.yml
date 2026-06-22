@@ -46,6 +46,7 @@
              '--filter', pve_ldap_user_filter,
              '--group_filter', pve_ldap_group_filter,
              '--group_dn', pve_ldap_group_dn,
+             '--group_classes', pve_ldap_group_classes,
              '--sync-defaults-options', ('enable-new=' + (pve_ldap_sync_enable_new | int | string))]
             + (['--server2', pve_ldap_server2] if (pve_ldap_server2 | length) > 0 else [])
           }}
