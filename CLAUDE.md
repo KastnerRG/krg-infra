@@ -169,7 +169,7 @@ krg-infra/
     creating-a-user.md             # AD user-creation runbook
     e4e-nas-dsm.md                 # DSM runbook: the NAS settings with no API (AD join, shares/ACLs, firewall, SSH, snapshots, updates) — → break-glass once spec/ seeded
     krg-prod-iac.md                # krg-prod IaC architecture + NAS standup plan (how the spec maps onto this repo)
-    adr/                           # Architecture Decision Records — 0001 IaC-source-of-truth, 0002 Garage, 0003 Garage-on-NAS, 0004 VM-IO-budget, 0005 repo-integration/OpenTofu/krg-deploy
+    adr/                           # Architecture Decision Records — 0001 IaC-source-of-truth, 0002 Garage, 0003 Garage-on-NAS, 0004 VM-IO-budget, 0005 repo-integration/OpenTofu/krg-deploy, 0006 no-OEC-on-DSM, 0007 DSM-ansible-not-terraform, 0008 e4e-prod-tenant-platform, 0009 lab-internal-PKI-AD, 0010 AD-structure-as-IaC, 0011 cross-layer-deploy-ordering, 0012 endpoint-device-management, 0013 SSO-Authentik-front-door, 0014 proxmox-auth-ldap-outpost
 ```
 
 > **Naming note:** `fabricant` now refers only to the Proxmox **host** (hypervisor,
