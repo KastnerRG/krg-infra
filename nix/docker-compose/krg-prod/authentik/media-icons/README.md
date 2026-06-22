@@ -60,4 +60,5 @@ scales down inside the square tile. Shared by the FishSense site and the
 FishSense Orchestrator (no orchestrator-specific logo exists).
 
 Not yet iconed (no clean off-the-shelf logo in dashboard-icons — follow-up):
-KRG Roster.
+KRG Roster, Fleet (mdm.e4e.ucsd.edu — device management/MDM; add `fleet.svg` and set
+`meta_icon` on `authentik_application.fleet` in applications_e4e.tf).

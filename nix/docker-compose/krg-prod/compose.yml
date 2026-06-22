@@ -11,6 +11,9 @@ include:
   - compose.mlflow.yml
   # Temporarily disabled — bring up once verified.
   # - compose.outline.yml
+  # Fleet (mdm.e4e.ucsd.edu) — disabled until bring-up (seed .secrets/fleet.env,
+  # verify the image pin, run initial setup). See docs/fleet-mdm.md.
+  # - compose.fleet.yml
 
 services:
   traefik:
@@ -72,6 +75,7 @@ services:
           # compose includes above:
           # - docs.krg.ucsd.edu
           # - github.roster.krg.ucsd.edu
+          # - mdm.e4e.ucsd.edu
           # s3 (s3.krg.ucsd.edu) is served by the fabricant hypervisor's storage
           # pool, not krg-prod's Traefik — see docs/fleet-inventory.md.
           # fishsense/smartfin APIs (api.fishsense / api.smartfin) move to e4e-prod.

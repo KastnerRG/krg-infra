@@ -1,0 +1,89 @@
+# Fleet — device management / MDM for lab-owned endpoints (ADR 0012).
+# Lab-owned control plane: FDE key escrow, remote lock/wipe, OS/app updates,
+# and config profiles for the MDM-capable platforms (macOS/Windows/iOS/Android).
+# NixOS devices are NOT managed here — the flake owns them (ADR 0012).
+#
+# Served at mdm.e4e.ucsd.edu (CNAME → krg-prod). Provisioned under the e4e
+# namespace because E4E owns the first devices; the stack itself is lab-wide on
+# krg-prod (alongside Authentik/Grafana). May be renamed (e.g. mdm.krg.ucsd.edu)
+# later — the Traefik router rule below is the single anchor for that rename.
+#
+# Secrets: ./.secrets/fleet.env (see nix/hosts/krg-prod/default.nix). Migrate to
+# krg.vaultAgent (/run renders) once bao-seeded — the rest of the project already has.
+services:
+  fleet_mysql:
+    image: mysql:8.4
+    env_file:
+      - ./fleet/fleet.env
+      - ./.secrets/fleet.env
+    command:
+      - mysqld
+      - --default-authentication-plugin=caching_sha2_password
+    volumes:
+      - ./fleet/mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 20s
+      retries: 5
+    networks:
+      - fleet
+
+  # Valkey, not Redis: Fleet documents Valkey as its recommended Redis-compatible
+  # cache, and it's the community/LF fork (Redis went SSPL) — same FOSS lean as the
+  # repo's OpenTofu/Garage choices. Wire-compatible, so FLEET_REDIS_ADDRESS is unchanged.
+  fleet_valkey:
+    image: valkey/valkey:9.1
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 30s
+      retries: 3
+    networks:
+      - fleet
+
+  # One-shot DB migration. Fleet refuses to `serve` against an unmigrated schema;
+  # `fleet prepare db` is idempotent, so it's safe to run on every `up`. The server
+  # waits on this completing successfully (depends_on condition below).
+  fleet_migrate:
+    image: fleetdm/fleet:v4.87.0 # latest stable (2026-06; check github.com/fleetdm/fleet/releases at bring-up)
+    command: ["fleet", "prepare", "db", "--no-prompt"]
+    env_file:
+      - ./fleet/fleet.env
+      - ./.secrets/fleet.env
+    depends_on:
+      fleet_mysql:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - fleet
+
+  fleet:
+    image: fleetdm/fleet:v4.87.0 # keep in lockstep with fleet_migrate above
+    command: ["fleet", "serve"]
+    env_file:
+      - ./fleet/fleet.env
+      - ./.secrets/fleet.env
+    depends_on:
+      fleet_mysql:
+        condition: service_healthy
+      fleet_valkey:
+        condition: service_started
+      fleet_migrate:
+        condition: service_completed_successfully
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fleet.rule=Host(`mdm.e4e.ucsd.edu`)"
+      - "traefik.http.routers.fleet.entrypoints=websecure"
+      - "traefik.http.routers.fleet.tls.certresolver=letsencrypt"
+      # Fleet serves plain HTTP on :8080 (FLEET_SERVER_TLS=false); Traefik terminates
+      # TLS. Pin the upstream port explicitly — the image exposes more than one.
+      - "traefik.http.services.fleet.loadbalancer.server.port=8080"
+    networks:
+      - fleet
+      - traefik_proxy
+
+networks:
+  fleet:
+  traefik_proxy:
+    external: true

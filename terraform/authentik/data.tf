@@ -67,3 +67,19 @@ data "authentik_property_mapping_source_ldap" "ad_sn" {
 data "authentik_property_mapping_source_ldap" "ad_upn" {
   managed = "goauthentik.io/sources/ldap/ms-userprincipalname"
 }
+
+# ── SAML provider property mappings (Fleet — ADR 0012) ────────────────────────
+# Fleet's console SSO is SAML 2.0 ONLY (no OIDC), so it's the repo's first
+# authentik_provider_saml. Default managed SAML mappings, looked up by their managed
+# identifier (same approach as the OIDC scope/LDAP data sources above).
+data "authentik_property_mapping_provider_saml" "email" {
+  managed = "goauthentik.io/providers/saml/email"
+}
+
+data "authentik_property_mapping_provider_saml" "username" {
+  managed = "goauthentik.io/providers/saml/username"
+}
+
+data "authentik_property_mapping_provider_saml" "name" {
+  managed = "goauthentik.io/providers/saml/name"
+}

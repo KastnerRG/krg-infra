@@ -178,3 +178,48 @@ resource "authentik_application" "e4e_roster" {
   meta_description  = "KRG lab roster and account management"
   group             = "Infrastructure"
 }
+
+# ── Fleet (device management / MDM) ───────────────────────────────────────────
+# mdm.e4e.ucsd.edu — the lab-owned MDM control plane (ADR 0012). Fleet's console
+# SSO is SAML 2.0 ONLY (every other app here is OIDC) — hence the repo's first
+# authentik_provider_saml. Fleet keys each user on the SAML NameID and REQUIRES it
+# to be the user's email address, so NameID = the default Email mapping. (Caveat:
+# our AD emails are admin-managed; treat them as stable while Fleet uses them as the
+# identity handle — same concern noted on the vaultwarden sub_mode.)
+#
+# HARDENING FOLLOW-UP: Fleet is the device control plane — restrict console access to
+# a Fleet-admins AD group via an authentik_policy_binding (see [[ad-structure-is-iac]]),
+# rather than leaving it open to all authenticated users. JIT role-mapping is Fleet
+# Premium (see fleet/sso_settings in docs/fleet-mdm.md).
+resource "authentik_provider_saml" "fleet" {
+  name               = "Provider for Fleet"
+  authorization_flow = data.authentik_flow.default_authorization.id
+  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  # Fleet's Assertion Consumer Service endpoint (the SAML callback).
+  acs_url = "https://mdm.e4e.ucsd.edu/api/v1/fleet/sso/callback"
+  # Audience MUST equal Fleet's configured entity_id (fleet sso_settings).
+  audience   = "https://mdm.e4e.ucsd.edu"
+  issuer     = "https://auth.krg.ucsd.edu"
+  sp_binding = "post"
+  # Sign assertions with Authentik's default keypair; Fleet verifies against the IdP
+  # signing cert published in the metadata_url it's pointed at.
+  signing_kp      = data.authentik_certificate_key_pair.default.id
+  name_id_mapping = data.authentik_property_mapping_provider_saml.email.id
+  property_mappings = [
+    data.authentik_property_mapping_provider_saml.email.id,
+    data.authentik_property_mapping_provider_saml.username.id,
+    data.authentik_property_mapping_provider_saml.name.id,
+  ]
+}
+
+resource "authentik_application" "fleet" {
+  name = "Fleet"
+  # slug is load-bearing: the SAML metadata URL embeds /application/saml/fleet/
+  # (fleet sso_settings metadata_url — docs/fleet-mdm.md).
+  slug              = "fleet"
+  protocol_provider = authentik_provider_saml.fleet.id
+  meta_launch_url   = "https://mdm.e4e.ucsd.edu"
+  meta_description  = "Lab device management / MDM (lab-owned endpoints)"
+  # No meta_icon yet — tracked in media-icons/README.md "Not yet iconed".
+  group = "Access & Security"
+}
