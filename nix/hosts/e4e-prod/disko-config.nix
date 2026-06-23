@@ -16,11 +16,10 @@
 # at install; on later boots use `--mode mount` (import + mount only). Treat this
 # file as "what the disk WILL be made to look like".
 #
-# GOTCHA — device path. A Proxmox VM has ONE virtual disk. Fill REPLACE-ROOT-DISK
-# from `ls -l /dev/disk/by-id/` on the booted VM:
-#   virtio-scsi  ->  scsi-0QEMU_QEMU_HARDDISK_drive-scsi0  or  wwn-0x...
-#   virtio-blk   ->  virtio-<serial>
-# Use by-id (NOT /dev/sda|vda): those names reshuffle across controller/slot
+# DEVICE — captured from the booted VM (`ls -l /dev/disk/by-id/`): the root disk is
+# a single **VirtIO SCSI** disk on scsi0, by-id `scsi-0QEMU_QEMU_HARDDISK_drive-scsi0`
+# (the default QEMU id when no disk serial is set — stable for a single-disk VM).
+# Use by-id (NOT /dev/sda): the kernel name reshuffles across controller
 # enumeration and ZFS would fail to import. Matches boot.zfs.devNodes.
 {...}: let
   espSize = "1G"; # vfat ESP; holds the bootloader + ZFS initrds (chunky) for a few generations
@@ -42,7 +41,7 @@ in {
   disko.devices = {
     disk.main = {
       type = "disk";
-      device = "/dev/disk/by-id/REPLACE-ROOT-DISK"; # <- fill from the booted VM (see header)
+      device = "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0"; # captured (see header)
       content = {
         type = "gpt";
         partitions = {

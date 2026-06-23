@@ -33,9 +33,9 @@
   boot.zfs.devNodes = "/dev/disk/by-id"; # match disko's by-id device paths
   boot.zfs.forceImportRoot = false; # safer (26.11 default); rpool has a single consumer
 
-  # REPLACE — ZFS requires a unique 8-hex-digit host id (else import refuses).
-  # Generate once on the box: `head -c4 /dev/urandom | od -A none -t x4`.
-  networking.hostId = "00000000"; # <- REPLACE with the captured value
+  # ZFS requires a unique 8-hex-digit host id (else import refuses). Random + stable
+  # (generated off-box; uniqueness across the fleet is all that matters).
+  networking.hostId = "3aecba9f";
 
   # ── Boot loader: systemd-boot on the UEFI ESP (disko mounts it at /boot) ─────
   boot.loader.systemd-boot.enable = true;
