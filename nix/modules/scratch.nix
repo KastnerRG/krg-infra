@@ -103,8 +103,8 @@ with lib; let
   # resolves. SSSD reaching `active` does NOT mean AD groups resolve yet — at boot
   # (and on the nightly auto-apply, which re-fires this unit via partOf) the SSSD
   # cache can still be cold, so we POLL for the group rather than checking once: a
-  # single miss used to leave $mp root-owned until the next run, stripping the lab
-  # group on every nightly switch and locking every member out of the 3770 tree.
+  # single miss would leave $mp root-owned until the next run, locking every member
+  # out of the 3770 tree.
   # The poll is BOUNDED (permsGroupResolveTimeout) so a genuinely-down DC (the
   # krg-ldap SPOF) still fails open — /scratch comes up root-owned (admin-only) and
   # re-tightens whenever this unit next runs. The group name has spaces
@@ -468,22 +468,22 @@ in {
         )
         projectList);
 
-      # /scratch parent + each lab mountpoint must exist before the mounts. 0755 is
-      # the bare mountpoint; the perms step tightens the mounted root to 3770. NOTE:
-      # systemd-tmpfiles-resetup re-applies these `d` rules to the *mounted* root on
-      # every `nixos-rebuild switch`, reverting that 3770 — so krg-scratch-perms-* is
-      # bound to re-fire after resetup (see systemd.services below).
-      # /scratch + each lab mountpoint, plus each overflow lab's cold mountpoint (and
-      # its parent) so the NFS mount target exists at boot with admin-only perms. The
-      # NFS mount overlays it; the local dir only shows through when NFS is down (and
-      # then overflow is fail-closed anyway). `unique` dedupes a shared parent.
+      # /scratch parent + each overflow lab's cold mountpoint (and its parent) so the
+      # NFS mount target exists at boot with admin-only perms. The NFS mount overlays
+      # it; the local dir only shows through when NFS is down (and then overflow is
+      # fail-closed anyway). `unique` dedupes a shared parent.
+      #
+      # We deliberately DO NOT add a `d` rule for the scratch mountpoints themselves.
+      # The systemd mount unit creates its own mountpoint, so the rule was redundant
+      # for creation — but actively harmful: a tmpfiles `d` on a mountpoint re-applies
+      # `0755 root root` to the *mounted dataset root* on every `nixos-rebuild switch`
+      # (systemd-tmpfiles-resetup), stripping the 3770+lab-group hardening and locking
+      # every member out of the 3770 tree until krg-scratch-perms-* won a fragile race
+      # to undo it. The dataset root's mode/group is persistent ZFS state set once by
+      # krg-scratch-perms-* (see systemd.services below); with no tmpfiles rule on the
+      # mountpoint, nothing clobbers it and the race is gone.
       systemd.tmpfiles.rules = unique (
         ["d /scratch 0755 root root -"]
-        ++ map ({
-          name,
-          proj,
-        }: "d ${proj.mountPoint} 0755 root root -")
-        projectList
         ++ concatMap ({
           name,
           proj,
@@ -501,14 +501,16 @@ in {
             proj,
           }:
           # ---- ownership/isolation: chmod 3770 + chgrp lab group, after the mount ----
-          # MUST re-run on every activation, not just at boot: a `nixos-rebuild switch`
-          # restarts systemd-tmpfiles-resetup.service, whose `systemd-tmpfiles --create`
-          # re-applies the `d ${mountPoint} 0755 root root` rule to the *mounted* dataset
-          # root — silently reverting this 3770+lab-group hardening to world-traversable
-          # 0755 root:root until the next reboot (lab isolation off in the meantime).
-          # `after` orders this oneshot AFTER that resetup clobber; `partOf` propagates
-          # resetup's activation restart to here, so it re-fires and re-tightens the
-          # mode/group every switch. mkPermsScript is idempotent, so re-running is safe.
+          # Sets the dataset root to 3770 + the lab group — persistent ZFS state, so
+          # once set it survives reboots and remounts. The lockout bug was a tmpfiles
+          # `d` rule on the mountpoint re-applying `0755 root root` to the mounted root
+          # on every switch; that rule is now gone (see systemd.tmpfiles.rules above),
+          # so nothing clobbers these perms and there is no race to lose. `after sssd`
+          # ensures the AD lab group resolves; `RequiresMountsFor` ensures the dataset
+          # is mounted before we chmod its root. `partOf`/`after` the resetup unit are
+          # kept only so this idempotent re-tighten still re-fires on every switch as a
+          # cheap, now-raceless safety net. mkPermsScript is idempotent, so re-running
+          # is safe.
             [
               (nameValuePair "krg-scratch-perms-${name}" {
                 description = "Set ownership/mode on ${proj.mountPoint} (lab isolation)";
