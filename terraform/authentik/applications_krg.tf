@@ -73,10 +73,18 @@ resource "authentik_provider_oauth2" "mlflow" {
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://mlflow.krg.ucsd.edu/callback" }]
-  # std_scopes + the AD-sourced groups scope: mlflow-oidc-auth gates access on the
-  # `groups` claim (OIDC_GROUP_NAME / OIDC_ADMIN_GROUP_NAME = the "MLflow Users" /
-  # "MLflow Admins" AD groups). Without this scope the claim is absent → nobody authorizes.
-  property_mappings = concat(local.std_scopes, [authentik_property_mapping_provider_scope.groups.id])
+  # std_scopes ONLY — do NOT also add the explicit "groups (KRG)" scope here. The
+  # managed `profile` scope (part of std_scopes) ALREADY emits a `groups` claim, so
+  # requesting both makes Authentik concatenate the two → every group appears TWICE in
+  # the claim. mlflow-oidc-auth's set_user_groups then inserts the same (user_id,
+  # group_id) twice → unique-constraint violation on `user_groups` → the whole login
+  # rolls back with "Failed to update user/groups". profile's groups claim already
+  # carries the AD group names the access gate (OIDC_GROUP_NAME = "MLflow Users" /
+  # OIDC_ADMIN_GROUP_NAME = "MLflow Admins") matches, so single-sourcing it is correct.
+  # (Apps like vaultwarden/garage-ui add the explicit scope and tolerate the dupe
+  # because they only read the claim; mlflow writes it into a UNIQUE-constrained table,
+  # so it must be dup-free.)
+  property_mappings = local.std_scopes
   # RS256 signing key — mlflow-oidc-auth (authlib) verifies the ID token against the
   # provider's jwks_uri. Without it Authentik falls back to HS256 + empty JWKS →
   # "Invalid ID token" (the same failure garage-ui/vaultwarden/temporal hit).
