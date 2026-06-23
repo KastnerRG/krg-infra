@@ -29,19 +29,24 @@ Redis-compatible cache; it's wire-compatible, so `FLEET_REDIS_ADDRESS` is unchan
 
 ## Secrets
 
-Hand-placed in `/var/lib/krg/krg-prod/.secrets/fleet.env` (gitignored). Migrate to
-`krg.vaultAgent` once bao-seeded — the rest of the project already renders from /run.
+Fully IaC — **no `.secrets/` file, no operator seeding.** `terraform/secrets/fleet.tf`
+generates them (`random_password`) and writes them to OpenBao at
+`secret/krg-prod/authentik-managed/fleet`; `krg.vaultAgent` renders them to `/run` on
+krg-prod (`/run/krg/fleet/db.env` for MySQL, `/run/krg/fleet/server.env` for Fleet),
+and the stack fails closed if OpenBao is unreachable — same contract as the rest of
+the project. (The `authentik-managed/` path is just the policy-globbed krg-prod
+namespace; Fleet's SSO is SAML, nothing Authentik-minted lives there.)
 
-```
-MYSQL_ROOT_PASSWORD=<random>
-MYSQL_PASSWORD=<random>            # the `fleet` DB-role password
-FLEET_MYSQL_PASSWORD=<same as MYSQL_PASSWORD>
-FLEET_SERVER_PRIVATE_KEY=<>=32 random chars>
-```
+| Key | Var(s) | Notes |
+|-----|--------|-------|
+| `mysql_root_password` | `MYSQL_ROOT_PASSWORD` | MySQL root |
+| `db_password` | `MYSQL_PASSWORD` + `FLEET_MYSQL_PASSWORD` | the `fleet` DB role; one value, two names |
+| `server_private_key` | `FLEET_SERVER_PRIVATE_KEY` | encrypts MDM assets at rest |
 
-> **`FLEET_SERVER_PRIVATE_KEY` is load-bearing:** Fleet encrypts MDM certificates and
-> keys at rest with it. **Back it up** — losing it bricks MDM enrollment and you must
-> re-enroll every device. Generate with e.g. `openssl rand -base64 32`.
+> **`server_private_key` is load-bearing and generate-once:** Fleet encrypts MDM
+> certs/keys at rest with it. `fleet.tf` never rotates it (it's persisted in OpenBao +
+> tofu state) — regenerating bricks MDM enrollment and you'd have to re-enroll every
+> device. That's *why* it lives in tofu/OpenBao, not a hand-placed file.
 
 ## SSO (Authentik, SAML)
 
@@ -74,21 +79,24 @@ org_settings:
 
 ## Bring-up
 
+The stack is wired in (`compose.fleet.yml` `include:` + the `mdm.e4e.ucsd.edu` Traefik
+alias are enabled) and the icon is shipped, so bring-up is just apply + deploy + setup:
+
 1. **Verify the image pin.** Confirm `fleetdm/fleet:vX.Y.Z` in `compose.fleet.yml` is
    current (both `fleet` and `fleet_migrate` — keep them in lockstep).
-2. **Seed** `/var/lib/krg/krg-prod/.secrets/fleet.env` (above).
-3. **`tofu apply`** in `terraform/authentik/` to create the SAML provider + app.
-4. **Enable** the stack: uncomment `- compose.fleet.yml` (include list) and
-   `- mdm.e4e.ucsd.edu` (Traefik aliases) in `compose.yml`; commit + push + deploy
-   (the 04:00 `autoUpgrade` tick, or `nixos-rebuild ... --target-host krg-prod`).
-5. **Initial setup:** browse to `https://mdm.e4e.ucsd.edu`, create the admin user, set
+2. **`tofu apply`** — `terraform/secrets` (generates the Fleet secrets into OpenBao,
+   which the krg-prod vault-agent renders at deploy) **and** `terraform/authentik` (the
+   SAML provider/app + icon registration). In the fleet deploy pipeline these are the
+   OpenTofu phases and run automatically.
+3. **Deploy** krg-prod (the 04:00 `autoUpgrade` tick, or `nixos-rebuild … --target-host
+   krg-prod`). vault-agent renders `/run/krg/fleet/{db,server}.env` (fail-closed if
+   OpenBao is down) and the fleet services come up behind Traefik.
+4. **Initial setup:** browse to `https://mdm.e4e.ucsd.edu`, create the admin user, set
    the Fleet **server URL** to `https://mdm.e4e.ucsd.edu`, and apply the SSO settings
    above (UI → Settings → Organization settings → SSO).
 
 ## Follow-ups (own PRs / issues)
 
-- **App-tile icon** — add `fleet.svg` to `authentik/media-icons/` and set `meta_icon`
-  (CLAUDE.md §4); tracked in that dir's README "Not yet iconed".
 - **`fleetctl gitops` layer + runner** — declarative teams / policies / FDE-enforcement /
   OS-update policy / the macOS Kerberos SSO Extension profile (realm `KRG.LOCAL`), plus
   the `fleetctl gitops` runner on krg-deploy (PR #85-style timer). Fold the SSO
@@ -99,4 +107,3 @@ org_settings:
 - **Intune coordination** — keep loaners Intune-exempt (eduroam, not UCSD-PROTECTED) to
   retain lab wipe/config control; no dual-MDM. Don't run `oec_qualys_trellix` on any
   Intune-managed device (ADR 0012 / ADR 0006).
-- **Secrets → `krg.vaultAgent`** — migrate `fleet.env` off `.secrets/` to /run renders.
