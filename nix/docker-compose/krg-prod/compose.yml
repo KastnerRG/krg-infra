@@ -9,8 +9,7 @@ include:
   - compose.guacamole.yml
   - compose.temporal.yml
   - compose.mlflow.yml
-  # Temporarily disabled — bring up once verified.
-  # - compose.outline.yml
+  - compose.outline.yml
   # Fleet (mdm.e4e.ucsd.edu) — disabled until bring-up (seed .secrets/fleet.env,
   # verify the image pin, run initial setup). See docs/fleet-mdm.md.
   # - compose.fleet.yml
@@ -71,9 +70,9 @@ services:
           - roster.krg.ucsd.edu
           - vaultwarden.krg.ucsd.edu
           - mlflow.krg.ucsd.edu
+          - docs.krg.ucsd.edu
           # Aliases for the temporarily-disabled stacks — re-enable alongside their
           # compose includes above:
-          # - docs.krg.ucsd.edu
           # - github.roster.krg.ucsd.edu
           # - mdm.e4e.ucsd.edu
           # s3 (s3.krg.ucsd.edu) is served by the fabricant hypervisor's storage

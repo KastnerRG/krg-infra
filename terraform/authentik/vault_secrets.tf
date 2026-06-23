@@ -4,15 +4,12 @@
 #   - terraform/grafana/ DOES read grafana-oidc from vault programmatically
 #     (data "vault_kv_secret_v2" in grafana/sso.tf — wired through to the
 #     grafana_sso_settings resource).
-#   - Outline (and any other not-yet-migrated compose-stack consumer) still reads from
-#     local /var/lib/krg/krg-prod/.secrets/*.env files at container start.
-#     The vault entries here are staged for future vault-agent/template
-#     rendering of those files; until then they must be populated manually
-#     (e.g. `bao kv get -field=client_secret secret/krg-prod/authentik-managed/outline-oidc`
-#     into the matching .secrets file).
-#   - MLflow is now a fail-closed P2 (vault-agent) consumer, so its OIDC secret moved
-#     to the early terraform/secrets workspace (mlflow.tf) — see the removed{}+data
-#     block below, mirroring temporal/vaultwarden.
+#   - MLflow and Outline are now fail-closed P2 (vault-agent) consumers, so their OIDC
+#     secrets moved to the early terraform/secrets workspace (mlflow.tf / outline.tf) —
+#     see the removed{}+data blocks below, mirroring temporal/vaultwarden.
+#   - Any remaining not-yet-migrated compose-stack consumer reads from local
+#     /var/lib/krg/krg-prod/.secrets/*.env at container start; its vault entry here is
+#     staged for future vault-agent rendering (populate manually until migrated).
 
 resource "vault_kv_secret_v2" "grafana_oidc" {
   mount = "secret"
@@ -24,14 +21,24 @@ resource "vault_kv_secret_v2" "grafana_oidc" {
   })
 }
 
-resource "vault_kv_secret_v2" "outline_oidc" {
+# Outline's OIDC client secret is now MINTED by the early terraform/secrets workspace
+# (it became a fail-closed P2 consumer: krg-prod vault-agent renders it as
+# OIDC_CLIENT_SECRET into /run/krg/outline/outline.env). This workspace READS it back
+# to set on the provider below. The `removed` block drops the old writer from state
+# without destroying the live KV entry (terraform/secrets owns it). See
+# terraform/secrets/README.md and outline.tf.
+removed {
+  from = vault_kv_secret_v2.outline_oidc
+  lifecycle {
+    destroy = false
+  }
+}
+
+# Read the Outline OIDC client_secret minted by terraform/secrets, to set on the
+# provider below. krg-deploy's policy already grants read on authentik-managed/* .
+data "vault_kv_secret_v2" "outline_oidc" {
   mount = "secret"
   name  = "krg-prod/authentik-managed/outline-oidc"
-  data_json = jsonencode({
-    client_id     = authentik_provider_oauth2.outline.client_id
-    client_secret = authentik_provider_oauth2.outline.client_secret
-    issuer_url    = "${var.authentik_url}/application/o/outline/"
-  })
 }
 
 # MLflow's OIDC client secret is now MINTED by the early terraform/secrets workspace
