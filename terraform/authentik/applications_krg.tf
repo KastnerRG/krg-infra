@@ -41,12 +41,21 @@ resource "authentik_application" "grafana" {
 # ── Outline ────────────────────────────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "outline" {
-  name                   = "Provider for Outline"
-  client_id              = "outline"
-  authorization_flow     = data.authentik_flow.default_authorization.id
-  invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://wiki.fabricant.ucsd.edu/auth/oidc.callback" }]
-  property_mappings      = local.std_scopes
+  name = "Provider for Outline"
+  # client_secret is minted by terraform/secrets and read back here (it must exist
+  # before the fail-closed krg-prod vault-agent renders it); client_id stays static.
+  client_id          = "outline"
+  client_secret      = data.vault_kv_secret_v2.outline_oidc.data["client_secret"]
+  authorization_flow = data.authentik_flow.default_authorization.id
+  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  # docs.krg.ucsd.edu (post DNS migration); Outline's OIDC callback path is
+  # /auth/oidc.callback. Strict match → must equal the Host Outline is served on.
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://docs.krg.ucsd.edu/auth/oidc.callback" }]
+  property_mappings     = local.std_scopes
+  # RS256 signing key — Outline (openid-client) verifies the ID token against the
+  # provider's jwks_uri. Without it Authentik falls back to HS256 + empty JWKS →
+  # "Invalid ID token" (the same failure garage-ui/vaultwarden/temporal/mlflow hit).
+  signing_key            = data.authentik_certificate_key_pair.default.id
   sub_mode               = "user_email"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
@@ -56,7 +65,7 @@ resource "authentik_application" "outline" {
   name              = "Outline"
   slug              = "outline"
   protocol_provider = authentik_provider_oauth2.outline.id
-  meta_launch_url   = "https://wiki.fabricant.ucsd.edu"
+  meta_launch_url   = "https://docs.krg.ucsd.edu"
   meta_description  = "KRG lab wiki and documentation"
   meta_icon         = "krg-icons/outline.svg"
   group             = "KRG Services"

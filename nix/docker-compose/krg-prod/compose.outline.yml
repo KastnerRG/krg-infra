@@ -1,9 +1,13 @@
 services:
   outline:
     image: docker.getoutline.com/outlinewiki/outline:1.8.1
+    # docker.env = non-secret config (URL, OIDC endpoints, SMTP, REDIS_URL, file
+    # storage). outline.env = secret-bearing, rendered from OpenBao to /run by
+    # krg.vaultAgent (DATABASE_URL, SECRET_KEY, UTILS_SECRET, OIDC_CLIENT_SECRET) — so
+    # the stack fails closed if bao is down (no .secrets/ file anymore).
     env_file:
       - ./outline/docker.env
-      - ./.secrets/outline_secrets.env
+      - /run/krg/outline/outline.env
     volumes:
       - ./outline/outline_data:/var/lib/outline/data
     depends_on:
@@ -20,12 +24,9 @@ services:
       - traefik_proxy
 
   outline_redis:
-    image: redis:8.8
-    env_file:
-      - ./outline/docker.env
-      - ./.secrets/outline_secrets.env
+    image: valkey/valkey:9.1
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
       timeout: 30s
       retries: 3
@@ -34,13 +35,18 @@ services:
 
   outline_postgres:
     image: postgres:18.4
+    # POSTGRES_PASSWORD is rendered from OpenBao to /run by krg.vaultAgent (its own
+    # file, so the postgres image never sees a var it doesn't own). Fresh bring-up:
+    # postgres initializes the data dir with this password on first start, so it must
+    # never rotate (terraform/secrets/outline.tf guards that). postgres:18 mounts the
+    # parent /var/lib/postgresql (new pg18 layout: data lands under .../18/docker), so
+    # no PGDATA pin is needed here.
     env_file:
-      - ./outline/docker.env
-      - ./.secrets/outline_secrets.env
+      - /run/krg/outline/db.env
     volumes:
       - ./outline/postgres:/var/lib/postgresql
     healthcheck:
-      test: ["CMD", "pg_isready", "-d", "outline", "-U", "user"]
+      test: ["CMD", "pg_isready", "-d", "outline", "-U", "outline_user"]
       interval: 30s
       timeout: 20s
       retries: 3
