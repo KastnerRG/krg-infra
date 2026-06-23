@@ -20,6 +20,13 @@ in {
   # project-specific services live on the separate e4e-prod host.
   krg.adminAccount = "krg-admin";
 
+  # Put the break-glass admin in the docker group on this host so it can drive
+  # the compose stacks (docker compose ps/logs/restart) without sudo. Merges with
+  # the ["wheel"] set in users/admin.nix (listOf concatenates across definitions).
+  # NOTE: docker group membership is effectively root on the host — fine here since
+  # krg-admin is already an unrestricted-sudo wheel account anyway.
+  krg.users.users.krg-admin.groups = ["docker"];
+
   # AD domain member — verified joined 2026-06-18 (`getent Administrator` resolves).
   # Explicit marker; base.nix already defaults krg.adClient.enable on. Login stays
   # Domain-Admins-only (the base default allowedGroups).
