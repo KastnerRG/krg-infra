@@ -121,11 +121,14 @@ in {
     # the outpost first started (it had been crash-looping on a missing token).
     "d  /var/lib/krg/krg-prod/authentik/proxy-tmp           0750 1000  1000 -"
 
-    # Outline: docker.env is read-only; data dirs are writable
+    # Outline: docker.env is read-only; the app data dir is a writable bind mount
+    # (the outline app runs as uid 1000, matching this dir). Postgres data is NOT here
+    # — it's a docker named volume (outline_postgres_data) so postgres:18's uid-999
+    # user owns it; a 1000-owned bind mount made postgres exit 1 ("mkdir … Permission
+    # denied"). See compose.outline.yml.
     "d  /var/lib/krg/krg-prod/outline                       0750 root   docker -"
     "L+ /var/lib/krg/krg-prod/outline/docker.env            - - - - ${composeDir}/outline/docker.env"
     "d  /var/lib/krg/krg-prod/outline/outline_data          0750 1000 1000 -"
-    "d  /var/lib/krg/krg-prod/outline/postgres              0750 1000 1000 -"
 
     # MLflow: working dir for postgres data volumes; config/Dockerfile + the postgres
     # initdb scripts are in the Nix store (docker follows the symlinks at mount time).
