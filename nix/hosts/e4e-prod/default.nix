@@ -1,6 +1,8 @@
-{...}: {
+{inputs, ...}: {
   imports = [
     ../../profiles/server.nix
+    inputs.disko.nixosModules.disko # declarative disk layout (ZFS-on-root)
+    ./disko-config.nix
     ./hardware-configuration.nix
   ];
 
