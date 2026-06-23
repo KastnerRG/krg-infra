@@ -20,12 +20,12 @@ services:
       - traefik_proxy
 
   outline_redis:
-    image: redis:8.8
+    image: valkey/valkey:9.1
     env_file:
       - ./outline/docker.env
       - ./.secrets/outline_secrets.env
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
       timeout: 30s
       retries: 3
