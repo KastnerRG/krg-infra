@@ -199,8 +199,10 @@ resource "authentik_provider_saml" "fleet" {
   acs_url = "https://mdm.e4e.ucsd.edu/api/v1/fleet/sso/callback"
   # Audience MUST equal Fleet's configured entity_id (fleet sso_settings).
   audience   = "https://mdm.e4e.ucsd.edu"
-  issuer     = "https://auth.krg.ucsd.edu"
   sp_binding = "post"
+  # No issuer override: authentik auto-generates the IdP issuer/EntityID, and Fleet
+  # reads it from the metadata_url it's pointed at (docs/fleet-mdm.md). The SAML
+  # provider has `issuer_override` (not `issuer`); we don't need to override it.
   # Sign assertions with Authentik's default keypair; Fleet verifies against the IdP
   # signing cert published in the metadata_url it's pointed at.
   signing_kp      = data.authentik_certificate_key_pair.default.id
