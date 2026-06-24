@@ -18,9 +18,12 @@ services:
     env_file:
       - ./fleet/fleet.env
       - /run/krg/fleet/db.env
-    command:
-      - mysqld
-      - --default-authentication-plugin=caching_sha2_password
+    # No `command:` override. `--default-authentication-plugin` was deprecated in
+    # MySQL 8.0 and REMOVED in 8.4 — passing it makes mysqld abort on every start
+    # ("unknown variable 'default-authentication-plugin'"), before it can finish
+    # creating its system tables (which then half-inits the datadir). caching_sha2_password
+    # is already the default auth plugin in 8.x, so the flag was redundant anyway; the
+    # 8.4 spelling would be --authentication-policy, but the default needs nothing.
     volumes:
       - ./fleet/mysql:/var/lib/mysql
     healthcheck:
