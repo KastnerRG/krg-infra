@@ -222,6 +222,6 @@ resource "authentik_application" "fleet" {
   protocol_provider = authentik_provider_saml.fleet.id
   meta_launch_url   = "https://mdm.e4e.ucsd.edu"
   meta_description  = "Lab device management / MDM (lab-owned endpoints)"
-  # No meta_icon yet — tracked in media-icons/README.md "Not yet iconed".
-  group = "Access & Security"
+  meta_icon         = "krg-icons/fleet.svg"
+  group             = "Access & Security"
 }

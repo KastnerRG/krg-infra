@@ -47,6 +47,7 @@ owner — used here only to label first-party links to those services).
 | `guacamole.svg`       | Guacamole            | `apache-guacamole`       |
 | `temporal.svg`        | Temporal             | (Temporal brand assets)¹ |
 | `proxmox.svg`         | Proxmox              | `proxmox`                |
+| `fleet.svg`           | Fleet (MDM)          | `fleetdm`                |
 
 ¹ `temporal.svg` is Temporal's official "Symbol (dark)" mark from the Temporal
 brand assets, not dashboard-icons. Note it's a near-black (`#141414`) glyph — fine
@@ -60,5 +61,4 @@ scales down inside the square tile. Shared by the FishSense site and the
 FishSense Orchestrator (no orchestrator-specific logo exists).
 
 Not yet iconed (no clean off-the-shelf logo in dashboard-icons — follow-up):
-KRG Roster, Fleet (mdm.e4e.ucsd.edu — device management/MDM; add `fleet.svg` and set
-`meta_icon` on `authentik_application.fleet` in applications_e4e.tf).
+KRG Roster.
