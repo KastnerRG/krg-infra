@@ -21,8 +21,15 @@
 # (the default QEMU id when no disk serial is set — stable for a single-disk VM).
 # Use by-id (NOT /dev/sda): the kernel name reshuffles across controller
 # enumeration and ZFS would fail to import. Matches boot.zfs.devNodes.
+#
+# FIRMWARE — **legacy BIOS (SeaBIOS) + GRUB**, matching krg-prod and the other lab
+# VMs (no UEFI/OVMF needed). On a GPT disk that means a 1 MiB BIOS-boot partition
+# (EF02) for GRUB's core.img + a plain ext4 /boot GRUB reads kernels/initrds from;
+# GRUB installs to the whole disk (boot.loader.grub.device in
+# hardware-configuration.nix). /boot is its own partition (NOT a ZFS dataset), so
+# it sits outside the impermanence rollback — GRUB manages generations there.
 {...}: let
-  espSize = "1G"; # vfat ESP; holds the bootloader + ZFS initrds (chunky) for a few generations
+  bootSize = "1G"; # ext4 /boot — GRUB reads kernels/initrds here (ZFS initrd is chunky)
 
   # Pool-root props inherited by every dataset. lz4 (light — nested ZFS, keep CPU
   # low and let it early-abort on incompressible data); atime off; xattr=sa +
@@ -45,14 +52,22 @@ in {
       content = {
         type = "gpt";
         partitions = {
-          ESP = {
-            size = espSize;
-            type = "EF00"; # EFI System — UEFI enumerates it as bootable
+          # 1 MiB BIOS-boot partition — GRUB embeds core.img here (required for
+          # legacy-BIOS GRUB on a GPT disk). No filesystem, no mountpoint.
+          bios = {
+            size = "1M";
+            type = "EF02";
+          };
+          # Plain ext4 /boot (GRUB reads kernels/initrds). Own partition, off the
+          # ZFS root, so the impermanence rollback never touches it.
+          boot = {
+            size = bootSize;
+            type = "8300"; # Linux filesystem
             content = {
               type = "filesystem";
-              format = "vfat";
+              format = "ext4";
               mountpoint = "/boot";
-              mountOptions = ["umask=0077" "nofail"];
+              mountOptions = ["nofail"];
             };
           };
           zfs = {
