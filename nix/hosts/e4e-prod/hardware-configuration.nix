@@ -31,7 +31,11 @@
   # ── ZFS-on-root support (disko owns the layout; see ./disko-config.nix) ──────
   boot.supportedFilesystems = ["zfs"];
   boot.zfs.devNodes = "/dev/disk/by-id"; # match disko's by-id device paths
-  boot.zfs.forceImportRoot = false; # safer (26.11 default); rpool has a single consumer
+  # Single-consumer VM pool: force-import the root pool so a hostId mismatch
+  # (e.g. rpool created under the installer's random hostid) can't wedge boot into
+  # emergency mode. There's no other system that could be using this disk, so the
+  # split-brain protection `false` buys is moot here.
+  boot.zfs.forceImportRoot = true;
 
   # ZFS requires a unique 8-hex-digit host id (else import refuses). Random + stable
   # (generated off-box; uniqueness across the fleet is all that matters).

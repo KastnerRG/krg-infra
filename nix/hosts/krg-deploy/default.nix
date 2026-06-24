@@ -111,7 +111,14 @@
       hostNames = ["e4e-nas.ucsd.edu" "132.239.17.124"];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILcS4fE6LEZa4QavcZr4Xi8Bv84ZReg75Wwky5a7rgoH";
     };
-    # e4e-prod omitted — host not provisioned yet (also absent from deploy ORDER).
+    # E4E student-project tenant platform (Proxmox VM). Deployed as e4e-admin
+    # (deploy/lib.sh USER_OVERRIDE). Key captured from the first install
+    # (2026-06-23); if the host is REINSTALLED the key changes — refresh from
+    # `cat /etc/ssh/ssh_host_ed25519_key.pub` on the live host (cf. krg-prod above).
+    e4e-prod = {
+      hostNames = ["e4e-prod.ucsd.edu" "137.110.161.107"];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK/Vl31g2FSV51OdRO7iuIBjSF2JbtvIDRQTZozkMpQb";
+    };
   };
 
   # ── GitHub Actions self-hosted runner ──────────────────────────────────────
