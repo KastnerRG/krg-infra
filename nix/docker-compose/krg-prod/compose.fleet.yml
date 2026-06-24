@@ -28,6 +28,13 @@ services:
       interval: 10s
       timeout: 20s
       retries: 5
+      # This ping AUTHENTICATES as root, so unlike the auth-less `pg_isready` checks
+      # elsewhere in the stack it can't pass until mysql's first-init has fully run and
+      # set the root password. On a fresh datadir, competing with ~20 other containers
+      # starting at once, that init outlasts the retry budget — without a start_period
+      # the container flips to `unhealthy` and compose aborts every dependent with
+      # "dependency failed to start". start_period suppresses unhealthy during init.
+      start_period: 120s
     networks:
       - fleet
 
