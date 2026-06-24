@@ -19,11 +19,11 @@ ADMIN="${DEPLOY_ADMIN:-krg-admin}"
 # Deploy/verify order: dependencies first (vault/AD before the services that use
 # them); compute boxes (waiter, kastner-ml) last. The phased deploy splits this
 # list across phases (foundation vs members) via DEPLOY_NIXOS_HOSTS, but the
-# canonical dependency order lives HERE so a rebuild always walks it.
-# e4e-prod is defined in the flake but NOT provisioned yet — omitted until the
-# host exists (deploying it would fail at SSH). Re-add it here + in ADDR when up.
+# canonical dependency order lives HERE so a rebuild always walks it. e4e-prod is a
+# service host (the student-tenant platform) like krg-prod — placed alongside it,
+# before the compute boxes.
 # shellcheck disable=SC2034  # consumed by sourcing scripts, not here
-ORDER=(krg-vault krg-ldap krg-prod waiter kastner-ml)
+ORDER=(krg-vault krg-ldap krg-prod e4e-prod waiter kastner-ml)
 
 # host -> ssh address. Fully-qualified DNS names only — never IPs (DNS is the
 # stable handle; IPs may change). Names are final per the rename plan (#128).
@@ -34,16 +34,17 @@ declare -A ADDR=(
   [krg-prod]=krg-prod.ucsd.edu
   [waiter]=waiter.ucsd.edu
   [kastner-ml]=kastner-ml.ucsd.edu
-  # [e4e-prod]=e4e-prod.ucsd.edu   # not provisioned yet — re-add to ORDER when it exists
+  [e4e-prod]=e4e-prod.ucsd.edu
 )
 
-# Per-host remote user (default ADMIN). kastner-ml is E4E hardware → the e4e-admin
-# break-glass account (nix/hosts/kastner-ml/default.nix sets krg.adminAccount); the
-# control node's deploy key is authorized for both (nix/keys/admins.json) and both
-# have sudoNoPassword, so the OEC staging + --sudo rebuild stay non-interactive.
+# Per-host remote user (default ADMIN). kastner-ml and e4e-prod are E4E hosts → the
+# e4e-admin break-glass account (their default.nix sets krg.adminAccount); the
+# control node's deploy key is authorized for it (nix/keys/admins.json) and it has
+# sudoNoPassword, so the OEC staging + --sudo rebuild stay non-interactive.
 # shellcheck disable=SC2034  # consumed by sourcing scripts, not here
 declare -A USER_OVERRIDE=(
   [kastner-ml]=e4e-admin
+  [e4e-prod]=e4e-admin
 )
 
 # <host> -> "<user>@<fqdn>"  (default admin unless overridden above)
