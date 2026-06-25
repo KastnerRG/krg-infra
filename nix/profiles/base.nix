@@ -20,8 +20,13 @@ in {
     ../modules/security/firewall.nix
     ../modules/security/crowdsec.nix
     ../modules/security/crowdsec-bouncer.nix
-    ../modules/services/node-exporter.nix
     ../modules/sssd-ad-client.nix
+    # Break-glass admin + krg.users on EVERY KRG machine (servers, compute, AND
+    # workstations/laptops — a portable box needs a local recovery account too).
+    # node-exporter is NOT here: it's the monitored-infra delta, moved to
+    # profiles/server.nix (an end-user endpoint isn't a Prometheus scrape target).
+    ../modules/users.nix
+    ../users/admin.nix
   ];
 
   options.krg.base = {
@@ -94,7 +99,10 @@ in {
     # SSH hardening (replaces Ansible SSH hardening task): key-only auth,
     # and only ed25519 public keys are accepted — RSA/ECDSA are rejected.
     services.openssh = {
-      enable = true;
+      # mkDefault so the mobility tier can drop the listener: profiles/laptop.nix
+      # sets `enable = mkForce false` — a portable box on the flat-public sealab
+      # network must not run an internet-reachable sshd. Every other tier keeps it.
+      enable = mkDefault true;
       # krg.firewall owns SSH gating (fleet policy — issue #74). 22 lives
       # in `krg.firewall.allowedTCPPorts` (compute hosts: globally open,
       # CrowdSec drops attackers) or moves to `sshSources` (service hosts:
@@ -119,12 +127,6 @@ in {
     # krg.oecQualysTrellix.installerArchive per host or they stay dormant.
     krg.oecQualysTrellix.enable = true;
 
-    # Prometheus node exporter on every machine (native systemd service). It
-    # opens its scrape port (9100) to the monitoring host itself (issue #234,
-    # node-exporter.nix), so no per-host firewall entry is needed. A host that
-    # runs node_exporter another way can override this with mkForce.
-    krg.nodeExporter.enable = mkDefault true;
-
     # Fail2ban is SUPERSEDED by the CrowdSec stack (krg.crowdsec, below).
     # CrowdSec is a fail2ban superset: same SSH brute-force jail surface,
     # plus community blocklists and fleet-wide CTI sharing.
@@ -146,10 +148,6 @@ in {
     # may reach the VM — it does not replace this layer. A host can still set
     # krg.firewall.enable = false explicitly if it really must.
     krg.firewall.enable = mkDefault true;
-
-    # Prometheus scrape source — sourced from the shared trusted-networks file
-    # so the monitoring host isn't duplicated across nix / ansible / PVE.
-    krg.firewall.monitoringSourceIp = mkDefault trusted.monitoring_host;
 
     # Fleet-wide CrowdSec stack (partial answer to issue #74's
     # "no public access — US is the floor"). Every host runs:

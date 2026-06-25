@@ -1,18 +1,19 @@
-# Server profile: web services, monitoring, reverse proxy (krg-prod, e4e-prod).
-# Import this in a host's default.nix, then add host-specific compose stacks.
+# Services profile: Authentik-gated lab web services behind Traefik (krg-prod,
+# e4e-prod). The LEAF for the HTTP-serving role. Import in a host's default.nix,
+# then add host-specific compose stacks.
+#
+# Renamed from the old `server.nix`: "server" was a misnomer (waiter/compute is a
+# server too). It now layers on the `server` tier (base + monitoring) plus the
+# `docker-host` mixin (Docker daemon + compose runner + IPMI exporter). Human users
+# come from Samba AD; only the local break-glass admin (via base.nix) stays.
 {
   config,
   lib,
   ...
 }: {
   imports = [
-    ./base.nix
-    ../modules/docker.nix
-    ../modules/users.nix
-    ../modules/services/compose-stack.nix
-    ../modules/services/ipmi-exporter.nix
-    ../users/admin.nix
-    # Human users come from Samba AD; only the local break-glass admin stays.
+    ./server.nix
+    ./docker-host.nix
   ];
 
   krg.base = {
