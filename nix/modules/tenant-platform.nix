@@ -55,6 +55,9 @@
   tenantIp = id: "${net.prefix}.${toString id}";
   gatewayIp = "${net.prefix}.1";
 
+  # Escape a hostname's dots for the edge's Go HostRegexp (apex + descendants).
+  escapeDots = lib.replaceStrings ["."] ["\\."];
+
   # Platform-ops break-glass SSH keys for the tenant VMs = the host's admin account
   # keys (e.g. e4e-admin; includes the krg-deploy key). Read on the host and embedded
   # into the guest eval (the guest is a separate NixOS evaluation).
@@ -267,6 +270,23 @@ in {
         description = "Resolvers the tenant VMs use (via the host NAT).";
       };
     };
+
+    acme = {
+      email = mkOption {
+        type = types.str;
+        default = "e4e@ucsd.edu";
+        description = "Let's Encrypt account email for the edge (the SOLE ACME client).";
+      };
+      staging = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Use the Let's Encrypt STAGING directory (untrusted certs, generous limits).
+          Flip on for first bring-up to avoid burning the shared `ucsd.edu` prod
+          rate-limit budget, then off (ADR 0008 staging-first).
+        '';
+      };
+    };
   };
 
   options.krg.tenants = mkOption {
@@ -464,6 +484,86 @@ in {
           autostart = true;
         })
         myTenants;
+
+      # ── the platform EDGE (ADR 0008) ──────────────────────────────────────────
+      # One platform-owned Traefik: the SOLE Let's Encrypt client (terminate public
+      # TLS), routing each tenant's subtree (apex + descendants) to its VM, and
+      # RE-ENCRYPTING to the VM's inner Traefik over the lab PKI (the VM serves its
+      # `tenant-internal` cert; the edge verifies it against the fleet CA in the
+      # system trust store — base.nix). Issuance is driven ONLY by the explicit
+      # per-router `tls.domains` (one multi-SAN cert/tenant) — on-demand/catch-all
+      # TLS is never enabled, so a stranger SNI can't trigger a (failing) issuance
+      # and burn the shared ucsd.edu rate-limit budget (the issuance invariant).
+      services.traefik = {
+        enable = true;
+        staticConfigOptions = {
+          entryPoints = {
+            # :80 — ACME HTTP-01 challenge + redirect everything else to https.
+            web = {
+              address = ":80";
+              http.redirections.entryPoint = {
+                to = "websecure";
+                scheme = "https";
+              };
+            };
+            websecure.address = ":443";
+          };
+          certificatesResolvers.le.acme =
+            {
+              email = cfg.acme.email;
+              storage = "/var/lib/traefik/acme.json"; # MUST persist (don't re-issue each boot)
+              httpChallenge.entryPoint = "web";
+            }
+            // lib.optionalAttrs cfg.acme.staging {
+              caServer = "https://acme-staging-v02.api.letsencrypt.org/directory";
+            };
+        };
+        dynamicConfigOptions.http = {
+          # Per tenant: a router matching the apex + every name beneath the subtree,
+          # a service pointing at the VM's :443 over the re-encrypt transport, and a
+          # transport that verifies the VM's `tenant-internal` cert (serverName =
+          # <name>.vm) against the system trust (the fleet CA).
+          routers = mapAttrs' (name: t:
+            nameValuePair "tenant-${name}" {
+              rule = "HostRegexp(`^(.+\\.)?${escapeDots t.subtree}$`)";
+              entryPoints = ["websecure"];
+              service = "tenant-${name}";
+              tls = {
+                certResolver = "le";
+                # Explicit multi-SAN issuance (NOT on-demand) — the invariant.
+                domains = [
+                  {
+                    main = lib.head t.hostnames;
+                    sans = lib.tail t.hostnames;
+                  }
+                ];
+              };
+            })
+          myTenants;
+          services = mapAttrs' (name: t:
+            nameValuePair "tenant-${name}" {
+              loadBalancer = {
+                servers = [{url = "https://${tenantIp t.network.id}:443";}];
+                serversTransport = "tenant-${name}";
+              };
+            })
+          myTenants;
+          serversTransports = mapAttrs' (name: _:
+            nameValuePair "tenant-${name}" {
+              serverName = "${name}.vm"; # verify the VM's tenant-internal cert vs the fleet CA (system trust)
+            })
+          myTenants;
+        };
+      };
+      # acme.json lives under the traefik StateDirectory (/var/lib/traefik, created by
+      # the traefik module) and MUST survive reboots — re-issuing every boot would burn
+      # the rate limit. It persists on this host; when impermanence lands, add it to
+      # the /persist set.
+
+      # :80 is intentionally world-open for ACME HTTP-01 (LE validates from many
+      # source IPs — never source-restrict it). :443 (the edge) is opened by the
+      # server profile's allowedTCPPorts.
+      krg.firewall.publicPorts = [80];
     })
   ];
 }
