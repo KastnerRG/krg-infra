@@ -100,6 +100,23 @@ in {
       # comes from AD. This also means the group always exists when something references it.
       users.groups.rdp_users = {};
       krg.users.defaultGroups = ["rdp_users"];
+
+      # Researchers reach this box through a SHARED XFCE desktop — one of them powering
+      # the host off or rebooting it kills everyone else's session (and the box only comes
+      # back via out-of-band/IPMI). XFCE's logout dialog surfaces Shut Down / Restart /
+      # Suspend / Hibernate buttons; it shows them based on what logind reports as allowed,
+      # which logind answers via polkit. Deny those actions for everyone who isn't an admin
+      # so the buttons disappear and the only desktop exit is Log Out. Admins (wheel — the
+      # break-glass krg-admin) keep the ability to reboot, and `systemctl`/`reboot` over SSH
+      # is unaffected (that path is gated by sudo, not these desktop-session polkit actions).
+      security.polkit.enable = true;
+      security.polkit.extraConfig = ''
+        polkit.addRule(function(action, subject) {
+          if (/^org\.freedesktop\.login1\.(power-off|reboot|halt|suspend|hibernate)/.test(action.id)) {
+            return subject.isInGroup("wheel") ? polkit.Result.YES : polkit.Result.NO;
+          }
+        });
+      '';
     })
 
     (mkIf (cfg.enable && tls.enable) {
