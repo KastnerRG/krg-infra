@@ -261,8 +261,21 @@ for t in "${TARGETS[@]}"; do
       tofu -chdir="$dir" plan -input=false \
            -state="${state_dir}/terraform.tfstate"
     else
+      # TOFU_REPLACE: force-replace specific resource addresses on this apply — to
+      # ROTATE a generate-once secret (e.g. a leaked/exposed random_password) or rebuild
+      # a tainted resource. Space-separated addresses; scope the run to ONE target (the
+      # addresses must exist in it). This goes through the real -state + TF_ENCRYPTION +
+      # AppRole token, so it is the CORRECT way to rotate — a bare `tofu apply -replace`
+      # in the target dir uses empty local state (wrong state DB) and silently misfires.
+      #   e.g. TOFU_TARGETS=secrets \
+      #        TOFU_REPLACE="random_password.fleet_db random_password.fleet_server_private_key" \
+      #        ./deploy/deploy-tofu.sh
+      replace_args=()
+      if [[ -n "${TOFU_REPLACE:-}" ]]; then
+        for addr in $TOFU_REPLACE; do replace_args+=("-replace=${addr}"); done
+      fi
       tofu -chdir="$dir" apply -auto-approve -input=false \
-           -state="${state_dir}/terraform.tfstate"
+           -state="${state_dir}/terraform.tfstate" "${replace_args[@]}"
     fi
   ) || rc=$?
   printf '\n::endgroup::\n'
