@@ -25,3 +25,8 @@ output "pki_int_ca_cert" {
   description = "Lab-internal intermediate CA certificate (PEM, non-secret)"
   value       = vault_pki_secret_backend_root_sign_intermediate.int.certificate
 }
+
+output "tenant_role_ids" {
+  description = "AppRole role_ids per e4e-prod tenant (non-secret). deploy-nixos.sh stages each + a freshly-minted secret_id into the VM's bootstrap virtiofs share."
+  value       = { for k, r in vault_approle_auth_backend_role.tenant : k => r.role_id }
+}

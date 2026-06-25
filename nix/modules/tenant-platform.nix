@@ -196,7 +196,7 @@
           # CN/SAN = the VM's internal identity (the edge dials it by bridge IP /
           # <name>.vm and verifies this leaf against the fleet CA root).
           contents = ''
-            {{- with secret "pki_int/issue/host" "common_name=${name}.vm" "ip_sans=${tenantIp t.network.id}" "ttl=720h" }}
+            {{- with secret "pki_int/issue/tenant-internal" "common_name=${name}.vm" "ip_sans=${tenantIp t.network.id}" "ttl=720h" }}
             {{ .Data.certificate }}
             {{- range .Data.ca_chain }}
             {{ . }}
