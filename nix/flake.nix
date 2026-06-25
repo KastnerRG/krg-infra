@@ -21,6 +21,14 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # Lightweight microVMs (cloud-hypervisor) for the e4e-prod tenant platform —
+    # one sealed VM per student project (ADR 0008). Pin its nixpkgs to ours so the
+    # guest closures build on the same stable tree as the host.
+    microvm = {
+      url = "github:astro/microvm.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # envfs serves /bin and /usr/bin via a FUSE daemon (mount.envfs); enabled
     # fleet-wide by the oec module (the vendor agents + nix-ld need an FHS layout).
     # nixpkgs 25.11 ships envfs 1.1.0, whose FUSE daemon DEADLOCKS: processes wedge
@@ -93,6 +101,7 @@
       zfs = import ./modules/zfs.nix;
       nix-ld = import ./modules/nix-ld.nix;
       impermanence = import ./modules/impermanence.nix;
+      tenant-platform = import ./modules/tenant-platform.nix;
 
       compose-stack = import ./modules/services/compose-stack.nix;
       node-exporter = import ./modules/services/node-exporter.nix;

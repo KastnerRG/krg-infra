@@ -4,6 +4,7 @@
     inputs.disko.nixosModules.disko # declarative disk layout (ZFS-on-root)
     ./disko-config.nix
     ./hardware-configuration.nix
+    ../../modules/tenant-platform.nix # krg.tenantPlatform / krg.tenants (ADR 0008)
   ];
 
   # E4E (Engineers for Exploration) production host — project-specific and
