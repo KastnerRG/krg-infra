@@ -60,8 +60,11 @@
   # into the guest eval (the guest is a separate NixOS evaluation).
   adminKeys = (builtins.fromJSON (builtins.readFile ../keys/admins.json)).${config.krg.adminAccount} or [];
 
-  # The guest NixOS config for one tenant — a sealed, bridged, Docker-capable box.
+  # The guest NixOS config for one tenant — a sealed, bridged, Docker-capable box
+  # with vault-agent rendering its internal TLS from the lab PKI.
   genGuest = name: t: {
+    imports = [./services/vault-agent.nix]; # krg.vaultAgent inside the guest
+
     system.stateVersion = config.system.stateVersion;
 
     microvm = {
@@ -94,6 +97,19 @@
           autoCreate = true;
         }
       ];
+
+      # Secret-zero broker: the deploy stages this tenant's AppRole role-id/secret-id
+      # into the dataset on the host; shared read-only into the guest so its
+      # vault-agent can authenticate. (Host-brokered because the #291 autostage only
+      # reaches --target-host machines, not nested guests.)
+      shares = [
+        {
+          source = "/var/lib/tenants/${name}/bootstrap";
+          mountPoint = "/var/lib/bootstrap";
+          tag = "bootstrap";
+          proto = "virtiofs";
+        }
+      ];
     };
 
     # Static IP on the private bridge subnet, matched by MAC (the guest interface
@@ -113,6 +129,30 @@
 
     virtualisation.docker.enable = true;
 
+    # Persistence — microVM roots are ephemeral by design, so the durable state must
+    # live on the data volume (/var/lib/state): Docker, the deploy checkout
+    # (DEPLOY_DIR), and the SSH host keys (stable known_hosts across VM restarts).
+    # Everything else resets on restart (the impermanence property, for free).
+    systemd.tmpfiles.rules = [
+      "d /var/lib/state/docker 0710 root root -"
+      "d /var/lib/state/ssh 0700 root root -"
+      "d /var/lib/state/deploy 0750 ops ops -"
+    ];
+    fileSystems = {
+      "/var/lib/docker" = {
+        device = "/var/lib/state/docker";
+        fsType = "none";
+        options = ["bind"];
+        depends = ["/var/lib/state"];
+      };
+      ${t.deployDir} = {
+        device = "/var/lib/state/deploy";
+        fsType = "none";
+        options = ["bind"];
+        depends = ["/var/lib/state"];
+      };
+    };
+
     # Break-glass only: key-only SSH, bridge-reachable (never external), authorized
     # for the platform-ops keys. Tenant maintainers get NO shell — they deploy via
     # their repo and observe via Grafana/Loki (ADR 0008 operator-access model).
@@ -122,6 +162,12 @@
         PasswordAuthentication = false;
         KbdInteractiveAuthentication = false;
       };
+      hostKeys = [
+        {
+          path = "/var/lib/state/ssh/ssh_host_ed25519_key";
+          type = "ed25519";
+        }
+      ];
     };
     users.mutableUsers = false;
     users.users.ops = {
@@ -130,6 +176,37 @@
       openssh.authorizedKeys.keys = adminKeys;
     };
     security.sudo.wheelNeedsPassword = false;
+
+    # vault-agent: authenticate with the per-tenant AppRole (secret-zero brokered
+    # from the host) and render the internal-TLS cert the inner Traefik serves — the
+    # edge re-encrypts to the VM over this, validated against the fleet CA (ADR 0008).
+    # The app-secret renders + the runner's App token are added with their prereqs
+    # (the per-tenant KV path + the GitHub App). A failed render here (before the
+    # AppRole exists) fails closed — its consumers don't start with stale/empty TLS.
+    krg.vaultAgent = {
+      enable = true;
+      roleName = "tenant-${name}"; # per-tenant AppRole (terraform/openbao — pending)
+      roleIdFile = "/var/lib/bootstrap/role-id";
+      secretIdFile = "/var/lib/bootstrap/secret-id";
+      renders = [
+        {
+          destination = "/run/tenant-tls/bundle.pem";
+          perms = "0640";
+          # ONE pki_int/issue call → one matched keypair (cert+chain+key in a bundle).
+          # CN/SAN = the VM's internal identity (the edge dials it by bridge IP /
+          # <name>.vm and verifies this leaf against the fleet CA root).
+          contents = ''
+            {{- with secret "pki_int/issue/host" "common_name=${name}.vm" "ip_sans=${tenantIp t.network.id}" "ttl=720h" }}
+            {{ .Data.certificate }}
+            {{- range .Data.ca_chain }}
+            {{ . }}
+            {{- end }}
+            {{ .Data.private_key }}
+            {{- end }}
+          '';
+        }
+      ];
+    };
   };
 in {
   # The microvm.nix host module — defines `microvm.host.*` and the guest runner
@@ -349,6 +426,9 @@ in {
             else
               zfs set quota=${toString t.resources.diskGiB}G "$ds"
             fi
+            # virtiofs source for the secret-zero broker (the deploy stages the
+            # tenant AppRole role-id/secret-id here; shared read-only into the VM).
+            install -d -m 0700 /var/lib/tenants/${name}/bootstrap
           '';
         })
       myTenants;
