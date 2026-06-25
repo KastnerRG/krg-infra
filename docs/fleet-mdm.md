@@ -77,10 +77,29 @@ org_settings:
 > **Restrict console access** to a Fleet-admins AD group (an `authentik_policy_binding`)
 > — Fleet is the device control plane, don't leave it open to all AD users.
 
+## OOBE gate (TEMPORARY — security-critical)
+
+Fleet's first-run setup wizard is **unauthenticated**: whoever reaches it first becomes
+**superadmin** of the device control plane. So Fleet must **never** be reachable on the
+public internet before its OOBE (admin created + SAML SSO configured) is done.
+
+During OOBE, `mdm.e4e.ucsd.edu` is fronted by an **Authentik forward-auth gate** (the
+`guacamole_gate` pattern), bound to **Domain Admins**, so only admins can reach the
+wizard. The pieces (all tagged ⚠ TEMPORARY in-code):
+- `authentik_provider_proxy.fleet_gate` + `authentik_application.fleet_gate` + the
+  `fleet_gate_admins` policy binding (`terraform/authentik/applications_e4e.tf`),
+- registered on the proxy outpost (`terraform/authentik/outpost.tf`),
+- the `traefik.http.routers.fleet.middlewares=authentik` label (`compose.fleet.yml`).
+
+**Remove the gate the moment OOBE is done** — it blocks roaming devices' API/enrollment
+(they hit Fleet over HTTP and can't do the browser SSO redirect). Removal = delete those
+four pieces, `tofu apply` (authentik), and redeploy krg-prod. After removal the wizard is
+gone (an admin exists) and the UI requires Fleet's own SAML login.
+
 ## Bring-up
 
 The stack is wired in (`compose.fleet.yml` `include:` + the `mdm.e4e.ucsd.edu` Traefik
-alias are enabled) and the icon is shipped, so bring-up is just apply + deploy + setup:
+alias are enabled), the icon is shipped, and the OOBE gate above is in place, so:
 
 1. **Verify the image pin.** Confirm `fleetdm/fleet:vX.Y.Z` in `compose.fleet.yml` is
    current (both `fleet` and `fleet_migrate` — keep them in lockstep).

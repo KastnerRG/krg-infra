@@ -91,6 +91,12 @@ services:
       # Fleet serves plain HTTP on :8080 (FLEET_SERVER_TLS=false); Traefik terminates
       # TLS. Pin the upstream port explicitly — the image exposes more than one.
       - "traefik.http.services.fleet.loadbalancer.server.port=8080"
+      # ⚠ TEMPORARY OOBE gate: Authentik forward-auth (the `authentik` middleware from
+      # compose.authentik.yml) — nothing unauthenticated reaches Fleet's unauthenticated
+      # first-run setup wizard. REMOVE this line once OOBE is done (admin created + SAML
+      # SSO configured), together with the fleet_gate resources in terraform/authentik —
+      # it blocks roaming devices' API/enrollment (no browser SSO redirect). docs/fleet-mdm.md.
+      - "traefik.http.routers.fleet.middlewares=authentik"
     networks:
       - fleet
       - traefik_proxy

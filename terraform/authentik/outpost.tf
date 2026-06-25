@@ -11,6 +11,9 @@ resource "authentik_outpost" "proxy" {
   protocol_providers = [
     authentik_provider_proxy.fishsense_orchestrator.id,
     authentik_provider_proxy.guacamole_gate.id,
+    # TEMPORARY — Fleet OOBE gate (remove together with the fleet_gate resources in
+    # applications_e4e.tf once Fleet first-run setup is done). See docs/fleet-mdm.md.
+    authentik_provider_proxy.fleet_gate.id,
   ]
 
   config = jsonencode({
