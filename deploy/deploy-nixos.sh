@@ -159,6 +159,37 @@ stage_vault_secret_zero() {
   echo "  staged vault-agent secret-zero for ${host} (AppRole ${rolename})"
 }
 
+# Stage secret-zero for each TENANT microVM on a krg.tenantPlatform host. The VMs run
+# their own vault-agent (nested guests the host-level autostage above can't reach), so
+# the host brokers each tenant's `tenant-<name>` AppRole role-id/secret-id into the
+# VM's bootstrap dir (/var/lib/microvm-secrets/<name> — a PLAIN dir off the ZFS data
+# mount, shared into the guest at /var/lib/bootstrap via virtiofs). Same mint-fresh,
+# stdin-only pattern as the host agent. No-op unless the host enables the platform and
+# has tenants. Fatal on failure — don't switch a box whose tenant agents can't auth
+# (the per-tenant AppRoles must already exist: apply terraform/openbao with var.tenants).
+stage_tenant_secret_zero() {
+  local host="$1" target="$2" enabled names name rolename rid sid
+  enabled="$(nix eval "${FLAKE}#nixosConfigurations.${host}.config.krg.tenantPlatform.enable" 2>/dev/null || echo false)"
+  [[ "$enabled" == "true" ]] || return 0
+  names="$(nix eval --json "${FLAKE}#nixosConfigurations.${host}.config.krg.tenantPlatform.tenantNames" 2>/dev/null | jq -r '.[]' 2>/dev/null)"
+  [[ -n "$names" ]] || return 0
+  if [[ -z "$VAULT_TOKEN" ]]; then
+    echo "  FAILED: ${host} runs tenant VMs but the control node has no OpenBao AppRole creds (${_va_role_id_file} / ${_va_secret_id_file})"
+    return 1
+  fi
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    rolename="tenant-${name}"
+    rid="$(bao read -field=role_id "auth/approle/role/${rolename}/role-id" 2>/dev/null)" \
+      || { echo "  FAILED: ${host}/${name} — cannot read role-id for AppRole '${rolename}' (apply terraform/openbao with var.tenants so the role exists)"; return 1; }
+    sid="$(bao write -f -field=secret_id "auth/approle/role/${rolename}/secret-id" 2>/dev/null)" \
+      || { echo "  FAILED: ${host}/${name} — cannot mint secret-id for AppRole '${rolename}'"; return 1; }
+    printf '%s' "$rid" | push_root_file "$target" "/var/lib/microvm-secrets/${name}/role-id" 0644 || return 1
+    printf '%s' "$sid" | push_root_file "$target" "/var/lib/microvm-secrets/${name}/secret-id" 0600 || return 1
+    echo "  staged tenant secret-zero: ${host}/${name} (AppRole ${rolename})"
+  done <<< "$names"
+}
+
 # Dump on-box failure context when a switch fails, so the cause is visible in the
 # CI log instead of needing a live login. READ-ONLY and best-effort: it only reads
 # unit/container state (never mutates), and its own failure (e.g. host unreachable)
@@ -214,6 +245,13 @@ for host in "${ORDER[@]}"; do
   # openbao-agent can authenticate on this same switch.
   if ! stage_vault_secret_zero "$host" "$target"; then
     echo "FAILED: ${host} — could not stage vault-agent secret-zero; stopping"
+    printf '\n::endgroup::\n'
+    exit 1
+  fi
+  # Stage each tenant microVM's secret-zero (no-op unless the host runs the tenant
+  # platform) so the nested guests' vault-agents can authenticate on this switch.
+  if ! stage_tenant_secret_zero "$host" "$target"; then
+    echo "FAILED: ${host} — could not stage tenant secret-zero; stopping"
     printf '\n::endgroup::\n'
     exit 1
   fi

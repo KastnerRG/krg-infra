@@ -104,7 +104,7 @@
       # reaches --target-host machines, not nested guests.)
       shares = [
         {
-          source = "/var/lib/tenants/${name}/bootstrap";
+          source = "/var/lib/microvm-secrets/${name}";
           mountPoint = "/var/lib/bootstrap";
           tag = "bootstrap";
           proto = "virtiofs";
@@ -219,11 +219,23 @@ in {
 
     id = mkOption {
       type = types.str;
+      default = ""; # required when enabled (asserted); "" matches no tenant when off
       example = "e4e-student";
       description = ''
         This platform instance's id. The host runs exactly the `krg.tenants` whose
         `platform` equals this. Lets two platform hosts (e.g. `e4e-student` and
         `krg-student`) share one roster, partitioned by this field.
+      '';
+    };
+
+    tenantNames = mkOption {
+      type = types.listOf types.str;
+      readOnly = true;
+      internal = true;
+      description = ''
+        Computed: the names of the tenants instantiated on this platform. Exposed so
+        the deploy (deploy-nixos.sh) can stage each tenant's secret-zero without a
+        heavy `microvm.vms` eval.
       '';
     };
 
@@ -354,8 +366,12 @@ in {
   config = mkMerge [
     # The microvm.nix host module defaults `enable` to true once imported, so force
     # it to FOLLOW the platform toggle — otherwise importing this module would turn
-    # on the host's microVM machinery everywhere it's available.
-    {microvm.host.enable = cfg.enable;}
+    # on the host's microVM machinery everywhere it's available. tenantNames is
+    # computed unconditionally so the deploy can read it (empty when off).
+    {
+      microvm.host.enable = cfg.enable;
+      krg.tenantPlatform.tenantNames = lib.attrNames myTenants;
+    }
 
     (mkIf cfg.enable {
       assertions =
@@ -402,7 +418,17 @@ in {
       # `ssh -J e4e-admin@e4e-prod ops@<tenant>.vm`).
       networking.hosts = mapAttrs' (name: t: nameValuePair (tenantIp t.network.id) ["${name}.vm"]) myTenants;
 
-      systemd.tmpfiles.rules = ["d /var/lib/tenants 0755 root root -"];
+      # /var/lib/tenants/<name> = the ZFS data datasets; /var/lib/microvm-secrets/<name>
+      # = the secret-zero virtiofs sources (PLAIN dirs, off the ZFS mounts — the deploy
+      # stages role-id/secret-id here BEFORE the switch, so they must not be shadowed by
+      # a later dataset mount). Dirs exist regardless so a VM can boot pre-staging
+      # (vault-agent then fails closed until the deploy stages).
+      systemd.tmpfiles.rules =
+        [
+          "d /var/lib/tenants 0755 root root -"
+          "d /var/lib/microvm-secrets 0700 root root -"
+        ]
+        ++ mapAttrsToList (name: _: "d /var/lib/microvm-secrets/${name} 0700 root root -") myTenants;
 
       # Per-tenant durable ZFS dataset (quota'd), provisioned before its microVM
       # starts. disko made the `rpool/tenants` container; children are created here
@@ -426,9 +452,6 @@ in {
             else
               zfs set quota=${toString t.resources.diskGiB}G "$ds"
             fi
-            # virtiofs source for the secret-zero broker (the deploy stages the
-            # tenant AppRole role-id/secret-id here; shared read-only into the VM).
-            install -d -m 0700 /var/lib/tenants/${name}/bootstrap
           '';
         })
       myTenants;
