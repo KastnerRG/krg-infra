@@ -225,3 +225,47 @@ resource "authentik_application" "fleet" {
   meta_icon         = "krg-icons/fleet.svg"
   group             = "Access & Security"
 }
+
+# ── Fleet OOBE gate (TEMPORARY — remove after first-run setup) ─────────────────
+# Fleet's first-run setup wizard is UNAUTHENTICATED: whoever reaches it first becomes
+# superadmin of the device control plane (enroll/wipe/script devices, read escrowed
+# FDE keys). Until Fleet has completed its OOBE (admin created + its own SAML SSO
+# configured), front mdm.e4e.ucsd.edu with an Authentik forward-auth gate (the
+# guacamole_gate pattern) so nothing unauthenticated reaches the wizard, and bind it
+# to Domain Admins so only admins — not any authenticated AD user — can pass.
+#
+# ⚠ REMOVE THIS once OOBE is done — all of: this proxy provider + application + the
+# policy binding below, the `authentik_provider_proxy.fleet_gate.id` entry in
+# outpost.tf, and the `middlewares=authentik` label on the fleet router in
+# compose.fleet.yml. The gate MUST go before enrolling devices: roaming endpoints hit
+# Fleet's API/enrollment over HTTP and cannot do the browser SSO redirect, so the gate
+# would block them. See docs/fleet-mdm.md "OOBE gate".
+resource "authentik_provider_proxy" "fleet_gate" {
+  name               = "Forward-auth gate for Fleet (OOBE)"
+  authorization_flow = data.authentik_flow.default_authorization.id
+  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  external_host      = "https://mdm.e4e.ucsd.edu"
+  mode               = "forward_single"
+}
+
+resource "authentik_application" "fleet_gate" {
+  name              = "Fleet (OOBE gate)"
+  slug              = "fleet-gate"
+  protocol_provider = authentik_provider_proxy.fleet_gate.id
+  # Icon only — no meta_launch_url/group, so it stays out of the user library (the
+  # SAML app above already provides the Fleet tile).
+  meta_icon = "krg-icons/fleet.svg"
+}
+
+# AD-synced group (sync_groups = true; same group Grafana keys off). The operator
+# running OOBE is a Domain Admin, so this gates the wizard without locking them out.
+data "authentik_group" "domain_admins" {
+  name          = "Domain Admins"
+  include_users = false
+}
+
+resource "authentik_policy_binding" "fleet_gate_admins" {
+  target = authentik_application.fleet_gate.uuid
+  group  = data.authentik_group.domain_admins.id
+  order  = 0
+}
