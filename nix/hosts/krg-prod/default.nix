@@ -11,7 +11,7 @@
   promConfig = ../../docker-compose/krg-prod/prometheus;
 in {
   imports = [
-    ../../profiles/server.nix
+    ../../profiles/services.nix
     ../../modules/services/vault-agent.nix
     ./hardware-configuration.nix
   ];
