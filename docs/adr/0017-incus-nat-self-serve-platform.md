@@ -232,4 +232,6 @@ Related: [ADR 0001](0001-iac-source-of-truth.md) (git as source of truth),
 [ADR 0013](0013-sso-authentik-front-door.md) (SSO front door),
 [ADR 0014](0014-proxmox-auth-ldap-outpost.md) (PVE auth — now PVE-specific),
 [ADR 0016](0016-developed-apps-are-one-trust-tier.md) (amended),
+[ADR 0019](0019-proxmox-to-incus-migration.md) (the cluster this runs on),
+[ADR 0020](0020-tenant-deploy-contract-mktenant.md) (the `lib.mkTenant` onboarding contract),
 [issue #288](https://github.com/KastnerRG/krg-infra/issues/288).
