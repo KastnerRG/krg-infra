@@ -190,12 +190,12 @@ covers the narrower case of one hostile tenant on an otherwise Incus platform.
 - **Roster:** interim digest-pin on krg-prod closes [issue #288](https://github.com/KastnerRG/krg-infra/issues/288)
   now; strategic home is a **tenant service** on the Incus NAT, exposed via the krg-prod
   edge at `roster.krg.ucsd.edu`.
-- **fishsense does not wait for the platform (it blocks active research).** Interim:
-  provision **e4e-prod** as a NixOS host (already scaffolded, IP `.107`) and run
-  fishsense repo-owns-deploy as a pinned-image compose stack in the **e4e zone** — *not*
-  on krg-prod (which would repeat the #288 trust-root anti-pattern). Migrates to an Incus
-  instance behind the e4e-prod edge when the platform lands. The roster two-step, on the
-  correct zone host.
+- **fishsense is the first tenant on the platform — no interim shortcut.** It blocks
+  active research, so **phase-1 Incus standup is the critical path** to host it
+  *properly*: an admin-provisioned Incus instance, repo-owns-deploy, behind the e4e-prod
+  edge, vault-agent secrets. We explicitly **reject** the throwaway compose-on-e4e-prod
+  stopgap (it would build fishsense twice) — ADR 0008's "do it right, not shortcuts."
+  fishsense is the platform's forcing function, not an exception to it.
 - **New self-serve VM tier** (quota'd Incus projects, OIDC→Authentik auth) that 0008
   lacked.
 - **[ADR 0014](0014-proxmox-auth-ldap-outpost.md) becomes Proxmox-specific:** Incus
@@ -215,9 +215,14 @@ covers the narrower case of one hostile tenant on an otherwise Incus platform.
 - **Aggregate capacity governance is deferred (tracked).** Per-tenant quotas exist; a
   *fleet-level* cap so the sum of self-serve VMs cannot starve prod on the shared
   fabricant host (phase 1) is an open item, held for now per [ADR 0004](0004-vm-disk-io-budget.md).
-- **Blocker:** the Incus host is not yet provisioned; this is offline declarative work
-  until then. **e4e-prod is provisioned early** (ahead of the platform) to unblock
-  fishsense.
+- **Migrating the *existing* Proxmox fleet to Incus is a separate, larger effort** —
+  rebuild-from-flake + data/storage migration + per-host network cutover, foundational
+  hosts (krg-ldap, krg-vault) last and only behind HA. Captured in its own ADR. The
+  platform here is *new* workload on Incus; moving krg-prod / krg-ldap / krg-vault / etc.
+  is phase-2+.
+- **Critical path:** phase-1 Incus (nested on fabricant) is not yet provisioned; standing
+  it up is what unblocks fishsense, which lands as its first tenant. e4e-prod is
+  provisioned as the e4e edge as part of this.
 
 Related: [ADR 0001](0001-iac-source-of-truth.md) (git as source of truth),
 [ADR 0004](0004-vm-disk-io-budget.md) (nested-IO/ZFS posture),
