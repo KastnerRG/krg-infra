@@ -64,9 +64,14 @@ provisions their own (internal, unexposed) boundary too.** "Standing up a servic
 ### 3. Substrate — Incus, managed by NixOS; phase 1 nested in Proxmox, phase 2 bare metal
 
 Incus is the platform (projects = tenancy, managed network = NAT, profiles+images =
-the baseline, OIDC = auth, the Terraform provider = platform-as-IaC); **NixOS manages
-the Incus host** (`virtualisation.incus`, a flake config). So this is *Incus the tool,
-nix the management* — not an abandonment of the lab's nix competence.
+the baseline, OIDC = auth); **NixOS manages the Incus host** (`virtualisation.incus`, a
+flake config). So this is *Incus the tool, nix the management* — not an abandonment of
+the lab's nix competence. The **boundary is IaC via `terraform/incus/`** — a new
+ADR-0005-style per-target root module (Incus provider: projects / managed network /
+profiles / instances / quotas) reconciled by `tofu plan` exactly as `terraform/openbao`
+reconciles OpenBao. This is what makes "git is truth" hold on the boundary side, and it
+maps 1:1 onto the §2 (and [ADR 0020](0020-tenant-deploy-contract-mktenant.md))
+provision-vs-manage split.
 
 - **Phase 1** — a NixOS VM on the current Proxmox host runs Incus. **Justified on its
   own merits** (self-serve + unified tenancy + no hand-rolled `krg-nat` box), so the
@@ -202,6 +207,15 @@ covers the narrower case of one hostile tenant on an otherwise Incus platform.
   authenticates via OIDC→Authentik directly; revisit if/when PVE is retired.
 - **Threat-model note recorded:** containers are *not* used for untrusted tenants
   precisely because the lab's incident was a compromised credential.
+- **Incus replaces Proxmox — not a new control-plane surface, a better one.** API access
+  is UCSD-only (= Proxmox's today), so exposure is parity; but on the lab's actual threat
+  (a compromised credential — the dictionary-attacked root SSH) it is a step *up*:
+  OIDC→Authentik + per-project scoping confine a compromised self-serve credential to its
+  own project. **≤ Proxmox exposure, > Proxmox containment.**
+- **Execution note — source-restrict the Incus API.** "UCSD-only" only holds if the Incus
+  API port is on `krg.firewall.sourcedPorts` (ucsd/ops), **not** the public list — like
+  the service hosts. On the current flat-public sealab ([[sealab-flat-public-no-nat]])
+  that firewall rule *is* the perimeter until the managed NAT lands.
 - **OEC follows persistence:** ephemeral self-serve VMs are OEC-exempt (narrow ITS
   carve-out, [ADR 0006](0006-no-oec-on-dsm.md) pattern) and compensated by enforced
   TTL + template-rebuild + auto-patch + segmentation + central logging; persistent and

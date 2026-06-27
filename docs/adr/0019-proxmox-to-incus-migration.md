@@ -130,6 +130,11 @@ tight**.
   critical-infra HA on the cleaned spare (or offline-cache/break-glass before that).
 - **fabricant's pivot is decoupled from the small node** (the spare's replicas give
   identity/secrets continuity); the spare's cleanup gates only the *zero-downtime* path.
+- **The cluster + tenant boundaries are IaC via `terraform/incus/`** — a new ADR-0005
+  per-target root module (Incus provider: projects / managed network / profiles /
+  instances / quotas), reconciled by `tofu plan` like `terraform/openbao`. This is what
+  keeps "git is truth" on the boundary side as Proxmox gives way to Incus
+  ([ADR 0017](0017-incus-nat-self-serve-platform.md) §3, [ADR 0020](0020-tenant-deploy-contract-mktenant.md)).
 - **Foundational hosts (krg-ldap, krg-vault) migrate only behind their replicas** — never
   as singletons.
 - **HA is app-level replicas, not VM-failover** (ZFS-local storage); **storage HA is out

@@ -13,6 +13,14 @@
 > [ADR 0016](0016-developed-apps-are-one-trust-tier.md); 0017 then withdrew 0016's
 > `krg-apps` rename and kept e4e-prod as the e4e edge. microVMs are kept *in reserve*
 > for a genuinely hostile tenant (ADR 0017 §4 / "When 0008's mechanism still wins").
+>
+> **Carry-forward of the in-flight implementation (#364–371):** **keep #369** (per-tenant
+> OpenBao AppRole + `tenant-internal` PKI role — substrate-agnostic; it becomes
+> `mkTenant`'s boundary AppRole, [ADR 0020](0020-tenant-deploy-contract-mktenant.md)) and
+> **#371** (the e4e edge — reaffirmed as the `*.e4e` zone edge; backends become Incus
+> instance IPs on the NAT). **Hold/close #364 / #365 / #367 / #370** — they implement the
+> retired mechanism; `microvm.nix` lives on only as the `isolation = microvm` in-reserve
+> path.
 
 ## Context
 

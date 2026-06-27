@@ -50,10 +50,12 @@ literally true — the instance is built from the project's own flake.
   by the tenant's runner on merged `auto-deploy/*` PRs.
 - **Boundary — requests, admin-provisioned, NOT self-granted:** `hostname`/CNAME, edge
   `zone`/route, `sso.group`, the OpenBao AppRole, `resources`/quota, the Incus instance
-  slot. The `mkTenant` declaration is a **spec**; an admin-side path in krg-infra reviews
-  and provisions it (a PR into krg-infra, or krg-infra pinning the tenant's spec output).
-  **A tenant cannot self-grant a boundary** — otherwise this re-creates the self-serve
-  *services* that ADR 0017 rejected.
+  slot. The `mkTenant` declaration is a **spec**; an admin **provisions it via
+  `terraform/incus/`** (the Incus-provider root module, ADR-0005-style — projects /
+  network / instances / quotas), so the boundary is `tofu`-reconciled state, exactly as
+  `terraform/openbao` reconciles OpenBao. The tenant's spec reaches it as a reviewed PR /
+  a pinned spec output. **A tenant cannot self-grant a boundary** — otherwise this
+  re-creates the self-serve *services* that ADR 0017 rejected.
 
 ### 4. The contract carries the baseline + the deploy machinery
 
