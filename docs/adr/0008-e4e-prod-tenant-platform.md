@@ -1,6 +1,26 @@
 # 0008. e4e-prod is a multi-tenant platform for student-built projects — sealed microVM per tenant, repo-owned deploys
 
-**Status:** Accepted · **Date:** 2026-06-17
+**Status:** Accepted · **Date:** 2026-06-17 · **Superseded in mechanism by [ADR 0017](0017-incus-nat-self-serve-platform.md) (2026-06-25)**
+
+> **Read with [ADR 0017](0017-incus-nat-self-serve-platform.md).** The *architecture*
+> below — repo-owns-deploy, the edge (LE-terminate + re-encrypt over OpenBao PKI), the
+> provision/manage split, the pluggable `isolation` knob, central Authentik/Temporal on
+> krg-prod — **stands and is reaffirmed**. The *realization* — nested `microvm.nix`
+> guests, the `krg.tenants` flake module, and a per-platform public-IP edge — is
+> **retired** in favour of an Incus platform on an internal-only NAT, with a self-serve
+> VM tier and per-DNS-zone edges (krg-prod / e4e-prod). The trust *framing* here
+> (krg-prod "trusted" / e4e-prod "untrusted") was already corrected by
+> [ADR 0016](0016-developed-apps-are-one-trust-tier.md); 0017 then withdrew 0016's
+> `krg-apps` rename and kept e4e-prod as the e4e edge. microVMs are kept *in reserve*
+> for a genuinely hostile tenant (ADR 0017 §4 / "When 0008's mechanism still wins").
+>
+> **Carry-forward of the in-flight implementation (#364–371):** **keep #369** (per-tenant
+> OpenBao AppRole + `tenant-internal` PKI role — substrate-agnostic; it becomes
+> `mkTenant`'s boundary AppRole, [ADR 0020](0020-tenant-deploy-contract-mktenant.md)) and
+> **#371** (the e4e edge — reaffirmed as the `*.e4e` zone edge; backends become Incus
+> instance IPs on the NAT). **Hold/close #364 / #365 / #367 / #370** — they implement the
+> retired mechanism; `microvm.nix` lives on only as the `isolation = microvm` in-reserve
+> path.
 
 ## Context
 
