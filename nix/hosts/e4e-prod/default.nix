@@ -1,14 +1,17 @@
 {inputs, ...}: {
   imports = [
     ../../profiles/services.nix
+    ../../modules/edge.nix # krg.edge — the *.e4e zone public edge (ADR 0017 §5)
     inputs.disko.nixosModules.disko # declarative disk layout (ZFS-on-root)
     ./disko-config.nix
     ./hardware-configuration.nix
   ];
 
-  # E4E (Engineers for Exploration) production host — project-specific and
-  # project-developed services (e.g. FishSense). Lab-wide tools live on krg-prod;
-  # this host starts empty because none of the current services are project-specific.
+  # E4E (Engineers for Exploration) production host. Under ADR 0017 its role is the
+  # **e4e DNS-zone edge**: it owns public ingress + Let's Encrypt issuance for
+  # `*.e4e.ucsd.edu` and re-encrypts to the student-project tenant instances running on
+  # the Incus platform (krg-nat). Lab-wide tools live on krg-prod (the krg-zone edge);
+  # tenants no longer run compose ON this host — they're Incus instances it fronts.
   krg.adminAccount = "e4e-admin";
 
   # Proxmox VM. The in-guest NixOS firewall stays ON (base.nix) — isVM just
@@ -35,9 +38,19 @@
     nameservers = ["132.239.0.252" "8.8.8.8" "1.1.1.1"];
   };
 
-  # E4E project services attach here as krg.composeStacks.<name> once defined,
-  # following the krg-prod pattern (compose dir under nix/docker-compose/e4e-prod/,
-  # working dir /var/lib/krg/e4e-prod). SSO can federate to krg-prod's Authentik.
+  # The e4e zone edge. Stands up Traefik (LE-terminate on :80/:443 → re-encrypt to the
+  # tenant instances over the OpenBao PKI). `routes` is EMPTY until tenant CNAMEs are
+  # published — each route is a per-name admin act gated on its CNAME (ADR 0017 §6), and
+  # the explicit SAN list is the only thing that drives issuance (no on-demand TLS). The
+  # first tenant (fishsense) adds its route + backend in its own PR alongside the CNAME
+  # request. SSO forward-auth to krg-prod's central Authentik is a follow-up seam.
+  krg.edge = {
+    enable = true;
+    zone = "e4e";
+    acme.email = "shperry@ucsd.edu";
+    # acme.staging = true;  # flip ON when adding the first real route, validate, then OFF
+    routes = {};
+  };
 
   system.stateVersion = "25.11";
 }

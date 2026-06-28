@@ -112,6 +112,7 @@
       ipmi-lan = import ./modules/hardware/ipmi-lan.nix;
 
       xrdp = import ./modules/desktop/xrdp.nix;
+      edge = import ./modules/edge.nix; # per-zone public edge (ADR 0017 §5)
     };
 
     nixosConfigurations = {
