@@ -187,6 +187,17 @@ materialize() { # <target>
       # NixOS members that consume the secrets); see terraform/secrets/README.md.
       [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping secrets" >&2; return 1; }
       ;;
+    incus)
+      # terraform/incus authenticates to the krg-nat Incus API with a CLIENT CERTIFICATE
+      # trusted by the server (set up ONCE at bring-up: `incus remote add krg-nat <token>`
+      # on krg-deploy mints + stores the cert under the incus config dir). The provider
+      # reads that cert on every run — there is NO TF_VAR secret to pre-read here, unlike
+      # the other targets, and the API address is non-secret (variables.tf default). If
+      # the remote/cert isn't bootstrapped yet the apply fails loudly at plan (not a
+      # skip) — intentional: by the time `incus` is in TOFU_TARGETS, the krg-nat host +
+      # trust cert are expected to exist. See terraform/incus/README.md.
+      :
+      ;;
     *)
       echo "  no materialization rule for ${1} — skipping" >&2
       return 1
