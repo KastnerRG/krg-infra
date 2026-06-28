@@ -1,28 +1,22 @@
 {inputs, ...}: {
   imports = [
-    # server tier (base + node-exporter): an always-on monitored infra VM. The
-    # break-glass admin + krg.users come via base.nix (imported by server).
-    ../../profiles/server.nix
-    ../../modules/incus.nix # krg.incus — the platform substrate (ADR 0017)
+    # Hypervisor role (server tier + the guest-hosting substrate). Host-specifics below.
+    ../../profiles/hypervisor.nix
     inputs.disko.nixosModules.disko # declarative disk layout (ZFS-on-root)
     ./disko-config.nix
     ./hardware-configuration.nix
   ];
 
   # The phase-1 Incus platform host (ADR 0017): runs the Incus daemon; student-project
-  # tenant services AND self-serve VMs are Incus instances on its internal NAT. There
-  # is no dedicated per-tenant disk provisioning at the hypervisor layer — a tenant is
-  # a terraform/incus instance on the `dir` pool. The zone edges (krg-prod for *.krg,
-  # e4e-prod for *.e4e) route to instances here; this host serves BOTH zones' tenants
-  # (one NAT, two edges).
+  # tenant services AND self-serve VMs are Incus instances on its internal NAT. A tenant
+  # is a terraform/incus instance on the `dir` pool — no per-tenant disk provisioning at
+  # the hypervisor layer. The zone edges (krg-prod for *.krg, e4e-prod for *.e4e) route
+  # to instances here; this host serves BOTH zones' tenants (one NAT, two edges).
   krg.adminAccount = "krg-admin";
 
-  krg.base = {
-    enable = true;
-    autoUpgrade = true;
-    serviceHost = true; # control-plane host — SSH ucsd+ops only (base default)
-    isVM = true; # Proxmox guest; in-guest firewall stays ON (base.nix)
-  };
+  # Proxmox guest (phase-1 nested). The role profile owns base enable/autoUpgrade/
+  # serviceHost; isVM is host-specific (phase-2 bare metal drops it).
+  krg.base.isVM = true;
 
   # Static networking — mirrors the other lab VMs (same /24, gateway, resolver list),
   # .124 (reserved for krg-nat in networks/trusted.json). krg.adClient prepends the DC
@@ -46,12 +40,6 @@
   # AD domain member (base.nix defaults krg.adClient.enable on). Domain join + keytab
   # are a bring-up step (docs/joining-a-host-to-the-domain.md), like the other hosts.
   krg.adClient.enable = true;
-
-  # Incus platform substrate. The daemon + API (8443, ucsd+ops via the module's
-  # sourcedPorts) + the bootstrap `dir` storage pool. The NAT network, projects,
-  # profiles, instances and quotas are the IaC boundary owned by terraform/incus
-  # (next on the track) — NOT declared here.
-  krg.incus.enable = true;
 
   # ── EDGE REACHABILITY — BRING-UP NETWORKING DECISION ─────────────────────────────
   # Incus SNATs tenant egress out of the managed NAT (incusbr0, RFC1918) — outbound
