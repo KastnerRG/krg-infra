@@ -198,7 +198,7 @@ in {
           mapAttrs' (
             name: r:
               nameValuePair "edge-${name}" {
-                serverName = r.serverName; # verify the backend's tenant-internal cert vs the fleet CA
+                inherit (r) serverName; # verify the backend's tenant-internal cert vs the fleet CA
               }
           )
           reencryptRoutes;
