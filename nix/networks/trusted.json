@@ -36,6 +36,7 @@
       { "cidr": "137.110.161.109", "comment": "krg-ldap.ucsd.edu" },
       { "cidr": "137.110.161.122", "comment": "krg-deploy.ucsd.edu" },
       { "cidr": "137.110.161.123", "comment": "krg-vault.ucsd.edu" },
+      { "cidr": "137.110.161.124", "comment": "krg-nat.ucsd.edu (Incus platform host; domain member) — RESERVED, confirm allocation + DNS at bring-up" },
       { "cidr": "132.239.17.123",  "comment": "kastner-ml.ucsd.edu (compute; domain member)" }
     ]
   }

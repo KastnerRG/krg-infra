@@ -100,6 +100,7 @@
 
       samba-ad = import ./modules/samba-ad.nix;
       ad-client = import ./modules/sssd-ad-client.nix;
+      incus = import ./modules/incus.nix;
 
       firewall = import ./modules/security/firewall.nix;
       crowdsec = import ./modules/security/crowdsec.nix;
@@ -122,6 +123,7 @@
       krg-ldap = mkSystem "krg-ldap";
       krg-vault = mkSystem "krg-vault"; # OpenBao secrets manager
       krg-deploy = mkSystem "krg-deploy"; # Ansible control node + OpenTofu
+      krg-nat = mkSystem "krg-nat"; # Incus platform host (ADR 0017)
     };
   };
 }
