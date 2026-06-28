@@ -23,6 +23,9 @@ eggs/
 .eggs/
 lib/
 lib64/
+# …but the flake's tenant-contract library is real source, not a Python venv lib dir.
+!/nix/lib/
+!/nix/lib/**
 parts/
 sdist/
 var/

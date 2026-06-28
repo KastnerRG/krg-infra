@@ -83,8 +83,56 @@
     # `nix fmt` → alejandra via treefmt.
     formatter.${system} = treefmtEval.config.build.wrapper;
 
-    # `nix flake check` gate: fails on any unformatted .nix in the tree.
-    checks.${system}.formatting = treefmtEval.config.build.check self;
+    # `nix flake check` gates.
+    checks.${system} = {
+      # Fails on any unformatted .nix in the tree.
+      formatting = treefmtEval.config.build.check self;
+
+      # Contract self-test (ADR 0020): force-evaluate a sample mkTenant call AND a tenant
+      # nixosConfiguration built from it, asserting the spec projection + the module
+      # wiring. Catches a contract regression at `nix flake check` time even though no
+      # host in this flake instantiates nixosModules.tenant (tenants live in their own repos).
+      mkTenant-contract = let
+        spec = self.lib.mkTenant {
+          name = "example";
+          zone = "e4e";
+          hostname = "example.e4e.ucsd.edu";
+          sso.group = "example";
+          resources = {
+            cpu = 4;
+            ram = "8GiB";
+          };
+          compose = ./templates/tenant/deploy/compose.yml;
+        };
+        sys = nixpkgs.lib.nixosSystem {
+          inherit system;
+          specialArgs = {inherit inputs;};
+          modules = [
+            self.nixosModules.tenant
+            {krg.tenant = spec;}
+          ];
+        };
+        # Spec shape: the admin-side terraform projection + the boundary fields.
+        shapeOk =
+          spec.terraformTenant.zone
+          == "e4e"
+          && spec.terraformTenant.memory == "8GiB"
+          && spec.terraformTenant.cpu == 4
+          && spec.boundary.sso.group == "example"
+          && spec.boundary.kvPrefix == "tenants/example"
+          && spec.interior.compose != null;
+        # Module wiring: the spec drives the hostname + the compose stack.
+        moduleOk =
+          sys.config.networking.hostName == "example" && (sys.config.krg.composeStacks ? "example");
+      in
+        assert shapeOk;
+        assert moduleOk;
+          pkgs.runCommand "mktenant-contract-ok" {} "touch $out";
+    };
+
+    # The tenant-facing contract surface (ADR 0020 §1) — narrow + secret-free, pinned by
+    # tenant repos. Kept separate from the flake's internals on purpose.
+    lib.mkTenant = import ./lib/mk-tenant.nix {lib = nixpkgs.lib;};
 
     nixosModules = {
       base = import ./profiles/base.nix;
@@ -100,6 +148,7 @@
 
       samba-ad = import ./modules/samba-ad.nix;
       ad-client = import ./modules/sssd-ad-client.nix;
+      tenant = import ./modules/tenant.nix; # the NixOS half of the deploy contract (ADR 0020)
 
       firewall = import ./modules/security/firewall.nix;
       crowdsec = import ./modules/security/crowdsec.nix;
@@ -122,6 +171,16 @@
       krg-ldap = mkSystem "krg-ldap";
       krg-vault = mkSystem "krg-vault"; # OpenBao secrets manager
       krg-deploy = mkSystem "krg-deploy"; # Ansible control node + OpenTofu
+    };
+
+    # `nix flake init -t github:KastnerRG/krg-infra?dir=nix#tenant` — a tenant repo
+    # skeleton: pin krg-infra + one mkTenant declaration + a compose interior (ADR 0020).
+    templates = {
+      tenant = {
+        path = ./templates/tenant;
+        description = "A KRG Incus platform tenant (mkTenant deploy contract)";
+      };
+      default = self.templates.tenant;
     };
   };
 }
