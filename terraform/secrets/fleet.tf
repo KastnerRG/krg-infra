@@ -1,10 +1,16 @@
 # Fleet's generated secrets, written EARLY so the fail-closed krg-prod vault-agent
-# (P2) finds them before it renders. Fleet is a brand-new bring-up — ALL pure CREATEs,
-# no live DB password or rotated key to preserve. Fleet's SSO is SAML (no OIDC client
-# secret), so there's nothing Authentik-related here; these are plain infra secrets.
-# They live under krg-prod/authentik-managed/ only because that's the GLOBBABLE,
-# policy-covered krg-prod namespace (#323) — not because Authentik touches them.
+# (P2) finds them before it renders. Fleet's SSO is SAML (no OIDC client secret), so
+# there's nothing Authentik-related here; these are plain infra secrets. They live
+# under krg-prod/authentik-managed/ only because that's the GLOBBABLE, policy-covered
+# krg-prod namespace (#323) — not because Authentik touches them.
 # See terraform/secrets/README.md.
+#
+# GENERATE-ONCE — NOT free to recreate. mysql_root_password/db_password are set into
+# MySQL at data-dir init; server_private_key encrypts MDM assets at rest. Once Fleet has
+# been deployed, the OpenBao secret is LIVE: a fresh apply MUST adopt the existing values
+# via TOFU_IMPORT, never recreate them. Recreating locks MySQL out AND bricks MDM (and a
+# value exposed during an open OOBE must be ROTATED off, not restored). deploy-tofu.sh
+# refuses to create-over-an-existing OpenBao secret; the invariant lives here too.
 #
 #   krg-prod/authentik-managed/fleet  {mysql_root_password, db_password, server_private_key}
 #       mysql_root_password — MySQL root (fleet_mysql), via MYSQL_ROOT_PASSWORD.

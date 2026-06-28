@@ -1,8 +1,14 @@
 # Outline's generated secrets, written EARLY so the fail-closed krg-prod vault-agent
-# (P2) finds them before it renders. Outline is a brand-new bring-up (the stack was
-# never deployed), so ALL of these are pure CREATES — there is no live DB password or
-# rotated client_secret to preserve (unlike temporal/guacamole, which import their
-# live DB password). See terraform/secrets/README.md.
+# (P2) finds them before it renders. See terraform/secrets/README.md.
+#
+# GENERATE-ONCE — NOT free to recreate. db_password is set into Postgres at data-dir
+# init; secret_key/utils_secret encrypt DB columns at rest. Once Outline has been
+# deployed, the OpenBao secret is LIVE: a fresh apply MUST adopt the existing values via
+# TOFU_IMPORT, never recreate them. Recreating rotates the DB password (auth lockout)
+# AND the encryption keys (existing data becomes undecryptable). This bit us once — a
+# deploy ran against state that had lost these resources and regenerated all three.
+# deploy-tofu.sh now refuses to create-over-an-existing OpenBao secret; the invariant
+# lives here too: treat every secret below as import-to-preserve, not "pure create".
 #
 #   krg-prod/authentik-managed/outline       {db_password, secret_key, utils_secret}
 #       db_password  — the Postgres role password (outline_user); embedded by

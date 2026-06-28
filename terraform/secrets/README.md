@@ -37,6 +37,48 @@ the e4e-nas pair, `proxmox-ldap-bind`) are consumed at tofu-time or by graceful
 ansible — they can't fail-close the stack, so they stay in `terraform/authentik`.
 **Rule:** when a secret becomes a vault-agent (P2) consumer, move it here.
 
+## The generate-once invariant (and the deploy guard)
+
+Every secret here is **generate-once**: a DB password (set into the database at
+data-dir init) or an encryption key (encrypts data/sessions/MDM assets at rest). Once a
+service has been deployed, its OpenBao secret is **live** and the consuming
+database/app is pinned to it. Recreating it is catastrophic — a rotated DB password
+locks the service out; a rotated encryption key (`secret_key`, `utils_secret`,
+`server_private_key`) makes existing data undecryptable.
+
+The trap: `random_password`/`random_id` emit a **fresh** value whenever they are absent
+from the state the apply runs against. So an apply against state that has lost these
+resources (or never had them — created out-of-band) **silently regenerates them and
+overwrites the live OpenBao value**. This happened to outline + fleet: a deploy
+regenerated all of their db/key secrets, locking Outline out of Postgres and corrupting
+its encrypted columns, and locking Fleet out of MySQL. (Beware the seductive per-file
+comment "brand-new bring-up, all pure CREATEs, no import needed" — it is only true
+until the *first* deploy; after that the secret is live and must be imported.)
+
+Two guardrails enforce the invariant:
+
+1. **`deploy-tofu.sh` refuses to create-over-an-existing secret.** Before applying the
+   `secrets` target it plans, and if the plan would **create** a `vault_kv_secret_v2`
+   whose OpenBao path **already exists**, it aborts (exit 5): *why create a secret that
+   already exists out there?* A genuinely new service is unaffected — its KV path
+   doesn't exist yet, so it creates cleanly and comes up automatically. Bypass only with
+   `TOFU_REPLACE` (deliberate rotation) or `TOFU_SECRETS_APPROVE=<reason>`.
+
+2. **Adopt, don't recreate.** When the guard fires, import the live value — never
+   recreate. `random_password` imports verbatim; **`random_id`** (`secret_key` /
+   `utils_secret`) imports through the same `TOFU_IMPORT` — deploy-tofu.sh converts the
+   KV `.hex` field to the base64url import ID automatically (a raw-hex import would land
+   different bytes and silently rotate on the next apply).
+
+   ```bash
+   # Adopt outline's three live values without rotating them (random_id auto-converts):
+   TOFU_TARGETS=secrets TOFU_STATE_PASSPHRASE='<passphrase>' TOFU_PLAN_ONLY=1 \
+     TOFU_IMPORT="random_password.outline_db     secret/krg-prod/authentik-managed/outline db_password
+   random_id.outline_secret_key   secret/krg-prod/authentik-managed/outline secret_key
+   random_id.outline_utils_secret secret/krg-prod/authentik-managed/outline utils_secret" \
+     ./deploy/deploy-tofu.sh        # confirm "No changes", then drop TOFU_PLAN_ONLY to apply
+   ```
+
 ## Migration (one-time, per secret)
 
 Two modes:

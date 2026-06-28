@@ -258,6 +258,17 @@ for t in "${TARGETS[@]}"; do
         fi
         imp_val="$(_kv "$imp_path" "$imp_field")" \
           || { echo "  import: cannot read ${imp_path} (${imp_field}) — skipping ${imp_addr}" >&2; continue; }
+        # random_id resources (e.g. Outline's secret_key / utils_secret) take their
+        # IMPORT ID as base64url(raw bytes), but we store the value as .hex in KV. Convert
+        # hex -> base64url(no pad) so the import reconstructs the SAME bytes; importing the
+        # raw hex string would yield DIFFERENT bytes -> a "replace" on the next apply ->
+        # silent rotation that re-corrupts whatever the key encrypts. random_password takes
+        # its value verbatim, so only random_id needs this.
+        if [[ "$imp_addr" == random_id.* ]]; then
+          imp_val="$(printf '%s' "$imp_val" \
+            | python3 -c 'import sys,base64; print(base64.urlsafe_b64encode(bytes.fromhex(sys.stdin.read().strip())).rstrip(b"=").decode())')" \
+            || { echo "  import: hex->base64url conversion failed for ${imp_addr} (need python3) — skipping" >&2; continue; }
+        fi
         tofu -chdir="$dir" import -input=false -state="${state_dir}/terraform.tfstate" \
              "$imp_addr" "$imp_val"
       done <<< "$TOFU_IMPORT"
@@ -272,6 +283,50 @@ for t in "${TARGETS[@]}"; do
       tofu -chdir="$dir" plan -input=false \
            -state="${state_dir}/terraform.tfstate"
     else
+      # ── Generate-once secret guard (secrets target only) ───────────────────────────
+      # terraform/secrets MINTS secrets into OpenBao; in steady state an apply is a
+      # no-op. The catastrophic case is a plan that would CREATE a secret whose OpenBao
+      # path ALREADY EXISTS — the state has lost track of a secret a live service was
+      # already provisioned with, so "create" silently ROTATES it: a rotated DB password
+      # locks the service out, a rotated encryption key (secret_key / server_private_key)
+      # makes existing data undecryptable. That is exactly the outline+fleet incident.
+      #
+      # We ask OpenBao — the authority for "this secret was already issued" — rather than
+      # reach cross-host into the consumers (which don't exist yet on a fresh deploy). A
+      # genuinely NEW service is unaffected: its KV path doesn't exist, so it CREATEs
+      # cleanly and comes up automatically. Bypass only for a deliberate rotation
+      # (TOFU_REPLACE) or an explicit, reasoned TOFU_SECRETS_APPROVE — and prefer
+      # TOFU_IMPORT to ADOPT the live value instead of rotating it.
+      if [[ "$t" == "secrets" && -z "${TOFU_SECRETS_APPROVE:-}" && -z "${TOFU_REPLACE:-}" ]]; then
+        guard_plan="${state_dir}/.guard.tfplan"
+        if tofu -chdir="$dir" plan -input=false -compact-warnings \
+             -state="${state_dir}/terraform.tfstate" -out="$guard_plan" >/dev/null; then
+          clobber=""
+          while IFS= read -r kvpath; do
+            [[ -z "$kvpath" ]] && continue
+            bao kv metadata get "$kvpath" >/dev/null 2>&1 && clobber+="    ${kvpath}"$'\n'
+          done < <(tofu -chdir="$dir" show -json "$guard_plan" 2>/dev/null \
+                     | jq -r '.resource_changes[]
+                              | select(.type=="vault_kv_secret_v2" and .change.actions==["create"])
+                              | .change.after.mount + "/" + .change.after.name')
+          rm -f "$guard_plan"
+          if [[ -n "$clobber" ]]; then
+            echo "ERROR: ${t} would CREATE secrets that ALREADY EXIST in OpenBao:" >&2
+            printf '%s' "$clobber" >&2
+            echo "       State has lost track of secrets a live service already uses; applying" >&2
+            echo "       would ROTATE them and lock out / corrupt that service (outline+fleet)." >&2
+            echo "       ADOPT the live values instead — this does NOT rotate them:" >&2
+            echo "         TOFU_TARGETS=secrets TOFU_PLAN_ONLY=1 \\" >&2
+            echo "           TOFU_IMPORT=\"<addr> <kvpath> <field>\" ./deploy/deploy-tofu.sh" >&2
+            echo "       (random_id secrets convert automatically; see terraform/secrets/README.md.)" >&2
+            echo "       To deliberately create over the existing value, set TOFU_SECRETS_APPROVE=<reason>." >&2
+            exit 5   # distinct from skip(0) / apply-fail(1) / encryption(3)
+          fi
+        else
+          rm -f "$guard_plan"
+          echo "  note: secret guard plan failed — proceeding; the apply below will surface the error" >&2
+        fi
+      fi
       # TOFU_REPLACE: force-replace specific resource addresses on this apply — to
       # ROTATE a generate-once secret (e.g. a leaked/exposed random_password) or rebuild
       # a tainted resource. Space-separated addresses; scope the run to ONE target (the
