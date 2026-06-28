@@ -76,9 +76,7 @@ in
     # reviewing the tenant's PR copies `terraformTenant` into terraform/incus — no
     # translation, no self-grant. `memory` is `ram` renamed to the Incus field name.
     terraformTenant = {
-      inherit zone isolation image;
-      cpu = cpu;
-      memory = ram;
-      inherit disk;
+      inherit zone isolation image cpu disk;
+      memory = ram; # `ram` renamed to the Incus field name
     };
   }

@@ -132,7 +132,7 @@
 
     # The tenant-facing contract surface (ADR 0020 §1) — narrow + secret-free, pinned by
     # tenant repos. Kept separate from the flake's internals on purpose.
-    lib.mkTenant = import ./lib/mk-tenant.nix {lib = nixpkgs.lib;};
+    lib.mkTenant = import ./lib/mk-tenant.nix {inherit (nixpkgs) lib;};
 
     nixosModules = {
       base = import ./profiles/base.nix;
