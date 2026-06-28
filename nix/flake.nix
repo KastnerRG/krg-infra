@@ -148,6 +148,7 @@
 
       samba-ad = import ./modules/samba-ad.nix;
       ad-client = import ./modules/sssd-ad-client.nix;
+      incus = import ./modules/incus.nix;
       tenant = import ./modules/tenant.nix; # the NixOS half of the deploy contract (ADR 0020)
 
       firewall = import ./modules/security/firewall.nix;
@@ -171,6 +172,7 @@
       krg-ldap = mkSystem "krg-ldap";
       krg-vault = mkSystem "krg-vault"; # OpenBao secrets manager
       krg-deploy = mkSystem "krg-deploy"; # Ansible control node + OpenTofu
+      krg-nat = mkSystem "krg-nat"; # Incus platform host (ADR 0017)
     };
 
     # `nix flake init -t github:KastnerRG/krg-infra?dir=nix#tenant` — a tenant repo

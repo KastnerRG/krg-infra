@@ -141,3 +141,17 @@ variable "pki_ad_group_roles" {
     "Temporal Users" = ["user"]
   }
 }
+
+variable "tenants" {
+  description = <<-EOT
+    The e4e-prod student-project tenants (mirrors the Nix krg.tenants roster). Each
+    gets an AppRole `tenant-<name>` + a least-privilege policy: mint its own
+    `tenant-internal` cert and read its own KV path. `kv_prefix` is the path under the
+    `secret` kv-v2 mount, matching the Nix `secrets.openbaoPath` minus the `secret/`
+    prefix (e.g. "e4e-student/fishsense"). Default empty — populated as tenants land.
+  EOT
+  type = map(object({
+    kv_prefix = string
+  }))
+  default = {}
+}
