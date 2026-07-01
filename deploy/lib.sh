@@ -23,7 +23,7 @@ ADMIN="${DEPLOY_ADMIN:-krg-admin}"
 # service host (the student-tenant platform) like krg-prod — placed alongside it,
 # before the compute boxes.
 # shellcheck disable=SC2034  # consumed by sourcing scripts, not here
-ORDER=(krg-vault krg-ldap krg-prod e4e-prod waiter kastner-ml)
+ORDER=(krg-vault krg-ldap krg-prod e4e-prod krg-nat waiter kastner-ml)
 
 # host -> ssh address. Fully-qualified DNS names only — never IPs (DNS is the
 # stable handle; IPs may change). Names are final per the rename plan (#128).
@@ -35,6 +35,7 @@ declare -A ADDR=(
   [waiter]=waiter.ucsd.edu
   [kastner-ml]=kastner-ml.ucsd.edu
   [e4e-prod]=e4e-prod.ucsd.edu
+  [krg-nat]=krg-nat.ucsd.edu
 )
 
 # Per-host remote user (default ADMIN). kastner-ml and e4e-prod are E4E hosts → the

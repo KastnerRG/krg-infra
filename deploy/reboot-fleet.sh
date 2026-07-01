@@ -35,6 +35,7 @@ declare -A ADDR=(
   [waiter]=waiter.ucsd.edu
   [kastner-ml]=kastner-ml.ucsd.edu
   [e4e-prod]=e4e-prod.ucsd.edu
+  [krg-nat]=krg-nat.ucsd.edu
   [e4e-nas]=132.239.17.124
 )
 # Per-host remote user (default ADMIN). kastner-ml, e4e-prod and e4e-nas are E4E
@@ -58,7 +59,7 @@ declare -A REBOOT_CMD_OVERRIDE=(
 # Reboot order. Sequential, one host fully back before the next, so the fleet is
 # never all-down at once and the log shows exactly where a failure happened. The
 # NAS goes last (slowest to reboot, least coupled to the others' reachability).
-ORDER=(krg-vault krg-ldap krg-prod e4e-prod waiter kastner-ml e4e-nas)
+ORDER=(krg-vault krg-ldap krg-prod e4e-prod krg-nat waiter kastner-ml e4e-nas)
 
 # Optional args restrict the run to a subset, given as a comma- and/or
 # space-separated list of HOSTNAMES (e.g. `reboot-fleet.sh waiter,krg-prod` or

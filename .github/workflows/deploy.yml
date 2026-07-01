@@ -200,13 +200,14 @@ jobs:
 
       # ── phase 2: systems (NixOS members) ──────────────────────────────────────
       # The remaining hosts now that the substrate exists: the service hosts (krg-prod,
-      # which OpenTofu configures in phase 3; e4e-prod, the student-tenant platform) and
-      # the compute boxes, which mount /home from phase 1's NFS exports. OEC staged here;
-      # daemons verified in phase 4.
+      # which OpenTofu configures in phase 3; e4e-prod, the student-tenant edge; krg-nat,
+      # the Incus platform host that runs the tenant instances) and the compute boxes,
+      # which mount /home from phase 1's NFS exports. OEC staged here; daemons verified in
+      # phase 4.
       - name: Phase 2 — systems (NixOS members)
         if: success() && steps.gate.outputs.ok == 'true'
         env:
-          DEPLOY_NIXOS_HOSTS: "krg-prod e4e-prod waiter kastner-ml"
+          DEPLOY_NIXOS_HOSTS: "krg-prod e4e-prod krg-nat waiter kastner-ml"
         run: ./deploy/deploy-nixos.sh
 
       # ── phase 3: config (OpenTofu) ────────────────────────────────────────────
