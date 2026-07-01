@@ -77,29 +77,30 @@ org_settings:
 > **Restrict console access** to a Fleet-admins AD group (an `authentik_policy_binding`)
 > — Fleet is the device control plane, don't leave it open to all AD users.
 
-## OOBE gate (TEMPORARY — security-critical)
+## OOBE gate (REMOVED — history)
 
 Fleet's first-run setup wizard is **unauthenticated**: whoever reaches it first becomes
-**superadmin** of the device control plane. So Fleet must **never** be reachable on the
-public internet before its OOBE (admin created + SAML SSO configured) is done.
-
-During OOBE, `mdm.e4e.ucsd.edu` is fronted by an **Authentik forward-auth gate** (the
-`guacamole_gate` pattern), bound to **Domain Admins**, so only admins can reach the
-wizard. The pieces (all tagged ⚠ TEMPORARY in-code):
+**superadmin** of the device control plane. So until an admin existed, `mdm.e4e.ucsd.edu`
+was fronted by an **Authentik forward-auth gate** (the `guacamole_gate` pattern) bound to
+**Domain Admins**, so only admins could reach the wizard. The pieces were:
 - `authentik_provider_proxy.fleet_gate` + `authentik_application.fleet_gate` + the
   `fleet_gate_admins` policy binding (`terraform/authentik/applications_e4e.tf`),
 - registered on the proxy outpost (`terraform/authentik/outpost.tf`),
 - the `traefik.http.routers.fleet.middlewares=authentik` label (`compose.fleet.yml`).
 
-**Remove the gate the moment OOBE is done** — it blocks roaming devices' API/enrollment
-(they hit Fleet over HTTP and can't do the browser SSO redirect). Removal = delete those
-four pieces, `tofu apply` (authentik), and redeploy krg-prod. After removal the wizard is
-gone (an admin exists) and the UI requires Fleet's own SAML login.
+**The gate has been removed** now that the break-glass admin exists (so the wizard is
+closed) — it also **blocks Fleet's own API**: the forward-auth 302 to Authentik's OIDC
+`authorize` endpoint fails the SPA's cross-origin XHR, so the SSO settings save returns
+*"Could not update settings"* while it's up (and it blocks roaming devices' HTTP
+API/enrollment, which can't do a browser SSO redirect). That's why the sequence is
+**create admin → remove gate → configure SSO**, not gate-then-SSO. Removal = delete those
+four pieces, `tofu apply` (authentik) via `deploy-tofu.sh`, and redeploy krg-prod; the
+login page is then guarded by the local admin (and, once configured, SAML SSO).
 
 ## Bring-up
 
 The stack is wired in (`compose.fleet.yml` `include:` + the `mdm.e4e.ucsd.edu` Traefik
-alias are enabled), the icon is shipped, and the OOBE gate above is in place, so:
+alias are enabled) and the icon is shipped, so:
 
 1. **Verify the image pin.** Confirm `fleetdm/fleet:vX.Y.Z` in `compose.fleet.yml` is
    current (both `fleet` and `fleet_migrate` — keep them in lockstep).
@@ -110,9 +111,14 @@ alias are enabled), the icon is shipped, and the OOBE gate above is in place, so
 3. **Deploy** krg-prod (the 04:00 `autoUpgrade` tick, or `nixos-rebuild … --target-host
    krg-prod`). vault-agent renders `/run/krg/fleet/{db,server}.env` (fail-closed if
    OpenBao is down) and the fleet services come up behind Traefik.
-4. **Initial setup:** browse to `https://mdm.e4e.ucsd.edu`, create the admin user, set
-   the Fleet **server URL** to `https://mdm.e4e.ucsd.edu`, and apply the SSO settings
-   above (UI → Settings → Organization settings → SSO).
+4. **Create the admin** while the OOBE gate is up (Domain-Admins-only): browse to
+   `https://mdm.e4e.ucsd.edu`, create the admin user, and set the Fleet **server URL** to
+   `https://mdm.e4e.ucsd.edu`.
+5. **Remove the OOBE gate** (see the section above) — the gate blocks the SSO settings
+   save (and device enrollment), so it must come down *before* the next step.
+6. **Configure SSO:** UI → Settings → Integrations → Single sign-on (SSO), Fleet-users
+   tab, with the values from the SSO section above, then **Save**. On Fleet Free
+   (no JIT), also pre-create each SSO user under **Users** with a matching AD email.
 
 ## Follow-ups (own PRs / issues)
 
