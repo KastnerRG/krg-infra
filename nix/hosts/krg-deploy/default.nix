@@ -120,13 +120,12 @@
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK/Vl31g2FSV51OdRO7iuIBjSF2JbtvIDRQTZozkMpQb";
     };
     # Incus platform host (Proxmox VM). Deployed as krg-admin (default; no
-    # USER_OVERRIDE). PLACEHOLDER KEY — the installer's host key is ephemeral; the
-    # installed system regenerates its own. REPLACE this with the real key once krg-nat
-    # is installed: `cat /etc/ssh/ssh_host_ed25519_key.pub` on the live host (trusted
-    # channel; cf. krg-prod above). Until then the deploy to krg-nat can't host-key-verify.
+    # USER_OVERRIDE). Key captured from the first install (2026-07-01); if the host is
+    # REINSTALLED the key changes — refresh from `cat /etc/ssh/ssh_host_ed25519_key.pub`
+    # on the live host (cf. krg-prod above).
     krg-nat = {
       hostNames = ["krg-nat.ucsd.edu" "137.110.161.105"];
-      publicKey = "ssh-ed25519 AAAA_REPLACE_WITH_KRG_NAT_HOST_KEY_POST_INSTALL";
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM00Znu//PplzyO4SaszlHV9pR6DGGu1gcJKHhIdlnc3";
     };
   };
 
