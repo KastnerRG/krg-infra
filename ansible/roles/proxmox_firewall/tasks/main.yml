@@ -32,6 +32,41 @@
     label: "{{ item.vmid }} ({{ item.name | default('') }})"
   notify: Restart pve firewall
 
+# A <vmid>.fw only actually FILTERS a NIC if that NIC has `firewall=1` set on the
+# device (net<N>: ...,firewall=1). Proxmox defaults new NICs to firewall=1, but that
+# is a per-NIC checkbox nobody asserts — leaving it unmanaged is drift: a guest could
+# silently have its perimeter OFF while its .fw sits inert. So ENABLE it declaratively
+# on every NIC of every managed guest. Idempotent: the flag is only flipped when it's
+# missing or =0, so a converged fleet reports no change. Applied live by pve-firewall
+# (no guest reboot). NB single-node assumption — `qm config` targets THIS node's VMs
+# (like the <vmid>.fw copy above); revisit if guests ever span nodes.
+- name: Ensure the guest firewall is ENABLED on every guest NIC (not a manual checkbox)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    vmid="{{ item.vmid }}"
+    changed=0
+    for dev in $(qm config "$vmid" | sed -n 's/^\(net[0-9]\{1,\}\):.*/\1/p'); do
+      line="$(qm config "$vmid" | sed -n "s/^${dev}: //p")"
+      case ",${line}," in
+        *,firewall=1,*) : ;;                                  # already on — no-op
+        *,firewall=0,*)                                       # explicitly off — flip to 1
+          qm set "$vmid" "--${dev}" "$(printf '%s' "$line" | sed 's/firewall=0/firewall=1/')"
+          changed=1 ;;
+        *)                                                    # unset — append firewall=1
+          qm set "$vmid" "--${dev}" "${line},firewall=1"
+          changed=1 ;;
+      esac
+    done
+    [ "$changed" -eq 1 ] && echo CHANGED || echo OK
+  args:
+    executable: /bin/bash
+  loop: "{{ proxmox_guests }}"
+  loop_control:
+    label: "{{ item.vmid }} ({{ item.name | default('') }})"
+  register: _krg_nic_fw
+  changed_when: "'CHANGED' in _krg_nic_fw.stdout"
+  notify: Restart pve firewall
+
 # Per-NODE host firewall (host-scoped rules, e.g. fabricant's NFS tcp/2049). Only
 # written when this node has rules — keeps host.fw off nodes that don't need it.
 #
