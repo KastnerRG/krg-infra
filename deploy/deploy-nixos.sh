@@ -22,8 +22,11 @@
 # never here — so a health gate can't deadlock the converge meant to satisfy it.
 #
 # krg-deploy ITSELF is intentionally excluded (not in ORDER): it runs this deploy,
-# and a self-switch can restart the github-runner service mid-job. krg-deploy stays
-# current via the nightly system.autoUpgrade in nix/profiles/base.nix.
+# and a self-switch can restart the github-runner service mid-job — so it must never
+# be switched INLINE here. On the push path it self-updates via the multistage flow
+# (deploy/deploy-self-update.sh schedules a DETACHED switch; deploy/await-self-update.sh
+# gates the resume) and, as a fallback, the nightly system.autoUpgrade in
+# nix/profiles/base.nix.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

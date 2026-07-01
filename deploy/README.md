@@ -11,17 +11,44 @@ timer) into a **push-triggered** apply.
 ```
 push to main
    │  (build.yml: nix flake check + per-host builds)   ─┐
-   │  (tests.yml: pytest helpers + drift detector)     ─┤ BOTH must be green
+   │  (tests.yml: pytest helpers + drift detector)     ─┤ ALL must be green
+   │  (lint.yml)                                        ─┤
    ▼                                                    │
 .github/workflows/deploy.yml  ──(workflow_run, gated)───┘
-   │   runs-on [self-hosted, krg-deploy]
-   ▼   PHASED PIPELINE (ADR 0011) — not one linear layer order:
- phase 0  deploy-nixos.sh  DEPLOY_NIXOS_HOSTS="krg-vault krg-ldap"  (foundation: OpenBao + AD DC/firewall)
- phase 1  deploy-ansible.sh  ansible-playbook site.yml  (substrate: Proxmox + NFS exports; Synology opt-in)
- phase 2  deploy-nixos.sh  DEPLOY_NIXOS_HOSTS="krg-prod waiter kastner-ml"  (systems: services + compute)
- phase 3  deploy-tofu.sh   tofu apply per target  (config; creds from OpenBao, opt-in via TOFU_TARGETS)
- phase 4  deploy-verify.sh  OEC + AD membership, whole fleet  (the ONLY gates; fatal here)
+   │   MULTISTAGE (ADR 0011) — three jobs so the control node can self-update:
+   │
+   ▼ Job 1  deploy-pre        runs-on [self-hosted, krg-deploy]
+ phase 0    deploy-nixos.sh   DEPLOY_NIXOS_HOSTS="krg-vault krg-ldap"  (foundation: OpenBao + AD DC/firewall)
+ phase 1    deploy-ansible.sh ansible-playbook site.yml  (substrate: Proxmox + NFS exports; Synology opt-in)
+ phase 1.5  deploy-tofu.sh    TOFU_TARGETS=secrets  (generate before use)
+ phase 1.9  deploy-self-update.sh  BUILD krg-deploy; if changed, SCHEDULE a detached self-switch
+   │
+   ▼ Job 2  await-selfupdate  runs-on ubuntu-latest  (only if a self-update was scheduled)
+            await-self-update.sh  wait-loop: watch the runner drop offline → return online (GitHub API)
+   │
+   ▼ Job 3  deploy-post       runs-on [self-hosted, krg-deploy]  (resumes on the updated control node)
+            deploy-self-verify.sh  assert /run/current-system == the target Job 1 built
+ phase 2    deploy-nixos.sh   DEPLOY_NIXOS_HOSTS="krg-prod e4e-prod waiter kastner-ml"  (systems: services + compute)
+ phase 3    deploy-tofu.sh    tofu apply per target  (config; creds from OpenBao, opt-in via TOFU_TARGETS)
+ phase 3.5  deploy-rerender-secrets.sh  reconcile Authentik outpost tokens (best-effort)
+ phase 4    deploy-verify.sh  OEC + AD membership, whole fleet  (the ONLY gates; fatal here)
 ```
+
+**Why three jobs (control-node self-update).** krg-deploy runs the deploy, so it
+can't `nixos-rebuild switch` itself inline — the switch restarts the github-runner
+that *is* the job. Historically it was excluded from every phase and only self-updated
+via the nightly `autoUpgrade`, so a control-node change (its firewall, `known_hosts`,
+resolver, the runner itself) could take a day to land — or strand you if it locked
+SSH. The multistage flow fixes that: **Job 1** builds krg-deploy and, if it changed,
+schedules the switch in a *detached* `systemd-run --on-active` unit (owned by PID 1,
+so it survives the runner restart); **Job 2** — a GitHub-hosted "cloud machine",
+because the self-hosted runner is the thing going down — waits for the runner to drop
+offline and return online (it watches the runner-registration API, not a direct ping:
+the control-node firewall admits only UCSD/ops, not a GitHub-hosted IP); **Job 3**
+verifies the switch took (`/run/current-system` == the built target — the safety net,
+since a detached switch can't fail the job that scheduled it) and runs the rest.
+Switch-only — a control-node change that needs a reboot activates but does **not**
+reboot unattended (see `deploy/krg-deploy-selfswitch.sh`).
 
 The runner itself is declarative — `services.github-runners.krg-deploy` in
 [`nix/hosts/krg-deploy/default.nix`](../nix/hosts/krg-deploy/default.nix). It runs
@@ -37,6 +64,10 @@ uses).
 | `deploy-ansible.sh` | `ansible/playbooks/site.yml` (Proxmox) | Synology is **opt-in** (`DEPLOY_SYNOLOGY=true`, off by default) — its declarative sync deletes, and bring-up has gates (see [docs/e4e-nas-dsm.md](../docs/e4e-nas-dsm.md)). Galaxy collections (`ansible/requirements.yml`) must be **provisioned on the control node** (not installed per-run — matches the nightly `ansible-apply`); deterministic/Nix-managed collections tracked in #129. **Passes `oec_installer` so the Proxmox hosts enroll the OEC daemons too** (see *OEC*). AD membership **converges in warn-mode** (`ad_require_joined` default-false); the strict gate is phase 4. |
 | `deploy-tofu.sh` | the targets named in `TOFU_TARGETS` | **Active; creds from OpenBao, no secrets on disk.** krg-deploy logs into OpenBao with its AppRole (the same `openbao-role-id`/`openbao-secret-id` the Ansible leg uses) and reads each target's creds from KV at apply time (paths below). **Opt-in:** only targets listed in `TOFU_TARGETS` apply (empty by default — like `SYNOLOGY_TAGS` scopes the synology converge); a listed target whose KV secret isn't seeded **skips** with a notice. A ready target with no `TOFU_STATE_PASSPHRASE` **hard-fails** rather than writing plaintext state (ADR 0005). State persists under `TOFU_STATE_ROOT` (CI checkout is ephemeral), always encrypted. **`openbao` is special** — it provisions OpenBao's own auth, so it can't use that AppRole; apply it manually with a privileged `TOFU_OPENBAO_TOKEN` (see below). |
 | `deploy-verify.sh` | nothing — **read-only checks** the whole fleet | **Phase 4: the single verification phase.** Asserts the OEC daemons (Qualys + Trellix) are active on every host + the control node, and that every host **configured** as an AD member passes `adcli testjoin` — NixOS hosts (gated on `krg.adClient.enable`, read from the flake) and the Proxmox hosts (ad-hoc against the `proxmox` group). Health gates live **only** here, after every layer has converged, so a gate can't deadlock the stage that satisfies it (ADR 0011). Fatal — any down daemon or broken join fails the deploy. `DEPLOY_VERIFY_AD=false` skips the AD checks for a first total bring-up. |
+| `deploy-self-update.sh` | **schedules** krg-deploy's own switch (phase 1.9, Job 1) | **Control-node self-update — build + schedule, never switch inline.** Builds krg-deploy from the CI-green checkout and compares the toplevel to `/run/current-system`. If unchanged → emits `selfupdate=skipped` and the pipeline skips the watcher. If changed → installs `krg-deploy-selfswitch.sh` to `/var/lib/krg/` and schedules it via `systemd-run --on-active=45s` (a transient unit owned by PID 1, so it outlives the runner restart the switch causes), emitting `selfupdate=scheduled` + `target=<store path>`. Tunable: `SELFSWITCH_DELAY`. |
+| `krg-deploy-selfswitch.sh` | the **detached** krg-deploy switch (run by systemd, not the job) | Stops the runner for the whole switch (so the watcher sees a clean offline→online), `nix-env --set` + `switch-to-configuration switch` to the pre-built `TARGET`, restarts the runner on the new code, writes `/var/lib/krg/selfupdate.status`. **Switch-only — never reboots** the control node. Not invoked directly; `deploy-self-update.sh` schedules it. |
+| `await-self-update.sh` | nothing — **the watcher** (Job 2, ubuntu-latest) | The GitHub-hosted "cloud machine" wait-loop. Polls the runner-registration API for the krg-deploy runner going `offline` → `online`, with timeouts (`OFFLINE_TIMEOUT`/`ONLINE_TIMEOUT`). Can't ping the box directly (firewall). **Needs `GH_TOKEN` with `Administration:read`** — wired from the `DEPLOY_RUNNER_PAT` Actions secret (see *Secrets*); the default `GITHUB_TOKEN` can't read that API. |
+| `deploy-self-verify.sh` | nothing — **read-only** (head of Job 3) | Safety net: asserts `/run/current-system` == the `target` Job 1 built (`DEPLOY_SELF_TARGET`), dumps `selfupdate.status`, and **fails the deploy** if the scheduled switch didn't take — so the fleet is never deployed from a stale control node. |
 
 `deploy/lib.sh` (sourced, not run) holds the shared host map + SSH setup for the two
 NixOS legs (`deploy-nixos.sh` rebuilds, `deploy-verify.sh` checks) so the host list
@@ -47,9 +78,9 @@ etc.; a full manual deploy walks phases 0→4 in order, ending with `./deploy/de
 ## Gating
 
 `deploy.yml` never runs on `push` directly. It triggers on `workflow_run` after the
-two CI workflows complete on `main`, and re-checks that **both** succeeded for the
-same commit before applying — so a broken commit never deploys. A single deploy runs
-at a time (`concurrency: deploy-fleet`).
+CI workflows (**build**, **tests**, **lint**) complete on `main`, and re-checks that
+**all three** succeeded for the same commit before applying — so a broken commit never
+deploys. A single deploy runs at a time (`concurrency: deploy-fleet`).
 
 **Fail-fast, end to end.** Each script stops on the first failed host/target (it
 doesn't push on to the rest), and each workflow phase gates the next (`success() &&
@@ -110,6 +141,13 @@ tracked in [#181](https://github.com/KastnerRG/krg-infra/issues/181).
 - `TOFU_STATE_PASSPHRASE` — repo Actions secret; encrypts OpenTofu state.
   **Required before any target applies** — a ready target with no passphrase
   hard-fails (ADR 0005: state holds live secrets, must not be written in the clear).
+- `DEPLOY_RUNNER_PAT` — repo Actions secret; a token with **`Administration:read`**
+  on this repo, used by the `await-selfupdate` job (`await-self-update.sh`) to read
+  the self-hosted-runners API and watch krg-deploy go offline→online during a
+  self-update. The default `GITHUB_TOKEN` can't be granted that scope. **Only needed
+  when the control node actually self-updates** — a deploy that doesn't change
+  krg-deploy skips the watcher entirely, so absence won't break routine deploys, but
+  set it (`gh secret set DEPLOY_RUNNER_PAT`) before relying on the self-update path.
   Set it once with `gh secret set TOFU_STATE_PASSPHRASE`.
 - `/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz` — the
   campus-mandated **OEC** (Qualys + Trellix) vendor archive, holding live enrollment
