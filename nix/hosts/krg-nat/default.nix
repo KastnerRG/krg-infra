@@ -19,17 +19,17 @@
   krg.base.isVM = true;
 
   # Static networking — mirrors the other lab VMs (same /24, gateway, resolver list),
-  # .124 (reserved for krg-nat in networks/trusted.json). krg.adClient prepends the DC
-  # (krg-ldap, .109) as primary resolver once joined; these stay as pre-join/fallback.
-  # NB: interface assumed `ens18` like the other Proxmox VMs — CONFIRM with `ip -o
-  # link` on the installer if the NIC enumerates differently.
+  # .105 (krg-nat in networks/trusted.json; DNS-assigned krg-nat.ucsd.edu). krg.adClient
+  # prepends the DC (krg-ldap, .109) as primary resolver once joined; these stay as
+  # pre-join/fallback. NB: interface assumed `ens18` like the other Proxmox VMs —
+  # CONFIRM with `ip -o link` on the installer if the NIC enumerates differently.
   networking = {
     hostName = "krg-nat";
     domain = "ucsd.edu";
     useDHCP = false;
     interfaces.ens18.ipv4.addresses = [
       {
-        address = "137.110.161.124";
+        address = "137.110.161.105";
         prefixLength = 24;
       }
     ];
