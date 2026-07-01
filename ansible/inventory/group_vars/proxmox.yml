@@ -31,3 +31,6 @@ proxmox_guests:
   - vmid: 103
     name: krg-prod        # Lab-wide production stack (Traefik + Authentik + services)
     fw_file: krg-prod.fw
+  - vmid: 104             # SET to the VM's actual VMID when krg-nat is created on fabricant
+    name: krg-nat         # Incus platform host (hypervisor; runs tenant instances on the NAT)
+    fw_file: krg-nat.fw

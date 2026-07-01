@@ -1,0 +1,30 @@
+[OPTIONS]
+
+enable: 1
+
+[RULES]
+
+# krg-nat — Incus platform host (a hypervisor: it runs guest VMs/containers, like the
+# Proxmox host itself). Its perimeter therefore MIRRORS the Proxmox host's own
+# management posture (cluster.fw): SSH + the management API restricted to UCSD +
+# off-campus admin, node_exporter to the monitoring host, everything else dropped.
+# The Incus API/UI (8443) is the analog of Proxmox's web UI (8006) — same sources.
+# The in-guest krg.firewall enforces the identical set (sshSources + the 8443
+# sourcedPort, nix/modules/incus.nix); this per-guest Proxmox layer is the additive
+# perimeter (defense-in-depth). Tenant instances live on Incus's INTERNAL NAT and are
+# never reachable through this public interface — the zone edges (krg-prod/e4e-prod)
+# front them, so no tenant/service ports are opened here.
+
+# Management surface: SSH + the Incus API/UI (8443 ≈ Proxmox 8006), UCSD + off-campus admin.
+IN SSH(ACCEPT)                       -source +dc/ucsd     -log nolog
+IN SSH(ACCEPT)                       -source +dc/ops      -log nolog
+IN ACCEPT -p tcp -dport 8443         -source +dc/ucsd     -log nolog # Incus API/UI (≈ PVE 8006)
+IN ACCEPT -p tcp -dport 8443         -source +dc/ops      -log nolog # Incus API/UI (off-campus admin)
+
+# node_exporter — scraped only by the monitoring host (krg-prod). cluster.fw's 9100
+# rule targets NODES (the hypervisor), not guests, so a guest behind this default-DROP
+# needs the allow here (the in-guest krg.firewall opens 9100 to the same IP). Source =
+# the nix/networks/trusted.json monitoring_host.
+IN ACCEPT -p tcp -dport 9100         -source 137.110.161.106 -log nolog # node exporter (krg-prod)
+
+IN DROP -log nolog
