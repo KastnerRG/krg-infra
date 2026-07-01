@@ -21,7 +21,7 @@ push to main
  phase 0    deploy-nixos.sh   DEPLOY_NIXOS_HOSTS="krg-vault krg-ldap"  (foundation: OpenBao + AD DC/firewall)
  phase 1    deploy-ansible.sh ansible-playbook site.yml  (substrate: Proxmox + NFS exports; Synology opt-in)
  phase 1.5  deploy-tofu.sh    TOFU_TARGETS=secrets  (generate before use)
- phase 1.9  deploy-self-update.sh  BUILD krg-deploy; if changed, SCHEDULE a detached self-switch
+ phase 1.9  deploy-self-update.sh  BUILD krg-deploy; if changed, TRIGGER the declarative root switch unit
    │
    ▼ Job 2  await-selfupdate  runs-on ubuntu-latest  (only if a self-update was scheduled)
             await-self-update.sh  wait-loop: watch the runner drop offline → return online (GitHub API)
@@ -39,16 +39,33 @@ can't `nixos-rebuild switch` itself inline — the switch restarts the github-ru
 that *is* the job. Historically it was excluded from every phase and only self-updated
 via the nightly `autoUpgrade`, so a control-node change (its firewall, `known_hosts`,
 resolver, the runner itself) could take a day to land — or strand you if it locked
-SSH. The multistage flow fixes that: **Job 1** builds krg-deploy and, if it changed,
-schedules the switch in a *detached* `systemd-run --on-active` unit (owned by PID 1,
-so it survives the runner restart); **Job 2** — a GitHub-hosted "cloud machine",
-because the self-hosted runner is the thing going down — waits for the runner to drop
-offline and return online (it watches the runner-registration API, not a direct ping:
-the control-node firewall admits only UCSD/ops, not a GitHub-hosted IP); **Job 3**
-verifies the switch took (`/run/current-system` == the built target — the safety net,
-since a detached switch can't fail the job that scheduled it) and runs the rest.
+SSH. The multistage flow fixes that.
+
+The runner is a hardened sandbox (`NoNewPrivileges` + `ProtectSystem=strict`), so it
+can neither `sudo` nor run a system switch in its own mount namespace. The switch
+therefore lives in a **declarative root, host-context systemd unit** on krg-deploy
+(`systemd.services.krg-deploy-selfupdate` in
+[`nix/hosts/krg-deploy/default.nix`](../nix/hosts/krg-deploy/default.nix)); a **polkit
+rule** authorizes the runner user (krg-admin) to `systemctl start` *only that unit* —
+no sudo, hardening intact. Then:
+
+- **Job 1** builds krg-deploy and, if it changed, triggers that unit (`systemctl start
+  --no-block`). The unit delays ~45 s (so this job finishes + reports first), stops the
+  runner, switches to the flake (same source as the nightly `autoUpgrade`), and restarts
+  the runner — detached from the job.
+- **Job 2** — a GitHub-hosted "cloud machine", because the self-hosted runner is the
+  thing going down — waits for the runner to drop offline and return online (it watches
+  the runner-registration API, not a direct ping: the control-node firewall admits only
+  UCSD/ops, not a GitHub-hosted IP).
+- **Job 3** verifies the switch took (`/run/current-system` == the built target — the
+  safety net, since the detached unit can't fail the job that triggered it) and runs
+  the rest.
+
 Switch-only — a control-node change that needs a reboot activates but does **not**
-reboot unattended (see `deploy/krg-deploy-selfswitch.sh`).
+reboot unattended. **Bootstrap:** the unit + polkit rule are declarative, so they must
+already be on krg-deploy before the push path can trigger them — land them via one
+nightly `autoUpgrade` or a manual `nixos-rebuild switch` first (`deploy-self-update.sh`
+fails with a clear message until then).
 
 The runner itself is declarative — `services.github-runners.krg-deploy` in
 [`nix/hosts/krg-deploy/default.nix`](../nix/hosts/krg-deploy/default.nix). It runs
@@ -64,8 +81,7 @@ uses).
 | `deploy-ansible.sh` | `ansible/playbooks/site.yml` (Proxmox) | Synology is **opt-in** (`DEPLOY_SYNOLOGY=true`, off by default) — its declarative sync deletes, and bring-up has gates (see [docs/e4e-nas-dsm.md](../docs/e4e-nas-dsm.md)). Galaxy collections (`ansible/requirements.yml`) must be **provisioned on the control node** (not installed per-run — matches the nightly `ansible-apply`); deterministic/Nix-managed collections tracked in #129. **Passes `oec_installer` so the Proxmox hosts enroll the OEC daemons too** (see *OEC*). AD membership **converges in warn-mode** (`ad_require_joined` default-false); the strict gate is phase 4. |
 | `deploy-tofu.sh` | the targets named in `TOFU_TARGETS` | **Active; creds from OpenBao, no secrets on disk.** krg-deploy logs into OpenBao with its AppRole (the same `openbao-role-id`/`openbao-secret-id` the Ansible leg uses) and reads each target's creds from KV at apply time (paths below). **Opt-in:** only targets listed in `TOFU_TARGETS` apply (empty by default — like `SYNOLOGY_TAGS` scopes the synology converge); a listed target whose KV secret isn't seeded **skips** with a notice. A ready target with no `TOFU_STATE_PASSPHRASE` **hard-fails** rather than writing plaintext state (ADR 0005). State persists under `TOFU_STATE_ROOT` (CI checkout is ephemeral), always encrypted. **`openbao` is special** — it provisions OpenBao's own auth, so it can't use that AppRole; apply it manually with a privileged `TOFU_OPENBAO_TOKEN` (see below). |
 | `deploy-verify.sh` | nothing — **read-only checks** the whole fleet | **Phase 4: the single verification phase.** Asserts the OEC daemons (Qualys + Trellix) are active on every host + the control node, and that every host **configured** as an AD member passes `adcli testjoin` — NixOS hosts (gated on `krg.adClient.enable`, read from the flake) and the Proxmox hosts (ad-hoc against the `proxmox` group). Health gates live **only** here, after every layer has converged, so a gate can't deadlock the stage that satisfies it (ADR 0011). Fatal — any down daemon or broken join fails the deploy. `DEPLOY_VERIFY_AD=false` skips the AD checks for a first total bring-up. |
-| `deploy-self-update.sh` | **schedules** krg-deploy's own switch (phase 1.9, Job 1) | **Control-node self-update — build + schedule, never switch inline.** Builds krg-deploy from the CI-green checkout and compares the toplevel to `/run/current-system`. If unchanged → emits `selfupdate=skipped` and the pipeline skips the watcher. If changed → installs `krg-deploy-selfswitch.sh` to `/var/lib/krg/` and schedules it via `systemd-run --on-active=45s` (a transient unit owned by PID 1, so it outlives the runner restart the switch causes), emitting `selfupdate=scheduled` + `target=<store path>`. Tunable: `SELFSWITCH_DELAY`. |
-| `krg-deploy-selfswitch.sh` | the **detached** krg-deploy switch (run by systemd, not the job) | Stops the runner for the whole switch (so the watcher sees a clean offline→online), `nix-env --set` + `switch-to-configuration switch` to the pre-built `TARGET`, restarts the runner on the new code, writes `/var/lib/krg/selfupdate.status`. **Switch-only — never reboots** the control node. Not invoked directly; `deploy-self-update.sh` schedules it. |
+| `deploy-self-update.sh` | **triggers** krg-deploy's own switch (phase 1.9, Job 1) | **Control-node self-update — build + trigger, never switch inline.** Builds krg-deploy from the CI-green checkout and compares the toplevel to `/run/current-system`. If unchanged → emits `selfupdate=skipped` and the pipeline skips the watcher. If changed → `systemctl start --no-block krg-deploy-selfupdate.service` (the declarative root unit; polkit authorizes the start, no sudo), emitting `selfupdate=scheduled` + `target=<store path>`. Fails with a clear message if that unit isn't present yet (pre-bootstrap). The switch itself — runner stop → `nixos-rebuild switch` → runner start, **switch-only, never reboots**, writing `/var/lib/krg/selfupdate.status` — lives in the nix unit, not here. |
 | `await-self-update.sh` | nothing — **the watcher** (Job 2, ubuntu-latest) | The GitHub-hosted "cloud machine" wait-loop. Polls the runner-registration API for the krg-deploy runner going `offline` → `online`, with timeouts (`OFFLINE_TIMEOUT`/`ONLINE_TIMEOUT`). Can't ping the box directly (firewall). **Needs `GH_TOKEN` with `Administration:read`** — wired from the `DEPLOY_RUNNER_PAT` Actions secret (see *Secrets*); the default `GITHUB_TOKEN` can't read that API. |
 | `deploy-self-verify.sh` | nothing — **read-only** (head of Job 3) | Safety net: asserts `/run/current-system` == the `target` Job 1 built (`DEPLOY_SELF_TARGET`), dumps `selfupdate.status`, and **fails the deploy** if the scheduled switch didn't take — so the fleet is never deployed from a stale control node. |
 
