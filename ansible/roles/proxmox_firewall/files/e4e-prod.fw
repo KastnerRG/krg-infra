@@ -1,0 +1,28 @@
+[OPTIONS]
+
+enable: 1
+
+[RULES]
+
+# e4e-prod — the *.e4e DNS-zone public EDGE (ADR 0017 §5). Traefik terminates public
+# TLS on :80/:443 and re-encrypts to the tenant Incus instances on krg-nat. Public
+# HTTP/HTTPS is intentional here (it IS the front door) — unlike the other infra
+# guests, whose management surfaces are all source-restricted. SSH + monitoring stay
+# restricted. Mirrors the in-guest krg.firewall on e4e-prod (services.nix opens 443;
+# the krg.edge module opens 80 for ACME); this per-guest Proxmox layer is additive.
+
+# Public web ingress — the edge's whole job. :80 also carries the ACME HTTP-01
+# challenge; Let's Encrypt validates from many source IPs, so it must NOT be
+# source-restricted (same reasoning as krg-vault's :80 / fabricant host.fw).
+IN ACCEPT -p tcp -dport 80  -log nolog # HTTP (ACME HTTP-01 + redirect to https)
+IN ACCEPT -p tcp -dport 443 -log nolog # HTTPS (Traefik ingress)
+
+# Management: SSH — UCSD + off-campus admin.
+IN SSH(ACCEPT) -source +dc/ucsd -log nolog
+IN SSH(ACCEPT) -source +dc/ops  -log nolog
+
+# node_exporter — scraped only by the monitoring host (krg-prod). cluster.fw's 9100
+# rule targets NODES, not guests, so a guest behind default-DROP needs the allow here.
+IN ACCEPT -p tcp -dport 9100 -source 137.110.161.106 -log nolog # node exporter (krg-prod)
+
+IN DROP -log nolog
