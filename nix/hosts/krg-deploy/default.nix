@@ -119,6 +119,14 @@
       hostNames = ["e4e-prod.ucsd.edu" "137.110.161.107"];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK/Vl31g2FSV51OdRO7iuIBjSF2JbtvIDRQTZozkMpQb";
     };
+    # Incus platform host (Proxmox VM). Deployed as krg-admin (default; no
+    # USER_OVERRIDE). Key captured from the first install (2026-07-01); if the host is
+    # REINSTALLED the key changes — refresh from `cat /etc/ssh/ssh_host_ed25519_key.pub`
+    # on the live host (cf. krg-prod above).
+    krg-nat = {
+      hostNames = ["krg-nat.ucsd.edu" "137.110.161.105"];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM00Znu//PplzyO4SaszlHV9pR6DGGu1gcJKHhIdlnc3";
+    };
   };
 
   # ── GitHub Actions self-hosted runner ──────────────────────────────────────
