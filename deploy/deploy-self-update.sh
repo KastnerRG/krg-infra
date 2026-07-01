@@ -32,6 +32,15 @@ SELFSWITCH_DEST=/var/lib/krg/krg-deploy-selfswitch.sh
 # gated on the external watcher, not this timer, so a generous delay is free.
 SELFSWITCH_DELAY="${SELFSWITCH_DELAY:-45s}"
 
+# sudo: this is the FIRST deploy leg to run sudo LOCALLY on the control node (the
+# others only sudo on remote hosts via ssh/nixos-rebuild --sudo). The github-runner
+# service runs with a curated PATH (its extraPackages) that does NOT include sudo,
+# and on NixOS sudo is the setuid wrapper under /run/wrappers/bin — so resolve it
+# explicitly. Falls back to that wrapper path when sudo isn't on PATH (the runner),
+# and uses PATH sudo for a manual/interactive run.
+SUDO=sudo
+command -v "$SUDO" >/dev/null 2>&1 || SUDO=/run/wrappers/bin/sudo
+
 emit() { [[ -n "${GITHUB_OUTPUT:-}" ]] && printf '%s\n' "$1" >>"$GITHUB_OUTPUT"; return 0; }
 
 echo "::group::build krg-deploy system (self-update check)"
@@ -54,18 +63,18 @@ fi
 
 echo "::group::schedule detached control-node self-update"
 # Clear any stale transient unit from a previous run so systemd-run can recreate it.
-sudo systemctl stop krg-deploy-selfupdate.timer krg-deploy-selfupdate.service 2>/dev/null || true
-sudo systemctl reset-failed krg-deploy-selfupdate.timer krg-deploy-selfupdate.service 2>/dev/null || true
+"$SUDO" systemctl stop krg-deploy-selfupdate.timer krg-deploy-selfupdate.service 2>/dev/null || true
+"$SUDO" systemctl reset-failed krg-deploy-selfupdate.timer krg-deploy-selfupdate.service 2>/dev/null || true
 
 # Install the detached switch payload to a STABLE path: the CI checkout is ephemeral
 # and may be cleaned before the timer fires, but a systemd unit's ExecStart must
 # still exist when it runs.
-sudo install -d -m 0755 -o root -g root /var/lib/krg
-sudo install -m 0755 -o root -g root "$SELFSWITCH_SRC" "$SELFSWITCH_DEST"
+"$SUDO" install -d -m 0755 -o root -g root /var/lib/krg
+"$SUDO" install -m 0755 -o root -g root "$SELFSWITCH_SRC" "$SELFSWITCH_DEST"
 
 # Detached transient timer+service, OWNED BY PID 1 (not the runner's cgroup), so it
 # survives the runner restart the switch triggers. TARGET is forwarded via --setenv.
-sudo systemd-run \
+"$SUDO" systemd-run \
   --unit=krg-deploy-selfupdate \
   --on-active="$SELFSWITCH_DELAY" \
   --timer-property=AccuracySec=1s \
