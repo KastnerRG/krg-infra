@@ -28,11 +28,18 @@ There are **three cases**, and they differ:
 
 ## Why a join is needed (and what already works without it)
 
-Deploying the AD-client config alone is **safe and non-breaking**: SSSD just runs
-offline, and local `krg-admin` key login keeps working. What *doesn't* work until
-the join is done: AD users resolving/logging in on that host, because SSSD has no
-keytab to authenticate the machine to the DC. So the order is always **deploy the
-config first, join second, validate third.**
+Deploying the AD-client config alone is **safe and non-breaking**, and local
+`krg-admin` key login keeps working. SSSD needs a keytab to start, so the module
+gates it on `/etc/krb5.keytab` (`ConditionPathExists` in
+[`sssd-ad-client.nix`](../nix/modules/sssd-ad-client.nix)): on a not-yet-joined host
+SSSD is **condition-skipped, not failed** — so the deploy (and its OEC/hardening)
+still succeeds. (Without that gate, SSSD hard-fails for lack of a keytab, and
+`switch-to-configuration-ng` turns a failed unit into a failed *switch* — which would
+break the deploy and, via fail-fast, starve every downstream host of hardening.)
+What *doesn't* work until the join is done: AD users resolving/logging in on that
+host. So the order is always **deploy the config first, join second, validate third**
+— and a host may sit safely in the fleet deploy, fully hardened, before it is joined
+(its phase-4 `adcli testjoin` will flag it as unjoined until you do).
 
 A useful tell that a host is *deployed but not joined*: a brand-new (uncached) AD
 user gets a bare `Permission denied (publickey)`. (If even cached users fail, see
