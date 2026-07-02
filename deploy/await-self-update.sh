@@ -18,20 +18,26 @@ set -euo pipefail
 
 : "${GH_TOKEN:?GH_TOKEN (a token with Administration:read on this repo) is required to read runner status}"
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
-RUNNER_NAME="${RUNNER_NAME:-krg-deploy}"
+# Which self-hosted runner to watch. Do NOT read this from $RUNNER_NAME: this script
+# runs on a GitHub-HOSTED runner, where the Actions runtime auto-injects RUNNER_NAME
+# as the HOSTED runner's own name (e.g. "GitHub Actions 1000009607"). That non-empty
+# value defeats a `${RUNNER_NAME:-krg-deploy}` default, so the watcher would poll for
+# a runner that isn't in the repo's self-hosted list and time out. Use a private,
+# non-reserved variable name instead.
+TARGET_RUNNER="${TARGET_RUNNER:-krg-deploy}"
 OFFLINE_TIMEOUT="${OFFLINE_TIMEOUT:-300}" # 5 min to observe it go down
 ONLINE_TIMEOUT="${ONLINE_TIMEOUT:-900}"   # 15 min to observe it come back
 POLL="${POLL_INTERVAL:-10}"
 
 # .status is "online" | "offline". --paginate in case there are >30 runners.
 status_of() {
-  NAME="$RUNNER_NAME" gh api "repos/${REPO}/actions/runners" --paginate \
+  NAME="$TARGET_RUNNER" gh api "repos/${REPO}/actions/runners" --paginate \
     --jq '.runners[] | select(.name==env.NAME) | .status' 2>/dev/null | head -n1
 }
 
 wait_for() { # <desired-status> <timeout> <label>
   local want="$1" timeout="$2" label="$3" waited=0 st
-  echo "waiting for runner '${RUNNER_NAME}' to be ${want} (${label}; timeout ${timeout}s)…"
+  echo "waiting for runner '${TARGET_RUNNER}' to be ${want} (${label}; timeout ${timeout}s)…"
   while ((waited < timeout)); do
     st="$(status_of || true)"
     echo "  [+${waited}s] status=${st:-<unknown>}"
