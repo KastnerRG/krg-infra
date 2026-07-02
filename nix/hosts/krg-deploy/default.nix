@@ -309,6 +309,12 @@
   # Authorize the runner user (krg-admin) to start ONLY that one unit — no sudo, so
   # the runner keeps its NoNewPrivileges/ProtectSystem sandbox. Scoped to the single
   # unit + user; everything else still requires root.
+  #
+  # polkit MUST be enabled for the rule below to take effect: without a running
+  # polkitd, systemd denies a non-root `systemctl start` of a system unit outright
+  # ("Access denied") and the extraConfig rule is never consulted. security.polkit is
+  # off by default on this server, so enable it explicitly here.
+  security.polkit.enable = true;
   security.polkit.extraConfig = ''
     polkit.addRule(function(action, subject) {
       if (action.id == "org.freedesktop.systemd1.manage-units" &&
