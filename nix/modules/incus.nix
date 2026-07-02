@@ -74,6 +74,25 @@ in {
       };
     };
 
+    trustedBridges = mkOption {
+      type = types.listOf types.str;
+      default = ["incusbr0"];
+      description = ''
+        Incus managed-network bridge interface names to mark trusted in the host
+        firewall (networking.firewall.trustedInterfaces). REQUIRED for the internal
+        NAT to work: Incus runs dnsmasq on each managed bridge to answer instances'
+        DHCP + DNS, but those requests arrive at the host on the bridge and
+        krg.firewall's default-drop INPUT would eat them before dnsmasq sees them —
+        so instances get NO IPv4 lease (eth0 up, 0 packets received). Trusting the
+        bridge accepts that INPUT; egress then works via Incus's own NAT/FORWARD
+        rules (NixOS doesn't filter FORWARD by default).
+
+        Names MUST match the networks terraform/incus creates (its
+        `nat_network_name`, default "incusbr0"). Add each managed bridge here; a
+        network whose bridge isn't listed will have dead instance networking.
+      '';
+    };
+
     oidc = {
       issuer = mkOption {
         type = types.str;
@@ -143,12 +162,14 @@ in {
     # egress.
     boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
 
-    # NFTABLES COEXISTENCE — BRING-UP VALIDATION GATE. krg.firewall sets
-    # networking.nftables.enable; Incus's managed-network firewall driver installs
-    # its OWN nftables table (NAT + the bridge's DHCP/DNS to the host). The two use
-    # separate table namespaces and should coexist, but the NixOS firewall's ruleset
-    # flush behaviour vs Incus's table must be verified on-box (instances must get
-    # DHCP, resolve DNS, and reach egress; the host firewall must not drop forwarded
-    # bridge traffic). Validate at standup before declaring the platform live.
+    # NFTABLES COEXISTENCE (resolved). krg.firewall sets networking.nftables.enable
+    # with a default-drop INPUT chain; Incus's managed-network firewall driver installs
+    # its OWN nftables table for NAT/FORWARD. Those coexist (separate tables), BUT the
+    # instances' DHCP/DNS to Incus's dnsmasq arrives at the HOST on the bridge and hits
+    # krg.firewall's INPUT drop first — so without this, instances get eth0 up but no
+    # IPv4 lease (0 packets received). Trusting the managed bridge(s) accepts that INPUT;
+    # egress works via Incus's NAT (NixOS doesn't filter FORWARD by default). Verified
+    # on krg-nat: with the bridge trusted, a test instance gets a 10.x lease + egress.
+    networking.firewall.trustedInterfaces = cfg.trustedBridges;
   };
 }
