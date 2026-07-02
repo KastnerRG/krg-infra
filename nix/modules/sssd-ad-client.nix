@@ -19,8 +19,13 @@
 # can't express. Local users (krg-admin) are unaffected: PAM uses pam_sss with
 # user_unknown=ignore, and NSS resolves files before sss.
 #
-# Deploying this BEFORE the runtime prerequisites is safe — SSSD just runs offline
-# and local key login keeps working; AD users resolve once the steps below are done.
+# Deploying this BEFORE the runtime prerequisites is safe: sssd is gated on the
+# machine keytab (ConditionPathExists=/etc/krb5.keytab), so on a not-yet-joined host
+# it is condition-SKIPPED rather than failed — the switch (and its OEC/hardening)
+# still succeeds, and local key login keeps working. AD users resolve once the host
+# is joined (keytab present) and sssd starts. (sssd genuinely cannot start without a
+# keytab — an ungated unit exits non-zero and, under switch-to-configuration-ng,
+# fails the whole deploy; see the ConditionPathExists note in config below.)
 #
 # ── Runtime prerequisites (stateful, NOT expressible in Nix) ────────────────────
 # Deploying this module only wires NSS/PAM/sshd; per-host and per-user setup is
@@ -255,6 +260,19 @@ in {
         ${optionalString (effectiveFilter != "") "ad_access_filter = ${effectiveFilter}"}
       '';
     };
+
+    # sssd CANNOT start without a machine keytab (/etc/krb5.keytab): on a host that is
+    # deployed but NOT yet AD-joined it exits non-zero ("Providers did not start in
+    # time"), and switch-to-configuration-ng (26.05+) turns that one failed unit into a
+    # non-zero SWITCH (exit 4) — failing the whole deploy and, via fail-fast, starving
+    # every downstream host of OEC + hardening. That contradicts the intended order:
+    # deploy + harden FIRST, JOIN second (docs/joining-a-host-to-the-domain.md). Gate
+    # the unit on the keytab so an unjoined host CONDITION-SKIPS sssd (skipped ≠ failed
+    # → the switch succeeds and hardening lands); once joined (keytab present) it starts
+    # normally, and the join runbook's `systemctl restart sssd` picks it up immediately.
+    # A joined host whose keytab went missing is still caught — loudly — by the phase-4
+    # `adcli testjoin` gate (read-only, after hardening), not by breaking the switch.
+    systemd.services.sssd.unitConfig.ConditionPathExists = "/etc/krb5.keytab";
 
     # NOTE: key-only AD login depends on sshd's AuthorizedKeysCommand, which upstream's
     # sshAuthorizedKeysIntegration installs as a `#!/bin/sh` wrapper at
