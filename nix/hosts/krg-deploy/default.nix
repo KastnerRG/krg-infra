@@ -54,6 +54,9 @@
     ansible
     opentofu
     openbao # bao CLI — talks to krg-vault for secrets management
+    incus # incus CLI — the control plane for the krg-nat Incus platform: one-time
+    #        trust bootstrap (`incus remote add krg-nat <token>`) that populates the
+    #        config dir the terraform/incus provider reads, plus ongoing management.
     python3 # ansible runtime dependency
     sshpass # needed by some ansible connection scenarios
     jq
