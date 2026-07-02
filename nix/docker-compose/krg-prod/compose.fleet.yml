@@ -58,7 +58,7 @@ services:
   # `fleet prepare db` is idempotent, so it's safe to run on every `up`. The server
   # waits on this completing successfully (depends_on condition below).
   fleet_migrate:
-    image: fleetdm/fleet:v4.87.0 # latest stable (2026-06; check github.com/fleetdm/fleet/releases at bring-up)
+    image: fleetdm/fleet:v4.88.0 # latest stable (2026-07; check github.com/fleetdm/fleet/releases at bring-up)
     command: ["fleet", "prepare", "db", "--no-prompt"]
     env_file:
       - ./fleet/fleet.env
@@ -71,7 +71,7 @@ services:
       - fleet
 
   fleet:
-    image: fleetdm/fleet:v4.87.0 # keep in lockstep with fleet_migrate above
+    image: fleetdm/fleet:v4.88.0 # keep in lockstep with fleet_migrate above
     command: ["fleet", "serve"]
     env_file:
       - ./fleet/fleet.env
