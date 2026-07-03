@@ -2,6 +2,12 @@
 
 **Status:** Accepted · **Date:** 2026-06-21
 
+> **Narrowed by [ADR 0017](0017-incus-nat-self-serve-platform.md) (2026-06-25).** This
+> decision is now **Proxmox-specific**: the LDAP-outpost binding covers PVE only. The new
+> Incus control plane authenticates via **OIDC→Authentik directly** (the OIDC realm PVE
+> couldn't use — its mobile app can't redirect — is fine for Incus). Revisit if/when PVE
+> is retired.
+
 ## Context
 
 Proxmox VE is the hypervisor control plane; lab admins log into its web UI **and

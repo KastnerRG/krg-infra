@@ -1,10 +1,18 @@
 # Temporal frontend mTLS
 
-> **Status: VALIDATED on-box 2026-06-16** (krg-prod). All gates below pass: certs
-> render, the server boots with mTLS on `:7233`, the bootstrap completes via the
-> plaintext internal-frontend, the UI connects with its client cert, and a
-> no-cert/plaintext probe to `:7233` is rejected. This was also the base Temporal
-> stack's first real deploy. Two bugs were found and fixed during bring-up:
+> **Status: deployed 2026-06-16** (krg-prod); the gates below were run on-box during
+> bring-up and passed — certs render, the server boots with mTLS on `:7233`, the
+> bootstrap completes via the plaintext internal-frontend, the UI connects with its
+> client cert, and a no-cert/plaintext probe to `:7233` is rejected. This was also the
+> base Temporal stack's first real deploy.
+>
+> **Stale code comments:** the in-code comments still say `UNVALIDATED`
+> (`nix/docker-compose/krg-prod/compose.temporal.yml` lines 29/67/120,
+> `nix/hosts/krg-prod/default.nix` ~line 339) — they predate this bring-up and are a
+> pending comment cleanup, **not** a signal that validation is outstanding. Drop them
+> when next touching those files.
+>
+> Two bugs were found and fixed during bring-up:
 >
 > 1. **Cert dir not traversable.** `/run/krg/temporal/tls` was `0750 root`, so the
 >    container (uid 1000) couldn't read the bind-mounted certs (`permission denied`

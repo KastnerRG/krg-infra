@@ -100,14 +100,24 @@ The `krg-deploy` policy can itself mint secret_ids for the other roles
 Populate the KV paths the other workspaces read (e.g.
 `secret/krg-deploy/authentik-admin-token`, `secret/krg-prod/grafana-admin`,
 `secret/e4e-nas/*`), then apply in **dependency order** — OpenBao must hold the
-secrets before the readers run, and Authentik writes OIDC secrets that Grafana
-reads:
+secrets before the readers run, `terraform/secrets` **mints** the OIDC/DB secrets
+the krg-prod vault-agent renders, and Authentik reads those OIDC secrets back:
 
 ```
-openbao  →  authentik  (writes generated OIDC client secrets back into OpenBao)
+openbao  →  secrets    (MINTS OIDC client secrets + DB/encryption keys —
+         │              vaultwarden, temporal, guacamole, mlflow, outline, fleet —
+         │              into secret/krg-prod/authentik-managed/*; a fail-closed
+         │              prerequisite of the krg-prod vault-agent, so it runs BEFORE
+         │              the NixOS members deploy and before authentik/grafana)
+         →  authentik  (reads the minted OIDC client secrets back onto its providers)
          →  grafana    (reads grafana-oidc from OpenBao)
          →  e4e-nas    (independent)
 ```
+
+> The full topological order is `krg-vault → terraform/openbao → terraform/secrets
+> → NixOS members (krg-prod vault-agent) → terraform/authentik + grafana`. See
+> [`terraform/secrets/README.md`](../terraform/secrets/README.md) for why generation
+> moved out of `terraform/authentik` (the #320 fail-closed outage).
 
 See each target's README under [`terraform/`](../terraform/README.md) for its
 required vars and tokens.
@@ -123,8 +133,9 @@ path below must exist before deploying or the agent exits non-zero and the
 stack won't start.
 
 Some values already exist (skip them): `secret/krg-prod/grafana-admin`
-(field `password`, also used by the grafana tofu provider) and the
-authentik-generated `secret/krg-prod/authentik-managed/vaultwarden-oidc`.
+(field `password`, also used by the grafana tofu provider) and
+`secret/krg-prod/authentik-managed/vaultwarden-oidc` (minted by
+`terraform/secrets/vaultwarden.tf` in step 6; Authentik reads it back).
 
 The rest are **LIVE** values — seed them at their *current* values, do **not**
 regenerate (rotating `secret_key` invalidates Authentik sessions; rotating the

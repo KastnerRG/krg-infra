@@ -18,10 +18,13 @@ comments and per-host configs; this is the one table to update when they change.
 | **krg-vault** | 137.110.161.123 | krg-vault.ucsd.edu | OpenBao secrets manager (`base`) | NixOS flake | VM on fabricant | 101 |
 | **krg-deploy** | 137.110.161.122 | krg-deploy.ucsd.edu | Ansible + OpenTofu control node; GitHub Actions deploy runner (`base`) | NixOS flake | VM on fabricant | 102 |
 | **krg-prod** | 137.110.161.106 | krg-prod.ucsd.edu | Lab-wide services (`server` profile) | NixOS flake | VM on fabricant | 103 |
-| **e4e-prod** | TBD | e4e-prod.ucsd.edu | E4E services (scaffold, `server`) | NixOS flake | VM (hypervisor TBD) | TBD |
+| **e4e-prod** | 137.110.161.107 | e4e-prod.ucsd.edu | `*.e4e` public edge (Traefik LE-terminate → re-encrypt), E4E services (`server`) | NixOS flake | VM on fabricant | 104 |
+| **krg-nat** | 137.110.161.105 | krg-nat.ucsd.edu | Incus platform host / hypervisor for tenant instances on the NAT ([ADR 0017](adr/0017-incus-nat-self-serve-platform.md)) | NixOS flake | VM on fabricant | 105 |
 | **kastner-ml** | 132.239.17.123 | kastner-ml.ucsd.edu | E4E GPU compute, RTX A6000 (`compute` profile) | NixOS flake | physical | — |
 | **e4e-nas** | 132.239.17.124 | e4e-nas.ucsd.edu | Synology NAS (krg-prod storage) | (separate IaC effort) | appliance | — |
-| ~~krg-ad~~ | 137.110.161.107 | krg-ad.ucsd.edu | **OLD AD — being decommissioned** (breached) | — | — | — |
+
+> The old `krg-ad` host (breached, decommissioned) is gone; its address
+> **137.110.161.107** is now reused by **e4e-prod**.
 
 Other fixed addresses:
 
@@ -31,12 +34,10 @@ Other fixed addresses:
 | Monitoring host (Prometheus) | 137.110.161.106 (krg-prod) | `trusted.json` `monitoring_host` |
 | AD DNS / KDC | 137.110.161.109 (krg-ldap) | `krg.adClient.serverIp`; pinned in `/etc/hosts` |
 | Site DNS fallbacks | 132.239.0.252, 8.8.8.8, 1.1.1.1 | host `networking.nameservers` (after the DC) |
-| Ops admin IPs (off-campus) | 97.252.106.89 (chris), 107.132.34.148 (sean) | `trusted.json` `ipsets.ops` |
+| Ops admin IPs (off-campus) | 97.170.130.76 (chris), 107.132.34.148 (sean) | `trusted.json` `ipsets.ops` |
 
-> e4e-prod is the only unplaced scaffold — it doesn't pin a static IP in the flake
-> (no `networking.interfaces.*` address) and has no assigned hypervisor/VMID yet.
-> Fill its `TBD`s once it's deployed. (krg-prod, krg-vault, and krg-deploy now pin
-> their static IPs in their host `default.nix`.)
+> All VM hosts now pin their static IPs in their host `default.nix` (krg-prod,
+> e4e-prod, krg-nat, krg-vault, krg-deploy) and have assigned VMIDs on fabricant.
 
 ## Trusted-network IPSets
 
@@ -47,10 +48,10 @@ whitelists). Summary:
 | IPSet | Contents | Used for |
 |---|---|---|
 | `public` | `0.0.0.0/1` + `128.0.0.0/1` (the whole internet) | compute SSH |
-| `sealab` | Sealab wifi `132.239.10.0/24`, e4e-nas, krg-prod, krg-ldap, old krg-ad | DC↔member SMB/RPC; CrowdSec whitelist |
+| `sealab` | Sealab wifi `132.239.10.0/24`, e4e-nas, krg-prod, e4e-prod, krg-ldap, kastner-ml | DC↔member SMB/RPC; CrowdSec whitelist |
 | `ucsd` | `100.0.0.0/8`, `128.54.0.0/16`, `137.110.0.0/16`, + sealab hosts | service SSH, PVE UI, AD client ports |
 | `ops` | off-campus admin IPs (chris, sean) | SSH + PVE UI from off-campus |
-| `machines` | fleet domain members (waiter, krg-prod, krg-ldap, krg-deploy, krg-vault) | inter-host trust; CrowdSec whitelist; OpenBao `:8200` source |
+| `machines` | fleet domain members (waiter, fabricant, krg-prod, krg-ldap, krg-deploy, krg-vault, krg-nat, kastner-ml) | inter-host trust; CrowdSec whitelist; OpenBao `:8200` source |
 
 ## Monitoring map
 
@@ -65,7 +66,7 @@ flowchart LR
     direction TB
     prom["Prometheus"]
     graf["Grafana"]
-    loki["Loki + Promtail<br/>(planned fleet-wide)"]
+    loki["Loki + Alloy<br/>(planned fleet-wide)"]
     bb["Blackbox exporter<br/>(HTTP/ICMP probes)"]
     prom --> graf
     loki --> graf
@@ -88,7 +89,7 @@ flowchart LR
 | Exporter | Port | Source | Hosts | Notes |
 |---|---|---|---|---|
 | node_exporter | 9100 | native systemd (nix) / systemd (ansible) | all | + ZFS pool-health textfile collector ([`zfs.nix`](../nix/modules/zfs.nix)) |
-| ipmi_exporter | 9290 | native systemd | waiter, fabricant, krg-prod | compute + hypervisor + servers |
+| ipmi_exporter | 9290 | native systemd | waiter, fabricant | compute + hypervisor (krg-prod is a VM → off) |
 | DCGM exporter | 9400 | Docker (CDI GPU) | waiter, kastner-ml | coupled to the NVIDIA driver ([`nvidia.nix`](../nix/modules/hardware/nvidia.nix)) |
 | docker metrics | 9323 | dockerd | waiter, kastner-ml | Docker daemon metrics endpoint |
 

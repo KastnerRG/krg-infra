@@ -2,7 +2,7 @@
 
 The lab-wide monitoring stack runs as Docker Compose on **krg-prod**
 (`nix/docker-compose/krg-prod/`): Prometheus (scrape + TSDB), Grafana
-(visualisation, Authentik SSO), Loki/Promtail (logs), and the Blackbox exporter
+(visualisation, Authentik SSO), Loki + Alloy (logs), and the Blackbox exporter
 (synthetic probes). Grafana is served at **monitoring.krg.ucsd.edu**.
 
 Grafana's datasources, SSO, and **dashboards** are managed as code in
@@ -48,6 +48,7 @@ Source of truth: `nix/docker-compose/krg-prod/prometheus/prometheus.yml`.
 | `dcgm_exporter` | 9400 | waiter, kastner-ml | NVIDIA GPUs. |
 | `docker_exporter` | 9323 | waiter, kastner-ml | Docker daemon `--metrics-addr`; **engine-level only**, no per-container stats. |
 | `ipmi_exporter` | 9290 | waiter, fabricant (+ localhost, dead) | Physical hosts only; VMs have no BMC. |
+| `pve` | 9221 | fabricant.ucsd.edu:9221 | Hypervisor-side per-VM metrics (`pve_*`) from `prometheus-pve-exporter` on the Proxmox host (ansible `pve_exporter` role, #235); `metrics_path: /pve`, PVE host passed as `?target=`. |
 | `traefik` | 8082 | traefik:8082 | Scraped over the `traefik_proxy` docker network; metrics on a dedicated unpublished entrypoint. |
 | `prometheus` | 9090 | localhost | Self-scrape. |
 | `blackbox_exporter` / `website_monitoring` / `blackbox-ping` | 9115 | exporter + HTTP/ICMP targets | Synthetic probes. |

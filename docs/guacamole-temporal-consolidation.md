@@ -17,7 +17,7 @@ folding a service into a new project changes the volume name its data lives unde
 | Service | Old project / volume | New project / volume | Data |
 |---|---|---|---|
 | **Guacamole Postgres** | `guacamole` / `guacamole_guacamole_pgdata` | `krg-prod` / `krg-prod_guacamole_pgdata` | **LIVE — must migrate** |
-| **Temporal Postgres** | `temporal` / `temporal_temporal_pgdata` | `krg-prod` / `krg-prod_temporal_pgdata` | none yet (Temporal not deployed — nothing to migrate) |
+| **Temporal Postgres** | `temporal` / `temporal_temporal_pgdata` | `krg-prod` / `krg-prod_temporal_pgdata` | none at the time of this cutover (Temporal was not yet deployed — nothing to migrate; it has since been deployed, see [temporal-mtls.md](temporal-mtls.md)) |
 
 Bind-mounted data is unaffected (it's keyed by host path, not project). Only the
 two named Postgres volumes are project-scoped, and only Guacamole's holds live data

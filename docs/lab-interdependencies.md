@@ -27,7 +27,8 @@ at the end). Keep this current when you add a host, a mount, or a service.
 | **krg-ldap** | nix (VM) | Samba AD domain controller — `KRG.LOCAL` identity for **every** host. |
 | **krg-vault** | nix (VM) | OpenBao — secrets for services (vault-agent) and for the deploy itself (AppRole). |
 | **krg-prod** | nix (VM) | Lab-wide services: Authentik (SSO), Traefik, Grafana/Prometheus/Loki, Outline, … |
-| **e4e-prod** | nix (VM) | E4E project services (not yet provisioned). |
+| **e4e-prod** | nix (VM) | E4E project services + the `*.e4e` public edge (Traefik LE-terminate → re-encrypt). |
+| **krg-nat** | nix (VM) | Incus platform host — hypervisor for self-serve / tenant instances on the NAT ([ADR 0017](adr/0017-incus-nat-self-serve-platform.md)). |
 | **waiter** | nix (physical) | KRG GPU compute. |
 | **kastner-ml** | nix (physical) | E4E GPU compute. |
 | **krg-deploy** | nix (VM) | Control node — runs the CD pipeline (`deploy.yml`) and the nightly pull-apply. |
@@ -46,6 +47,7 @@ graph TD
     LDAP[krg-ldap<br/>AD DC]
     VAULT[krg-vault<br/>OpenBao]
     PROD[krg-prod<br/>services]
+    NAT[krg-nat<br/>Incus platform]
     WAITER[waiter<br/>compute]
     KML[kastner-ml<br/>compute]
   end
@@ -53,11 +55,13 @@ graph TD
     AUTH[authentik config]
     GRAF[grafana config]
     NASCFG[e4e-nas config]
+    INCUS[incus config]
   end
 
   LDAP -->|VM runs on| FAB
   VAULT -->|VM runs on| FAB
   PROD -->|VM runs on| FAB
+  NAT -->|VM runs on| FAB
 
   WAITER -->|/home NFS| FAB
   KML -->|/home NFS| NAS
@@ -65,6 +69,7 @@ graph TD
   WAITER -->|AD login| LDAP
   KML -->|AD login| LDAP
   PROD -->|AD login| LDAP
+  NAT -->|AD login| LDAP
   FAB -->|AD client| LDAP
   NAS -->|AD / SMB| LDAP
 
@@ -74,6 +79,7 @@ graph TD
   GRAF -->|reads OIDC secret| AUTH
   AUTH -->|writes secrets| VAULT
   NASCFG -->|configures| NAS
+  INCUS -->|configures| NAT
 
   DEPLOY[krg-deploy] -->|AppRole creds| VAULT
   DEPLOY -->|pinned host keys / SSH| nixos
@@ -97,14 +103,19 @@ satisfies every edge. Fail-fast between phases. The rule within each phase is st
    compute boxes mount as `/home`**. Must precede the member NixOS hosts (a compute
    box can't mount a `/home` export that doesn't exist yet), and now runs after
    phase 0 so fabricant can already reach the DC.
-2. **systems** — NixOS **krg-prod + waiter + kastner-ml**: the services (Authentik,
-   Grafana, OpenBao consumers) and the compute boxes that mount phase 1's exports.
-   Hosts rebuild in the `deploy/lib.sh` `ORDER`
-   (`krg-vault → krg-ldap → krg-prod → waiter → kastner-ml`), split across phases 0/2.
+2. **systems** — NixOS **krg-prod + e4e-prod + krg-nat + waiter + kastner-ml**: the
+   services (Authentik, Grafana, OpenBao consumers), the E4E edge / Incus platform,
+   and the compute boxes that mount phase 1's exports. Hosts rebuild in the
+   `deploy/lib.sh` `ORDER`
+   (`krg-vault → krg-ldap → krg-prod → e4e-prod → krg-nat → waiter → kastner-ml`),
+   split across phases 0/2.
 3. **config** — **OpenTofu**: configures those services **through their APIs** and
    reads/writes OpenBao secrets, so it must come after they exist. Target order
-   (`TOFU_TARGETS`): `authentik → grafana → e4e-nas → temporal` — Grafana reads the
-   OIDC secret Authentik mints, so Authentik first.
+   (`TOFU_TARGETS`, phase-3): `authentik → grafana → e4e-nas → temporal → incus` —
+   Grafana reads the OIDC secret Authentik mints, so Authentik first. (A separate
+   phase-1.5 `TOFU_TARGETS=secrets` run generates secrets before use; `openbao` is
+   applied manually with a privileged token. Other built targets live under
+   `terraform/`.)
 4. **verify** — `deploy/deploy-verify.sh`: every health/membership gate (OEC daemons,
    `adcli testjoin`) for the whole fleet, **once, here** — after the stages that
    satisfy them. Phases 0–3 converge (gates warn); phase 4 is the only fatal gate, so

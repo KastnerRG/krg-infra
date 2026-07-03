@@ -23,7 +23,7 @@ recovery without automation).
 | §4 Shared folders + ACLs + recursive stamp | [`synology_shares`](../ansible/synology/roles/synology_shares) + [`synology_acls`](../ansible/synology/roles/synology_acls) (recursive-stamp via `--tags acls-recursive`; specs: [`shares.yml`](../spec/e4e-nas/shares.yml), [`acls.yml`](../spec/e4e-nas/acls.yml)) |
 | §5 Snapshot Replication + Hyper Backup | [`synology_snapshot_replication`](../ansible/synology/roles/synology_snapshot_replication) + [`synology_hyper_backup`](../ansible/synology/roles/synology_hyper_backup) (specs: [`snapshots.yml`](../spec/e4e-nas/snapshots.yml), [`hyper-backup.yml`](../spec/e4e-nas/hyper-backup.yml)) |
 | §6 DSM updates | [`synology_dsm_updates`](../ansible/synology/roles/synology_dsm_updates) (spec: [`dsm-updates.yml`](../spec/e4e-nas/dsm-updates.yml)) |
-| §7 Periodic `.dss` config backup | [`../terraform/e4e-nas/scheduler.tf`](../terraform/e4e-nas/scheduler.tf) (`weekly_config_backup_export`) |
+| §7 Periodic `.dss` config backup | **Not yet automated** — the `.dss` export is commented scaffolding in [`../terraform/e4e-nas/scheduler.tf`](../terraform/e4e-nas/scheduler.tf) (no active `synology_core_event` resource; the off-box destination is an open decision), so the off-box export is currently a **manual/pending** step |
 | §8 Monitoring (SNMP + blackbox) | [`synology_services`](../ansible/synology/roles/synology_services) (SNMP) — blackbox already in [`../nix/docker-compose/krg-prod/prometheus/prometheus.yml`](../nix/docker-compose/krg-prod/prometheus/prometheus.yml) |
 | Per-share quotas | [`synology_quotas`](../ansible/synology/roles/synology_quotas) (spec: [`quotas.yml`](../spec/e4e-nas/quotas.yml)) |
 | DSM web hardening (HSTS / HTTP2 / TLS profile) | [`synology_dsm_web`](../ansible/synology/roles/synology_dsm_web) (spec: [`dsm-web.yml`](../spec/e4e-nas/dsm-web.yml)) |
@@ -102,8 +102,8 @@ is IaC.
    | Netmask | `255.255.0.0` (/16) |
    | Gateway | `132.239.17.1` |
    | Manual DNS | yes (do NOT take from DHCP) |
-   | Primary DNS | `132.239.95.109` (UCSD recursive) |
-   | Secondary DNS | `1.1.1.1` |
+   | Primary DNS | `137.110.161.109` (krg-ldap — the KRG.LOCAL AD DC; required for winbind/AD join) |
+   | Secondary DNS | `132.239.95.109` (UCSD recursive — fallback for non-krg-local names) |
    | MTU | 1500 |
    | IPv6 | disabled |
 
@@ -138,8 +138,11 @@ chassis:
 4. Re-apply the IaC (`ansible-playbook ansible/synology/playbook.yml`).
 
 Bare-metal recovery without disks (rare) uses the most recent `.dss`
-configuration backup from the off-box destination (driven by
-[`../terraform/e4e-nas/scheduler.tf`](../terraform/e4e-nas/scheduler.tf)). The
+configuration backup from the off-box destination. That periodic export is
+**not yet automated** — it is commented scaffolding in
+[`../terraform/e4e-nas/scheduler.tf`](../terraform/e4e-nas/scheduler.tf) (no
+active `synology_core_event` resource), so the `.dss` must currently be
+exported manually until that job (and its off-box destination) is wired. The
 `.dss` is sensitive — see the gitignore note in the periodic-backup section.
 
 ## DSM major-update post-action
