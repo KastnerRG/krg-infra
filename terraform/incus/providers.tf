@@ -41,9 +41,16 @@ provider "incus" {
   # is anchored to the fleet CA (server.ca) on krg-nat.
   accept_remote_certificate = true
 
+  # The lxc/incus provider takes the remote's host, scheme and port as SEPARATE fields —
+  # `address` must be a BARE HOST. Passing a full `https://host:port` URL here (as this
+  # once did) makes the provider fail to build an https remote and fall back to the local
+  # UNIX socket, which on krg-deploy doesn't exist → "the incus daemon doesn't appear to
+  # be started (socket path: https://krg-nat.ucsd.edu:8443)". scheme/port are explicit.
   remote {
     name    = "krg-nat"
+    scheme  = "https"
     address = var.incus_api_address
+    port    = var.incus_api_port
     default = true
   }
 }

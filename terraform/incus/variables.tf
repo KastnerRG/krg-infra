@@ -1,7 +1,20 @@
 variable "incus_api_address" {
-  description = "https URL of the krg-nat Incus API (ucsd+ops-restricted at the firewall)."
+  description = <<-EOT
+    FQDN/IP of the krg-nat Incus API — a BARE HOST, no scheme and no port. The lxc/incus
+    provider's remote takes address/scheme/port as SEPARATE fields; passing a full
+    `https://host:port` URL here makes the provider fail to parse a valid https remote,
+    silently fall back to the local unix socket, and report "the incus daemon doesn't
+    appear to be started (socket path: <url>)". Scheme/port are set in providers.tf.
+    (ucsd+ops-restricted at the firewall.)
+  EOT
   type        = string
-  default     = "https://krg-nat.ucsd.edu:8443"
+  default     = "krg-nat.ucsd.edu"
+}
+
+variable "incus_api_port" {
+  description = "Port of the krg-nat Incus API (remote.port). Mirrors the nix krg.incus.apiPort."
+  type        = string
+  default     = "8443"
 }
 
 variable "incus_config_dir" {
