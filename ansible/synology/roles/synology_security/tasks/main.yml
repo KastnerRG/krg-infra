@@ -8,8 +8,8 @@
 #   — see the comment in apply_security.py:do_firewall_profile).
 #
 # CROSS-REFERENCE: counterpart of nix `krg.firewall` (`nix/modules/security/firewall.nix`)
-# and ansible `roles/proxmox_firewall` + the in-guest fail2ban allow-list pattern.
-# All three layers read `nix/networks/trusted.json` (single source of truth) for
+# and ansible `roles/proxmox_firewall` + the CrowdSec whitelist pattern.
+# All layers read `nix/networks/trusted.json` (single source of truth) for
 # allow-listed source nets — edit there, not here.
 #
 # AutoBlock allow/deny lists (AutoBlock.Rules) are still deferred — the capture
@@ -24,7 +24,7 @@
     name: security_spec
 
 # --- Shared trusted-nets data (group_vars/all.yml already loaded krg_trusted) ---
-# This is the SAME object the Debian fail2ban role uses for ignoreip. Mirror the
+# This is the SAME object the Debian CrowdSec whitelist reads. Mirror the
 # nix `krg.firewall.trustedNets` pattern here so any change to trusted.json
 # flows to every layer.
 - name: Compute autoblock allow-list from nix/networks/trusted.json (sealab + machines + monitoring, deduped)

@@ -224,8 +224,8 @@ auto_block:
   # Allow-list (never block) + deny-list (always block). The allow-list is
   # COMPUTED in the role from nix/networks/trusted.json (`krg_trusted` —
   # loaded by group_vars/all.yml), so a change to the single source of truth
-  # flows here automatically. Same DRY pattern as the Debian fail2ban
-  # `ignoreip` and nix `krg.firewall.trustedNets`. See synology_security
+  # flows here automatically. Same DRY pattern as the Debian CrowdSec
+  # whitelist and nix `krg.firewall.trustedNets`. See synology_security
   # tasks/main.yml — the role debug-surfaces the resolved IP list.
   # Push to DSM is DEFERRED: SYNO.Core.Security.AutoBlock.Rules errored 5100
   # in 2026-05-28 captures (wrong method/param shape); add a subcommand once

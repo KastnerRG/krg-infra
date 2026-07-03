@@ -60,8 +60,6 @@
     autoSnapshot.enable = true;
   };
 
-  # krg.fail2ban is OFF fleet-wide (superseded by CrowdSec — see base.nix).
-
   krg.nvidia = {
     enable = true;
     openDriver = true;

@@ -19,6 +19,6 @@ tool (not guest-vs-host — some NixOS machines are physical):
 
 This repo is an incident-response rebuild: a Proxmox host's root SSH was
 dictionary-attacked. The NixOS guests were already hardened, so `ansible/` brings
-the hypervisors under the same baseline (key-only SSH, fail2ban, `krg-admin`),
+the hypervisors under the same baseline (key-only SSH, CrowdSec, `krg-admin`),
 and the breached Active Directory is being rebuilt clean as a new Samba AD forest
 on krg-ldap.

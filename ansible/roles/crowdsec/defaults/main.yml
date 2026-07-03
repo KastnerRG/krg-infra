@@ -4,11 +4,9 @@
 
 # Master switch. When false, the role skips installs/templating AND
 # (separately, in tasks/main.yml) stops + disables any previously-
-# enabled CrowdSec services so they can't race with whatever's
-# replacing them (typically fail2ban during a rollback). Packages stay
-# installed so flipping back to true is a fast re-enable. On a host
-# where you flip this off you should ALSO flip fail2ban_enabled back
-# to true (set in group_vars/all.yml here).
+# enabled CrowdSec services (a maintenance / roll-back convenience —
+# there is no other ban layer to fall back to). Packages stay
+# installed so flipping back to true is a fast re-enable.
 crowdsec_enabled: true
 
 # CrowdSec hub collections + parsers installed on this host. Mirrors the
