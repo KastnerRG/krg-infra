@@ -124,9 +124,9 @@ decision before opening the door.
 
 - Fleet baseline:
   [`nix/profiles/base.nix`](../nix/profiles/base.nix) — enables the
-  CrowdSec stack (`krg.crowdsec`, `krg.crowdsecBouncer`), sets
-  `krg.base.serviceHost = true` as the fleet default, and disables
-  fail2ban (superseded by CrowdSec).
+  CrowdSec stack (`krg.crowdsec`, `krg.crowdsecBouncer`) as the sole
+  ban layer, and sets `krg.base.serviceHost = true` as the fleet
+  default.
 - Strict-tier SSH source restriction:
   [`nix/modules/security/firewall.nix`](../nix/modules/security/firewall.nix)
   via `sshSources` (populated from `ucsd` + `ops` in `base.nix` when

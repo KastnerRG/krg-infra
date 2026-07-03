@@ -154,7 +154,6 @@
       firewall = import ./modules/security/firewall.nix;
       crowdsec = import ./modules/security/crowdsec.nix;
       crowdsec-bouncer = import ./modules/security/crowdsec-bouncer.nix;
-      fail2ban = import ./modules/security/fail2ban.nix;
       oec-qualys-trellix = import ./modules/security/oec-qualys-trellix.nix;
 
       nvidia = import ./modules/hardware/nvidia.nix;

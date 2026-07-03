@@ -36,7 +36,7 @@ of each kind).
 | Current OS | Ubuntu 24.04.4 LTS, root on **btrfs-over-bcache** (3.1 TB used) | NixOS |
 
 Because the primary interface holds a **public UCSD address**, kastner-ml takes
-the same perimeter posture as waiter: key-only SSH + fail2ban, in-guest firewall,
+the same perimeter posture as waiter: key-only SSH + CrowdSec, in-guest firewall,
 and care with any Docker-published ports (see the DOCKER-USER note in
 [waiter-topology.md](waiter-topology.md)).
 
@@ -194,7 +194,7 @@ Contents:
    - `krg.adClient` (KRG.LOCAL; `allowedGroups` covering the E4E project/lab groups
      — and the course group — whose members use this box).
 4. **`nix/flake.nix`** — add `kastner-ml` under `nixosConfigurations`.
-5. **Perimeter** — `eno1` is public; same key-only + fail2ban posture as waiter.
+5. **Perimeter** — `eno1` is public; same key-only + CrowdSec posture as waiter.
    If it ever exposes a Docker-published port for remote scraping (e.g. DCGM
    9400), add the `DOCKER-USER`/nftables FORWARD restriction matching the ingress
    interface (`eno1`) — the standing waiter caveat.

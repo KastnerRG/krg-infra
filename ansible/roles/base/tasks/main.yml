@@ -3,11 +3,11 @@
 #   1. OS baseline       — timezone, packages (incl tmux), unattended security
 #                          upgrades, sysctl.
 #   2. Security + monitoring baseline — composes krg_admin, ssh_hardening,
-#                          fail2ban, monitoring, oec_qualys_trellix, and ad_client
+#                          crowdsec, monitoring, oec_qualys_trellix, and ad_client
 #                          (AD enrollment — every host joins KRG.LOCAL) (below).
 #
 # CROSS-REFERENCE: this is the Proxmox/Debian counterpart of the NixOS baseline
-# profile nix/profiles/base.nix, which likewise bundles SSH hardening + fail2ban +
+# profile nix/profiles/base.nix, which likewise bundles SSH hardening + CrowdSec +
 # OEC + node-exporter onto every host. When you change the baseline on EITHER side
 # (timezone, packages, auto-updates, sysctl, OR which security/monitoring concerns
 # are default), apply the equivalent change to the other. Platform differences are
@@ -100,23 +100,40 @@
   ansible.builtin.import_role:
     name: ssh_hardening
 
-# ORDER IS LOAD-BEARING: CrowdSec installs + registers + starts FIRST,
-# then fail2ban runs (stops + disables itself when superseded). If
-# CrowdSec install/registration fails on a host that had fail2ban
-# running, the play fails and fail2ban stays UP — host keeps
-# brute-force protection rather than ending up with neither stack
-# active. During a successful apply there's a brief overlap (both
-# stacks running) — that's benign: CrowdSec writes to its own
-# `CROWDSEC` iptables chain and fail2ban to `f2b-sshd`, no cross-stack
-# conflict; the double-ban window closes when fail2ban stops a few
-# tasks later.
-- name: CrowdSec (community CTI + local scenarios — replaces fail2ban)
+# CrowdSec is the sole brute-force/ban layer (community CTI + local ssh-bf
+# scenarios). It installs + registers + starts before the fail2ban cleanup
+# below so a host is never left without brute-force protection: if CrowdSec
+# fails to come up, the play fails BEFORE any fail2ban teardown runs.
+- name: CrowdSec (community CTI + local scenarios — the ban layer)
   ansible.builtin.import_role:
     name: crowdsec
 
-- name: Fail2ban (sshd brute-force jail — SUPERSEDED by crowdsec; gated off fleet-wide)
-  ansible.builtin.import_role:
-    name: fail2ban
+# TOMBSTONE — fail2ban was removed fleet-wide (superseded by CrowdSec). The
+# `fail2ban` role is gone; this block converges hosts that ran it before the
+# switch to a clean no-fail2ban state (stop + disable + purge the package so
+# it can't race the CrowdSec bouncer on iptables). Idempotent + a no-op on
+# hosts that never had it. Safe to delete once the whole fleet has applied a
+# post-removal run (target: 2026-Q4).
+- name: Fail2ban removed — ensure absent (transitional cleanup)
+  block:
+    - name: Read installed-package facts (idempotency guard)
+      ansible.builtin.package_facts:
+        manager: apt
+
+    - name: Stop + disable + purge fail2ban (only if present)
+      when: "'fail2ban' in ansible_facts.packages"
+      block:
+        - name: Stop + disable fail2ban
+          ansible.builtin.systemd_service:
+            name: fail2ban
+            enabled: false
+            state: stopped
+
+        - name: Purge the fail2ban package + its jail config
+          ansible.builtin.apt:
+            name: fail2ban
+            state: absent
+            purge: true
 
 - name: Monitoring (node + ipmi exporters) — on every host by default
   ansible.builtin.import_role:
