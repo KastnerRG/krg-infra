@@ -10,6 +10,38 @@ locals {
     data.authentik_property_mapping_provider_scope.email.id,
     data.authentik_property_mapping_provider_scope.profile.id,
   ]
+
+  # Like std_scopes, but swaps the managed email scope for email_verified below
+  # (asserts email_verified=true). Use for any app that federates AD/LDAP users
+  # AND refuses SSO when the email_verified claim is false (Outline, Vaultwarden).
+  std_scopes_verified = [
+    data.authentik_property_mapping_provider_scope.openid.id,
+    authentik_property_mapping_provider_scope.email_verified.id,
+    data.authentik_property_mapping_provider_scope.profile.id,
+  ]
+}
+
+# Shared verified-email OIDC scope. Authentik's MANAGED email scope reports
+# email_verified=false for AD/LDAP-synced users (it never ran an email-verification
+# flow against them), and some relying parties (Outline, Vaultwarden) refuse SSO —
+# or refuse to provision a NEW user — unless email_verified is true. Our member
+# emails are admin-entered from AD (known-good), so we assert verified here. This
+# replaces the former Vaultwarden-specific `vaultwarden_email` scope so any future
+# AD-federated app can reuse it via local.std_scopes_verified.
+#
+# Issue #185 tracks doing REAL email verification at Authentik and dropping this
+# (and Vaultwarden's compose SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION flag, which only
+# covers a *missing* claim, not an explicit false — which is why it didn't fix this).
+resource "authentik_property_mapping_provider_scope" "email_verified" {
+  name        = "OIDC Scope — email (verified, AD-federated)"
+  scope_name  = "email"
+  description = "Standard email claim, asserting email_verified=true (admin-entered AD emails)."
+  expression  = <<-EOT
+    return {
+      "email": request.user.email,
+      "email_verified": True,
+    }
+  EOT
 }
 
 # ── Grafana ────────────────────────────────────────────────────────────────────
@@ -51,7 +83,11 @@ resource "authentik_provider_oauth2" "outline" {
   # docs.krg.ucsd.edu (post DNS migration); Outline's OIDC callback path is
   # /auth/oidc.callback. Strict match → must equal the Host Outline is served on.
   allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://docs.krg.ucsd.edu/auth/oidc.callback" }]
-  property_mappings     = local.std_scopes
+  # std_scopes_verified (not std_scopes): Outline refuses to provision a NEW user
+  # when email_verified is false, which Authentik reports for every AD/LDAP-synced
+  # account — so first-time logins failed with "email address has not been verified"
+  # while existing members were unaffected. See the email_verified scope above.
+  property_mappings = local.std_scopes_verified
   # RS256 signing key — Outline (openid-client) verifies the ID token against the
   # provider's jwks_uri. Without it Authentik falls back to HS256 + empty JWKS →
   # "Invalid ID token" (the same failure garage-ui/vaultwarden/temporal/mlflow hit).
@@ -121,25 +157,6 @@ resource "authentik_application" "mlflow" {
 # once upstream Vaultwarden supports it) needs no Authentik change. See
 # docs/vaultwarden-sso.md.
 
-# Custom email scope: Authentik's managed email scope reports email_verified=false
-# for AD/LDAP-synced users (it never verified the address), and Vaultwarden refuses
-# SSO login unless email_verified is true. Our member emails are admin-entered
-# (known-good), so assert verified here. Issue #185 tracks doing real email
-# verification at Authentik and dropping this (and the compose
-# SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION flag, which only covers a *missing* claim,
-# not an explicit false — which is why it didn't fix this).
-resource "authentik_property_mapping_provider_scope" "vaultwarden_email" {
-  name        = "OIDC Scope — email (verified, Vaultwarden)"
-  scope_name  = "email"
-  description = "Standard email claim, asserting email_verified=true (admin-entered AD emails)."
-  expression  = <<-EOT
-    return {
-      "email": request.user.email,
-      "email_verified": True,
-    }
-  EOT
-}
-
 resource "authentik_provider_oauth2" "vaultwarden" {
   name = "Provider for Vaultwarden"
   # client_secret is minted by terraform/secrets and read back here (it must exist
@@ -149,11 +166,11 @@ resource "authentik_provider_oauth2" "vaultwarden" {
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://vaultwarden.krg.ucsd.edu/identity/connect/oidc-signin" }]
-  # Like std_scopes, but swaps the managed email scope for vaultwarden_email
-  # (asserts email_verified=true) + adds the AD-sourced groups scope.
+  # Like std_scopes, but swaps the managed email scope for the shared email_verified
+  # scope (asserts email_verified=true) + adds the AD-sourced groups scope.
   property_mappings = [
     data.authentik_property_mapping_provider_scope.openid.id,
-    authentik_property_mapping_provider_scope.vaultwarden_email.id,
+    authentik_property_mapping_provider_scope.email_verified.id,
     data.authentik_property_mapping_provider_scope.profile.id,
     authentik_property_mapping_provider_scope.groups.id,
   ]
