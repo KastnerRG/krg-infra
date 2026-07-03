@@ -133,6 +133,14 @@ in {
   config = mkIf cfg.enable {
     virtualisation.incus = {
       enable = true;
+      # Feature Incus (7.2.x), NOT the NixOS default incus-lts (7.0.x). Both are in the
+      # SAME pinned nixpkgs. The fleet's incus CLI (krg-deploy, pkgs.incus = 7.2) and the
+      # lxc/incus terraform provider target recent Incus API extensions (api_filtering,
+      # added after 7.0) — against a 7.0 LTS server they fail: the CLI with "server is
+      # missing the required api_filtering API extension", the provider with the
+      # misleading "daemon doesn't appear to be started". Matching the server to the
+      # fleet's client is the fix.
+      package = pkgs.incus;
       ui.enable = cfg.ui.enable;
 
       # Applied by the incus-preseed service on first start. Minimal on purpose —
