@@ -60,6 +60,9 @@
     python3 # ansible runtime dependency
     sshpass # needed by some ansible connection scenarios
     jq
+    openssl # operator-supplied TF_VAR_ldap_ca_cert for the openbao tofu bootstrap
+    # (deploy-tofu.sh's openbao leg doesn't auto-materialize it):
+    #   TF_VAR_ldap_ca_cert="$(openssl s_client -connect krg-ldap.krg.local:636 </dev/null 2>/dev/null | openssl x509)"
   ];
 
   # Point bao at krg-vault so every shell session works without manual export.
