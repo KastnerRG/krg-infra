@@ -201,13 +201,24 @@ in {
     # Only when the CA PEM is present in the checkout.
     systemd.services.incus-server-ca = mkIf haveCa {
       description = "Install the fleet CA as the Incus server CA (PKI client trust)";
-      wantedBy = ["incus.service"];
+      # Run at ACTIVATION/boot, ordered before incus — NOT only wantedBy incus.service:
+      # a deploy that doesn't restart incus.service would then never trigger this, so
+      # server.ca stayed missing and CA-client-trust was silently inert (the bug that
+      # made the terraform/incus provider fail to authenticate). multi-user.target pulls
+      # it in on every switch; before/wantedBy incus.service keeps the ordering.
+      wantedBy = ["multi-user.target" "incus.service"];
       before = ["incus.service"];
+      restartTriggers = [caFile];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
         ExecStart = "${pkgs.coreutils}/bin/install -Dm0644 ${caFile} /var/lib/incus/server.ca";
       };
     };
+
+    # Incus reads server.ca ONLY at daemon start (PKI mode), so it must RESTART when the
+    # CA lands or rotates — else a daemon that came up before server.ca existed never
+    # picks up client-CA trust. Triggering on caFile restarts incus exactly when needed.
+    systemd.services.incus.restartTriggers = [caFile];
   };
 }
