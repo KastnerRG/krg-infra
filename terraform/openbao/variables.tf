@@ -40,6 +40,17 @@ variable "temporal_client_domains" {
   default     = ["krg-deploy", "temporal-worker", "temporal-ui"]
 }
 
+variable "incus_client_domains" {
+  description = <<-EOT
+    Identity names the incus-client CLIENT certs may carry (cert CN). krg-deploy's
+    terraform/incus provider mints one to authenticate to the krg-nat Incus API.
+    krg-nat only checks the cert chains to the fleet CA; scoping the issuable names
+    keeps the role least-privilege.
+  EOT
+  type        = list(string)
+  default     = ["krg-deploy"]
+}
+
 variable "host_allowed_domains" {
   description = <<-EOT
     Domains the general-purpose `host` SERVER role (pki.tf) may issue under, with

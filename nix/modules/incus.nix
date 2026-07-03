@@ -23,6 +23,7 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 with lib; let
@@ -35,6 +36,17 @@ with lib; let
   # NEVER in publicPorts — OIDC→Authentik gates *who*, this gates *from where*.
   defaultApiSources =
     map (e: e.cidr) (trusted.ipsets.ucsd ++ (trusted.ipsets.ops or []));
+
+  # The fleet OpenBao CA (public trust anchor, committed at nix/keys/krg-pki-ca.pem;
+  # same file base.nix puts in the system trust store). Placed as Incus's `server.ca`
+  # so krg-nat runs in PKI mode + trusts machine clients whose cert chains to it —
+  # e.g. the terraform/incus provider's cert, minted from pki_int/issue/incus-client
+  # by deploy-tofu.sh. That removes the per-cert `incus config trust add` drift. Guard
+  # on pathExists so a checkout WITHOUT the PEM still evaluates (CA trust is then off,
+  # falling back to per-cert trust). Additive: individually-trusted certs (a human's
+  # browser cert / the coming OIDC) still work.
+  caFile = ../keys/krg-pki-ca.pem;
+  haveCa = builtins.pathExists caFile;
 in {
   options.krg.incus = {
     enable = mkEnableOption "KRG Incus platform host (ADR 0017)";
@@ -130,6 +142,12 @@ in {
           {
             "core.https_address" = ":${toString cfg.apiPort}";
           }
+          // optionalAttrs haveCa {
+            # PKI mode: auto-trust machine clients whose cert chains to server.ca
+            # (the fleet CA placed by the incus-server-ca service below). No per-cert
+            # trust add for the terraform/incus provider.
+            "core.trust_ca_certificates" = "true";
+          }
           // optionalAttrs (cfg.oidc.issuer != "") {
             "oidc.issuer" = cfg.oidc.issuer;
             "oidc.client.id" = cfg.oidc.clientId;
@@ -171,5 +189,20 @@ in {
     # egress works via Incus's NAT (NixOS doesn't filter FORWARD by default). Verified
     # on krg-nat: with the bridge trusted, a test instance gets a 10.x lease + egress.
     networking.firewall.trustedInterfaces = cfg.trustedBridges;
+
+    # Install the fleet CA as Incus's server.ca BEFORE the daemon starts, so PKI mode
+    # (core.trust_ca_certificates above) can trust fleet-signed machine clients. Copied
+    # each start (idempotent) so a CA rotation is picked up on the next incus restart.
+    # Only when the CA PEM is present in the checkout.
+    systemd.services.incus-server-ca = mkIf haveCa {
+      description = "Install the fleet CA as the Incus server CA (PKI client trust)";
+      wantedBy = ["incus.service"];
+      before = ["incus.service"];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.coreutils}/bin/install -Dm0644 ${caFile} /var/lib/incus/server.ca";
+      };
+    };
   };
 }

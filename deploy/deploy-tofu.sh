@@ -188,15 +188,30 @@ materialize() { # <target>
       [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping secrets" >&2; return 1; }
       ;;
     incus)
-      # terraform/incus authenticates to the krg-nat Incus API with a CLIENT CERTIFICATE
-      # trusted by the server (set up ONCE at bring-up: `incus remote add krg-nat <token>`
-      # on krg-deploy mints + stores the cert under the incus config dir). The provider
-      # reads that cert on every run — there is NO TF_VAR secret to pre-read here, unlike
-      # the other targets, and the API address is non-secret (variables.tf default). If
-      # the remote/cert isn't bootstrapped yet the apply fails loudly at plan (not a
-      # skip) — intentional: by the time `incus` is in TOFU_TARGETS, the krg-nat host +
-      # trust cert are expected to exist. See terraform/incus/README.md.
-      :
+      # Declarative auth — no hand-made `incus remote`, no ~/.config (same
+      # mTLS-over-fleet-PKI model as temporal). Mint a short-lived CLIENT cert from
+      # OpenBao (pki_int/issue/incus-client) and lay it into an EPHEMERAL config dir the
+      # provider reads (TF_VAR_incus_config_dir → provider config_dir). krg-nat trusts it
+      # because the cert chains to the fleet CA it runs as server.ca
+      # (core.trust_ca_certificates — nix/modules/incus.nix), so there is NO per-cert
+      # `incus config trust add`. The provider needs cert FILES (no PEM-string args),
+      # hence the temp dir — removed when this target's subshell exits.
+      [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping incus" >&2; return 1; }
+      local icj
+      icj="$(bao write -format=json pki_int/issue/incus-client common_name=krg-deploy ttl=1h 2>/dev/null)" \
+        || { echo "  could not issue incus-client cert — skipping incus" >&2; return 1; }
+      # NOT `local`: the EXIT trap (subshell-scoped) must still see icdir after this
+      # function returns, so the temp dir is cleaned after the apply.
+      icdir="$(mktemp -d)"
+      trap 'rm -rf "${icdir:-}"' EXIT
+      # client.crt = leaf + issuing CA so krg-nat can chain the leaf to its server.ca.
+      {
+        jq -r '.data.certificate' <<<"$icj"
+        jq -r '.data.issuing_ca' <<<"$icj"
+      } >"${icdir}/client.crt"
+      jq -r '.data.private_key' <<<"$icj" >"${icdir}/client.key"
+      chmod 600 "${icdir}/client.key"
+      export TF_VAR_incus_config_dir="$icdir"
       ;;
     *)
       echo "  no materialization rule for ${1} — skipping" >&2
