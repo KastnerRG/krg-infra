@@ -274,12 +274,15 @@ jobs:
       # State is local on krg-deploy (ADR 0005) + encrypted with the
       # TOFU_STATE_PASSPHRASE Actions secret. Creds come from OpenBao (krg-deploy
       # AppRole). authentik applies before grafana (grafana reads the grafana-oidc
-      # authentik produces). An unseeded target skips with a notice. openbao is NOT
-      # listed — it needs a privileged bootstrap token and is applied manually.
+      # authentik produces). `incus` reconciles the platform boundary (incusbr0 +
+      # profiles + tenant projects/instances) — cert-based auth, no special token; it
+      # depends on the one-time openbao bootstrap having added the incus-client role.
+      # An unseeded/unreachable target skips with a notice. openbao is NOT listed — it
+      # needs a privileged bootstrap token and is applied manually.
       - name: Phase 3 — config (OpenTofu)
         env:
           TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
-          TOFU_TARGETS: "authentik grafana e4e-nas temporal"
+          TOFU_TARGETS: "authentik grafana e4e-nas temporal incus"
         run: ./deploy/deploy-tofu.sh
 
       # ── phase 3.5: reconcile phase-3-generated secrets into their consumers ────
