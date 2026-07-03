@@ -190,6 +190,11 @@ in {
     # on krg-nat: with the bridge trusted, a test instance gets a 10.x lease + egress.
     networking.firewall.trustedInterfaces = cfg.trustedBridges;
 
+    # The Incus unix socket is gated to the `incus-admin` group. Put the break-glass
+    # admin (the platform host's operator) in it so `incus …` works without sudo. Human
+    # admins reach the API via OIDC/mTLS; this is local-socket management on the box.
+    users.users.${config.krg.adminAccount}.extraGroups = ["incus-admin"];
+
     # Install the fleet CA as Incus's server.ca BEFORE the daemon starts, so PKI mode
     # (core.trust_ca_certificates above) can trust fleet-signed machine clients. Copied
     # each start (idempotent) so a CA rotation is picked up on the next incus restart.
