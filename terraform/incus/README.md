@@ -49,11 +49,15 @@ State is local + encrypted on krg-deploy (ADR 0005), same as the other targets. 
 
 ## Status / bring-up gates
 
-- **Provider-attribute verification** — written against the `lxc/incus` provider
-  schema and `tofu validate`-clean, but not yet applied against a live server (the
-  `krg-nat` host is being provisioned). Verify on first `plan` like the e4e-nas target.
-- **Golden-template image** — instances are `image`-gated and stay empty until the
-  hardened template (AD-join, key-only SSH, auto-upgrade, monitoring, central logging —
-  ADR 0017 §7) is published. Boundary (project + quota + profile + network) applies now.
+- **Provider-attribute verification** — DONE. Applied live against `krg-nat`; the
+  boundary (`incusbr0` NAT + the `krg-baseline` profile) is created and steady-state
+  converged (`0 added, 0 changed`). Tenant projects/instances stay inert until declared.
+- **Golden-template image** — DONE. The hardened template (AD-join, key-only SSH,
+  auto-upgrade, monitoring, in-guest firewall — ADR 0017 §7, MINUS OEC which follows
+  persistence) is built from `nixosConfigurations.krg-golden` (`nix/golden/`) and
+  published to krg-nat's image store as `krg-golden` by `deploy/incus-publish-golden.sh`
+  (CD phase 2.7). Point a tenant at it with `tenants.<name>.image = "krg-golden"`; the
+  instance then converges to its full config via the tenant's own flake (repo-owns-deploy).
+  Remaining §7 item: central-logging shipper, deferred until the Loki push endpoint lands.
 - **Edge ingress route** — egress NAT is automatic; an edge reaching an instance needs
   the ingress path settled at bring-up (see the `krg-nat` host config).
