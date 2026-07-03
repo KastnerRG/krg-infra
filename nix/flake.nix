@@ -79,6 +79,23 @@
           ./hosts/${hostname}/default.nix
         ];
       };
+
+    # The Incus GOLDEN TEMPLATE (ADR 0017 §7, gate 3) — the shared hardened NixOS system
+    # every tenant instance boots from. NOT a fleet host (it's never nixos-rebuilt onto a
+    # machine and is absent from deploy/lib.sh); it lives in nixosConfigurations only so
+    # CI type-checks + builds its toplevel and base.nix's autoUpgrade #krg-golden resolves.
+    # Its image artifacts (config.system.build.qemuImage / .metadata, from
+    # nix/golden/default.nix's incus-virtual-machine import) are built + published to
+    # krg-nat by deploy/incus-publish-golden.sh. Built inline (not mkSystem) because it's
+    # under golden/, not hosts/.
+    golden = nixpkgs.lib.nixosSystem {
+      inherit system;
+      specialArgs = {inherit inputs;};
+      modules = [
+        {_module.args.self = self;}
+        ./golden/default.nix
+      ];
+    };
   in {
     # `nix fmt` → alejandra via treefmt.
     formatter.${system} = treefmtEval.config.build.wrapper;
@@ -174,6 +191,7 @@
       krg-vault = mkSystem "krg-vault"; # OpenBao secrets manager
       krg-deploy = mkSystem "krg-deploy"; # Ansible control node + OpenTofu
       krg-nat = mkSystem "krg-nat"; # Incus platform host (ADR 0017)
+      krg-golden = golden; # the Incus golden template (ADR 0017 §7); an IMAGE, not a deployed host
     };
 
     # `nix flake init -t github:KastnerRG/krg-infra?dir=nix#tenant` — a tenant repo

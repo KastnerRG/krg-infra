@@ -20,7 +20,8 @@ It exercises every piece of the platform built across the Incus track:
 
 > **Status / gates.** This runbook is executable once: (1) the platform PRs above merge
 > to `main`; (2) `krg-nat` is provisioned (a nested VM on fabricant, **nested virt on** —
-> ADR 0017 critical path); (3) the golden-template image exists ([ADR 0017 §7](adr/0017-incus-nat-self-serve-platform.md));
+> ADR 0017 critical path); (3) the golden-template image exists — **DONE**: `krg-golden`,
+> built from `nixosConfigurations.krg-golden` + published by CD ([ADR 0017 §7](adr/0017-incus-nat-self-serve-platform.md));
 > (4) the CNAMEs are published (we request them one at a time); (5) the GitHub App for the
 > repo-scoped runner is created (the deferred krg-deploy item). Each step below flags which
 > gate it needs.
@@ -100,7 +101,7 @@ fishsense = {
   memory    = "8GiB"
   disk      = "20GiB"           # raise if Postgres needs more
   isolation = "virtual-machine" # untrusted developed code = separate kernel (§4)
-  image     = ""                # → the golden-template image once it lands (gate 3)
+  image     = ""                # boundary-only start; set to "krg-golden" (published, gate 3) to boot the slot
 }
 ```
 
@@ -146,8 +147,9 @@ time").
 
 1. **Platform up** — merge #374–#378; provision `krg-nat` (gate 2); apply
    `TOFU_TARGETS="openbao incus"` so the AppRole + project/quota exist.
-2. **Golden template** (gate 3) — publish the hardened image; set `image` in 2b; `tofu
-   apply` `terraform/incus` → the fishsense instance boots from the template.
+2. **Golden template** (gate 3, **DONE**) — the hardened `krg-golden` image is built +
+   published by CD (`deploy/incus-publish-golden.sh`); set `image = "krg-golden"` in 2b;
+   `tofu apply` `terraform/incus` → the fishsense instance boots from the template.
 3. **Secrets** — seed `secret/tenants/fishsense/*`; the in-instance vault-agent (tenant
    AppRole) renders the `fishsense.vm` cert + app secrets.
 4. **Runner** (gate 5) — create the GitHub App; the runner registers; a merged

@@ -270,6 +270,18 @@ jobs:
           DEPLOY_NIXOS_HOSTS: "krg-prod e4e-prod krg-nat waiter kastner-ml"
         run: ./deploy/deploy-nixos.sh
 
+      # ── phase 2.7: publish the Incus golden template (ADR 0017 §7) ─────────────
+      # Build the hardened golden image (nixosConfigurations.krg-golden) and (re)point
+      # krg-nat's `krg-golden` alias at it — BEFORE phase 3, so terraform/incus can
+      # launch a tenant slot from it. Idempotent + cheap: `nix build` is an instant
+      # cache hit when the golden config is unchanged, and the import is skipped when
+      # the published image already came from that store path — so the qcow only
+      # rebuilds when the baseline actually changes. Best-effort: image publish is
+      # orthogonal to the fleet config, and phase 3's incus target is inert until a
+      # tenant references the image, so a publish hiccup must not fail the deploy.
+      - name: Phase 2.7 — publish golden template (Incus)
+        run: ./deploy/incus-publish-golden.sh || echo "::warning::golden-template publish failed (non-fatal); see log"
+
       # ── phase 3: config (OpenTofu) ────────────────────────────────────────────
       # State is local on krg-deploy (ADR 0005) + encrypted with the
       # TOFU_STATE_PASSPHRASE Actions secret. Creds come from OpenBao (krg-deploy
