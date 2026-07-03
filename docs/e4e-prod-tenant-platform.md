@@ -1,10 +1,24 @@
 # e4e-prod tenant platform — architecture & onboarding
 
+> **⚠️ SUPERSEDED (mechanism).** The tenant *mechanism* below (microvm.nix /
+> cloud-hypervisor / `krg.tenants` / `krg.tenantPlatform`) was retired by
+> [ADR 0017](adr/0017-incus-nat-self-serve-platform.md) and
+> [ADR 0020](adr/0020-tenant-deploy-contract-mktenant.md): tenants are now
+> **Incus instances on krg-nat**, fronted by `krg.edge`, provisioned via
+> `lib.mkTenant`. For the current onboarding runbook see
+> [onboarding-fishsense.md](onboarding-fishsense.md). The architecture goals
+> (repo-owns-deploy, edge LE-terminate + re-encrypt over OpenBao PKI, per-tenant
+> AppRole, GitHub-App runner registration) still stand; only the guest mechanism
+> changed.
+
 > Design companion to [ADR 0008](adr/0008-e4e-prod-tenant-platform.md). The ADR
 > records *what* was decided and *why*; this doc is the *how* — topology, the
-> `krg.tenants` interface, the request path, secrets/PKI, and onboarding. Status:
-> **design — not yet built.** The e4e-prod VM is unprovisioned, so everything
-> here is offline declarative work until the host boots.
+> `krg.tenants` interface (retired — now Incus/`lib.mkTenant`, see banner), the
+> request path, secrets/PKI, and onboarding. Status: **e4e-prod is provisioned &
+> deployed as the Incus edge** (`krg.edge.enable`; first install 2026-06-23). The
+> historical microvm.nix/`krg.tenants` design captured below is kept for context —
+> annotated, not deleted — but the live mechanism is Incus + `lib.mkTenant` per
+> the banner.
 
 ## What e4e-prod is
 
@@ -95,6 +109,10 @@ Two cases matter — a sub-service and the **subtree apex** (the web portal live
 
 ## The `krg.tenants.<name>` module (interface sketch)
 
+> (retired — now Incus/`lib.mkTenant`, see banner. The current NixOS surface is
+> `nixosModules.tenant` (singular) + `lib.mkTenant`, not `krg.tenants.<name>` /
+> `krg.tenantPlatform`.)
+
 Namespace is **`krg.tenants`** (generic, org-wide), not `e4e.*` — see
 [ADR 0008 §6](adr/0008-e4e-prod-tenant-platform.md). Not yet written — this is the
 intended surface. Each tenant is one declaration; the module generates the
@@ -130,6 +148,9 @@ compose service.
 
 ### Multiple platforms
 
+> (retired — the `krg.tenantPlatform` per-platform-instance framing below is
+> superseded by the Incus zone / `krg.edge` model, see banner.)
+
 The design is a **per-platform instance**, not e4e-prod-specific. A host becomes
 a platform with `krg.tenantPlatform = { enable = true; id = "<id>"; }` and owns
 that instance's edge Traefik + microVM fleet + cert-manager + bridge (its own IP,
@@ -141,6 +162,11 @@ partitioned by the `platform` field. Reassigning a tenant is a one-field change
 IP/cert). This is why the module is generic `krg.tenants`, not `e4e.*`.
 
 ## Hypervisor & VM substrate
+
+> (retired — the microvm.nix-nested-in-Proxmox / cloud-hypervisor substrate
+> described in this section was replaced by **Incus instances on krg-nat** per
+> [ADR 0017](adr/0017-incus-nat-self-serve-platform.md) / [ADR 0019](adr/0019-proxmox-to-incus-migration.md);
+> see banner. Kept for historical context.)
 
 Tenants are **microvm.nix guests nested inside the e4e-prod Proxmox guest**
 (decided 2026-06-17). e4e-prod stays a **fabricant VM, sized generously** — the
@@ -261,8 +287,11 @@ highest-fiddle part of bring-up — validate across reboots before go-live.
 3. **Authentik (krg-prod):** register the tenant's app(s)/provider(s) + outpost
    in `terraform/authentik/applications_e4e.tf`; ship app-tile icons (CLAUDE.md
    §4).
-4. **Platform:** add `krg.tenants.<name>` (platform, repo, subtree, hostnames,
-   resources, AppRole path); `nix flake check`; deploy the platform host.
+4. **Platform:** add `krg.tenants.<name>` (retired — now a `lib.mkTenant`
+   declaration in the tenant's own repo + `nixosModules.tenant` on the Incus
+   instance, fronted by `krg.edge`; see banner and
+   [onboarding-fishsense.md](onboarding-fishsense.md)) (platform, repo, subtree,
+   hostnames, resources, AppRole path); `nix flake check`; deploy the platform host.
 5. **Runner:** install the org's GitHub App on the tenant repo; the in-VM
    oneshot mints the registration token from the App key (OpenBao) and the
    repo-scoped `github-runner` comes online. The AppRole secret-zero is
@@ -303,7 +332,8 @@ The platform substrate plus the coordinated repo-side changes we own:
 - [ ] **Nested KVM on fabricant** — `kvm_intel nested=1` + e4e-prod CPU type
       `host` (prerequisite for the nested microvm.nix fleet).
 - [ ] microvm.nix as a flake input (cloud-hypervisor backend); per-tenant zvol;
-      host bridge networking + inter-VM firewall.
+      host bridge networking + inter-VM firewall. *(retired — replaced by Incus
+      on krg-nat + `krg.edge`, ADR 0017/0019; see banner.)*
 - [ ] PKI: **reuse** the lab CA — now on main (#259/#289/#290, ADR 0009). Add
       per-tenant AppRoles + an edge client-cert role + vault-agent render targets
       (pattern: #260). No new CA, no longer blocked on an in-flight PR.
@@ -327,4 +357,7 @@ The platform substrate plus the coordinated repo-side changes we own:
       `KastnerRG`), App key → OpenBao, in-VM token-minting oneshot (no PATs).
       **Migrate krg-deploy's runner** off its hand-placed `github-runner-token`
       file to the same App-based, OpenBao-rendered pattern (same effort).
-- [ ] `krg.tenants` module implementation + fishsense instantiation.
+- [x] ~~`krg.tenants` module implementation + fishsense instantiation.~~
+      *(retired — done differently: `nixosModules.tenant` + `lib.mkTenant` on
+      Incus, ADR 0020; fishsense onboarded via
+      [onboarding-fishsense.md](onboarding-fishsense.md). See banner.)*

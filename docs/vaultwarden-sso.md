@@ -47,9 +47,11 @@ Decide the mechanism when Phase 2 lands — do not hand-click it as the fix.
 Two things people mean by "Terraform for Vaultwarden":
 
 1. **The SSO integration (what this deployment uses, included in this PR).** The
-   Authentik OIDC provider/application + the OpenBao `krg-prod/authentik-managed/vaultwarden-oidc`
-   secret, in `terraform/authentik/applications_krg.tf` + `vault_secrets.tf`. This
-   is the only Terraform we add.
+   Authentik OIDC provider/application (`terraform/authentik/applications_krg.tf`) +
+   the OpenBao `krg-prod/authentik-managed/vaultwarden-oidc` secret, which is
+   **minted by `terraform/secrets/vaultwarden.tf`**; `terraform/authentik/vault_secrets.tf`
+   only reads it back (a `removed{}` block + a `data "vault_kv_secret_v2"` source) to
+   set on the provider. This is the only Terraform we add.
 
 2. **Managing Vaultwarden's org/collection/user structure directly.** Two
    community providers exist, but **neither covers groups or group→collection
@@ -85,21 +87,39 @@ mirroring the **garage-ui** pattern (groups scope + RS256 signing key):
   `groups` scope; RS256 `signing_key` — **required**, since Vaultwarden verifies the
   ID token against `jwks_uri`, else Authentik falls back to HS256 + empty JWKS →
   "Invalid ID token").
+- [`terraform/secrets/vaultwarden.tf`](../terraform/secrets/vaultwarden.tf) —
+  **mints** the client secret (`random_password` + `vault_kv_secret_v2.vaultwarden_oidc`)
+  at `krg-prod/authentik-managed/vaultwarden-oidc`. This workspace applies **first**
+  so the secret exists before the fail-closed krg-prod vault-agent renders it.
 - [`terraform/authentik/vault_secrets.tf`](../terraform/authentik/vault_secrets.tf)
-  — `vault_kv_secret_v2.vaultwarden_oidc` at `krg-prod/authentik-managed/vaultwarden-oidc`.
+  — no longer writes it: a `removed{}` block drops the old writer from state
+  (without destroying the live KV entry) and a `data "vault_kv_secret_v2".vaultwarden_oidc`
+  source **reads it back** to set `client_secret` on the Authentik provider.
 
-Apply with the rest of `terraform/authentik/` (`tofu apply`); the client secret
-lands in OpenBao, from which it's pulled into `.secrets/vaultwarden.env` (below).
+Apply `terraform/secrets/` then `terraform/authentik/` (`tofu apply`); the client
+secret lands in OpenBao, from which vault-agent renders it into
+`/run/krg/krg-prod/vaultwarden.env` (below).
 
 > Gate *who* may reach the provider with an Authentik application policy bound to
 > the appropriate AD group(s), so only intended AD users can SSO in.
 
-## Secrets — `/var/lib/krg/krg-prod/.secrets/vaultwarden.env` (not in git)
+## Secrets — `/run/krg/krg-prod/vaultwarden.env` (rendered by vault-agent, tmpfs)
+
+The compose `env_file` is **`/run/krg/krg-prod/vaultwarden.env`** — no hand-placed
+`.secrets/` file. `krg.vaultAgent` (`nix/hosts/krg-prod/default.nix`) renders it
+from OpenBao to `/run` at boot, and the krg-prod stack `requires` the agent (fails
+closed if bao is sealed/unreachable). Two vars land in it, from two OpenBao paths:
 
 ```
-ADMIN_TOKEN=<argon2 hash>     # `vaultwarden hash` (or argon2 a strong password) — gates /admin
-SSO_CLIENT_SECRET=<secret>    # bao kv get -field=client_secret secret/krg-prod/authentik-managed/vaultwarden-oidc
+ADMIN_TOKEN=<argon2 hash>     # gates /admin — operator-SEEDED at secret/krg-prod/vaultwarden (field admin_token)
+SSO_CLIENT_SECRET=<secret>    # from secret/krg-prod/authentik-managed/vaultwarden-oidc (MINTED by terraform/secrets/vaultwarden.tf)
 ```
+
+`ADMIN_TOKEN` is an operator-seeded live value (`vaultwarden hash` / argon2 a strong
+password, written once to `secret/krg-prod/vaultwarden`); `SSO_CLIENT_SECRET` is the
+OIDC client secret **minted by `terraform/secrets/vaultwarden.tf`** (see below).
+Argon2 hashes are full of `$`, which compose's `env_file` interpolation would strip,
+so the render doubles `$`→`$$` (the OpenBao value stays a clean single-`$` hash).
 
 `DOMAIN`, `SSO_ENABLED`, `SSO_AUTHORITY`, `SSO_CLIENT_ID`, `SSO_SCOPES`,
 `SIGNUPS_ALLOWED` are set inline (non-secret) in the compose file. `SSO_AUTHORITY`
@@ -109,12 +129,15 @@ is the **exact** Authentik app issuer (trailing slash, no
 
 ## Bring-up & verification
 
-1. Apply `terraform/authentik/`; `tofu plan` should show
-   only the new provider/application/secret.
-2. `nix flake check ./nix` and deploy krg-prod
-   (`nixos-rebuild switch --flake ./nix#krg-prod --target-host …`).
-3. Populate `.secrets/vaultwarden.env` (pull `SSO_CLIENT_SECRET` from OpenBao;
-   generate `ADMIN_TOKEN`).
+1. Apply `terraform/secrets/` (mints the OIDC client secret into OpenBao), then
+   `terraform/authentik/` (reads it back onto the provider).
+2. Seed `ADMIN_TOKEN` into OpenBao at `secret/krg-prod/vaultwarden`
+   (`bao kv put secret/krg-prod/vaultwarden admin_token=<argon2 hash>`). The
+   `SSO_CLIENT_SECRET` already exists (minted in step 1).
+3. `nix flake check ./nix` and deploy krg-prod
+   (`nixos-rebuild switch --flake ./nix#krg-prod --target-host …`); vault-agent
+   renders `/run/krg/krg-prod/vaultwarden.env` from OpenBao at boot (fails closed
+   if bao is sealed/unreachable).
 4. Confirm the container is healthy: `docker compose ps`, `docker logs vaultwarden`.
 5. Browse `https://vaultwarden.krg.ucsd.edu` → **Enterprise Single Sign-On** →
    redirects to Authentik → AD login → returns authenticated. Verify the user
