@@ -19,35 +19,33 @@ project / route / quota / isolation here; the owning team manages the interior v
 repo-owns-deploy (§8). Adding a tenant is a `var.tenants` entry — a tofu change, not a
 host rebuild.
 
-## Auth
+## Auth — fully declarative (no hand-configured remote)
 
-`krg-deploy` authenticates with a **client certificate trusted by `krg-nat`**, set up
-once at bring-up:
+Same mTLS-over-fleet-PKI model as `terraform/temporal` — **nothing is set up by hand**,
+nothing lives in a user's `~/.config/incus`:
 
-```sh
-# on krg-nat (the server):
-incus config trust add --name krg-deploy        # prints a one-time trust TOKEN
+- `deploy/deploy-tofu.sh` mints a short-lived **client cert** from OpenBao
+  (`pki_int/issue/incus-client`) on every apply and writes `client.crt`/`client.key`
+  into an ephemeral dir, passed to the provider via `config_dir` (`TF_VAR_incus_config_dir`).
+- `krg-nat` **trusts the fleet CA**: the `krg.incus` nix module installs it as Incus's
+  `server.ca` and sets `core.trust_ca_certificates=true`, so any fleet-signed client cert
+  is accepted — **no per-cert `incus config trust add`**.
+- `accept_remote_certificate` trusts krg-nat's server cert on the trusted internal segment.
 
-# on krg-deploy (the client):
-incus remote add krg-nat <token>                 # mints the client cert, stores the remote
-```
-
-The provider then reads that cert from the incus config dir on every run. The API is
-**ucsd+ops-restricted** at the firewall (the nix module's `sourcedPorts`) and
-OIDC-gated for humans; this cert is the machine identity. No secret in tfvars.
+The API is **ucsd+ops-restricted** at the firewall (the nix module's `sourcedPorts`) and
+OIDC-gated for humans; this cert is the machine identity. No secret in tfvars, no drift.
 
 ## Apply
 
-Via the control node, in dependency order (`openbao` first — it mints the AppRoles;
-`incus` after the platform host is up):
+Via the control node (needs `openbao` applied first for the `incus-client` PKI role +
+the krg-deploy grant, and the `krg-nat` host deployed with the CA-trust module):
 
 ```sh
-TOFU_TARGETS="incus" ./deploy/deploy-tofu.sh
+TOFU_TARGETS="openbao incus" ./deploy/deploy-tofu.sh
 ```
 
 State is local + encrypted on krg-deploy (ADR 0005), same as the other targets. The
-`tenants` map is empty by default, so this is **inert until tenants are declared** and
-the `krg-nat` host + trust cert exist.
+`tenants` map is empty by default, so this is **inert until tenants are declared**.
 
 ## Status / bring-up gates
 

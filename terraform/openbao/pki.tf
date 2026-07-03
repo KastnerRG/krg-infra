@@ -114,6 +114,27 @@ resource "vault_pki_secret_backend_role" "temporal_client" {
   max_ttl            = 60 * 60 * 24 * 30 # 30d ceiling
 }
 
+# incus-client — CLIENT cert the terraform/incus provider (run by krg-deploy) uses to
+# authenticate to the krg-nat Incus API. krg-nat trusts the fleet CA for machine
+# clients (nix/modules/incus.nix: server.ca + core.trust_ca_certificates), so a cert
+# minted here is accepted with NO per-cert `incus config trust add` — the same
+# mTLS-over-fleet-PKI pattern as temporal-client, minted by deploy-tofu.sh each apply
+# into an ephemeral config dir (no ~/.config drift). server_flag off so a client
+# identity can't masquerade as the API server.
+resource "vault_pki_secret_backend_role" "incus_client" {
+  backend            = vault_mount.pki_int.path
+  name               = "incus-client"
+  allowed_domains    = var.incus_client_domains
+  allow_bare_domains = true
+  allow_subdomains   = false
+  server_flag        = false
+  client_flag        = true
+  key_type           = "ec"
+  key_bits           = 256
+  ttl                = 60 * 60 * 24 * 7  # 7d issued (short — re-minted per apply)
+  max_ttl            = 60 * 60 * 24 * 30 # 30d ceiling
+}
+
 # ── General lab roles (AD-aware) ──────────────────────────────────────────────
 
 # host — SERVER cert for any lab host/service presenting TLS that isn't Temporal:
@@ -190,6 +211,11 @@ locals {
   pki_krg_deploy_rules = <<-EOT
     # Issue Temporal mTLS CLIENT certs (terraform/temporal provider auth) — see pki.tf
     path "pki_int/issue/temporal-client" {
+      capabilities = ["create", "update"]
+    }
+
+    # Issue Incus API mTLS CLIENT certs (terraform/incus provider auth) — see pki.tf
+    path "pki_int/issue/incus-client" {
       capabilities = ["create", "update"]
     }
   EOT

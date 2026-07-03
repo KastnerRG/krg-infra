@@ -4,6 +4,18 @@ variable "incus_api_address" {
   default     = "https://krg-nat.ucsd.edu:8443"
 }
 
+variable "incus_config_dir" {
+  description = <<-EOT
+    Directory the provider reads its client cert (client.crt/client.key) from.
+    deploy-tofu.sh populates an EPHEMERAL dir per apply with a PKI-minted cert and sets
+    TF_VAR_incus_config_dir to it — so the provider never depends on a user's
+    ~/.config/incus (that reliance was the drift this replaces). Empty falls back to the
+    provider default; that fallback must NOT be relied on in the deploy.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "nat_network_name" {
   description = "Name of the managed internal NAT bridge (the nix preseed leaves this to terraform)."
   type        = string
