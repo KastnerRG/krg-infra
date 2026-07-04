@@ -27,4 +27,20 @@ resource "incus_instance" "tenant" {
     "limits.cpu"    = tostring(each.value.cpu)
     "limits.memory" = each.value.memory
   }
+
+  # Pin the NAT address when the tenant is publicly exposed, so the ingress forward
+  # (forwards.tf) has a STABLE target — a DHCP lease could move on reprovision and
+  # silently break the forward. Overrides the baseline profile's DHCP eth0 (profiles.tf)
+  # only when nat_ip is set; otherwise the instance keeps a DHCP lease.
+  dynamic "device" {
+    for_each = each.value.nat_ip != "" ? [1] : []
+    content {
+      name = "eth0"
+      type = "nic"
+      properties = {
+        network        = incus_network.nat.name
+        "ipv4.address" = each.value.nat_ip
+      }
+    }
+  }
 }

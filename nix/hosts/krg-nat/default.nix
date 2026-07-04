@@ -41,20 +41,16 @@
   # are a bring-up step (docs/joining-a-host-to-the-domain.md), like the other hosts.
   krg.adClient.enable = true;
 
-  # ── EDGE REACHABILITY — BRING-UP NETWORKING DECISION ─────────────────────────────
+  # ── EDGE REACHABILITY — SETTLED (ADR 0017 §5) ────────────────────────────────────
   # Incus SNATs tenant egress out of the managed NAT (incusbr0, RFC1918) — outbound
-  # works out of the box. INGRESS (a zone edge dialing an instance to re-encrypt to
-  # it) needs a path INTO that private subnet, which the edges don't have by default.
-  # Phase-1 options, to settle at standup (ADR 0017 §3 — "instances bridged onto an
-  # internal-only Proxmox bridge the edges also touch"):
-  #   (a) a static route on each edge (krg-prod, e4e-prod) to the instance subnet via
-  #       krg-nat's .124 address, OR
-  #   (b) an Incus `proxy` device per exposed instance (forwards a krg-nat host port
-  #       to the instance), OR
-  #   (c) a shared internal Proxmox bridge all three VMs leg onto (the §3 phase-1
-  #       sketch; egress SNAT done once).
-  # Left undeclared here on purpose — it spans the Proxmox/ansible layer and the edge
-  # configs, not just this host. Pick one with the operator before exposing a tenant.
+  # works out of the box. INGRESS (a zone edge dialing an instance to re-encrypt to it)
+  # is an `incus_network_forward` declared in terraform/incus (forwards.tf): the edge
+  # dials krg-nat's OWN uplink IP:port on its own segment (no route), and Incus DNATs to
+  # the instance's pinned NAT address:443. Decided this way because an L3 route INTO the
+  # NAT is broken by Incus's own return-path masquerade (validated on-box: 100% loss),
+  # and because a forward is Proxmox-INDEPENDENT — nothing on the hypervisor, which the
+  # earlier shared-bridge option was not (the platform is moving off Proxmox). Expose a
+  # tenant by setting its `nat_ip` + `edge_port` in terraform/incus var.tenants.
 
   system.stateVersion = "25.11";
 }
