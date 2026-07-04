@@ -105,6 +105,31 @@ in {
       '';
     };
 
+    tenantIngressPortRange = mkOption {
+      type = types.str;
+      default = "30000-30999";
+      description = ''
+        Reserved TCP port range on this host for tenant INGRESS proxy devices (ADR 0017
+        §5). terraform/incus gives each exposed tenant an `edge_port` in this range and
+        attaches an Incus proxy device (krg-nat's external IP:<edge_port> → the instance's
+        inner service). This range is opened in the firewall to tenantIngressSources; only
+        ports with a live proxy device actually listen. nftables range syntax (e.g.
+        "30000-30999"); empty string disables the rule.
+      '';
+    };
+
+    tenantIngressSources = mkOption {
+      type = types.listOf types.str;
+      # The zone edges (krg-prod, e4e-prod in nix/networks/trusted.json) — the only clients
+      # of the ingress ports: the public path is edge → instance, never client → instance.
+      default = ["137.110.161.106" "137.110.161.107"];
+      description = ''
+        Source IPs/CIDRs allowed to reach the tenant ingress port range in-guest. Defaults
+        to the two zone edges that re-encrypt public traffic to instances; nothing else
+        should dial these ports directly.
+      '';
+    };
+
     oidc = {
       issuer = mkOption {
         type = types.str;
@@ -204,16 +229,19 @@ in {
     # on krg-nat: with the bridge trusted, a test instance gets a 10.x lease + egress.
     networking.firewall.trustedInterfaces = cfg.trustedBridges;
 
-    # INGRESS FORWARDS need strict reverse-path filtering OFF. base.nix's firewall keeps
-    # rpfilter on (a host default), but this host is also a ROUTER: an
-    # `incus_network_forward` (terraform/incus forwards.tf) DNATs edge → instance, and
-    # NixOS's strict rpfilter drops the forwarded/reply path. Validated on-box: with the
-    # forward in place, the listen port worked from krg-nat itself (HTTP 200) but was
-    # FILTERED from an external edge (e4e-prod), with no conntrack entry — the textbook
-    # checkReversePath symptom (a published/forwarded port reachable from the host but not
-    # from other machines). Disabling it is the standard router/NAT posture; the INPUT
-    # default-drop + CrowdSec still guard the host, so the anti-spoofing loss is bounded.
-    networking.firewall.checkReversePath = mkForce false;
+    # TENANT INGRESS (ADR 0017 §5): a zone edge reaches a tenant instance through an Incus
+    # PROXY DEVICE — a real listening socket on this host (bind=host) that forwards to the
+    # instance, declared per exposed tenant in terraform/incus. (An incus_network_forward,
+    # tried first, does NOT work here: its prerouting DNAT only fires for host-LOCAL traffic,
+    # so external edges saw the port filtered with no conntrack — validated on-box. A proxy
+    # device is INPUT-governed like any socket, so it just needs the port opened.) Open the
+    # reserved ingress range to the edges only. Bound to krg-nat's external IP in terraform
+    # (not 0.0.0.0), so instances can't reach each other's ingress ports across the trusted
+    # bridge; this firewall rule is the source gate. Only ports with a live proxy device
+    # actually listen — the rest of the range simply has nothing behind it.
+    networking.firewall.extraInputRules = mkIf (cfg.tenantIngressPortRange != "") ''
+      ip saddr { ${concatStringsSep ", " cfg.tenantIngressSources} } tcp dport ${cfg.tenantIngressPortRange} accept
+    '';
 
     # The Incus unix socket is gated to the `incus-admin` group. Put the break-glass
     # admin (the platform host's operator) in it so `incus …` works without sudo. Human
