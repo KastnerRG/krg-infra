@@ -19,6 +19,7 @@ locals {
     guacamole              = ["Domain Admins", "Waiter", "KastnerML"]
     fleet                  = ["Domain Admins"]  # device control plane — admins only (resolves the hardening follow-up in applications_e4e.tf)
     proxmox                = ["proxmox-admins"] # space-free name on purpose (see groups.tf / spec)
+    incus                  = ["Domain Admins"]  # tenant-platform control plane — admins only. First cut reuses the existing Domain Admins (also the Incus-side authZ group); a dedicated space-free "incus-admins" (mirroring proxmox-admins) is the least-privilege follow-up once created in spec/krg-ad + synced.
     fishsense_analytics    = ["FishSense"]
     fishsense_oauth        = ["FishSense"]
     fishsense_orchestrator = ["FishSense"]
@@ -30,6 +31,7 @@ locals {
     guacamole              = authentik_application.guacamole.uuid
     fleet                  = authentik_application.fleet.uuid
     proxmox                = authentik_application.proxmox.uuid
+    incus                  = authentik_application.incus.uuid
     fishsense_analytics    = authentik_application.fishsense_analytics.uuid
     fishsense_oauth        = authentik_application.fishsense_oauth.uuid
     fishsense_orchestrator = authentik_application.fishsense_orchestrator.uuid

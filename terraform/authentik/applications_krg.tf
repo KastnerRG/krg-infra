@@ -320,3 +320,41 @@ resource "authentik_application" "proxmox" {
   group            = "Infrastructure"
   open_in_new_tab  = true
 }
+
+# ── Incus — the tenant-platform control plane (ADR 0017 §5 / ADR 0013) ────────────
+# Human admin auth for the krg-nat Incus API/UI. ADR 0017 (Consequences) decided Incus
+# authenticates via OIDC→Authentik DIRECTLY — NOT the Authentik LDAP outpost, which is
+# Proxmox-specific (ADR 0014: PVE's Android app can't do the OIDC redirect + PVE can't
+# expand nested groups; neither blocker applies to Incus, whose CLI/UI do the OAuth2
+# device/redirect flow). client_secret is minted by terraform/secrets (incus.tf) and read
+# back here, because the krg-nat incus daemon renders it via a fail-closed vault-agent (a
+# P2 consumer) — same pattern as temporal. The `groups` scope is included so Incus can map
+# an AD group → admin (oidc.groups.claim, wired in the krg-nat consumption PR). The
+# redirect URI is the Incus web-UI callback (the CLI uses the device-code flow); verify
+# the exact path against the live Incus UI on first login.
+resource "authentik_provider_oauth2" "incus" {
+  name                   = "Provider for Incus"
+  client_id              = "incus"
+  client_secret          = data.vault_kv_secret_v2.incus_oidc.data["client_secret"]
+  authorization_flow     = data.authentik_flow.default_authorization.id
+  invalidation_flow      = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://krg-nat.ucsd.edu:8443/oidc/callback" }]
+  property_mappings      = concat(local.std_scopes, [authentik_property_mapping_provider_scope.groups.id])
+  signing_key            = data.authentik_certificate_key_pair.default.id
+  sub_mode               = "user_email"
+  access_token_validity  = "minutes=60"
+  refresh_token_validity = "days=30"
+}
+
+resource "authentik_application" "incus" {
+  name              = "Incus"
+  slug              = "incus" # LOAD-BEARING: issuer = ${var.authentik_url}/application/o/incus/
+  protocol_provider = authentik_provider_oauth2.incus.id
+  meta_launch_url   = "https://krg-nat.ucsd.edu:8443"
+  meta_description  = "Incus platform control plane (tenant VMs)"
+  # meta_icon intentionally unset — no clean Incus logo shipped yet; tracked in the
+  # media-icons README "Not yet iconed" list (CLAUDE.md app-icon rule) rather than
+  # pointing at a missing krg-icons/incus.svg (which would render a broken tile).
+  group           = "Infrastructure"
+  open_in_new_tab = true
+}
