@@ -115,17 +115,20 @@ fi
 old_fp="$(incus image alias list "${REMOTE}:" --format csv 2>/dev/null | awk -F, -v a="$ALIAS" '$1==a{print $2}')"
 
 echo "==> importing new golden image to ${REMOTE}"
-imp="$(incus image import "$meta" "$qcow" "${REMOTE}:" --property krg.source="$SRC")"
-new_fp="$(sed -n 's/.*fingerprint:[[:space:]]*//p' <<<"$imp" | head -n1)"
-[[ -n "$new_fp" ]] || { echo "ERROR: could not parse the imported image fingerprint from: $imp" >&2; exit 1; }
+# Properties are trailing key=value POSITIONALS (NOT a --property flag): the import
+# signature is `image import <metadata> [<rootfs>] [<remote>:] [<key>=<value>...]`.
+# --alias + --reuse set the alias to the new image atomically (--reuse replaces an
+# existing krg-golden alias), so there's no fragile parse of the import stdout for the
+# fingerprint. `krg.source` stamps the content-addressed source path for the idempotency
+# check above.
+incus image import "$meta" "$qcow" "${REMOTE}:" krg.source="$SRC" --alias "$ALIAS" --reuse
+echo "==> ${ALIAS} published (source ${SRC})"
 
-# (Re)point the alias atomically-ish: drop any existing one, create it on the new fp.
-incus image alias delete "${REMOTE}:${ALIAS}" 2>/dev/null || true
-incus image alias create "${REMOTE}:${ALIAS}" "$new_fp"
-echo "==> ${ALIAS} -> ${new_fp}"
-
-# GC the previous image so the store doesn't accumulate old templates.
-if [[ -n "$old_fp" && "$old_fp" != "$new_fp" ]]; then
+# GC the previous image so the store doesn't accumulate old templates. SRC is a
+# CONTENT-ADDRESSED store path, so reaching this point (cur_src != SRC) guarantees the
+# content — and thus the fingerprint — changed; the old image is now un-aliased and
+# distinct from the new one, so deleting it is always safe.
+if [[ -n "$old_fp" ]]; then
   incus image delete "${REMOTE}:${old_fp}" 2>/dev/null \
     && echo "    removed previous image ${old_fp}" \
     || echo "    note: could not remove previous image ${old_fp} (in use?) — left in place"
