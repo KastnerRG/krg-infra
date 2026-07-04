@@ -59,5 +59,10 @@ State is local + encrypted on krg-deploy (ADR 0005), same as the other targets. 
   (CD phase 2.7). Point a tenant at it with `tenants.<name>.image = "krg-golden"`; the
   instance then converges to its full config via the tenant's own flake (repo-owns-deploy).
   Remaining §7 item: central-logging shipper, deferred until the Loki push endpoint lands.
-- **Edge ingress route** — egress NAT is automatic; an edge reaching an instance needs
-  the ingress path settled at bring-up (see the `krg-nat` host config).
+- **Edge ingress route** — SETTLED (`forwards.tf`). Egress NAT is automatic; INGRESS is
+  an `incus_network_forward`: the zone edge dials `incus_host_ip:<edge_port>` (krg-nat's
+  own IP) and Incus DNATs to the tenant's pinned `nat_ip:443`. Chosen over an L3 route
+  (Incus masquerades the return path — validated on-box) and over a shared bridge
+  (Proxmox-dependent; the platform is moving off Proxmox). Expose a tenant with
+  `nat_ip` + `edge_port`; the `tenant_edge_backends` output gives the edge `backend`.
+  Verify the forward end-to-end on first apply (curl the edge → instance path).
