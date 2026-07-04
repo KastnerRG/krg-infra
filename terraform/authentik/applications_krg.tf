@@ -336,11 +336,17 @@ resource "authentik_application" "proxmox" {
 # `groups` scope is included so a future scriptlet/OpenFGA authz can key on AD groups;
 # WHO may authenticate is gated by the app-access binding (Domain Admins) below.
 resource "authentik_provider_oauth2" "incus" {
-  name                   = "Provider for Incus"
-  client_id              = "incus"
-  client_type            = "public"
-  authorization_flow     = data.authentik_flow.default_authorization.id
-  invalidation_flow      = data.authentik_flow.default_invalidation.id
+  name               = "Provider for Incus"
+  client_id          = "incus"
+  client_type        = "public"
+  authorization_flow = data.authentik_flow.default_authorization.id
+  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  # grant_types is REQUIRED and defaults EMPTY on create in goauthentik 2026.x — an empty
+  # list makes Authentik reject every authorization request with "Invalid grant_type for
+  # provider" → "The request is otherwise malformed" (diagnosed in the Authentik log for a
+  # real login). Incus does authorization_code (response_type=code, +PKCE) and refresh_token
+  # (it requests scope=offline_access). Any NEW OIDC provider here needs this set explicitly.
+  grant_types            = ["authorization_code", "refresh_token"]
   allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://krg-nat.ucsd.edu:8443/oidc/callback" }]
   property_mappings      = concat(local.std_scopes, [authentik_property_mapping_provider_scope.groups.id])
   signing_key            = data.authentik_certificate_key_pair.default.id
@@ -355,9 +361,7 @@ resource "authentik_application" "incus" {
   protocol_provider = authentik_provider_oauth2.incus.id
   meta_launch_url   = "https://krg-nat.ucsd.edu:8443"
   meta_description  = "Incus platform control plane (tenant VMs)"
-  # meta_icon intentionally unset — no clean Incus logo shipped yet; tracked in the
-  # media-icons README "Not yet iconed" list (CLAUDE.md app-icon rule) rather than
-  # pointing at a missing krg-icons/incus.svg (which would render a broken tile).
-  group           = "Infrastructure"
-  open_in_new_tab = true
+  meta_icon         = "krg-icons/incus.svg" # official Incus mark (dashboard-icons)
+  group             = "Infrastructure"
+  open_in_new_tab   = true
 }

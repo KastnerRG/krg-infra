@@ -48,6 +48,7 @@ owner — used here only to label first-party links to those services).
 | `temporal.svg`        | Temporal             | (Temporal brand assets)¹ |
 | `proxmox.svg`         | Proxmox              | `proxmox`                |
 | `fleet.svg`           | Fleet (MDM)          | `fleetdm`                |
+| `incus.svg`           | Incus                | `incus`                  |
 
 ¹ `temporal.svg` is Temporal's official "Symbol (dark)" mark from the Temporal
 brand assets, not dashboard-icons. Note it's a near-black (`#141414`) glyph — fine
@@ -61,6 +62,4 @@ scales down inside the square tile. Shared by the FishSense site and the
 FishSense Orchestrator (no orchestrator-specific logo exists).
 
 Not yet iconed (no clean off-the-shelf logo in dashboard-icons — follow-up):
-KRG Roster; Incus (the tenant-platform control-plane tile — add `incus.svg` from the
-Incus/LinuxContainers brand assets or `dashboard-icons/incus` if/when available, then
-set `meta_icon = "krg-icons/incus.svg"` on `authentik_application.incus`).
+KRG Roster.
