@@ -198,6 +198,17 @@ in {
     # on krg-nat: with the bridge trusted, a test instance gets a 10.x lease + egress.
     networking.firewall.trustedInterfaces = cfg.trustedBridges;
 
+    # INGRESS FORWARDS need strict reverse-path filtering OFF. base.nix's firewall keeps
+    # rpfilter on (a host default), but this host is also a ROUTER: an
+    # `incus_network_forward` (terraform/incus forwards.tf) DNATs edge → instance, and
+    # NixOS's strict rpfilter drops the forwarded/reply path. Validated on-box: with the
+    # forward in place, the listen port worked from krg-nat itself (HTTP 200) but was
+    # FILTERED from an external edge (e4e-prod), with no conntrack entry — the textbook
+    # checkReversePath symptom (a published/forwarded port reachable from the host but not
+    # from other machines). Disabling it is the standard router/NAT posture; the INPUT
+    # default-drop + CrowdSec still guard the host, so the anti-spoofing loss is bounded.
+    networking.firewall.checkReversePath = mkForce false;
+
     # The Incus unix socket is gated to the `incus-admin` group. Put the break-glass
     # admin (the platform host's operator) in it so `incus …` works without sudo. Human
     # admins reach the API via OIDC/mTLS; this is local-socket management on the box.
