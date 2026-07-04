@@ -61,4 +61,6 @@ scales down inside the square tile. Shared by the FishSense site and the
 FishSense Orchestrator (no orchestrator-specific logo exists).
 
 Not yet iconed (no clean off-the-shelf logo in dashboard-icons — follow-up):
-KRG Roster.
+KRG Roster; Incus (the tenant-platform control-plane tile — add `incus.svg` from the
+Incus/LinuxContainers brand assets or `dashboard-icons/incus` if/when available, then
+set `meta_icon = "krg-icons/incus.svg"` on `authentik_application.incus`).
