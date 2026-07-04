@@ -119,18 +119,11 @@ in {
       clientId = mkOption {
         type = types.str;
         default = "";
-        description = "Authentik OIDC client ID (oidc.client.id). Inert unless issuer is set.";
-      };
-      clientSecretFile = mkOption {
-        type = types.str;
-        default = "";
         description = ''
-          Path to a file holding the OIDC client secret (oidc.client.secret) — rendered
-          at runtime by krg.vaultAgent from secret/krg-prod/authentik-managed/incus-oidc
-          (minted by terraform/secrets, set on the Authentik provider by
-          terraform/authentik). NOT baked into the Nix store. Read by the incus-oidc-config
-          oneshot below and applied with `incus config set`. Empty = confidential-client
-          secret not applied (fine for a public/device-flow client).
+          Authentik OIDC client ID (oidc.client.id). Inert unless issuer is set. Incus is
+          a PUBLIC OIDC client (authorization-code flow) — there is NO client secret to
+          configure (Incus 7.2 has no oidc.client.secret key; verified on-box), so issuer
+          + clientId are the whole config.
         '';
       };
     };
@@ -253,25 +246,24 @@ in {
     # picks up client-CA trust. Triggering on caFile restarts incus exactly when needed.
     systemd.services.incus.restartTriggers = [caFile];
 
-    # Human OIDC auth (ADR 0017 / 0013): apply oidc.issuer/client.id/client.secret to the
-    # RUNNING daemon. NOT via preseed — preseed only runs on first daemon start (krg-nat is
-    # already provisioned) and the client secret is a runtime render, never a store path.
-    # `incus config set` over the local unix socket (root → admin) is idempotent and applies
-    # live. Ordered after the daemon is up AND after the vault-agent render so the secret
-    # file exists; re-applied on rotation via the render's reloadCommand (krg-nat host).
-    # Inert unless oidc.issuer is set. NOTE: this configures AUTHENTICATION only — it does
-    # NOT set an authorizer (Incus 7.2 has no group→admin mapping: `incus auth` doesn't
-    # exist, and the scriptlet authorizer can't see OIDC groups). WHO may authenticate is
-    # gated at Authentik (the incus app → Domain Admins); WHAT an authenticated OIDC user
-    # can do is Incus's default, to be settled by an on-daemon spike before any fine-grained
-    # (scriptlet/OpenFGA) authz lands — see the OIDC PR notes.
+    # Human OIDC auth (ADR 0017 / 0013): apply oidc.issuer + oidc.client.id to the RUNNING
+    # daemon. NOT via preseed — preseed only runs on first daemon start (krg-nat is already
+    # provisioned). `incus config set` (key=value form) over the local unix socket
+    # (root → admin) is idempotent and applies live. Inert unless oidc.issuer is set.
+    #
+    # PUBLIC CLIENT — NO client secret. Incus 7.2 has no oidc.client.secret key (verified
+    # on-box: setting it → "unknown key"); Incus's OIDC is a public authorization-code
+    # client, so issuer + clientId are the whole config. This is AUTHENTICATION only — it
+    # sets NO authorizer (Incus 7.2 has no group→admin mapping: `incus auth` doesn't exist,
+    # and the scriptlet authorizer can't see OIDC groups). WHO may authenticate is gated at
+    # Authentik (the incus app → Domain Admins); WHAT an authenticated user can do is Incus's
+    # default, to be settled by an on-daemon spike before any fine-grained authz lands.
     systemd.services.incus-oidc-config = mkIf (cfg.oidc.issuer != "") {
       description = "Apply Incus OIDC config to the running daemon";
-      after = ["incus.service" "openbao-agent.service"];
+      after = ["incus.service"];
       requires = ["incus.service"];
       wantedBy = ["multi-user.target"];
-      # Re-run when the non-secret config changes; secret rotation comes via the render reload.
-      restartTriggers = [cfg.oidc.issuer cfg.oidc.clientId cfg.oidc.clientSecretFile];
+      restartTriggers = [cfg.oidc.issuer cfg.oidc.clientId];
       # incus CLI resolves a config dir under $HOME at startup; give it an ephemeral one.
       environment.HOME = "/run/incus-oidc-config";
       path = [config.virtualisation.incus.package pkgs.coreutils];
@@ -282,15 +274,8 @@ in {
       };
       script = ''
         set -euo pipefail
-        incus config set oidc.issuer ${escapeShellArg cfg.oidc.issuer}
-        incus config set oidc.client.id ${escapeShellArg cfg.oidc.clientId}
-        ${optionalString (cfg.oidc.clientSecretFile != "") ''
-          if [ -s ${escapeShellArg cfg.oidc.clientSecretFile} ]; then
-            incus config set oidc.client.secret "$(cat ${escapeShellArg cfg.oidc.clientSecretFile})"
-          else
-            echo "incus-oidc-config: ${cfg.oidc.clientSecretFile} missing/empty — skipping oidc.client.secret" >&2
-          fi
-        ''}
+        incus config set oidc.issuer=${escapeShellArg cfg.oidc.issuer}
+        incus config set oidc.client.id=${escapeShellArg cfg.oidc.clientId}
       '';
     };
   };

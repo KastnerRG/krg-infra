@@ -1,12 +1,7 @@
-{
-  inputs,
-  pkgs,
-  ...
-}: {
+{inputs, ...}: {
   imports = [
     # Hypervisor role (server tier + the guest-hosting substrate). Host-specifics below.
     ../../profiles/hypervisor.nix
-    ../../modules/services/vault-agent.nix # renders the Incus OIDC client secret (below)
     inputs.disko.nixosModules.disko # declarative disk layout (ZFS-on-root)
     ./disko-config.nix
     ./hardware-configuration.nix
@@ -47,32 +42,14 @@
   krg.adClient.enable = true;
 
   # ── Human OIDC auth for the Incus API/UI (ADR 0017 / 0013) ───────────────────────
-  # vault-agent renders the OIDC client secret (minted by terraform/secrets, path
-  # secret/krg-prod/authentik-managed/incus-oidc) to a tmpfs file; the incus-oidc-config
-  # oneshot (modules/incus.nix) applies issuer/client.id/client.secret to the running
-  # daemon. AppRole = "krg-nat" (terraform/openbao). The secret is fail-closed
-  # (errorOnMissingKey default true), so terraform/secrets MUST have minted incus-oidc
-  # before this host deploys — the deploy phase order (secrets in 1.5, systems in 2)
-  # guarantees that; if landing PRs out of order, apply the openbao/secrets side first.
-  krg.vaultAgent = {
-    enable = true; # roleName defaults to the hostname ("krg-nat")
-    renders = [
-      {
-        destination = "/run/krg/incus/oidc-client-secret";
-        perms = "0600";
-        contents = ''
-          {{- with secret "secret/data/krg-prod/authentik-managed/incus-oidc" }}{{ .Data.data.client_secret }}{{- end }}
-        '';
-        # Re-apply the secret to the daemon when it rotates (agent fires this on change).
-        reloadCommand = "${pkgs.systemd}/bin/systemctl restart incus-oidc-config.service || true";
-      }
-    ];
-  };
-
+  # Incus is a PUBLIC OIDC client (authorization-code flow) — NO client secret (Incus 7.2
+  # has no oidc.client.secret key; verified on-box). So there's nothing to render: just
+  # issuer + clientId, applied to the running daemon by the incus-oidc-config oneshot
+  # (modules/incus.nix). WHO may authenticate is gated at Authentik (the incus app →
+  # Domain Admins); the Authentik provider is client_type = "public" to match.
   krg.incus.oidc = {
     issuer = "https://auth.krg.ucsd.edu/application/o/incus/"; # authentik app slug "incus"
     clientId = "incus";
-    clientSecretFile = "/run/krg/incus/oidc-client-secret";
   };
 
   # ── EDGE REACHABILITY — SETTLED (ADR 0017 §5) ────────────────────────────────────

@@ -325,17 +325,20 @@ resource "authentik_application" "proxmox" {
 # Human admin auth for the krg-nat Incus API/UI. ADR 0017 (Consequences) decided Incus
 # authenticates via OIDC→Authentik DIRECTLY — NOT the Authentik LDAP outpost, which is
 # Proxmox-specific (ADR 0014: PVE's Android app can't do the OIDC redirect + PVE can't
-# expand nested groups; neither blocker applies to Incus, whose CLI/UI do the OAuth2
-# device/redirect flow). client_secret is minted by terraform/secrets (incus.tf) and read
-# back here, because the krg-nat incus daemon renders it via a fail-closed vault-agent (a
-# P2 consumer) — same pattern as temporal. The `groups` scope is included so Incus can map
-# an AD group → admin (oidc.groups.claim, wired in the krg-nat consumption PR). The
-# redirect URI is the Incus web-UI callback (the CLI uses the device-code flow); verify
-# the exact path against the live Incus UI on first login.
+# expand nested groups; neither blocker applies to Incus).
+#
+# PUBLIC CLIENT — NO client_secret. Incus's OIDC is the authorization-code flow of a
+# PUBLIC client (verified on-box: `incus config set oidc.client.secret` → "unknown key";
+# Incus has no such config, and the Authelia/upstream integration guides configure it as
+# public with token_endpoint_auth_method=none). So `client_type = "public"` and there is
+# NO minted secret / vault-agent render (that confidential-client machinery was removed).
+# The RS256 signing_key stays (the client verifies the ID token via jwks_uri). The
+# `groups` scope is included so a future scriptlet/OpenFGA authz can key on AD groups;
+# WHO may authenticate is gated by the app-access binding (Domain Admins) below.
 resource "authentik_provider_oauth2" "incus" {
   name                   = "Provider for Incus"
   client_id              = "incus"
-  client_secret          = data.vault_kv_secret_v2.incus_oidc.data["client_secret"]
+  client_type            = "public"
   authorization_flow     = data.authentik_flow.default_authorization.id
   invalidation_flow      = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://krg-nat.ucsd.edu:8443/oidc/callback" }]

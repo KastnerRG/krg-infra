@@ -110,14 +110,9 @@ data "vault_kv_secret_v2" "temporal_oidc" {
   name  = "krg-prod/authentik-managed/temporal-oidc"
 }
 
-# Read the Incus OIDC client_secret minted by terraform/secrets (incus.tf), to set on
-# authentik_provider_oauth2.incus. Minted there (not here) because the krg-nat incus
-# daemon renders it via a fail-closed vault-agent (a P2 consumer). Greenfield — no
-# `removed{}` block (unlike temporal, there is no old tofu-side writer to drop).
-data "vault_kv_secret_v2" "incus_oidc" {
-  mount = "secret"
-  name  = "krg-prod/authentik-managed/incus-oidc"
-}
+# (Incus has NO OIDC client secret — it's a PUBLIC client, authorization-code flow. The
+# incus-oidc secret + its data source were removed when that was found on-box; see
+# authentik_provider_oauth2.incus in applications_krg.tf.)
 
 # garage-ui — the ONLY garage secret tofu generates (Authentik mints it; brand
 # new, so writing it is pure creation, not a rotation of a live value). Path is
