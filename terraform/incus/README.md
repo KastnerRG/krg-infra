@@ -59,10 +59,11 @@ State is local + encrypted on krg-deploy (ADR 0005), same as the other targets. 
   (CD phase 2.7). Point a tenant at it with `tenants.<name>.image = "krg-golden"`; the
   instance then converges to its full config via the tenant's own flake (repo-owns-deploy).
   Remaining §7 item: central-logging shipper, deferred until the Loki push endpoint lands.
-- **Edge ingress route** — SETTLED (`forwards.tf`). Egress NAT is automatic; INGRESS is
-  an `incus_network_forward`: the zone edge dials `incus_host_ip:<edge_port>` (krg-nat's
-  own IP) and Incus DNATs to the tenant's pinned `nat_ip:443`. Chosen over an L3 route
-  (Incus masquerades the return path — validated on-box) and over a shared bridge
-  (Proxmox-dependent; the platform is moving off Proxmox). Expose a tenant with
-  `nat_ip` + `edge_port`; the `tenant_edge_backends` output gives the edge `backend`.
-  Verify the forward end-to-end on first apply (curl the edge → instance path).
+- **Edge ingress route** — SETTLED (a proxy device on `incus_instance`). Egress NAT is
+  automatic; INGRESS is an Incus **proxy device** listening on `incus_host_ip:<edge_port>`
+  (bind=host) that forwards to the instance's inner service (`127.0.0.1:443`). The zone
+  edge dials `incus_host_ip:<edge_port>` (the `tenant_edge_backends` output) and
+  re-encrypts. Chosen over an L3 route (Incus masquerades the return path — validated
+  on-box), an `incus_network_forward` (its DNAT only fires host-locally — external edges
+  saw the port filtered, validated on-box), and a shared bridge (Proxmox-dependent).
+  Expose a tenant with `edge_port` (in `krg.incus`'s reserved 30000-30999 range).

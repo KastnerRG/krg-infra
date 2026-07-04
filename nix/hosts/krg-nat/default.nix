@@ -53,15 +53,16 @@
   };
 
   # ── EDGE REACHABILITY — SETTLED (ADR 0017 §5) ────────────────────────────────────
-  # Incus SNATs tenant egress out of the managed NAT (incusbr0, RFC1918) — outbound
-  # works out of the box. INGRESS (a zone edge dialing an instance to re-encrypt to it)
-  # is an `incus_network_forward` declared in terraform/incus (forwards.tf): the edge
-  # dials krg-nat's OWN uplink IP:port on its own segment (no route), and Incus DNATs to
-  # the instance's pinned NAT address:443. Decided this way because an L3 route INTO the
-  # NAT is broken by Incus's own return-path masquerade (validated on-box: 100% loss),
-  # and because a forward is Proxmox-INDEPENDENT — nothing on the hypervisor, which the
-  # earlier shared-bridge option was not (the platform is moving off Proxmox). Expose a
-  # tenant by setting its `nat_ip` + `edge_port` in terraform/incus var.tenants.
+  # Incus SNATs tenant egress out of the managed NAT (incusbr0, RFC1918) — outbound works
+  # out of the box. INGRESS (a zone edge dialing an instance to re-encrypt to it) is an
+  # Incus PROXY DEVICE per exposed tenant (terraform/incus): a real listening socket on
+  # krg-nat's uplink IP:<edge_port> that forwards to the instance's inner service — the
+  # edge dials that IP:port on its own segment (no route). krg.incus opens the reserved
+  # ingress port range (default 30000-30999) to the zone edges (tenantIngressSources).
+  # Chosen over: an L3 route INTO the NAT (broken by Incus's return-path masquerade,
+  # validated on-box), an incus_network_forward (its DNAT only fires host-locally — external
+  # edges saw the port filtered, validated on-box), and a shared Proxmox bridge (the platform
+  # is moving off Proxmox). Expose a tenant with `edge_port` in terraform/incus var.tenants.
 
   system.stateVersion = "25.11";
 }

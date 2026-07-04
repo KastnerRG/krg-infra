@@ -39,9 +39,9 @@ variable "nat_ipv4_subnet" {
   description = <<-EOT
     Gateway address + CIDR of the internal tenant NAT. Incus runs DHCP + DNS on it
     and SNATs egress (ipv4.nat) — "egress NAT is the Incus managed network" (ADR 0017
-    §5). RFC1918; instances get addresses here. Zone edges reach instances via an
-    incus_network_forward on krg-nat (forwards.tf), NOT an L3 route into this subnet
-    (Incus masquerades the return path — see forwards.tf).
+    §5). RFC1918; instances get addresses here. Zone edges reach instances via a proxy
+    device on krg-nat (instances.tf), NOT an L3 route into this subnet (Incus masquerades
+    the return path — validated on-box).
   EOT
   type        = string
   default     = "10.100.0.1/24"
@@ -55,14 +55,14 @@ variable "storage_pool" {
 
 variable "incus_host_ip" {
   description = <<-EOT
-    krg-nat's own uplink IP — the listen address for tenant INGRESS network forwards
+    krg-nat's own uplink IP — the listen address for tenant INGRESS proxy devices
     (edge → instance). The zone edge (e4e-prod / krg-prod) dials `incus_host_ip:<edge_port>`
-    on its OWN segment (no route needed), and Incus DNATs it to the tenant instance on
-    the internal NAT. This is the settled ingress mechanism (ADR 0017 §5): an
-    `incus_network_forward`, NOT an L3 route into the NAT — routing INTO the managed NAT
-    is masqueraded on the return path by Incus's own SNAT (validated on-box), and it
-    keeps ingress Proxmox-independent (nothing on the hypervisor). Defaults to krg-nat's
-    address in nix/networks/trusted.json.
+    on its OWN segment (no route needed); a proxy device on the instance (bind=host) listens
+    there and forwards to the instance's inner service. This is the settled ingress
+    mechanism (ADR 0017 §5): a proxy device (a real INPUT-governed socket, opened in
+    krg.incus.tenantIngressPortRange), NOT an L3 route into the NAT (masqueraded return
+    path) nor an incus_network_forward (its DNAT only fires host-locally) — both validated
+    on-box. Proxmox-independent. Defaults to krg-nat's address in nix/networks/trusted.json.
   EOT
   type        = string
   default     = "137.110.161.105"
@@ -86,16 +86,15 @@ variable "tenants" {
       image     — the golden-template image to launch the slot from. Empty (the default)
                   = BOUNDARY ONLY (project + quota, no instance) until the hardened
                   template image lands (ADR 0017 §7). Set it to materialize the slot.
-      nat_ip    — a PINNED address on the internal NAT (e.g. "10.100.0.10") for this
-                  instance, so the ingress forward has a stable target (a DHCP lease
-                  could move on reprovision). Empty = DHCP (fine for a tenant with no
-                  public ingress). REQUIRED to expose the tenant (edge_port needs it).
-      edge_port — the port on `incus_host_ip` (krg-nat) the zone edge dials to reach
-                  this instance. 0 (default) = NOT publicly exposed (boundary only). When
-                  >0, an incus_network_forward maps incus_host_ip:edge_port → nat_ip:443
-                  (the instance's inner Traefik), and the edge route's `backend` is
-                  "<incus_host_ip>:<edge_port>" (ADR 0017 §5). Allocate a distinct port
-                  per exposed tenant (they share krg-nat's one IP).
+      edge_port — the port on `incus_host_ip` (krg-nat) the zone edge dials to reach this
+                  instance. 0 (default) = NOT publicly exposed (boundary only). When >0, an
+                  Incus PROXY DEVICE listens on incus_host_ip:<edge_port> and forwards to
+                  the instance's inner service (127.0.0.1:443, its inner Traefik), and the
+                  edge route's `backend` is "<incus_host_ip>:<edge_port>" (ADR 0017 §5).
+                  Allocate a distinct port per exposed tenant within the reserved range
+                  krg.incus opens (default 30000-30999); they share krg-nat's one IP.
+                  (A proxy device — not incus_network_forward — because the forward's DNAT
+                  only fires for host-local traffic; validated on-box.)
   EOT
   type = map(object({
     zone      = string
@@ -104,7 +103,6 @@ variable "tenants" {
     disk      = optional(string, "20GiB")
     isolation = optional(string, "virtual-machine")
     image     = optional(string, "")
-    nat_ip    = optional(string, "")
     edge_port = optional(number, 0)
   }))
   default = {}
@@ -119,11 +117,17 @@ variable "tenants" {
     error_message = "Each tenant.isolation must be \"virtual-machine\" or \"container\" (ADR 0017 §4: untrusted = VM)."
   }
 
-  # A publicly-exposed tenant (edge_port > 0) needs both an instance to forward to
-  # (image set) and a stable target address (nat_ip pinned) — a forward to a DHCP-mobile
-  # or non-existent instance is a silent black hole.
+  # A publicly-exposed tenant (edge_port > 0) needs an instance for the proxy device to
+  # attach to — so image must be set (no instance = nowhere to proxy).
   validation {
-    condition     = alltrue([for t in var.tenants : t.edge_port == 0 || (t.image != "" && t.nat_ip != "")])
-    error_message = "A tenant with edge_port > 0 must also set image (an instance to reach) and nat_ip (a pinned forward target)."
+    condition     = alltrue([for t in var.tenants : t.edge_port == 0 || t.image != ""])
+    error_message = "A tenant with edge_port > 0 must also set image (the proxy device needs an instance to attach to)."
+  }
+
+  # edge_ports must fall inside the range krg.incus opens in the firewall (default
+  # 30000-30999) and be unique across tenants (they share krg-nat's one IP).
+  validation {
+    condition     = alltrue([for t in var.tenants : t.edge_port == 0 || (t.edge_port >= 30000 && t.edge_port <= 30999)])
+    error_message = "Each tenant.edge_port must be within the reserved ingress range 30000-30999 (krg.incus.tenantIngressPortRange)."
   }
 }

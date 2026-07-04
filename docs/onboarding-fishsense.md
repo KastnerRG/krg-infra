@@ -102,13 +102,12 @@ fishsense = {
   disk      = "20GiB"           # raise if Postgres needs more
   isolation = "virtual-machine" # untrusted developed code = separate kernel (§4)
   image     = ""                # boundary-only start; set to "krg-golden" (published, gate 3) to boot the slot
-  nat_ip    = "10.100.0.10"     # pinned NAT address (forward target); set when exposing
-  edge_port = 30443             # krg-nat port the e4e edge dials; Incus DNATs → nat_ip:443
+  edge_port = 30443             # krg-nat port the e4e edge dials; a proxy device forwards it to the instance:443
 }
 ```
 
 **c. Edge route** — `e4e-prod` `krg.edge.routes` (#378). Needs the CNAMEs (gate 4); the
-`backend` is `krg-nat:edge_port` (the ingress forward from 2b), not the instance address:
+`backend` is `krg-nat:edge_port` (the ingress proxy device from 2b), not the instance address:
 
 ```nix
 krg.edge.routes.fishsense = {
@@ -118,8 +117,8 @@ krg.edge.routes.fishsense = {
     "orchestrator.fishsense.e4e.ucsd.edu"
     "analytics.fishsense.e4e.ucsd.edu"
   ];
-  backend   = "137.110.161.105:30443";       # krg-nat:edge_port — the incus_network_forward
-                                             # DNATs this to the instance's nat_ip:443
+  backend   = "137.110.161.105:30443";       # krg-nat:edge_port — the ingress proxy device
+                                             # forwards this to the instance's inner Traefik:443
                                              # (= terraform/incus output tenant_edge_backends.fishsense).
   # serverName defaults to "fishsense.vm"; reencrypt defaults true (verifies the
   # tenant-internal cert vs the fleet CA).
