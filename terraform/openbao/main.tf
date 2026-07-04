@@ -62,17 +62,9 @@ resource "vault_approle_auth_backend_role" "kastner_ml" {
   token_max_ttl  = 86400
 }
 
-# krg-nat (the Incus platform host): its vault-agent authenticates with this role to
-# render the Incus OIDC client_secret (secret/krg-prod/authentik-managed/incus-oidc,
-# minted by terraform/secrets) so the incus daemon can offer human OIDC login. Read-only
-# on exactly that one secret — least-privilege, same posture as the other per-host roles.
-resource "vault_approle_auth_backend_role" "krg_nat" {
-  backend        = vault_auth_backend.approle.path
-  role_name      = "krg-nat"
-  token_policies = [vault_policy.krg_nat.name]
-  token_ttl      = 3600
-  token_max_ttl  = 86400
-}
+# (No krg-nat AppRole: Incus OIDC is a PUBLIC client with no client secret — verified
+# on-box — so krg-nat needs no vault-agent render and thus no KV access. The role +
+# policy added in the initial OIDC PR were removed once that was found.)
 
 # ── Policies ───────────────────────────────────────────────────────────────────
 
@@ -236,24 +228,6 @@ resource "vault_policy" "kastner_ml" {
 
     # PKI: issue kastner-ml's host server cert for XRDP TLS (rules defined in pki.tf)
     ${local.pki_xrdp_host_rules}
-  EOT
-}
-
-# krg-nat reads ONLY the Incus OIDC client_secret — enough for its vault-agent to render
-# the value the incus daemon needs for human OIDC auth, and nothing else in KV.
-resource "vault_policy" "krg_nat" {
-  name   = "krg-nat"
-  policy = <<-EOT
-    # Allow vault-agent to renew its own token
-    path "auth/token/renew-self" {
-      capabilities = ["update"]
-    }
-
-    # Read the Incus OIDC client_secret (minted by terraform/secrets, set on the
-    # Authentik provider by terraform/authentik). Read-only, this one secret only.
-    path "secret/data/krg-prod/authentik-managed/incus-oidc" {
-      capabilities = ["read"]
-    }
   EOT
 }
 
