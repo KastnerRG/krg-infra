@@ -41,6 +41,21 @@ export VAULT_ADDR="${VAULT_ADDR:-https://krg-vault.ucsd.edu:8200}"
 role_id_file="${OPENBAO_ROLE_ID_FILE:-/var/lib/krg-admin/.secrets/openbao-role-id}"
 secret_id_file="${OPENBAO_SECRET_ID_FILE:-/var/lib/krg-admin/.secrets/openbao-secret-id}"
 
+# The incus CLI is NOT guaranteed on PATH here: on the self-hosted krg-deploy runner it
+# lives in the NixOS system profile (/run/current-system/sw/bin), which the Actions
+# runner service doesn't necessarily see — the first CD run hit "incus: command not
+# found". Resolve it deterministically from the flake's pinned nixpkgs — specifically
+# krg-nat's OWN incus package — so the client and server API versions match (no repeat of
+# the 7.0-vs-7.2 skew), then route every `incus` call through it via a thin wrapper so
+# the call sites stay readable.
+INCUS_BIN="$(command -v incus || true)"
+if [[ -z "$INCUS_BIN" ]]; then
+  echo "==> incus not on PATH — resolving from the flake (krg-nat's incus package)"
+  INCUS_BIN="$(nix build --no-link --print-out-paths \
+    "${FLAKE}#nixosConfigurations.krg-nat.config.virtualisation.incus.package")/bin/incus"
+fi
+incus() { "$INCUS_BIN" "$@"; }
+
 # ── 1. Build the image artifacts ─────────────────────────────────────────────────
 # Resolve the two out paths in one evaluation. --no-link: we reference the store paths
 # directly (this box's store is the artifact source stamped for idempotency).
