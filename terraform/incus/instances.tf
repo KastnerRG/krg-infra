@@ -28,6 +28,25 @@ resource "incus_instance" "tenant" {
     "limits.memory" = each.value.memory
   }
 
+  # Sized root disk — OVERRIDES the baseline profile's root device (an instance device of
+  # the same name replaces the profile's wholesale, so pool + path are re-declared). The
+  # project sets `limits.disk` (projects.tf), and Incus's project-quota accounting REJECTS
+  # instance creation if any disk lacks a `size` ("has no size ... but the project has a
+  # limits.disk set"). We size it to the tenant's own `disk` quota, so the VM's root block
+  # device == the project cap (one instance ⇒ exactly at the limit, which Incus permits).
+  # For a virtual-machine (the untrusted default, ADR 0017 §4) `size` is the block-device
+  # size and works on the bootstrap `dir` pool — unlike a container FS quota, which the dir
+  # driver can't enforce (revisit if a container tenant ever lands on the dir pool).
+  device {
+    name = "root"
+    type = "disk"
+    properties = {
+      pool = var.storage_pool
+      path = "/"
+      size = each.value.disk
+    }
+  }
+
   # INGRESS (ADR 0017 §5): expose the tenant to its zone edge via an Incus PROXY DEVICE —
   # a real listening socket on krg-nat (bind=host) at incus_host_ip:<edge_port> that proxies
   # to the instance's inner service (127.0.0.1:443, the tenant's inner Traefik, resolved in
