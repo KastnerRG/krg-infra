@@ -48,23 +48,23 @@
     zone = "e4e";
     acme.email = "shperry@ucsd.edu";
 
-    # STAGING for the first-route bring-up (ADR 0017 §5 / runbook §5): this is e4e-prod's
-    # first-ever real route, so validate the HTTP-01 path against LE staging (untrusted
-    # certs, generous limits) before spending the shared `ucsd.edu` prod budget. Flip OFF
-    # in the follow-up once the chain is confirmed.
-    acme.staging = true;
+    # PRODUCTION LE. The first-route staging bring-up (ADR 0017 §5 / runbook §5) is done:
+    # e4e-prod's HTTP-01 path was validated against LE staging (issued + served the
+    # `(STAGING) Let's Encrypt` cert for fishsense.e4e.ucsd.edu on 2026-07-05), so
+    # `acme.staging` is now off for a real, trusted cert. Keep this the default; only flip
+    # staging back on to debug a NEW first route on this edge.
 
     routes = {
       # fishsense — tenant #1 (docs/onboarding-fishsense.md §2c). ONLY the apex is listed:
       # `fishsense.e4e.ucsd.edu` is the only published CNAME so far; the orchestrator/
       # analytics SANs are added one-by-one as their CNAMEs land (the subtree HostRegexp
       # already matches every descendant, so each is a one-line `hostnames` addition — no
-      # new route). backend = krg-nat:edge_port (the ingress proxy device from
+      # new route). backend = krg-nat:edge_port (the ingress network forward from
       # terraform/incus, output tenant_edge_backends.fishsense), NOT the instance address.
       # serverName defaults to "fishsense.vm" and reencrypt to true — the edge verifies the
       # tenant-internal cert by chain against the fleet CA. Until the fishsense interior is
-      # up (its inner Traefik serving fishsense.vm), this backend 502s; the public cert
-      # still issues (HTTP-01 is independent of the backend).
+      # up (its inner Traefik serving fishsense.vm), this backend is unreachable (the VM
+      # drops :443); the public cert still issues (HTTP-01 is independent of the backend).
       fishsense = {
         subtree = "fishsense.e4e.ucsd.edu";
         hostnames = ["fishsense.e4e.ucsd.edu"];
