@@ -39,17 +39,38 @@
   };
 
   # The e4e zone edge. Stands up Traefik (LE-terminate on :80/:443 → re-encrypt to the
-  # tenant instances over the OpenBao PKI). `routes` is EMPTY until tenant CNAMEs are
-  # published — each route is a per-name admin act gated on its CNAME (ADR 0017 §6), and
-  # the explicit SAN list is the only thing that drives issuance (no on-demand TLS). The
-  # first tenant (fishsense) adds its route + backend in its own PR alongside the CNAME
-  # request. SSO forward-auth to krg-prod's central Authentik is a follow-up seam.
+  # tenant instances over the OpenBao PKI). Each route is a per-name admin act gated on
+  # its CNAME (ADR 0017 §6), and the explicit `hostnames` SAN list is the only thing that
+  # drives issuance (no on-demand TLS). SSO forward-auth to krg-prod's central Authentik
+  # is a follow-up seam.
   krg.edge = {
     enable = true;
     zone = "e4e";
     acme.email = "shperry@ucsd.edu";
-    # acme.staging = true;  # flip ON when adding the first real route, validate, then OFF
-    routes = {};
+
+    # STAGING for the first-route bring-up (ADR 0017 §5 / runbook §5): this is e4e-prod's
+    # first-ever real route, so validate the HTTP-01 path against LE staging (untrusted
+    # certs, generous limits) before spending the shared `ucsd.edu` prod budget. Flip OFF
+    # in the follow-up once the chain is confirmed.
+    acme.staging = true;
+
+    routes = {
+      # fishsense — tenant #1 (docs/onboarding-fishsense.md §2c). ONLY the apex is listed:
+      # `fishsense.e4e.ucsd.edu` is the only published CNAME so far; the orchestrator/
+      # analytics SANs are added one-by-one as their CNAMEs land (the subtree HostRegexp
+      # already matches every descendant, so each is a one-line `hostnames` addition — no
+      # new route). backend = krg-nat:edge_port (the ingress proxy device from
+      # terraform/incus, output tenant_edge_backends.fishsense), NOT the instance address.
+      # serverName defaults to "fishsense.vm" and reencrypt to true — the edge verifies the
+      # tenant-internal cert by chain against the fleet CA. Until the fishsense interior is
+      # up (its inner Traefik serving fishsense.vm), this backend 502s; the public cert
+      # still issues (HTTP-01 is independent of the backend).
+      fishsense = {
+        subtree = "fishsense.e4e.ucsd.edu";
+        hostnames = ["fishsense.e4e.ucsd.edu"];
+        backend = "137.110.161.105:30443"; # krg-nat:30443 → proxy device → instance:443
+      };
+    };
   };
 
   system.stateVersion = "25.11";
