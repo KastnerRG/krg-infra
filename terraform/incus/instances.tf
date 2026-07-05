@@ -47,25 +47,27 @@ resource "incus_instance" "tenant" {
     }
   }
 
-  # INGRESS (ADR 0017 §5): expose the tenant to its zone edge via an Incus PROXY DEVICE —
-  # a real listening socket on krg-nat (bind=host) at incus_host_ip:<edge_port> that proxies
-  # to the instance's inner service (127.0.0.1:443, the tenant's inner Traefik, resolved in
-  # the INSTANCE namespace). The edge dials incus_host_ip:<edge_port> (= the
-  # tenant_edge_backends output) and re-encrypts. A proxy device — not incus_network_forward
-  # — because the forward's prerouting DNAT only fires for host-LOCAL traffic (external edges
-  # saw the port filtered, validated on-box); a proxy is a normal INPUT-governed socket that
-  # nix opens in krg.incus.tenantIngressPortRange. Bound to incus_host_ip (not 0.0.0.0) so
-  # instances can't reach one another's ingress ports across the trusted bridge. No pinned
-  # nat_ip needed — the proxy connects inside the instance namespace.
+  # Pin the NAT address when the tenant is publicly exposed, so the ingress forward
+  # (forwards.tf) has a STABLE target — a DHCP lease could move on reprovision and
+  # silently break the forward. Overrides the baseline profile's DHCP eth0 (profiles.tf)
+  # only when nat_ip is set; otherwise the instance keeps a DHCP lease.
+  #
+  # INGRESS (ADR 0017 §5) is an incus_network_forward (forwards.tf) DNAT'ing
+  # incus_host_ip:<edge_port> → nat_ip:443, NOT a proxy device: a proxy device on a VM
+  # supports ONLY nat mode ("Only NAT mode is supported for proxies on VM instances"),
+  # and untrusted tenants are VMs (§4). A network forward is pure host-side DNAT — no
+  # in-namespace forkproxy — so it works identically for VMs and containers. (Its earlier
+  # "fails externally" result was CONFOUNDED by the Proxmox per-guest firewall dropping the
+  # port upstream, since fixed in ansible krg-nat.fw; the forward itself creates + DNATs
+  # fine on the host's own uplink IP.)
   dynamic "device" {
-    for_each = each.value.edge_port > 0 ? [1] : []
+    for_each = each.value.nat_ip != "" ? [1] : []
     content {
-      name = "edge-ingress"
-      type = "proxy"
+      name = "eth0"
+      type = "nic"
       properties = {
-        bind    = "host"
-        listen  = "tcp:${var.incus_host_ip}:${each.value.edge_port}"
-        connect = "tcp:127.0.0.1:443"
+        network        = incus_network.nat.name
+        "ipv4.address" = each.value.nat_ip
       }
     }
   }
