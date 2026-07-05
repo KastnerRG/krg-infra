@@ -15,11 +15,16 @@
 locals {
   # app local-name → the AD group names allowed to access it.
   app_group_access = {
-    grafana                = ["Domain Admins", "Waiter", "KastnerML"]
-    guacamole              = ["Domain Admins", "Waiter", "KastnerML"]
-    fleet                  = ["Domain Admins"]  # device control plane — admins only (resolves the hardening follow-up in applications_e4e.tf)
-    proxmox                = ["proxmox-admins"] # space-free name on purpose (see groups.tf / spec)
-    incus                  = ["Domain Admins"]  # tenant-platform control plane — admins only. First cut reuses the existing Domain Admins (also the Incus-side authZ group); a dedicated space-free "incus-admins" (mirroring proxmox-admins) is the least-privilege follow-up once created in spec/krg-ad + synced.
+    grafana   = ["Domain Admins", "Waiter", "KastnerML"]
+    guacamole = ["Domain Admins", "Waiter", "KastnerML"]
+    fleet     = ["Domain Admins"]  # device control plane — admins only (resolves the hardening follow-up in applications_e4e.tf)
+    proxmox   = ["proxmox-admins"] # space-free name on purpose (see groups.tf / spec)
+    # LOAD-BEARING: this binding is the ENTIRE Incus access control. Incus 7.2 can't
+    # restrict an OIDC identity (no `incus auth`, and the scriptlet authorizer can't see
+    # groups), so any user who completes the incus OIDC flow gets FULL platform admin
+    # (confirmed live). This gate is what limits that to Domain Admins — do NOT remove it
+    # without a replacement authorizer. Project-scoped non-admin access is tracked in #417.
+    incus                  = ["Domain Admins"]
     fishsense_analytics    = ["FishSense"]
     fishsense_oauth        = ["FishSense"]
     fishsense_orchestrator = ["FishSense"]
