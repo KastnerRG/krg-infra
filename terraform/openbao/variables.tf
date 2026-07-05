@@ -158,11 +158,20 @@ variable "tenants" {
     The e4e-prod student-project tenants (mirrors the Nix krg.tenants roster). Each
     gets an AppRole `tenant-<name>` + a least-privilege policy: mint its own
     `tenant-internal` cert and read its own KV path. `kv_prefix` is the path under the
-    `secret` kv-v2 mount, matching the Nix `secrets.openbaoPath` minus the `secret/`
-    prefix (e.g. "e4e-student/fishsense"). Default empty — populated as tenants land.
+    `secret` kv-v2 mount — it MUST equal the mkTenant contract's `boundary.kvPrefix`
+    (`tenants/<name>`, nix/lib/mk-tenant.nix), because the in-VM vault-agent reads
+    `secret/<kv_prefix>/*` and this policy is the only thing that grants it. Populated
+    as tenants land (an admin copies the tenant's onboarding request in here).
   EOT
   type = map(object({
     kv_prefix = string
   }))
-  default = {}
+
+  # fishsense — tenant #1 (docs/onboarding-fishsense.md §2a). kv_prefix mirrors
+  # mkTenant's boundary.kvPrefix so `secret/tenants/fishsense/*` (the fishsense.vm
+  # cert + app secrets its vault-agent renders) is readable by the tenant-fishsense
+  # AppRole and nothing else.
+  default = {
+    fishsense = { kv_prefix = "tenants/fishsense" }
+  }
 }

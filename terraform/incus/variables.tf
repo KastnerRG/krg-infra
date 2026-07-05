@@ -105,7 +105,25 @@ variable "tenants" {
     image     = optional(string, "")
     edge_port = optional(number, 0)
   }))
-  default = {}
+
+  # fishsense — tenant #1 (docs/onboarding-fishsense.md §2b). This is exactly
+  # `nix eval .#krgTenant.terraformTenant --json` from the fishsense-lite flake
+  # (zone/cpu/memory/disk/isolation/image — the mkTenant spec→provision projection),
+  # PLUS the two admin-allocated fields: `image` (the published golden template,
+  # gate 3 DONE) and `edge_port` (a free port in the reserved 30000-30999 range the
+  # e4e-prod edge dials). The tenant cannot self-grant either — an admin lands them
+  # here (ADR 0020 §3).
+  default = {
+    fishsense = {
+      zone      = "e4e"             # fronted by the e4e-prod edge (*.e4e.ucsd.edu)
+      cpu       = 4                 # resources.cpu from mkTenant
+      memory    = "8GiB"            # resources.ram (renamed to the Incus field)
+      disk      = "20GiB"           # raise if Postgres needs more
+      isolation = "virtual-machine" # untrusted developed code = separate kernel (§4)
+      image     = "krg-golden"      # boot the slot from the hardened template
+      edge_port = 30443             # krg-nat port the e4e edge dials → proxy device → instance:443
+    }
+  }
 
   validation {
     condition     = alltrue([for t in var.tenants : contains(["krg", "e4e"], t.zone)])
