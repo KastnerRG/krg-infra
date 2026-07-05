@@ -33,6 +33,12 @@ resource "incus_network_forward" "tenant" {
   description    = "Edge ingress for tenant ${each.key} (ADR 0017 §5)"
 
   ports = [{
+    # description MUST be set to "" (not omitted). The lxc/incus provider marks the port
+    # `description` optional-not-computed, so omitting it plans `null` — but Incus always
+    # returns "" for a port description, so the post-apply read can't correlate the `ports`
+    # set element ("Provider produced inconsistent result after apply: .ports: planned set
+    # element ... does not correlate"). Setting "" makes plan == the value Incus returns.
+    description    = ""
     protocol       = "tcp"
     listen_port    = tostring(each.value.edge_port)
     target_address = each.value.nat_ip
