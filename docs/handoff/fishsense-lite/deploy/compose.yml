@@ -1,0 +1,71 @@
+# fishsense-lite INTERIOR — authoritative, repo-owns-deploy (ADR 0017 §8). The platform
+# runs this stack on your Incus slot (10.100.0.10); your runner ships updates via merged
+# auto-deploy/* PRs.
+#
+# INGRESS CONTRACT (already wired on the admin side — do not change the shape):
+#   public → e4e-prod edge (prod LE cert, TLS-terminate)
+#          → re-encrypt HTTPS to krg-nat:30443
+#          → incus_network_forward → 10.100.0.10:443  (THIS stack's inner traefik)
+# The edge re-encrypts and VERIFIES the backend cert by serverName `fishsense.vm` against
+# the fleet CA. So your inner traefik MUST listen on :443 and serve the `fishsense.vm`
+# cert. (This is why you terminate TLS internally, unlike the generic template which uses a
+# plain internal port — the fishsense route is reencrypt=true.)
+#
+# THE `fishsense.vm` CERT is minted by the in-instance vault-agent from the per-tenant
+# OpenBao AppRole (tenant-fishsense) against the tenant-internal PKI, and rendered to
+# /run/tenant/tls/fishsense.vm.{crt,key} by nixosModules.tenant (#428, ADR 0021 §1/§2) —
+# which this stack's traefik mounts read-only. You do NOT place a cert by hand, and you do
+# NOT stage secret-zero: krg-deploy pushes the agent's AppRole role-id/secret-id into the
+# instance automatically every deploy (CD Phase 3.6, #429). The agent fails closed if
+# OpenBao is unreachable, so this stack won't start with a bad/absent cert.
+services:
+  # ── inner edge: TLS on :443 with fishsense.vm, route public names to services ──────────
+  traefik:
+    image: traefik:3.7
+    restart: unless-stopped
+    command:
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --entrypoints.websecure.address=:443
+    ports:
+      - "0.0.0.0:443:443" # the incus_network_forward targets :443 (bound to the instance NIC)
+    volumes:
+      - /run/tenant/tls:/etc/traefik/tls:ro # fishsense.vm.{crt,key} — rendered by vault-agent (#428)
+      - ./traefik-dynamic.yml:/etc/traefik/dynamic.yml:ro # routers/services/TLS store (below)
+    depends_on: [web, api, superset]
+
+  # ── your project stack (placeholder images — swap for the real fishsense-lite images) ──
+  web:
+    image: ghcr.io/ucsd-e4e/fishsense-lite-web:latest # fishsense.e4e.ucsd.edu → web portal
+    restart: unless-stopped
+    expose: ["8080"] # internal only; inner traefik routes here (do NOT publish to the host)
+  api:
+    image: ghcr.io/ucsd-e4e/fishsense-lite-api:latest # orchestrator.fishsense.e4e.ucsd.edu → API
+    restart: unless-stopped
+    expose: ["8000"]
+    depends_on: [postgres]
+  superset:
+    image: ghcr.io/ucsd-e4e/fishsense-lite-superset:latest # analytics.fishsense.e4e.ucsd.edu → superset
+    restart: unless-stopped
+    expose: ["8088"]
+    depends_on: [postgres]
+  workers:
+    image: ghcr.io/ucsd-e4e/fishsense-lite-workers:latest # reach krg-prod Temporal over gRPC (egress NAT)
+    restart: unless-stopped
+    depends_on: [api]
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password # from secret/tenants/fishsense/* (vault-agent)
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    expose: ["5432"]
+
+volumes:
+  pgdata:
+# traefik-dynamic.yml (ship alongside this file) wires:
+#   tls.certificates: [{ certFile: /etc/traefik/tls/fishsense.vm.crt, keyFile: .../fishsense.vm.key }]
+#   http.routers.web:      rule Host(`fishsense.e4e.ucsd.edu`)              → service web (:8080)
+#   http.routers.api:      rule Host(`orchestrator.fishsense.e4e.ucsd.edu`) → service api (:8000)
+#   http.routers.superset: rule Host(`analytics.fishsense.e4e.ucsd.edu`)    → service superset (:8088)
+# (orchestrator/analytics need their CNAMEs + SAN additions in the edge route first — HANDOFF.md.)
