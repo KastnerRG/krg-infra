@@ -100,6 +100,11 @@ variable "tenants" {
                   30000-30999); they share krg-nat's one IP. (A network forward — not a
                   proxy device — because a proxy on a VM supports nat mode only; validated
                   on-box.)
+      repo      — the tenant's GitHub repo "owner/name" (e.g. "UCSD-E4E/fishsense-lite").
+                  Stamped onto the instance as `user.krg_repo` so the provision leg
+                  (deploy/stage-tenant-secret-zero.sh) brokers + pushes a runner
+                  registration token, and nixosModules.tenant runs a runner scoped to it
+                  (repo-owns-deploy, ADR 0022). Empty (default) = no runner provisioned.
   EOT
   type = map(object({
     zone      = string
@@ -110,6 +115,7 @@ variable "tenants" {
     image     = optional(string, "")
     nat_ip    = optional(string, "")
     edge_port = optional(number, 0)
+    repo      = optional(string, "")
   }))
 
   # fishsense — tenant #1 (docs/onboarding-fishsense.md §2b). This is exactly
@@ -121,14 +127,15 @@ variable "tenants" {
   # The tenant cannot self-grant any — an admin lands them here (ADR 0020 §3).
   default = {
     fishsense = {
-      zone      = "e4e"             # fronted by the e4e-prod edge (*.e4e.ucsd.edu)
-      cpu       = 4                 # resources.cpu from mkTenant
-      memory    = "8GiB"            # resources.ram (renamed to the Incus field)
-      disk      = "20GiB"           # raise if Postgres needs more
-      isolation = "virtual-machine" # untrusted developed code = separate kernel (§4)
-      image     = "krg-golden"      # boot the slot from the hardened template
-      nat_ip    = "10.100.0.10"     # pinned NAT target for the ingress forward
-      edge_port = 30443             # krg-nat port the e4e edge dials → network forward → nat_ip:443
+      zone      = "e4e"                     # fronted by the e4e-prod edge (*.e4e.ucsd.edu)
+      cpu       = 4                         # resources.cpu from mkTenant
+      memory    = "8GiB"                    # resources.ram (renamed to the Incus field)
+      disk      = "20GiB"                   # raise if Postgres needs more
+      isolation = "virtual-machine"         # untrusted developed code = separate kernel (§4)
+      image     = "krg-golden"              # boot the slot from the hardened template
+      nat_ip    = "10.100.0.10"             # pinned NAT target for the ingress forward
+      edge_port = 30443                     # krg-nat port the e4e edge dials → network forward → nat_ip:443
+      repo      = "UCSD-E4E/fishsense-lite" # repo-owns-deploy runner scope (ADR 0022)
     }
   }
 

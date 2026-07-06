@@ -120,6 +120,7 @@
             ram = "8GiB";
           };
           compose = ./templates/tenant/deploy/compose.yml;
+          repo = "UCSD-E4E/example";
         };
         sys = nixpkgs.lib.nixosSystem {
           inherit system;
@@ -138,16 +139,19 @@
           && spec.boundary.sso.group == "example"
           && spec.boundary.kvPrefix == "tenants/example"
           && spec.interior.compose != null;
-        # Module wiring: the spec drives the hostname + the compose stack, and a tenant with
-        # a compose gets the in-instance vault-agent that mints its <tenant>.vm cert (ADR
-        # 0021). Forcing the openbao-agent unit's script here type-checks the cert render
-        # block (roleName + templates) in CI, so the cert seam can't silently break eval.
+        # Module wiring: the spec drives the hostname + the compose stack; a tenant with a
+        # compose gets the in-instance vault-agent that mints its <tenant>.vm cert (ADR 0021);
+        # and a tenant with a repo gets the repo-owns-deploy runner + its self-update unit
+        # (ADR 0022). Forcing the openbao-agent + selfupdate unit scripts here type-checks
+        # those render/switch blocks in CI, so neither seam can silently break eval.
         moduleOk =
           sys.config.networking.hostName
           == "example"
           && (sys.config.krg.composeStacks ? "example")
           && sys.config.krg.vaultAgent.roleName == "tenant-example"
-          && builtins.isString "${sys.config.systemd.services.openbao-agent.serviceConfig.ExecStart}";
+          && builtins.isString "${sys.config.systemd.services.openbao-agent.serviceConfig.ExecStart}"
+          && sys.config.services.github-runners.example.url == "https://github.com/UCSD-E4E/example"
+          && builtins.isString "${sys.config.systemd.services.example-selfupdate.script}";
       in
         assert shapeOk;
         assert moduleOk;

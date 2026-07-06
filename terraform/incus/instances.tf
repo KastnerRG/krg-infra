@@ -22,11 +22,16 @@ resource "incus_instance" "tenant" {
 
   # Per-instance limits mirror the project cap (defense in depth; the project quota is
   # the hard ceiling). Instance limits live in the config map (limits.cpu = a count,
-  # limits.memory = a size).
-  config = {
-    "limits.cpu"    = tostring(each.value.cpu)
-    "limits.memory" = each.value.memory
-  }
+  # limits.memory = a size). `user.krg_repo` stamps the tenant's GitHub repo onto the
+  # instance so the provision leg (deploy/stage-tenant-secret-zero.sh) can broker + push
+  # its runner registration token (ADR 0022 §3); omitted when no repo is set.
+  config = merge(
+    {
+      "limits.cpu"    = tostring(each.value.cpu)
+      "limits.memory" = each.value.memory
+    },
+    each.value.repo != "" ? { "user.krg_repo" = each.value.repo } : {}
+  )
 
   # Sized root disk — OVERRIDES the baseline profile's root device (an instance device of
   # the same name replaces the profile's wholesale, so pool + path are re-declared). The
