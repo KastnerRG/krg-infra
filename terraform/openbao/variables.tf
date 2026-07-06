@@ -165,13 +165,20 @@ variable "tenants" {
   EOT
   type = map(object({
     kv_prefix = string
+    # temporal = true also grants pki_int/issue/temporal-client on this tenant's policy
+    # (a "<name>-worker" client cert) and adds "<name>-worker" to the temporal-client
+    # role's allowed CNs (pki.tf). Mirrors the mkTenant `temporal` request (ADR 0023).
+    temporal = optional(bool, false)
   }))
 
   # fishsense — tenant #1 (docs/onboarding-fishsense.md §2a). kv_prefix mirrors
   # mkTenant's boundary.kvPrefix so `secret/tenants/fishsense/*` (the fishsense.vm
   # cert + app secrets its vault-agent renders) is readable by the tenant-fishsense
-  # AppRole and nothing else.
+  # AppRole and nothing else. temporal = true — its workers connect to krg-prod Temporal.
   default = {
-    fishsense = { kv_prefix = "tenants/fishsense" }
+    fishsense = {
+      kv_prefix = "tenants/fishsense"
+      temporal  = true
+    }
   }
 }

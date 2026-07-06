@@ -121,6 +121,7 @@
           };
           compose = ./templates/tenant/deploy/compose.yml;
           repo = "UCSD-E4E/example";
+          temporal = {namespace = "example";};
         };
         sys = nixpkgs.lib.nixosSystem {
           inherit system;
@@ -138,6 +139,7 @@
           && spec.terraformTenant.cpu == 4
           && spec.boundary.sso.group == "example"
           && spec.boundary.kvPrefix == "tenants/example"
+          && spec.boundary.temporal.namespace == "example"
           && spec.interior.compose != null;
         # Module wiring: the spec drives the hostname + the compose stack; a tenant with a
         # compose gets the in-instance vault-agent that mints its <tenant>.vm cert (ADR 0021);
@@ -151,7 +153,9 @@
           && sys.config.krg.vaultAgent.roleName == "tenant-example"
           && builtins.isString "${sys.config.systemd.services.openbao-agent.serviceConfig.ExecStart}"
           && sys.config.services.github-runners.example.url == "https://github.com/UCSD-E4E/example"
-          && builtins.isString "${sys.config.systemd.services.example-selfupdate.script}";
+          && builtins.isString "${sys.config.systemd.services.example-selfupdate.script}"
+          # a tenant that requested temporal gets the temporal-client render (ADR 0023 §2)
+          && builtins.any (r: r.destination == "/run/tenant/temporal/tls.crt") sys.config.krg.vaultAgent.renders;
       in
         assert shapeOk;
         assert moduleOk;

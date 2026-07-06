@@ -123,16 +123,20 @@ route). Request them one at a time.
 - **Auth:** **mTLS only** (no OIDC/API-key). Present a `temporal-client` cert; verify the server
   against the lab CA (`issuing_ca`); set the gRPC TLS **server-name override to
   `workflows.krg.ucsd.edu`**.
-- **⚠️ Client-cert delivery is NOT YET WIRED (platform TODO).** Your tenant AppRole grants only
-  `tenant-internal` (`fishsense.vm`), *not* `temporal-client` — so neither your vault-agent nor an
-  OpenBao path can hand you a Temporal cert today. Two seams the platform owes:
-  - **In-slot workers:** a `temporal-client` render added to `nixosModules.tenant` (exactly like
-    `fishsense.vm`) → `/run/tenant/temporal/{tls.crt,tls.key,ca.crt}`, auto-renewed.
-  - **Off-prem NRP worker:** krg-deploy mints a `temporal-client` cert and delivers it as an NRP
-    k8s Secret (interim: an admin hands you a 30-day PEM trio to load manually).
-- **Namespace isolation is by convention, not enforced** — OSS Temporal mTLS authenticates the
-  *connection*, not per-namespace access; any valid client cert can target any namespace unless an
-  authorizer is added later.
+- **Client-cert delivery** (ADR 0023):
+  - **In-slot workers — WIRED.** Set `temporal = { namespace = "fishsense"; }` in your `mkTenant`
+    call (the admin grants `pki_int/issue/temporal-client` on your tenant policy). Your in-VM
+    vault-agent then renders a `fishsense-worker` client cert to
+    **`/run/tenant/temporal/{tls.crt,tls.key,ca.crt}`**, auto-renewed — mount it into your workers
+    like `fishsense.vm`. Fail-closed if OpenBao is unreachable.
+  - **Off-prem NRP worker — manual (interim).** NRP is off our OpenBao, so it can't self-render:
+    an admin mints a 30-day `temporal-client` cert and hands you the PEM trio to load as a k8s
+    Secret; renew at 30 days. (Automated krg-deploy→NRP-Secret delivery is a tracked follow-up —
+    needs an NRP kubeconfig on krg-deploy.)
+- **⚠️ Namespace isolation is by convention, not enforced** — OSS Temporal mTLS authenticates the
+  *connection*, not per-namespace access; any valid client cert can target any namespace. Fine
+  while you're the only tenant; a per-namespace authorizer is tracked in **#434** before a second
+  distrusting tenant shares Temporal.
 
 ## 7. Auth per route (unauthenticated / OIDC / proxy)
 
