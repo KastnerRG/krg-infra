@@ -138,9 +138,16 @@
           && spec.boundary.sso.group == "example"
           && spec.boundary.kvPrefix == "tenants/example"
           && spec.interior.compose != null;
-        # Module wiring: the spec drives the hostname + the compose stack.
+        # Module wiring: the spec drives the hostname + the compose stack, and a tenant with
+        # a compose gets the in-instance vault-agent that mints its <tenant>.vm cert (ADR
+        # 0021). Forcing the openbao-agent unit's script here type-checks the cert render
+        # block (roleName + templates) in CI, so the cert seam can't silently break eval.
         moduleOk =
-          sys.config.networking.hostName == "example" && (sys.config.krg.composeStacks ? "example");
+          sys.config.networking.hostName
+          == "example"
+          && (sys.config.krg.composeStacks ? "example")
+          && sys.config.krg.vaultAgent.roleName == "tenant-example"
+          && builtins.isString "${sys.config.systemd.services.openbao-agent.serviceConfig.ExecStart}";
       in
         assert shapeOk;
         assert moduleOk;

@@ -37,6 +37,7 @@ in {
     ../profiles/server.nix # the lab baseline (base + monitoring)
     ./docker.nix
     ./services/compose-stack.nix
+    ./services/vault-agent.nix # krg.vaultAgent — renders the <tenant>.vm cert (ADR 0021)
   ];
 
   options.krg.tenant = mkOption {
@@ -67,11 +68,56 @@ in {
       system.stateVersion = mkDefault "25.11";
     }
 
-    (mkIf hasCompose {
+    (mkIf hasCompose (let
+      tlsDir = "/run/tenant/tls";
+      cn = "${t.name}.vm"; # the tenant-internal SERVER cert CN (terraform/openbao pki.tf)
+      # One pki_int/issue/tenant-internal write, rendered to two files. The two renders
+      # carry IDENTICAL secret args, so the agent's template engine (a consul-template
+      # fork) dedups the dependency and BOTH files come from the SAME issuance — a matching
+      # cert+key (a second issue would mint a non-matching key). crt = leaf + issuing CA so
+      # the edge can verify the chain; key = the matching private key (ADR 0021 §2).
+      # Double-quoted (not '') so nix indentation-stripping can't leak leading whitespace
+      # into the rendered PEM; \n are literal newlines in the template body.
+      issue = field: "{{ with secret \"pki_int/issue/tenant-internal\" \"common_name=${cn}\" }}${field}{{ end }}";
+    in {
       # The tenant's compose, run as a managed stack under /var/lib/krg/<name>. The
       # INTERIOR is tenant-owned: the runner ships updates via merged auto-deploy PRs
-      # (ADR 0017 §8); nix only declares the stack that runs it.
-      krg.composeStacks.${t.name}.composeFiles = [(toString t.interior.compose)];
-    })
+      # (ADR 0017 §8); nix only declares the stack that runs it. Ordered AFTER openbao-agent
+      # so the <tenant>.vm cert is on /run before the inner Traefik starts — fail-closed if
+      # bao is sealed/unreachable (the stack never starts with a missing/stale cert).
+      krg.composeStacks.${t.name} = {
+        composeFiles = [(toString t.interior.compose)];
+        after = ["openbao-agent.service"];
+        requires = ["openbao-agent.service"];
+      };
+
+      # In-instance vault-agent mints the tenant's OWN tenant-internal server cert
+      # (<tenant>.vm) from its per-tenant AppRole (terraform/openbao tenants.tf grants
+      # pki_int/issue/tenant-internal, scoped to this tenant) and renders cert+key to
+      # /run/tenant/tls for the inner Traefik to serve. The zone edge re-encrypts and
+      # verifies <tenant>.vm by chain against the fleet CA (ADR 0017 §5 / ADR 0021 §1).
+      # Traefik's file provider watches these paths and hot-reloads on rotation, so no
+      # reloadCommand is needed. Secret-zero (role-id + secret-id for tenant-<name>) is
+      # pushed into the instance by krg-deploy at provision (ADR 0021 §3) — until that
+      # lands, stage it manually; the agent fails closed without it.
+      krg.vaultAgent = {
+        enable = true;
+        roleName = "tenant-${t.name}"; # the tofu AppRole (terraform/openbao tenants.tf)
+        renders = [
+          {
+            destination = "${tlsDir}/${cn}.crt";
+            perms = "0644"; # leaf + chain (not secret)
+            dirPerms = "0755"; # the inner-Traefik container traverses to read the pair
+            contents = issue "{{ .Data.certificate }}\n{{ .Data.issuing_ca }}\n";
+          }
+          {
+            destination = "${tlsDir}/${cn}.key";
+            perms = "0640"; # private key (inner Traefik runs as root by default)
+            dirPerms = "0755";
+            contents = issue "{{ .Data.private_key }}\n";
+          }
+        ];
+      };
+    }))
   ]);
 }
