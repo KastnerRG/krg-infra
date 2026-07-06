@@ -60,8 +60,8 @@ authenticates the *connection*, not the namespace) — any valid client cert can
 namespace. This is the **same shared-role posture the platform already accepts for
 `tenant-internal`** (a granted tenant could mint another `<name>.vm`), so it is consistent, not a
 new weakness. **Accept it for now** (few, semi-trusted tenants). Real per-namespace isolation =
-a **Temporal authorizer** mapping cert CN → allowed namespace (plus per-tenant PKI roles) — a
-tracked follow-up, worth doing when multiple tenants share Temporal.
+a **Temporal authorizer** mapping cert CN → allowed namespace (plus per-tenant PKI roles) —
+tracked in **#434**, worth doing before a second mutually-distrusting tenant shares Temporal.
 
 ### 4. Off-prem NRP worker — krg-deploy mints + delivers a k8s Secret
 
