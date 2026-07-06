@@ -31,7 +31,8 @@ push to main
  phase 2    deploy-nixos.sh   DEPLOY_NIXOS_HOSTS="krg-prod e4e-prod waiter kastner-ml"  (systems: services + compute)
  phase 3    deploy-tofu.sh    tofu apply per target  (config; creds from OpenBao, opt-in via TOFU_TARGETS)
  phase 3.5  deploy-rerender-secrets.sh  reconcile Authentik outpost tokens (best-effort)
- phase 3.6  stage-tenant-secret-zero.sh  push each Incus tenant's AppRole secret-zero (best-effort; ADR 0021 §3)
+ phase 3.6  stage-tenant-secret-zero.sh  push each Incus tenant's provision creds — vault-agent secret-zero (ADR 0021 §3) + github-runner registration token (ADR 0022 §3); best-effort
+            (mint-runner-token.sh  helper: GitHub App → runner registration token, ADR 0022 §2)
  phase 4    deploy-verify.sh  OEC + AD membership, whole fleet  (the ONLY gates; fatal here)
 ```
 

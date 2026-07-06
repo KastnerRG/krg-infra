@@ -25,7 +25,8 @@
 set -euo pipefail
 umask 077
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 FLAKE="${REPO_ROOT}/nix"
 REMOTE="krg-nat"
 INCUS_API="${INCUS_API_ADDRESS:-https://krg-nat.ucsd.edu:8443}"
@@ -33,6 +34,9 @@ INCUS_API="${INCUS_API_ADDRESS:-https://krg-nat.ucsd.edu:8443}"
 # Where the in-instance vault-agent reads its AppRole creds — MUST match krg.vaultAgent's
 # roleIdFile / secretIdFile defaults (nix/modules/services/vault-agent.nix).
 AGENT_DIR="/var/lib/krg/openbao-agent"
+# Where the in-instance github-runner reads its registration token — MUST match the
+# tokenFile dir in nixosModules.tenant (nix/modules/tenant.nix, ADR 0022).
+RUNNER_DIR="/var/lib/krg/github-runner"
 
 export VAULT_ADDR="${VAULT_ADDR:-https://krg-vault.ucsd.edu:8200}"
 role_id_file="${OPENBAO_ROLE_ID_FILE:-/var/lib/krg-admin/.secrets/openbao-role-id}"
@@ -119,6 +123,25 @@ for row in "${rows[@]}"; do
   else
     echo "::warning::${name}: incus file push failed after retries (instance stopped/booting?)"
     rc=1
+  fi
+
+  # Runner registration token (ADR 0022 §3): if the instance is tagged with its GitHub
+  # repo (terraform/incus stamps user.krg_repo), broker a fresh token from the org's
+  # GitHub App and push it where nixosModules.tenant's runner reads it. Best-effort like
+  # secret-zero: a missing App/seed or a booting VM warns, never fails the fleet.
+  repo="$(incus config get "$name" --project "$project" user.krg_repo 2>/dev/null || true)"
+  if [[ -n "$repo" ]]; then
+    if regtok="$("${SCRIPT_DIR}/mint-runner-token.sh" "$repo" 2>/dev/null)" && [[ -n "$regtok" ]]; then
+      if printf '%s' "$regtok" | incus file push --project "$project" - \
+        "${REMOTE}:${name}${RUNNER_DIR}/registration-token" --create-dirs --uid 0 --gid 0 --mode 0600 2>/dev/null; then
+        echo "  staged runner token for ${name} (repo ${repo})"
+      else
+        echo "::warning::${name}: runner token push failed (instance stopped/booting?)"
+        rc=1
+      fi
+    else
+      echo "::warning::skip runner token for ${name}: could not mint for ${repo} (App installed on the repo + seeded to OpenBao?)"
+    fi
   fi
 done
 

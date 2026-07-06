@@ -26,12 +26,14 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 with lib; let
   t = config.krg.tenant;
   hasTenant = t != {};
   hasCompose = hasTenant && (t.interior.compose or null) != null;
+  hasRepo = hasTenant && (t.interior.repo or null) != null;
 in {
   imports = [
     ../profiles/server.nix # the lab baseline (base + monitoring)
@@ -118,6 +120,86 @@ in {
           }
         ];
       };
+    }))
+
+    # ── repo-owns-deploy runner (ADR 0022) ──────────────────────────────────────
+    # A self-hosted GitHub Actions runner scoped to the tenant's repo. A merged
+    # auto-deploy/* PR runs `systemctl start ${t.name}-selfupdate` on this runner, which
+    # converges the instance from the tenant flake (config + the krg.composeStacks interior).
+    (mkIf hasRepo (let
+      repo = t.interior.repo; # "owner/name", e.g. "UCSD-E4E/fishsense-lite"
+      runnerUser = "gh-runner";
+      selfUpdate = "${t.name}-selfupdate";
+      # Registration token pushed into the instance by krg-deploy at provision (the App
+      # broker → incus file push, ADR 0022 §2/§3). The runner registers ONCE and persists
+      # its own creds, so a between-deploys expiry is harmless.
+      tokenFile = "/var/lib/krg/github-runner/registration-token";
+      workDir = "/var/lib/${runnerUser}/work";
+    in {
+      # A dedicated, NON-admin user runs the tenant's CI — never krg-admin (tenant
+      # workflow code must not run as the break-glass admin). Its ONLY privileged
+      # capability is starting the one self-update unit below (polkit-scoped) — no docker
+      # group, no sudo. Image builds/pushes belong in GitHub-hosted CI; this runner only
+      # triggers the deploy.
+      users.users.${runnerUser} = {
+        isSystemUser = true;
+        group = runnerUser;
+        home = "/var/lib/${runnerUser}";
+        createHome = true;
+      };
+      users.groups.${runnerUser} = {};
+
+      systemd.tmpfiles.rules = [
+        "d /var/lib/krg/github-runner 0700 root root -" # krg-deploy pushes the token here (root)
+      ];
+
+      services.github-runners.${t.name} = {
+        enable = true;
+        name = t.name;
+        url = "https://github.com/${repo}";
+        inherit tokenFile workDir;
+        user = runnerUser;
+        replace = true; # re-register over a stale runner of this name
+        extraLabels = [t.name]; # the tenant workflow targets [self-hosted, <name>]
+        extraPackages = with pkgs; [git openssh systemd coreutils]; # systemctl to trigger the switch
+      };
+
+      # Converge from the tenant flake — a root, host-context oneshot the runner triggers via
+      # `systemctl start` (polkit-authorized, no sudo, runner sandbox intact — the pattern
+      # krg-deploy uses for its own self-update). Rebuilds from the tenant repo's flake
+      # (`.#<name>`), which brings up the config AND the krg.composeStacks interior. --refresh
+      # bypasses the eval cache so a just-merged commit is picked up. (Assumes a PUBLIC tenant
+      # repo; a private repo needs a fetch token — a tracked follow-up.)
+      systemd.services.${selfUpdate} = {
+        description = "Converge ${t.name} from ${repo} (tenant self-deploy, ADR 0022)";
+        restartIfChanged = false;
+        stopIfChanged = false;
+        path = [pkgs.nixos-rebuild pkgs.systemd pkgs.coreutils pkgs.git pkgs.openssh config.nix.package];
+        serviceConfig.Type = "oneshot";
+        script = ''
+          set -uo pipefail
+          RUNNER=github-runner-${t.name}.service
+          systemctl stop "$RUNNER" || true
+          nixos-rebuild switch --flake github:${repo}#${t.name} --refresh
+          rc=$?
+          systemctl start "$RUNNER" || true
+          exit "$rc"
+        '';
+      };
+
+      # polkit MUST be on for a non-root `systemctl start` of a system unit to be
+      # consulted (else systemd denies outright). Authorize ONLY runnerUser to start ONLY
+      # the self-update unit — everything else still needs root.
+      security.polkit.enable = true;
+      security.polkit.extraConfig = ''
+        polkit.addRule(function(action, subject) {
+          if (action.id == "org.freedesktop.systemd1.manage-units" &&
+              action.lookup("unit") == "${selfUpdate}.service" &&
+              subject.user == "${runnerUser}") {
+            return polkit.Result.YES;
+          }
+        });
+      '';
     }))
   ]);
 }
