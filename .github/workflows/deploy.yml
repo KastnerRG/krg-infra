@@ -306,6 +306,15 @@ jobs:
       - name: Phase 3.5 — reconcile generated secrets (outpost tokens)
         run: ./deploy/deploy-rerender-secrets.sh
 
+      # ── phase 3.6: stage tenant secret-zero (Incus) ───────────────────────────
+      # Each tenant instance's krg.vaultAgent needs its AppRole role-id + secret-id on
+      # box to mint <tenant>.vm — and the tenant can't self-mint (ADR 0021 §3). krg-deploy
+      # pushes it via `incus file push`. Runs AFTER phase 3 creates the instances;
+      # best-effort like the golden-publish leg (a booting/absent instance retries next
+      # deploy, and the in-instance agent fails closed until it lands — no fleet impact).
+      - name: Phase 3.6 — stage tenant secret-zero (Incus)
+        run: ./deploy/stage-tenant-secret-zero.sh || echo "::warning::tenant secret-zero staging failed (non-fatal); see log"
+
       # ── phase 4: verify (all health/membership gates, once) ───────────────────
       # The SINGLE verification phase — runs AFTER every layer has converged, for the
       # whole fleet: OEC daemons (Qualys + Trellix) on every host + the control node,
