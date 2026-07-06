@@ -110,3 +110,63 @@ route). Request them one at a time.
    `fishsense.vm` on :443.
 4. `https://fishsense.e4e.ucsd.edu` goes fully live — the edge's re-encrypt verifies the cert by
    chain and routes to `web`. Add orchestrator/analytics SANs as their CNAMEs land (§4).
+
+---
+
+## 6. Talking to krg-prod Temporal
+
+- **Endpoint:** `krg-prod.ucsd.edu:7233` — the raw gRPC frontend (NOT behind Traefik;
+  `workflows.krg.ucsd.edu` is the *UI*). Public + mTLS-gated ("the cert is the access control,
+  not the network"). Reachable from **both** your in-slot workers (10.100.0.10 via egress NAT)
+  and your off-prem NRP data-worker.
+- **Namespace:** `fishsense` (dedicated, retention 30d) — exists.
+- **Auth:** **mTLS only** (no OIDC/API-key). Present a `temporal-client` cert; verify the server
+  against the lab CA (`issuing_ca`); set the gRPC TLS **server-name override to
+  `workflows.krg.ucsd.edu`**.
+- **⚠️ Client-cert delivery is NOT YET WIRED (platform TODO).** Your tenant AppRole grants only
+  `tenant-internal` (`fishsense.vm`), *not* `temporal-client` — so neither your vault-agent nor an
+  OpenBao path can hand you a Temporal cert today. Two seams the platform owes:
+  - **In-slot workers:** a `temporal-client` render added to `nixosModules.tenant` (exactly like
+    `fishsense.vm`) → `/run/tenant/temporal/{tls.crt,tls.key,ca.crt}`, auto-renewed.
+  - **Off-prem NRP worker:** krg-deploy mints a `temporal-client` cert and delivers it as an NRP
+    k8s Secret (interim: an admin hands you a 30-day PEM trio to load manually).
+- **Namespace isolation is by convention, not enforced** — OSS Temporal mTLS authenticates the
+  *connection*, not per-namespace access; any valid client cert can target any namespace unless an
+  authorizer is added later.
+
+## 7. Auth per route (unauthenticated / OIDC / proxy)
+
+Auth lives in **your inner Traefik** (per-path, under your control) — the edge is auth-agnostic
+(per-hostname, too coarse for mixed routes). The Authentik resources you need **already exist** in
+`terraform/authentik`:
+
+| Your route type | Authentik resource (exists) | Where it runs |
+|---|---|---|
+| Unauthenticated | — | edge passes straight through |
+| OIDC (web app, Superset) | `fishsense_oauth`, `fishsense_analytics` OAuth2 providers | in-app (your OIDC flow) |
+| Proxy-protected (orchestrator) | `fishsense_orchestrator` proxy provider (`forward_single`), bound to the krg-prod proxy outpost + a `FishSense`-group access policy | your inner Traefik `forwardAuth` middleware |
+
+To gate the orchestrator router, reproduce the old `authentik@docker` behavior in your
+`traefik-dynamic.yml`: a `forwardAuth` middleware → the proxy outpost's
+`/outpost.goauthentik.io/auth/traefik`, applied to the **orchestrator router only** (leave the OIDC
+and public routers alone). **Working reference in this repo:** `guacamole_gate`
+(`terraform/authentik/applications_krg.tf` + the `authentik` middleware in `compose.authentik.yml`)
+— same outpost, same `forward_single` mode.
+
+## 8. Operational answers (quota / egress / subdomains / runner)
+
+- **Resource quota:** current 4 vCPU / 8 GiB / 20 GiB disk. krg-nat has **16 vCPU / 98 GiB** (ample
+  headroom), so 6 vCPU / 12 GiB is fine. Bumping = an admin one-liner in `terraform/incus`
+  `var.tenants.fishsense` + `tofu apply` (a memory *raise* may want an instance restart). Same
+  one-liner to raise later; the ceiling is krg-nat's capacity, shared across tenants.
+- **Egress: open NAT, no allowlist.** Your instance SNATs out krg-nat's uplink and nothing filters
+  outbound — Temporal gRPC, Garage S3, FileStation HTTP, the NRP k8s API, Label Studio, and
+  Authentik OIDC all just work. Only *inbound* is restricted (30000–30999 from the edges).
+- **Subdomains:** each extra public name (`orchestrator.`, `analytics.`) = (1) request the CNAME →
+  `e4e-prod.ucsd.edu` (DNS admin — the long pole, one at a time), then (2) a one-line add to
+  `krg.edge.routes.fishsense.hostnames` (PR + one deploy → LE re-issues the multi-SAN cert). The
+  `subtree` HostRegexp already matches them, so no new route. `workflows.` no longer needed.
+- **Runner coexistence:** the self-hosted runner is **opt-in per job by label**
+  (`[self-hosted, fishsense]`). Your NRP job (`runs-on: ubuntu-latest`) is untouched; your in-slot
+  job uses `runs-on: [self-hosted, fishsense]`. **Don't** use bare `runs-on: self-hosted` for NRP
+  jobs — that label matches ours.
