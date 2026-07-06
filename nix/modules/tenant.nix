@@ -155,7 +155,7 @@ in {
 
       services.github-runners.${t.name} = {
         enable = true;
-        name = t.name;
+        inherit (t) name;
         url = "https://github.com/${repo}";
         inherit tokenFile workDir;
         user = runnerUser;
