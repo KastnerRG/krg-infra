@@ -92,18 +92,26 @@ locals {
     # is back to just the two e4e-nas secrets that stay enumerated.)
   ]
 
-  # Globbable sub-paths the authentik target writes its GENERATED secrets under. One
-  # trailing-* wildcard per prefix — OpenBao policy globs only match a trailing * (no
-  # suffix match, so *-oidc is impossible), so a dedicated subtree is how we get a
-  # wildcard without broadening to all of krg-prod/*. New app secrets written under
-  # here need NO terraform/openbao apply — that's the whole point of the sub-path.
+  # Globbable sub-paths the authentik target writes its GENERATED secrets under. Each
+  # becomes `secret/{data,metadata}/<prefix>/*`. OpenBao ACL paths take a trailing `*`
+  # (matches the rest of the path) and `+` (matches ONE path segment, anywhere) — so a
+  # dedicated subtree is how we get a wildcard without broadening to all of krg-prod/*,
+  # and `+` lets one rule span a variable segment (e.g. the tenant name). New secrets
+  # written under any prefix here need NO terraform/openbao apply — that's the point.
   authentik_managed_glob_prefixes = [
     "krg-prod/authentik-managed",
     # Per-tenant OIDC secrets Authentik generates for an e4e tenant, written UNDER the
     # tenant's own KV (secret/tenants/<name>/oidc/*) so the tenant's vault-agent reads
     # them with its existing secret/data/tenants/<name>/* grant. SCOPED to .../oidc so
     # the authentik writer can't touch the tenant's own app secrets (postgres, etc.).
-    "tenants/fishsense/oidc",
+    #
+    # `+` matches the tenant-name segment, so this ONE rule covers EVERY tenant
+    # (fishsense, smartfin, roster, …) — adding a tenant needs NO terraform/openbao
+    # apply, the same self-service the krg-prod/authentik-managed glob already gives new
+    # apps. (Was pinned to `tenants/fishsense/oidc`; a per-tenant entry meant every new
+    # tenant tripped the privileged openbao apply — the #438 deploy 403. Templating it
+    # ends that class of manual apply.)
+    "tenants/+/oidc",
   ]
 
   # Render the per-path rules as one string to interpolate into the policy heredoc
