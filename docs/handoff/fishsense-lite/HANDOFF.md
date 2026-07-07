@@ -148,14 +148,87 @@ Auth lives in **your inner Traefik** (per-path, under your control) — the edge
 |---|---|---|
 | Unauthenticated | — | edge passes straight through |
 | OIDC (web app, Superset) | `fishsense_oauth`, `fishsense_analytics` OAuth2 providers | in-app (your OIDC flow) |
-| Proxy-protected (the orchestrator API, at `api.fishsense`) | `fishsense_orchestrator` proxy provider (`forward_single`, `external_host = https://api.fishsense.e4e.ucsd.edu`), bound to the krg-prod proxy outpost + a `FishSense`-group access policy | your inner Traefik `forwardAuth` middleware |
+| Proxy-protected (the orchestrator API, at `api.fishsense`) | `fishsense_orchestrator` proxy provider (`forward_single`, `external_host = https://api.fishsense.e4e.ucsd.edu`), registered on a **co-located** `fishsense proxy outpost` + a `FishSense`-group access policy | your inner Traefik `forwardAuth` middleware → a proxy-outpost container **in your stack** |
 
-To gate the orchestrator router, reproduce the old `authentik@docker` behavior in your
-`traefik-dynamic.yml`: a `forwardAuth` middleware → the proxy outpost's
-`/outpost.goauthentik.io/auth/traefik`, applied to the **orchestrator router only** (leave the OIDC
-and public routers alone). **Working reference in this repo:** `guacamole_gate`
-(`terraform/authentik/applications_krg.tf` + the `authentik` middleware in `compose.authentik.yml`)
-— same outpost, same `forward_single` mode.
+### Why a co-located outpost (and not the shared krg-prod one)
+
+A proxy provider's sign-in/callback needs `/outpost.goauthentik.io/*` served **on the app's own
+domain** so the session cookie lands on `api.fishsense`. guacamole "just works" because its app and
+the outpost share krg-prod's Traefik. **You are cross-host** — an `api.fishsense.e4e.ucsd.edu`
+request goes public → e4e edge → krg-nat → your inner Traefik and **never touches krg-prod's
+Traefik**, so those paths would have nowhere to land → auth redirect loop. The Authentik-blessed fix
+for a remote app is to run the outpost **next to the app**.
+
+**Admin side (DONE — `terraform/authentik`):** `fishsense_orchestrator` is registered on a dedicated
+`authentik_outpost.fishsense_proxy` (not the shared `proxy` outpost). Its API token is minted in IaC
+and written to **`secret/tenants/fishsense/oidc/proxy-outpost-token`** — inside your tenant KV, so
+**your** vault-agent renders it (no manual "View token").
+
+**Your side — add to your interior stack:**
+
+1. **Render the outpost token.** Add a vault-agent render (in your `secrets.nix`) mapping
+   `secret/tenants/fishsense/oidc/proxy-outpost-token` field `token` → an env file, e.g.
+   `/run/tenant/outpost/token.env` containing `AUTHENTIK_TOKEN=<token>`. ⚠ **Set
+   `errorOnMissingKey = false` on this one render.** The token only exists after the admin's
+   `terraform/authentik` apply; a fail-closed render of an absent token would take down your whole
+   vault-agent (and thus the `fishsense.vm` cert → your Traefik). With it soft, a missing token fails
+   *loud but localized* — the outpost visibly can't connect (login fails) until it's populated, while
+   the rest of the stack stays up. (This mirrors how krg-prod treats its own outpost token.)
+
+2. **Add the outpost container** (dials OUT to auth.krg — no new inbound; egress is open, §8). Match
+   the Authentik core image version:
+   ```yaml
+   authentik-outpost:
+     image: ghcr.io/goauthentik/proxy:2026.2   # keep in step with krg-prod's authentik version
+     restart: unless-stopped
+     environment:
+       AUTHENTIK_HOST: https://auth.krg.ucsd.edu
+       AUTHENTIK_INSECURE: "false"
+     env_file:
+       - /run/tenant/outpost/token.env          # AUTHENTIK_TOKEN=… (vault-agent render above)
+     expose: ["9000"]                            # interior only — do NOT publish
+   ```
+
+3. **Wire two routers in `traefik-dynamic.yml`** (the outpost router MUST out-priority the API one):
+   ```yaml
+   http:
+     middlewares:
+       fishsense-auth:
+         forwardAuth:
+           address: "http://authentik-outpost:9000/outpost.goauthentik.io/auth/traefik"
+           trustForwardHeader: true
+           authResponseHeaders:
+             - X-authentik-username
+             - X-authentik-groups
+             - X-authentik-email
+             - X-authentik-name
+             - X-authentik-uid
+             - X-authentik-jwt
+     routers:
+       # browser sign-in/callback — served LOCALLY by the co-located outpost, NO auth middleware
+       api-outpost:
+         rule: "Host(`api.fishsense.e4e.ucsd.edu`) && PathPrefix(`/outpost.goauthentik.io/`)"
+         priority: 100
+         service: authentik-outpost
+         tls: {}
+       # the gated API — forwardAuth to the local outpost
+       api:
+         rule: "Host(`api.fishsense.e4e.ucsd.edu`)"
+         priority: 10
+         service: api
+         middlewares: [fishsense-auth]
+         tls: {}
+     services:
+       authentik-outpost:
+         loadBalancer:
+           servers: [{ url: "http://authentik-outpost:9000" }]
+   ```
+   Leave the OIDC (`fishsense.e4e`, `analytics.fishsense`) and any public routers **un-gated** — only
+   the orchestrator API gets `fishsense-auth`.
+
+**Working reference in this repo:** `guacamole_gate` (`terraform/authentik/applications_krg.tf` + the
+`authentik` middleware/outpost in `compose.authentik.yml`) — same `forward_single` mode; you just run
+the outpost container yourself instead of sharing krg-prod's.
 
 ## 8. Operational answers (quota / egress / subdomains / runner)
 

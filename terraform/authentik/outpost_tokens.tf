@@ -8,9 +8,9 @@
 # by hand on every bring-up. This replaces that: for each managed outpost we mint
 # our OWN api token for its SA with `retrieve_key`, and write it to OpenBao under
 # the authentik-managed/* sub-path — the glob krg-deploy may write with NO
-# terraform/openbao policy change (terraform/openbao/main.tf). krg.vaultAgent on
-# krg-prod renders each into the env file its container reads. Adding another
-# outpost is a one-line addition to the map below.
+# terraform/openbao policy change (terraform/openbao/main.tf). The consuming host's
+# vault-agent renders each into the env file its container reads. Adding another
+# outpost is a two-line addition to the maps below (resource id + OpenBao leaf).
 #
 # WHY NOT self-mint these early (the way terraform/secrets self-mints the OIDC
 # client_secrets and DB passwords before phase 2): authentik_token.key is
@@ -34,11 +34,24 @@
 # privileged token if you want it gone).
 
 locals {
-  # outpost key -> the authentik_outpost resource id (dashed uuid). The key names
-  # both the token identifier and the OpenBao leaf (…/<key>-outpost-token).
+  # outpost key -> the authentik_outpost resource id (dashed uuid). The key names the
+  # token identifier; the OpenBao leaf is looked up in outpost_token_paths below.
   managed_outposts = {
-    proxy = authentik_outpost.proxy.id
-    ldap  = authentik_outpost.ldap.id
+    proxy           = authentik_outpost.proxy.id
+    ldap            = authentik_outpost.ldap.id
+    fishsense_proxy = authentik_outpost.fishsense_proxy.id
+  }
+
+  # Where each outpost's token is written in OpenBao. The krg-prod outposts render on
+  # krg-prod, so they land under the authentik-managed/* glob. The fishsense outpost runs
+  # in the TENANT's interior stack, so its token goes to the tenant KV
+  # (tenants/fishsense/oidc/* — already covered by the krg-deploy writer glob in
+  # terraform/openbao/main.tf, and read by the fishsense vault-agent's
+  # secret/data/tenants/fishsense/* grant). No openbao policy change.
+  outpost_token_paths = {
+    proxy           = "krg-prod/authentik-managed/proxy-outpost-token"
+    ldap            = "krg-prod/authentik-managed/ldap-outpost-token"
+    fishsense_proxy = "tenants/fishsense/oidc/proxy-outpost-token"
   }
 }
 
@@ -50,7 +63,7 @@ locals {
 data "authentik_user" "outpost_sa" {
   for_each   = local.managed_outposts
   username   = "ak-outpost-${replace(each.value, "-", "")}"
-  depends_on = [authentik_outpost.proxy, authentik_outpost.ldap]
+  depends_on = [authentik_outpost.proxy, authentik_outpost.ldap, authentik_outpost.fishsense_proxy]
 }
 
 # A non-expiring api token per outpost SA. `retrieve_key` reads the generated key
@@ -64,15 +77,18 @@ resource "authentik_token" "outpost" {
   intent       = "api"
   expiring     = false
   retrieve_key = true
-  description  = "${each.key} outpost API token (managed by terraform/authentik/outpost_tokens.tf; rendered to krg-prod by krg.vaultAgent)"
+  description  = "${each.key} outpost API token (managed by terraform/authentik/outpost_tokens.tf; rendered by the consuming host's vault-agent)"
 }
 
-# Write-back under the authentik-managed/* glob (no openbao policy change). The
-# krg.vaultAgent renders on krg-prod read field `token` from these paths.
+# Write-back to the per-outpost OpenBao leaf (outpost_token_paths). The krg-prod outposts
+# land under the authentik-managed/* glob (rendered by krg.vaultAgent on krg-prod); the
+# fishsense outpost lands in the tenant KV (rendered by the fishsense instance's
+# vault-agent). All read field `token`. No openbao policy change — both prefixes are
+# already in the krg-deploy writer set (terraform/openbao/main.tf).
 resource "vault_kv_secret_v2" "outpost_token" {
   for_each = local.managed_outposts
   mount    = "secret"
-  name     = "krg-prod/authentik-managed/${each.key}-outpost-token"
+  name     = local.outpost_token_paths[each.key]
   data_json = jsonencode({
     token = authentik_token.outpost[each.key].key
   })
