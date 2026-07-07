@@ -166,3 +166,31 @@ resource "vault_kv_secret_v2" "guacamole_oidc" {
 
 # Outpost tokens (proxy + ldap) are minted in IaC by outpost_tokens.tf and written
 # under the authentik-managed/* glob — no manual "View token" step here anymore.
+
+# ── FishSense (e4e tenant) OIDC secrets ───────────────────────────────────────
+# Unlike the krg-prod apps above, FishSense runs on its OWN Incus instance and reads
+# secrets with the tenant-fishsense AppRole (secret/data/tenants/fishsense/*). So its
+# generated OIDC client secrets are written UNDER the tenant KV (secret/tenants/
+# fishsense/oidc/*), which that AppRole already grants — the tenant's in-VM vault-agent
+# renders them for the web app + Superset. The .../oidc sub-path is added to
+# authentik_managed_glob_prefixes (terraform/openbao/main.tf) so the krg-deploy writer
+# can create them WITHOUT reaching the tenant's own app secrets. (ADR 0023-adjacent.)
+resource "vault_kv_secret_v2" "fishsense_oidc_web" {
+  mount = "secret"
+  name  = "tenants/fishsense/oidc/web"
+  data_json = jsonencode({
+    client_id     = authentik_provider_oauth2.fishsense_oauth.client_id
+    client_secret = authentik_provider_oauth2.fishsense_oauth.client_secret
+    issuer_url    = "${var.authentik_url}/application/o/fishsense-oauth/"
+  })
+}
+
+resource "vault_kv_secret_v2" "fishsense_oidc_analytics" {
+  mount = "secret"
+  name  = "tenants/fishsense/oidc/analytics"
+  data_json = jsonencode({
+    client_id     = authentik_provider_oauth2.fishsense_analytics.client_id
+    client_secret = authentik_provider_oauth2.fishsense_analytics.client_secret
+    issuer_url    = "${var.authentik_url}/application/o/fishsense-analytics/"
+  })
+}
