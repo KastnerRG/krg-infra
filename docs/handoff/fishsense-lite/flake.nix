@@ -29,8 +29,8 @@
       hostname = "fishsense.e4e.ucsd.edu"; # the apex CNAME (published; edge serves a prod LE cert)
       sso.group = "FishSense"; # AD group (auth is in-app today; edge SSO is a later seam)
       resources = {
-        cpu = 4;
-        ram = "8GiB";
+        cpu = 6;
+        ram = "12GiB";
       };
       image = "krg-golden"; # the slot boots from the hardened template (already applied)
       compose = ./deploy/compose.yml; # YOUR interior — repo-owns-deploy
