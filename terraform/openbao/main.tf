@@ -99,6 +99,11 @@ locals {
   # here need NO terraform/openbao apply — that's the whole point of the sub-path.
   authentik_managed_glob_prefixes = [
     "krg-prod/authentik-managed",
+    # Per-tenant OIDC secrets Authentik generates for an e4e tenant, written UNDER the
+    # tenant's own KV (secret/tenants/<name>/oidc/*) so the tenant's vault-agent reads
+    # them with its existing secret/data/tenants/<name>/* grant. SCOPED to .../oidc so
+    # the authentik writer can't touch the tenant's own app secrets (postgres, etc.).
+    "tenants/fishsense/oidc",
   ]
 
   # Render the per-path rules as one string to interpolate into the policy heredoc
