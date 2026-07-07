@@ -130,7 +130,7 @@ variable "tenants" {
       zone      = "e4e"                     # fronted by the e4e-prod edge (*.e4e.ucsd.edu)
       cpu       = 6                         # resources.cpu from mkTenant
       memory    = "12GiB"                   # resources.ram (renamed to the Incus field)
-      disk      = "20GiB"                   # raise if Postgres needs more
+      disk      = "50GiB"                   # Postgres + Superset images/volumes; dir-pool root size IS the cap
       isolation = "virtual-machine"         # untrusted developed code = separate kernel (§4)
       image     = "krg-golden"              # boot the slot from the hardened template
       nat_ip    = "10.100.0.10"             # pinned NAT target for the ingress forward
