@@ -56,7 +56,7 @@
 
     routes = {
       # fishsense — tenant #1 (docs/onboarding-fishsense.md §2c). ONLY the apex is listed:
-      # `fishsense.e4e.ucsd.edu` is the only published CNAME so far; the orchestrator/
+      # `fishsense.e4e.ucsd.edu` is the only published CNAME so far; the api/
       # analytics SANs are added one-by-one as their CNAMEs land (the subtree HostRegexp
       # already matches every descendant, so each is a one-line `hostnames` addition — no
       # new route). backend = krg-nat:edge_port (the ingress network forward from
@@ -69,7 +69,7 @@
         subtree = "fishsense.e4e.ucsd.edu";
         hostnames = [
           "fishsense.e4e.ucsd.edu"
-          "orchestrator.fishsense.e4e.ucsd.edu" # API — gated in the inner Traefik (fishsense_orchestrator forward-auth)
+          "api.fishsense.e4e.ucsd.edu" # orchestrator API — gated in the inner Traefik (fishsense_orchestrator forward-auth)
           "analytics.fishsense.e4e.ucsd.edu" # Superset — OIDC (fishsense_analytics) in-app
         ];
         backend = "137.110.161.105:30443"; # krg-nat:30443 → proxy device → instance:443
