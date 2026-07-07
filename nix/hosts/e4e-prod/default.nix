@@ -67,7 +67,11 @@
       # drops :443); the public cert still issues (HTTP-01 is independent of the backend).
       fishsense = {
         subtree = "fishsense.e4e.ucsd.edu";
-        hostnames = ["fishsense.e4e.ucsd.edu"];
+        hostnames = [
+          "fishsense.e4e.ucsd.edu"
+          "orchestrator.fishsense.e4e.ucsd.edu" # API — gated in the inner Traefik (fishsense_orchestrator forward-auth)
+          "analytics.fishsense.e4e.ucsd.edu" # Superset — OIDC (fishsense_analytics) in-app
+        ];
         backend = "137.110.161.105:30443"; # krg-nat:30443 → proxy device → instance:443
       };
     };
