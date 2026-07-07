@@ -31,7 +31,23 @@ services:
     volumes:
       - /run/tenant/tls:/etc/traefik/tls:ro # fishsense.vm.{crt,key} — rendered by vault-agent (#428)
       - ./traefik-dynamic.yml:/etc/traefik/dynamic.yml:ro # routers/services/TLS store (below)
-    depends_on: [web, api, superset]
+    depends_on: [web, api, superset, authentik-outpost]
+
+  # ── co-located Authentik proxy outpost — gates api.fishsense (HANDOFF §7) ───────────────
+  # Dials OUT to auth.krg over the API websocket (egress open; NO new inbound) and serves
+  # /outpost.goauthentik.io/* LOCALLY so the proxy-provider sign-in/callback cookie lands on
+  # api.fishsense. Cross-host is exactly why a co-located outpost is required (see HANDOFF §7).
+  authentik-outpost:
+    image: ghcr.io/goauthentik/proxy:2026.2 # keep in step with krg-prod's authentik version
+    restart: unless-stopped
+    environment:
+      AUTHENTIK_HOST: https://auth.krg.ucsd.edu
+      AUTHENTIK_INSECURE: "false"
+    env_file:
+      # AUTHENTIK_TOKEN=… — vault-agent render of secret/tenants/fishsense/oidc/proxy-outpost-token
+      # (errorOnMissingKey=false so an unminted token can't brick the stack — HANDOFF §7).
+      - /run/tenant/outpost/token.env
+    expose: ["9000"] # interior only; inner traefik routes /outpost.goauthentik.io/ + forwardAuth here
 
   # ── your project stack (placeholder images — swap for the real fishsense-lite images) ──
   web:
@@ -65,7 +81,11 @@ volumes:
   pgdata:
 # traefik-dynamic.yml (ship alongside this file) wires:
 #   tls.certificates: [{ certFile: /etc/traefik/tls/fishsense.vm.crt, keyFile: .../fishsense.vm.key }]
-#   http.routers.web:      rule Host(`fishsense.e4e.ucsd.edu`)              → service web (:8080)
-#   http.routers.api:      rule Host(`api.fishsense.e4e.ucsd.edu`)          → service api (:8000)  [+ the forwardAuth middleware]
-#   http.routers.superset: rule Host(`analytics.fishsense.e4e.ucsd.edu`)    → service superset (:8088)
+#   http.routers.web:         rule Host(`fishsense.e4e.ucsd.edu`)                              → service web (:8080)
+#   http.routers.api-outpost: rule Host(`api.fishsense…`) && PathPrefix(`/outpost.goauthentik.io/`)  → authentik-outpost (:9000), priority 100, NO auth
+#   http.routers.api:         rule Host(`api.fishsense.e4e.ucsd.edu`)                          → service api (:8000), priority 10, mw fishsense-auth
+#   http.routers.superset:    rule Host(`analytics.fishsense.e4e.ucsd.edu`)                    → service superset (:8088)
+#   http.middlewares.fishsense-auth.forwardAuth.address: http://authentik-outpost:9000/outpost.goauthentik.io/auth/traefik
+# The api-outpost router MUST out-priority api so the browser sign-in/callback path is served by the
+# outpost, not gated as an API call. Full snippet in HANDOFF §7.
 # (api/analytics need their CNAMEs + SAN additions in the edge route first — HANDOFF.md.)
