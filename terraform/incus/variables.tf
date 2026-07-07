@@ -128,8 +128,8 @@ variable "tenants" {
   default = {
     fishsense = {
       zone      = "e4e"                     # fronted by the e4e-prod edge (*.e4e.ucsd.edu)
-      cpu       = 4                         # resources.cpu from mkTenant
-      memory    = "8GiB"                    # resources.ram (renamed to the Incus field)
+      cpu       = 6                         # resources.cpu from mkTenant
+      memory    = "12GiB"                   # resources.ram (renamed to the Incus field)
       disk      = "20GiB"                   # raise if Postgres needs more
       isolation = "virtual-machine"         # untrusted developed code = separate kernel (§4)
       image     = "krg-golden"              # boot the slot from the hardened template
