@@ -49,7 +49,7 @@ template).
    swap the placeholder `ghcr.io/ucsd-e4e/fishsense-lite-*` images for the real ones, wire
    `traefik-dynamic.yml` routers). The stack routes:
    - `fishsense.e4e.ucsd.edu` → web
-   - `orchestrator.fishsense.e4e.ucsd.edu` → API
+   - `api.fishsense.e4e.ucsd.edu` → API (the orchestrator)
    - `analytics.fishsense.e4e.ucsd.edu` → superset
    - workers reach krg-prod Temporal over gRPC (automatic egress NAT).
 3. **`.github/workflows/auto-deploy.yml`** — the ~6-line workflow that runs on your
@@ -93,9 +93,9 @@ The cert design is settled in [ADR 0021](../../adr/0021-tenant-tls-vault-agent-a
   installs the runner; it self-sustains after. This is the last thing between "front door live"
   and "end-to-end green".
 
-## 4. Extra public names (orchestrator / analytics)
-Only the **apex** CNAME is published + in the edge SAN list today. `orchestrator.` and
-`analytics.` each need (1) their CNAME → e4e-prod filed, then (2) a one-line `hostnames`
+## 4. Extra public names (api / analytics)
+Only the **apex** CNAME is published + in the edge SAN list today. `api.` (the orchestrator API)
+and `analytics.` each need (1) their CNAME → e4e-prod filed, then (2) a one-line `hostnames`
 addition to `krg.edge.routes.fishsense` (the subtree HostRegexp already matches them — no new
 route). Request them one at a time.
 
@@ -109,7 +109,7 @@ route). Request them one at a time.
    a merged `auto-deploy/*` PR then converges the interior. Verify the inner traefik serves
    `fishsense.vm` on :443.
 4. `https://fishsense.e4e.ucsd.edu` goes fully live — the edge's re-encrypt verifies the cert by
-   chain and routes to `web`. Add orchestrator/analytics SANs as their CNAMEs land (§4).
+   chain and routes to `web`. Add api/analytics SANs as their CNAMEs land (§4).
 
 ---
 
@@ -148,7 +148,7 @@ Auth lives in **your inner Traefik** (per-path, under your control) — the edge
 |---|---|---|
 | Unauthenticated | — | edge passes straight through |
 | OIDC (web app, Superset) | `fishsense_oauth`, `fishsense_analytics` OAuth2 providers | in-app (your OIDC flow) |
-| Proxy-protected (orchestrator) | `fishsense_orchestrator` proxy provider (`forward_single`), bound to the krg-prod proxy outpost + a `FishSense`-group access policy | your inner Traefik `forwardAuth` middleware |
+| Proxy-protected (the orchestrator API, at `api.fishsense`) | `fishsense_orchestrator` proxy provider (`forward_single`, `external_host = https://api.fishsense.e4e.ucsd.edu`), bound to the krg-prod proxy outpost + a `FishSense`-group access policy | your inner Traefik `forwardAuth` middleware |
 
 To gate the orchestrator router, reproduce the old `authentik@docker` behavior in your
 `traefik-dynamic.yml`: a `forwardAuth` middleware → the proxy outpost's
@@ -166,7 +166,7 @@ and public routers alone). **Working reference in this repo:** `guacamole_gate`
 - **Egress: open NAT, no allowlist.** Your instance SNATs out krg-nat's uplink and nothing filters
   outbound — Temporal gRPC, Garage S3, FileStation HTTP, the NRP k8s API, Label Studio, and
   Authentik OIDC all just work. Only *inbound* is restricted (30000–30999 from the edges).
-- **Subdomains:** each extra public name (`orchestrator.`, `analytics.`) = (1) request the CNAME →
+- **Subdomains:** each extra public name (`api.`, `analytics.`) = (1) request the CNAME →
   `e4e-prod.ucsd.edu` (DNS admin — the long pole, one at a time), then (2) a one-line add to
   `krg.edge.routes.fishsense.hostnames` (PR + one deploy → LE re-issues the multi-SAN cert). The
   `subtree` HostRegexp already matches them, so no new route. `workflows.` no longer needed.

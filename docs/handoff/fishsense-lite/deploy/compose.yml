@@ -39,7 +39,7 @@ services:
     restart: unless-stopped
     expose: ["8080"] # internal only; inner traefik routes here (do NOT publish to the host)
   api:
-    image: ghcr.io/ucsd-e4e/fishsense-lite-api:latest # orchestrator.fishsense.e4e.ucsd.edu → API
+    image: ghcr.io/ucsd-e4e/fishsense-lite-api:latest # api.fishsense.e4e.ucsd.edu → the orchestrator API
     restart: unless-stopped
     expose: ["8000"]
     depends_on: [postgres]
@@ -66,6 +66,6 @@ volumes:
 # traefik-dynamic.yml (ship alongside this file) wires:
 #   tls.certificates: [{ certFile: /etc/traefik/tls/fishsense.vm.crt, keyFile: .../fishsense.vm.key }]
 #   http.routers.web:      rule Host(`fishsense.e4e.ucsd.edu`)              → service web (:8080)
-#   http.routers.api:      rule Host(`orchestrator.fishsense.e4e.ucsd.edu`) → service api (:8000)
+#   http.routers.api:      rule Host(`api.fishsense.e4e.ucsd.edu`)          → service api (:8000)  [+ the forwardAuth middleware]
 #   http.routers.superset: rule Host(`analytics.fishsense.e4e.ucsd.edu`)    → service superset (:8088)
-# (orchestrator/analytics need their CNAMEs + SAN additions in the edge route first — HANDOFF.md.)
+# (api/analytics need their CNAMEs + SAN additions in the edge route first — HANDOFF.md.)

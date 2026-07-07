@@ -138,7 +138,7 @@ resource "authentik_provider_proxy" "fishsense_orchestrator" {
   name               = "Provider for FishSense Orchestrator"
   authorization_flow = data.authentik_flow.default_authorization.id
   invalidation_flow  = data.authentik_flow.default_invalidation.id
-  external_host      = "https://orchestrator.fishsense.e4e.ucsd.edu"
+  external_host      = "https://api.fishsense.e4e.ucsd.edu" # the orchestrator API host (forward-auth matches on this)
   mode               = "forward_single"
 }
 
@@ -146,7 +146,7 @@ resource "authentik_application" "fishsense_orchestrator" {
   name              = "FishSense Orchestrator"
   slug              = "fishsense-orchestrator"
   protocol_provider = authentik_provider_proxy.fishsense_orchestrator.id
-  meta_launch_url   = "https://orchestrator.fishsense.e4e.ucsd.edu"
+  meta_launch_url   = "https://api.fishsense.e4e.ucsd.edu"
   # Reuse the FishSense brand mark — no orchestrator-specific logo exists (same
   # pattern as guacamole_gate reusing guacamole.svg).
   meta_icon = "krg-icons/fishsense.svg"
