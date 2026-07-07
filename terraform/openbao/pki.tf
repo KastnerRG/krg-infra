@@ -101,9 +101,12 @@ resource "vault_pki_secret_backend_role" "temporal_frontend" {
 # terraform/temporal provider (run by krg-deploy) and any worker/UI. server_flag
 # off so these can't masquerade as the frontend.
 resource "vault_pki_secret_backend_role" "temporal_client" {
-  backend            = vault_mount.pki_int.path
-  name               = "temporal-client"
-  allowed_domains    = var.temporal_client_domains
+  backend = vault_mount.pki_int.path
+  name    = "temporal-client"
+  # Static callers (krg-deploy, temporal-worker, temporal-ui) PLUS a per-tenant
+  # "<name>-worker" CN for each tenant that opted into Temporal (ADR 0023 §2) — that
+  # is the CN the tenant's in-VM vault-agent mints.
+  allowed_domains    = concat(var.temporal_client_domains, [for k, v in var.tenants : "${k}-worker" if v.temporal])
   allow_bare_domains = true
   allow_subdomains   = false
   server_flag        = false
@@ -254,6 +257,17 @@ locals {
   pki_tenant_internal_rules = <<-EOT
     # Issue the tenant VM's internal-TLS cert (vault-agent renders it) — see pki.tf
     path "pki_int/issue/tenant-internal" {
+      capabilities = ["create", "update"]
+    }
+  EOT
+
+  # Folded into a tenant policy only when that tenant set temporal = true (tenants.tf).
+  # The temporal-client role's allowed CNs include "<name>-worker" (below), so the
+  # in-VM vault-agent mints exactly that worker cert (ADR 0023 §2). Shared role — see
+  # ADR 0023 §3 / #434 on the (deferred) per-namespace authorizer.
+  pki_temporal_client_rules = <<-EOT
+    # Issue this tenant's Temporal client cert (vault-agent renders it) — see pki.tf
+    path "pki_int/issue/temporal-client" {
       capabilities = ["create", "update"]
     }
   EOT

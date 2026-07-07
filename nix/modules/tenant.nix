@@ -34,6 +34,7 @@ with lib; let
   hasTenant = t != {};
   hasCompose = hasTenant && (t.interior.compose or null) != null;
   hasRepo = hasTenant && (t.interior.repo or null) != null;
+  hasTemporal = hasTenant && (t.boundary.temporal or null) != null;
 in {
   imports = [
     ../profiles/server.nix # the lab baseline (base + monitoring)
@@ -81,6 +82,35 @@ in {
       # Double-quoted (not '') so nix indentation-stripping can't leak leading whitespace
       # into the rendered PEM; \n are literal newlines in the template body.
       issue = field: "{{ with secret \"pki_int/issue/tenant-internal\" \"common_name=${cn}\" }}${field}{{ end }}";
+
+      # Temporal client-cert renders (ADR 0023 §2), added ONLY when the tenant requested
+      # Temporal access (boundary.temporal). Same single-issuance dedup trick: 3 renders with
+      # IDENTICAL args → one issuance → leaf/key/CA split into tls.crt/tls.key/ca.crt. CN is
+      # "<name>-worker" (must be allowed in terraform/openbao temporal_client_domains). The
+      # worker dials krg-prod.ucsd.edu:7233 with TLS server-name workflows.krg.ucsd.edu.
+      tdir = "/run/tenant/temporal";
+      tcn = "${t.name}-worker";
+      tissue = field: "{{ with secret \"pki_int/issue/temporal-client\" \"common_name=${tcn}\" }}${field}{{ end }}";
+      temporalRenders = optionals hasTemporal [
+        {
+          destination = "${tdir}/tls.crt";
+          perms = "0644";
+          dirPerms = "0755";
+          contents = tissue "{{ .Data.certificate }}\n";
+        }
+        {
+          destination = "${tdir}/tls.key";
+          perms = "0640";
+          dirPerms = "0755";
+          contents = tissue "{{ .Data.private_key }}\n";
+        }
+        {
+          destination = "${tdir}/ca.crt";
+          perms = "0644";
+          dirPerms = "0755";
+          contents = tissue "{{ .Data.issuing_ca }}\n";
+        }
+      ];
     in {
       # The tenant's compose, run as a managed stack under /var/lib/krg/<name>. The
       # INTERIOR is tenant-owned: the runner ships updates via merged auto-deploy PRs
@@ -105,20 +135,22 @@ in {
       krg.vaultAgent = {
         enable = true;
         roleName = "tenant-${t.name}"; # the tofu AppRole (terraform/openbao tenants.tf)
-        renders = [
-          {
-            destination = "${tlsDir}/${cn}.crt";
-            perms = "0644"; # leaf + chain (not secret)
-            dirPerms = "0755"; # the inner-Traefik container traverses to read the pair
-            contents = issue "{{ .Data.certificate }}\n{{ .Data.issuing_ca }}\n";
-          }
-          {
-            destination = "${tlsDir}/${cn}.key";
-            perms = "0640"; # private key (inner Traefik runs as root by default)
-            dirPerms = "0755";
-            contents = issue "{{ .Data.private_key }}\n";
-          }
-        ];
+        renders =
+          [
+            {
+              destination = "${tlsDir}/${cn}.crt";
+              perms = "0644"; # leaf + chain (not secret)
+              dirPerms = "0755"; # the inner-Traefik container traverses to read the pair
+              contents = issue "{{ .Data.certificate }}\n{{ .Data.issuing_ca }}\n";
+            }
+            {
+              destination = "${tlsDir}/${cn}.key";
+              perms = "0640"; # private key (inner Traefik runs as root by default)
+              dirPerms = "0755";
+              contents = issue "{{ .Data.private_key }}\n";
+            }
+          ]
+          ++ temporalRenders;
       };
     }))
 

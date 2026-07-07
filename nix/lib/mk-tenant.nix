@@ -26,6 +26,7 @@
   sso ? {}, # { group ? name } — AD group gating access at the edge
   resources ? {}, # { cpu ? 2; ram ? "4GiB"; disk ? "20GiB"; }
   isolation ? "virtual-machine", # "virtual-machine" (untrusted/developed) | "container"
+  temporal ? null, # { namespace } — request a krg-prod Temporal client cert (ADR 0023). null = none.
   # ── interior (tenant-owned) ───────────────────────────────────────────────────
   compose ? null, # path to the tenant's compose file (repo-owns-deploy)
   image ? "", # golden-template image for the slot; "" = boundary only (no instance yet)
@@ -69,6 +70,14 @@ in
       sso = {group = ssoGroup;};
       resources = {inherit cpu ram disk;};
       kvPrefix = "tenants/${name}"; # OpenBao secret/<kvPrefix>/* (per-tenant policy)
+      # Temporal access request (ADR 0023). null = none; otherwise the admin grants
+      # pki_int/issue/temporal-client on the tenant policy + confirms the namespace, and
+      # nixosModules.tenant renders the client cert to /run/tenant/temporal/. The worker
+      # cert CN is "<name>-worker".
+      temporal =
+        if temporal == null
+        then null
+        else {inherit (temporal) namespace;};
     };
 
     # Admin-side spec→provision projection: the EXACT object terraform/incus's

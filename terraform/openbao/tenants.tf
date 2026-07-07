@@ -26,6 +26,11 @@ resource "vault_policy" "tenant" {
     # Issue ONLY this VM's internal-TLS cert (rule defined in pki.tf)
     ${local.pki_tenant_internal_rules}
 
+    # Temporal client cert (ADR 0023) — ONLY when this tenant opted in (temporal = true).
+    # Lets the in-VM vault-agent mint a "<name>-worker" temporal-client cert to reach the
+    # krg-prod Temporal frontend. The role's allowed CNs (pki.tf) include "<name>-worker".
+    ${each.value.temporal ? local.pki_temporal_client_rules : ""}
+
     # Read ONLY this tenant's own KV secrets (kv-v2: data + metadata)
     path "secret/data/${each.value.kv_prefix}/*" {
       capabilities = ["read"]
