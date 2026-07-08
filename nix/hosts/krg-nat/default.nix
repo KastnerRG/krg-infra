@@ -52,6 +52,13 @@
     clientId = "incus";
   };
 
+  # ── Incus metrics → fleet Prometheus / Grafana (ADR 0017 observability) ──────────
+  # Serve /1.0/metrics on a dedicated listener so the krg-prod Prometheus scrapes the
+  # hypervisor's view of every tenant instance (per-instance CPU/mem/disk/net + daemon
+  # health) WITHOUT reaching into the NAT'd guests. Port opened only to the monitoring
+  # host (monitoringPorts); auth off, firewall is the boundary (node-exporter's model).
+  krg.incus.metrics.enable = true;
+
   # ── EDGE REACHABILITY — SETTLED (ADR 0017 §5) ────────────────────────────────────
   # Incus SNATs tenant egress out of the managed NAT (incusbr0, RFC1918) — outbound works
   # out of the box. INGRESS (a zone edge dialing an instance to re-encrypt to it) is an
