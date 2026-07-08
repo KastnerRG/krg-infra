@@ -89,13 +89,14 @@ firewall:
         #     trusted.json `machines`. e4e-nas is an AD MEMBER (see
         #     spec/e4e-nas/ad.yml), so nothing listens on these inbound
         #     today; this is a forward-looking restriction.
-        # (6) the static rules below (ssh/smb/nfs-deny-fall-through,
-        #     then lets-encrypt-http-01). There is NO geoip-US floor
-        #     anymore (see note below) — eth0's own adapter policy is
-        #     `drop`, so anything not matched by (1)-(6) is denied by
-        #     default. The deny-fall-through rules exist as explicit,
-        #     self-documenting belts-and-suspenders in case a broader
-        #     allow is ever reintroduced above them.
+        # (6) the static rules below: ssh/smb/nfs-deny-fall-through,
+        #     lets-encrypt-http-01 (port 80, worldwide), then
+        #     geoip-US-web (ports 443/6020/6021 ONLY, US-geoip — NOT the
+        #     old all-ports floor). Everything else — SMB, NFS, domain
+        #     ports, any port not explicitly listed above — is denied by
+        #     eth0's own `drop` policy. The deny-fall-through rules exist
+        #     as explicit, self-documenting belts-and-suspenders in case
+        #     a broader allow is ever reintroduced above them.
         global:
           policy: none
           rules:
@@ -194,22 +195,37 @@ firewall:
               source_ip_group: all
               source_ip: all
 
-        # --- geoip-US-floor: REMOVED 2026-07-08 -------------------------
-        # Previously this list ended with a `geoip-US-floor` rule:
-        # policy=allow, port_group=all, ports=all, source=geoip US —
-        # i.e. every port except SSH was open to any US-geoip IP. Removed
-        # after an on-box audit found e4e-nas already drawing recurring
-        # automated CGI-exploit-scanner traffic (harmless misses, but
-        # real exposure) and confirmed no compromise — see the
-        # conversation this fix came out of. The floor is now explicit
-        # per-service allows only ((1)-(6) above); eth0's own `drop`
-        # policy is the real default-deny. Do not re-add a blanket
-        # geoip/all-ports allow without deliberately reopening this.
+            # US-wide web surface: DSM web UI (login portal + the apps it
+            # fronts — FileStation, Synology Drive, Synology Photos; see
+            # app-portal.yml) on its configured ports (dsm-web.yml:
+            # http_port 6020, https_port 6021) PLUS Garage's public HTTPS
+            # front doors (app-portal.yml reverse_proxy: s3.e4e.ucsd.edu +
+            # s3-admin.e4e.ucsd.edu, both on 443) — external collaborators
+            # need S3 access from outside ucsd, same as DSM UI users.
+            # NARROWED 2026-07-08 from the old `geoip-US-floor` (which was
+            # policy=allow, port_group=all, ports=all — every port except
+            # SSH open to any US-geoip source). That blanket form was
+            # removed after an on-box audit found e4e-nas already drawing
+            # recurring internet-scanner traffic and confirmed no
+            # compromise, but the actual user-facing web surface still
+            # needs US-wide reach, so this narrower rule restores exactly
+            # that, scoped to only the three ports it actually uses.
+            - name: geoip-US-web
+              enable: true
+              log: false
+              policy: allow
+              port_direction: destination
+              port_group: custom
+              ports: "443,6020,6021"
+              protocol: tcp
+              source_ip_group: geoip
+              source_ip: US
 
         # eth0 is the planned public interface (132.239.17.124; currently
         # disconnected, gets cabled later). Default-DROP everything that
-        # didn't match an earlier allow — this is the actual enforcement
-        # point now that there's no geoip floor beneath it.
+        # didn't match an earlier allow — SMB/NFS/domain ports and
+        # everything else besides SSH + the DSM UI now hit this default,
+        # instead of falling through to a country-wide floor.
         eth0:
           policy: drop
           rules: []
@@ -221,17 +237,18 @@ firewall:
         # cable swap means lab access keeps working through the
         # transition; flip it to drop once eth0 is the live path.
 
-  # Geoip block — SUPERSEDED 2026-07-08. The country-allowlist floor
-  # (`geoip-US-floor`, a blanket allow-every-port rule for any US-geoip
-  # source) was removed after an audit found it was already drawing
-  # internet scanner traffic. Posture is now explicit per-service allows
-  # ((1)-(6) in the `global` adapter comment above) with a real
-  # default-deny beneath them, not a country-wide floor. `enable: false`
-  # here means tasks/main.yml's geoip-rule drift-check is skipped (no
-  # geoip rule exists to check against). Re-enabling this requires
-  # re-adding a geoip rule AND flipping this back on, deliberately.
+  # Geoip block — NARROWED 2026-07-08. The old `geoip-US-floor` (a
+  # blanket allow-every-port rule for any US-geoip source) was replaced
+  # by `geoip-US-web`, scoped to the DSM web UI ports (6020, 6021 — see
+  # dsm-web.yml) plus Garage's public HTTPS front doors (443 — see
+  # app-portal.yml). Everything else (SMB, NFS, domain ports, anything
+  # not explicitly allowed) hits eth0's default-drop instead of this
+  # floor. tasks/main.yml's geoip-rule drift-check (below) still
+  # applies: it asserts every geoip-source rule's country matches
+  # `allow_countries`, it does NOT check port scope — narrowing the
+  # ports on `geoip-US-web` is intentional and won't trip it.
   geoip:
-    enable: false
+    enable: true
     allow_countries: [US]
 
 auto_block:
