@@ -1,0 +1,575 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Hypervisor's view of the Incus platform on krg-nat (incus_*): per-instance and per-project CPU/memory/disk/network/filesystem, plus daemon health. This is the OUTSIDE view of every tenant instance — krg-nat sees them all without reaching into the NAT'd guests, so it works for instances the fleet Prometheus can't scrape directly. Pick a $project / $instance to scope. Complements KRG · Node Fleet (the in-guest node_exporter view, which tenant instances don't expose).",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Overview",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Instances",
+      "description": "Instances known to the Incus daemon in the selected project(s).",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum(incus_instances{project=~\"$project\"})",
+          "legendFormat": "Instances",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "CPU cores in use",
+      "description": "Sum of instance CPU usage (rate of incus_cpu_seconds_total) across the selection — effectively cores consumed right now.",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "unit": "short",
+          "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum(rate(incus_cpu_seconds_total{project=~\"$project\",name=~\"$name\"}[$__rate_interval]))",
+          "legendFormat": "cores",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Memory used",
+      "description": "incus_memory_MemTotal_bytes − incus_memory_MemFree_bytes summed across the selection.",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "unit": "bytes",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum(incus_memory_MemTotal_bytes{project=~\"$project\",name=~\"$name\"}) - sum(incus_memory_MemFree_bytes{project=~\"$project\",name=~\"$name\"})",
+          "legendFormat": "used",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "OOM kills (total)",
+      "description": "Cumulative in-instance OOM kills (incus_memory_OOM_kills_total). Non-zero = a guest hit its memory limit.",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum(incus_memory_OOM_kills_total{project=~\"$project\",name=~\"$name\"})",
+          "legendFormat": "oom",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Per-instance",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+      "id": 10,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU cores used",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1,
+            "fillOpacity": 10, "gradientMode": "none", "showPoints": "never",
+            "axisPlacement": "auto", "axisColorMode": "text",
+            "scaleDistribution": { "type": "linear" },
+            "stacking": { "mode": "none", "group": "A" }, "spanNulls": false
+          },
+          "unit": "short", "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "id": 11,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum by (name) (rate(incus_cpu_seconds_total{project=~\"$project\",name=~\"$name\"}[$__rate_interval]))",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory used",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1,
+            "fillOpacity": 10, "gradientMode": "none", "showPoints": "never",
+            "axisPlacement": "auto", "axisColorMode": "text",
+            "scaleDistribution": { "type": "linear" },
+            "stacking": { "mode": "none", "group": "A" }, "spanNulls": false
+          },
+          "unit": "bytes", "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "id": 12,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum by (name) (incus_memory_MemTotal_bytes{project=~\"$project\",name=~\"$name\"}) - sum by (name) (incus_memory_MemFree_bytes{project=~\"$project\",name=~\"$name\"})",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Disk throughput",
+      "description": "Per-instance block I/O (rate of incus_disk_read/written_bytes_total, summed across the instance's disk devices).",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1,
+            "fillOpacity": 10, "gradientMode": "none", "showPoints": "never",
+            "axisPlacement": "auto", "axisColorMode": "text",
+            "scaleDistribution": { "type": "linear" },
+            "stacking": { "mode": "none", "group": "A" }, "spanNulls": false
+          },
+          "unit": "Bps", "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "id": 13,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum by (name) (rate(incus_disk_read_bytes_total{project=~\"$project\",name=~\"$name\"}[$__rate_interval]))",
+          "legendFormat": "{{name}} read",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum by (name) (rate(incus_disk_written_bytes_total{project=~\"$project\",name=~\"$name\"}[$__rate_interval]))",
+          "legendFormat": "{{name}} write",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Network throughput",
+      "description": "Per-instance network I/O (rate of incus_network_receive/transmit_bytes_total, excluding loopback).",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1,
+            "fillOpacity": 10, "gradientMode": "none", "showPoints": "never",
+            "axisPlacement": "auto", "axisColorMode": "text",
+            "scaleDistribution": { "type": "linear" },
+            "stacking": { "mode": "none", "group": "A" }, "spanNulls": false
+          },
+          "unit": "Bps", "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "id": 14,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum by (name) (rate(incus_network_receive_bytes_total{project=~\"$project\",name=~\"$name\",device!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "{{name}} rx",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum by (name) (rate(incus_network_transmit_bytes_total{project=~\"$project\",name=~\"$name\",device!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "{{name}} tx",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Filesystem used %",
+      "description": "Per-instance root filesystem utilisation: 100 · (1 − free/size), summed across the instance's filesystems.",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1,
+            "fillOpacity": 10, "gradientMode": "none", "showPoints": "never",
+            "axisPlacement": "auto", "axisColorMode": "text",
+            "scaleDistribution": { "type": "linear" },
+            "stacking": { "mode": "none", "group": "A" }, "spanNulls": false
+          },
+          "unit": "percent", "min": 0, "max": 100, "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 23 },
+      "id": 15,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "100 * (1 - sum by (name) (incus_filesystem_free_bytes{project=~\"$project\",name=~\"$name\"}) / sum by (name) (incus_filesystem_size_bytes{project=~\"$project\",name=~\"$name\"}))",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Processes",
+      "description": "Per-instance process count (incus_procs_total).",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1,
+            "fillOpacity": 10, "gradientMode": "none", "showPoints": "never",
+            "axisPlacement": "auto", "axisColorMode": "text",
+            "scaleDistribution": { "type": "linear" },
+            "stacking": { "mode": "none", "group": "A" }, "spanNulls": false
+          },
+          "unit": "short", "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 },
+      "id": 16,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum by (name) (incus_procs_total{project=~\"$project\",name=~\"$name\"})",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Daemon · krg-nat",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 },
+      "id": 20,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Active warnings",
+      "description": "Incus daemon warnings (incus_warnings_total) — cluster/config/storage issues raised by the daemon.",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 32 },
+      "id": 21,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum(incus_warnings_total)",
+          "legendFormat": "warnings",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Operations rate",
+      "description": "Incus daemon operations per second (rate of incus_operations_total).",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1,
+            "fillOpacity": 10, "gradientMode": "none", "showPoints": "never",
+            "axisPlacement": "auto", "axisColorMode": "text",
+            "scaleDistribution": { "type": "linear" },
+            "stacking": { "mode": "none", "group": "A" }, "spanNulls": false
+          },
+          "unit": "ops", "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 12, "x": 6, "y": 32 },
+      "id": 22,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "sum(rate(incus_operations_total[$__rate_interval]))",
+          "legendFormat": "ops/s",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Goroutines",
+      "description": "Incus daemon Go runtime goroutines (incus_go_goroutines) — a coarse daemon-health/leak signal.",
+      "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 32 },
+      "id": 23,
+      "options": {
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+          "editorMode": "code",
+          "expr": "max(incus_go_goroutines)",
+          "legendFormat": "goroutines",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "auto",
+  "schemaVersion": 42,
+  "tags": ["krg", "generated"],
+  "templating": {
+    "list": [
+      {
+        "name": "project",
+        "type": "query",
+        "label": "Project",
+        "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+        "definition": "label_values(incus_cpu_seconds_total, project)",
+        "query": "label_values(incus_cpu_seconds_total, project)",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "regex": "",
+        "current": {},
+        "options": [],
+        "hide": 0,
+        "allValue": ".*"
+      },
+      {
+        "name": "name",
+        "type": "query",
+        "label": "Instance",
+        "datasource": { "type": "prometheus", "uid": "de0e1fh1fk35sc" },
+        "definition": "label_values(incus_cpu_seconds_total{project=~\"$project\"}, name)",
+        "query": "label_values(incus_cpu_seconds_total{project=~\"$project\"}, name)",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "regex": "",
+        "current": {},
+        "options": [],
+        "hide": 0,
+        "allValue": ".*"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "title": "KRG · Incus",
+  "uid": "krg-incus",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1
+}

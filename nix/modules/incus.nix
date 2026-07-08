@@ -158,6 +158,33 @@ in {
       default = true;
       description = "Serve the Incus web UI on the API port.";
     };
+
+    metrics = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Serve the Incus Prometheus metrics endpoint on a DEDICATED listener
+          (core.metrics_address) for the fleet Prometheus to scrape. This exposes the
+          hypervisor's view of every instance — per-instance + per-project
+          CPU/memory/disk/network/filesystem, plus daemon metrics — WITHOUT reaching
+          into the NAT'd tenant guests (krg-nat sees them all). Scoped to the monitoring
+          host by opening the port via krg.firewall.monitoringPorts.
+
+          The endpoint is served UNAUTHENTICATED (core.metrics_authentication = false):
+          the firewall is the boundary, the same model node-exporter uses for :9100.
+          Off by default; enabled on krg-nat.
+        '';
+      };
+      port = mkOption {
+        type = types.port;
+        default = 8444;
+        description = ''
+          Port for the Incus metrics listener (core.metrics_address). Distinct from the
+          API port; opened only to the monitoring host.
+        '';
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -306,5 +333,36 @@ in {
         incus config set oidc.client.id=${escapeShellArg cfg.oidc.clientId}
       '';
     };
+
+    # Prometheus metrics endpoint (ADR 0017 observability). Applied to the RUNNING daemon
+    # — NOT via preseed (preseed only runs on first daemon start; krg-nat is already
+    # provisioned, same reason as incus-oidc-config above). `incus config set` over the
+    # local root→admin socket is idempotent and applies live. Serves /1.0/metrics on a
+    # dedicated listener; auth is OFF (the firewall gates it to the monitoring host,
+    # node-exporter's model), so this MUST stay paired with the monitoringPorts rule below.
+    systemd.services.incus-metrics-config = mkIf cfg.metrics.enable {
+      description = "Apply Incus metrics-endpoint config to the running daemon";
+      after = ["incus.service"];
+      requires = ["incus.service"];
+      wantedBy = ["multi-user.target"];
+      restartTriggers = [(toString cfg.metrics.port)];
+      environment.HOME = "/run/incus-metrics-config";
+      path = [config.virtualisation.incus.package pkgs.coreutils];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        RuntimeDirectory = "incus-metrics-config";
+      };
+      script = ''
+        set -euo pipefail
+        incus config set core.metrics_address=${escapeShellArg ":${toString cfg.metrics.port}"}
+        incus config set core.metrics_authentication=false
+      '';
+    };
+
+    # Open the metrics port to the fleet monitoring host only (via monitoringSourceIp),
+    # the same firewall path node-exporter uses. Load-bearing: the endpoint is
+    # unauthenticated, so the firewall is its ONLY access control.
+    krg.firewall.monitoringPorts = mkIf cfg.metrics.enable [cfg.metrics.port];
   };
 }
