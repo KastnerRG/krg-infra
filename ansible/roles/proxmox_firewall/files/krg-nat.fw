@@ -23,11 +23,19 @@ IN SSH(ACCEPT)                       -source +dc/ops      -log nolog
 IN ACCEPT -p tcp -dport 8443         -source +dc/ucsd     -log nolog # Incus API/UI (≈ PVE 8006)
 IN ACCEPT -p tcp -dport 8443         -source +dc/ops      -log nolog # Incus API/UI (off-campus admin)
 
-# node_exporter — scraped only by the monitoring host (krg-prod). cluster.fw's 9100
-# rule targets NODES (the hypervisor), not guests, so a guest behind this default-DROP
-# needs the allow here (the in-guest krg.firewall opens 9100 to the same IP). Source =
-# the nix/networks/trusted.json monitoring_host.
+# Prometheus scrape targets — scraped only by the monitoring host (krg-prod). cluster.fw's
+# exporter rules target NODES (the hypervisor), not guests, so a guest behind this
+# default-DROP needs the allow here (the in-guest krg.firewall opens the same ports to the
+# same IP). Source = the nix/networks/trusted.json monitoring_host. Same Proxmox-layer gap
+# as the tenant-ingress rule below: an in-guest allow alone leaves the packet dropped BEFORE
+# it reaches krg-nat's guest firewall (metrics :8444 was in-guest-open yet the scrape timed
+# out — up{job="incus"}=0 — until this rule landed).
+#   9100 — node_exporter (host metrics).
+#   8444 — the Incus daemon's /1.0/metrics endpoint (krg.incus.metrics): the hypervisor's
+#          view of every tenant instance. Unauthenticated by design, so this source
+#          restriction (with the in-guest monitoringPorts rule) is its ONLY access control.
 IN ACCEPT -p tcp -dport 9100         -source 137.110.161.106 -log nolog # node exporter (krg-prod)
+IN ACCEPT -p tcp -dport 8444         -source 137.110.161.106 -log nolog # Incus metrics (krg-prod)
 
 # Tenant INGRESS (ADR 0017 §5): the zone edges reach a tenant instance through an Incus
 # proxy device on krg-nat's uplink IP in the reserved range 30000-30999. ONLY the edges
