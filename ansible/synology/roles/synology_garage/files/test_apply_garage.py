@@ -5,6 +5,7 @@ The script's three subcommands shell out to (a) the filesystem and (b)
 `_atomic_write` so nothing escapes the test process.
 """
 
+import io
 import json
 import os
 import subprocess  # noqa: F401  (referenced in monkeypatch targets)
@@ -749,3 +750,368 @@ def test_deploy_ui_config_changed_restarts_container(monkeypatch, capsys):
     assert payload["compose_drift"] is False and payload["image_drift"] is False
     assert any("restart" in c for c in runs)
     assert not any("up" in c for c in runs)
+
+
+# --- _admin_request -------------------------------------------------------------
+class _FakeHTTPResponse:
+    def __init__(self, status, body_bytes):
+        self.status = status
+        self._body = body_bytes
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_admin_request_success(monkeypatch):
+    def fake_urlopen(req, timeout=10):
+        assert req.get_header("Authorization") == "Bearer tok"
+        assert req.full_url == "http://127.0.0.1:3903/v2/ListBuckets"
+        return _FakeHTTPResponse(200, b'{"ok":true}')
+
+    monkeypatch.setattr(m.urllib.request, "urlopen", fake_urlopen)
+    status, body = m._admin_request(3903, "tok", "GET", "/v2/ListBuckets")
+    assert status == 200 and body == {"ok": True}
+
+
+def test_admin_request_encodes_query_and_body(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(req, timeout=10):
+        seen["url"] = req.full_url
+        seen["data"] = req.data
+        seen["content_type"] = req.get_header("Content-type")
+        return _FakeHTTPResponse(201, b"{}")
+
+    monkeypatch.setattr(m.urllib.request, "urlopen", fake_urlopen)
+    m._admin_request(
+        3903, "tok", "POST", "/v2/CreateBucket", query={"id": "abc"}, body={"globalAlias": "x"}
+    )
+    assert seen["url"] == "http://127.0.0.1:3903/v2/CreateBucket?id=abc"
+    assert json.loads(seen["data"]) == {"globalAlias": "x"}
+    assert seen["content_type"] == "application/json"
+
+
+def test_admin_request_http_error_returns_status_and_body(monkeypatch):
+    def fake_urlopen(req, timeout=10):
+        raise m.urllib.error.HTTPError(
+            req.full_url, 403, "Forbidden", None, io.BytesIO(b'{"error":"bad token"}')
+        )
+
+    monkeypatch.setattr(m.urllib.request, "urlopen", fake_urlopen)
+    status, body = m._admin_request(3903, "tok", "GET", "/v2/ListBuckets")
+    assert status == 403 and body == {"error": "bad token"}
+
+
+# --- sync-buckets ---------------------------------------------------------------
+def _sync_buckets_args(**overrides):
+    base = {"admin_port": "3903", "buckets_json": '["label-studio"]', "check": False}
+    base.update(overrides)
+    return type("A", (), base)()
+
+
+def _fake_admin(responses):
+    """responses: dict {(method, path): value_or_callable(query, body)}.
+    A callable lets one endpoint (e.g. CreateBucket, called once per missing
+    bucket) return different responses per call; a plain (status, body)
+    tuple is enough for endpoints hit at most once (ListBuckets, ListKeys)."""
+    calls = []
+
+    def fake(admin_port, admin_token, method, path, query=None, body=None):
+        calls.append((method, path, query, body))
+        resp = responses[(method, path)]
+        return resp(query, body) if callable(resp) else resp
+
+    return fake, calls
+
+
+def test_sync_buckets_creates_missing(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, []),
+            ("POST", "/v2/CreateBucket"): (200, {"id": "b1", "globalAliases": ["label-studio"]}),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(_sync_buckets_args())
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["buckets_to_create"] == ["label-studio"]
+    create_calls = [c for c in calls if c[1] == "/v2/CreateBucket"]
+    assert len(create_calls) == 1
+    assert create_calls[0][3] == {"globalAlias": "label-studio"}
+
+
+def test_sync_buckets_no_change_when_present(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {("GET", "/v2/ListBuckets"): (200, [{"id": "b1", "globalAliases": ["label-studio"]}])}
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(_sync_buckets_args())
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
+    assert not any(c[1] == "/v2/CreateBucket" for c in calls)
+
+
+def test_sync_buckets_check_mode_no_mutation(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin({("GET", "/v2/ListBuckets"): (200, [])})
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(_sync_buckets_args(check=True))
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("WOULD-CHANGE ")
+    assert not any(c[1] == "/v2/CreateBucket" for c in calls)
+
+
+def test_sync_buckets_fails_clean_when_admin_token_unset(monkeypatch, capsys):
+    monkeypatch.delenv("GARAGE_ADMIN_TOKEN", raising=False)
+    rc = m.do_sync_buckets(_sync_buckets_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["vars"] == ["GARAGE_ADMIN_TOKEN"]
+
+
+def test_sync_buckets_fails_on_non200_listbuckets(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, _calls = _fake_admin({("GET", "/v2/ListBuckets"): (401, {"error": "bad token"})})
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(_sync_buckets_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+
+
+# --- sync-keys --------------------------------------------------------------------
+def _sync_keys_args(**overrides):
+    base = {
+        "admin_port": "3903",
+        "keys_json": json.dumps(
+            [{"name": "label-studio", "buckets": [{"name": "label-studio", "permissions": ["read", "write"]}]}]
+        ),
+        "keys_dir": "/volume1/docker/garage/keys",
+        "check": False,
+    }
+    base.update(overrides)
+    return type("A", (), base)()
+
+
+_LS_BUCKET = {"id": "b1", "globalAliases": ["label-studio"]}
+
+
+def test_sync_keys_creates_key_persists_secret_and_grants(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
+            ("GET", "/v2/ListKeys"): (200, []),
+            ("POST", "/v2/CreateKey"): (
+                200,
+                {"accessKeyId": "GK1", "secretAccessKey": "SUPERSECRETVALUE"},
+            ),
+            ("POST", "/v2/AllowBucketKey"): (200, {}),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+    writes = []
+    monkeypatch.setattr(m, "_atomic_write", lambda p, c, mode: writes.append((p, c, mode)))
+    monkeypatch.setattr(m.os, "makedirs", lambda p, exist_ok=False: None)
+
+    rc = m.do_sync_keys(_sync_keys_args())
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED ")
+    assert "SUPERSECRETVALUE" not in out  # secret never in the emitted payload
+
+    assert len(writes) == 1
+    path, content, mode = writes[0]
+    assert path == os.path.join("/volume1/docker/garage/keys", "label-studio.env")
+    assert mode == 0o400
+    assert "ACCESS_KEY_ID=GK1" in content
+    assert "SECRET_ACCESS_KEY=SUPERSECRETVALUE" in content
+
+    allow_calls = [c for c in calls if c[1] == "/v2/AllowBucketKey"]
+    assert len(allow_calls) == 1
+    assert allow_calls[0][3] == {
+        "bucketId": "b1",
+        "accessKeyId": "GK1",
+        "permissions": {"read": True, "write": True},
+    }
+
+
+def test_sync_keys_no_change_when_key_and_grants_match(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
+            ("GET", "/v2/ListKeys"): (200, [{"id": "GK1", "name": "label-studio"}]),
+            ("GET", "/v2/GetBucketInfo"): (
+                200,
+                {
+                    "keys": [
+                        {
+                            "accessKeyId": "GK1",
+                            "permissions": {"read": True, "write": True, "owner": False},
+                        }
+                    ]
+                },
+            ),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+    monkeypatch.setattr(m.os.path, "exists", lambda p: True)
+
+    rc = m.do_sync_keys(_sync_keys_args())
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
+    assert not any(c[1] in ("/v2/CreateKey", "/v2/AllowBucketKey", "/v2/DenyBucketKey") for c in calls)
+
+
+def test_sync_keys_revokes_extra_permission(monkeypatch, capsys):
+    """Current grant has owner=True, desired is only [read, write] — the sync
+    is fully declarative (Deny removes what's not listed), not additive-only."""
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
+            ("GET", "/v2/ListKeys"): (200, [{"id": "GK1", "name": "label-studio"}]),
+            ("GET", "/v2/GetBucketInfo"): (
+                200,
+                {
+                    "keys": [
+                        {
+                            "accessKeyId": "GK1",
+                            "permissions": {"read": True, "write": True, "owner": True},
+                        }
+                    ]
+                },
+            ),
+            ("POST", "/v2/DenyBucketKey"): (200, {}),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+    monkeypatch.setattr(m.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(m.os, "makedirs", lambda p, exist_ok=False: None)
+
+    rc = m.do_sync_keys(_sync_keys_args())
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED ")
+    deny_calls = [c for c in calls if c[1] == "/v2/DenyBucketKey"]
+    assert len(deny_calls) == 1
+    assert deny_calls[0][3] == {"bucketId": "b1", "accessKeyId": "GK1", "permissions": {"owner": True}}
+    assert not any(c[1] == "/v2/AllowBucketKey" for c in calls)
+
+
+def test_sync_keys_fails_when_secret_file_missing_for_existing_key(monkeypatch, capsys):
+    """Unrecoverable-drift guard: Garage never re-reveals a secret, so a key
+    that exists remotely with no local .env must FAIL loudly, not silently
+    no-op (unusable key) or silently recreate (rotates a live consumer's
+    credentials out from under it)."""
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
+            ("GET", "/v2/ListKeys"): (200, [{"id": "GK1", "name": "label-studio"}]),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+    monkeypatch.setattr(m.os.path, "exists", lambda p: False)
+
+    rc = m.do_sync_keys(_sync_keys_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["keys"] == ["label-studio"]
+    assert "never re-reveals" in payload["reason"]
+    # Must fail BEFORE touching GetBucketInfo / any mutation endpoint.
+    assert not any(c[1] == "/v2/GetBucketInfo" for c in calls)
+
+
+def test_sync_keys_fails_on_missing_bucket_reference(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, _calls = _fake_admin({("GET", "/v2/ListBuckets"): (200, [])})
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_keys(_sync_keys_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["bucket"] == "label-studio"
+    assert "sync-buckets must run" in payload["reason"]
+
+
+def test_sync_keys_fails_on_duplicate_key_name(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, _calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
+            ("GET", "/v2/ListKeys"): (
+                200,
+                [
+                    {"id": "GK1", "name": "label-studio"},
+                    {"id": "GK2", "name": "label-studio"},
+                ],
+            ),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_keys(_sync_keys_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["name"] == "label-studio"
+    assert "duplicate" in payload["reason"]
+
+
+def test_sync_keys_check_mode_no_mutation(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
+            ("GET", "/v2/ListKeys"): (200, []),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+    writes = []
+    monkeypatch.setattr(m, "_atomic_write", lambda p, c, mode: writes.append((p, c, mode)))
+
+    rc = m.do_sync_keys(_sync_keys_args(check=True))
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("WOULD-CHANGE ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["keys_to_create"] == ["label-studio"]
+    assert payload["grant_ops"] == [
+        {"key": "label-studio", "bucket": "label-studio", "op": "allow", "permissions": ["read", "write"]}
+    ]
+    assert writes == []
+    assert not any(c[1] in ("/v2/CreateKey", "/v2/AllowBucketKey") for c in calls)
+
+
+def test_sync_keys_rejects_invalid_permission(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    bad_json = json.dumps(
+        [{"name": "label-studio", "buckets": [{"name": "label-studio", "permissions": ["read", "delete"]}]}]
+    )
+    rc = m.do_sync_keys(_sync_keys_args(keys_json=bad_json))
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert "invalid permission" in payload["reason"]
+
+
+def test_sync_keys_fails_clean_when_admin_token_unset(monkeypatch, capsys):
+    monkeypatch.delenv("GARAGE_ADMIN_TOKEN", raising=False)
+    rc = m.do_sync_keys(_sync_keys_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["vars"] == ["GARAGE_ADMIN_TOKEN"]

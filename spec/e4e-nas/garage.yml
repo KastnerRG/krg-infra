@@ -1,6 +1,7 @@
 # Garage S3 object store on e4e-nas — ADRs 0002, 0003 — source of truth for
 # the `synology_garage` Ansible role: deployment, garage.toml config, cluster
-# bootstrap. Bucket / key / policy management is TODO (#101 sub-PR 5).
+# bootstrap, and bucket / key management (#101 sub-PR 5). Bucket-level
+# quotas/policies beyond read/write/owner grants remain out of scope.
 #
 # Why Ansible and not Terraform: `synology_container_project` hit three
 # distinct upstream bugs in one session (#110/#113/#114). See
@@ -38,6 +39,11 @@ deployment:
   meta_dir: /volume2/s3-data/meta
   restart_policy: unless-stopped
   rust_log: garage=info,garage_api=info,garage_block=info
+  # Where sync-keys persists each newly-created access key's one-time secret
+  # (<name>.env, root:root 0400) — Garage only returns secretAccessKey once,
+  # at creation, so this file is the only durable copy on the box. See
+  # roles/synology_garage/README.md "Key secrets" for the OpenBao seed step.
+  keys_dir: /volume1/docker/garage/keys
 
 # Structural garage.toml — rendered with secrets injected at apply-time.
 config:
@@ -128,6 +134,30 @@ ui:
       - E4E Garage Admins                 # dedicated AD group, for garage-specific grants
       - E4E Admins                        # for now: all E4E admins are garage admins
 
-# --- Sub-PR 5 of #101: bucket / key management (NOT YET IMPLEMENTED) ---------
-buckets: []   # TODO
-keys: []      # TODO
+# --- Sub-PR 5 of #101: bucket / key management --------------------------------
+# `buckets:` entries become Garage global aliases (garage bucket create /
+# CreateBucket) — the name IS the bucket, addressed path-style as
+# https://s3.e4e.ucsd.edu/<name> (root_domain above) or virtual-host style
+# <name>.s3.e4e.ucsd.edu once #118's wildcard cert lands.
+#
+# `keys:` entries become Garage access keys (garage key new / CreateKey),
+# each granted the listed read/write/owner permissions on the named buckets
+# (garage bucket allow / AllowBucketKey — DenyBucketKey removes anything no
+# longer listed, so this is fully declarative, not additive-only). A key's
+# secret is shown by Garage exactly once, at creation, and persisted to
+# deployment.keys_dir/<name>.env (root:root 0400) — see
+# roles/synology_garage/README.md "Key secrets" for how to retrieve it and
+# seed it into OpenBao.
+#
+# label-studio: read/write storage for the Label Studio Enterprise (Heartex
+# SaaS) project — Label Studio isn't a krg-infra host, so it's configured
+# entirely from its own "Cloud Storage" UI (endpoint https://s3.e4e.ucsd.edu,
+# region garage, path-style, bucket "label-studio").
+buckets:
+  - name: label-studio
+
+keys:
+  - name: label-studio
+    buckets:
+      - name: label-studio
+        permissions: [read, write]
