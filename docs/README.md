@@ -55,7 +55,7 @@ Decision/analysis records that aren't operate-or-recover runbooks:
 |---|---|
 | [scratch-architecture-options.md](scratch-architecture-options.md) | Historical: the `/scratch` redesign options (autotier symptoms, rejected brownfield, cost analysis); as-built is [scratch-greenfield.md](scratch-greenfield.md) |
 | [e4e-nas-crowdsec-evaluation.md](e4e-nas-crowdsec-evaluation.md) | Why CrowdSec is **not** added to the NAS — DSM-native AutoBlock + Firewall + GeoIP instead |
-| [label-studio-sso.md](label-studio-sso.md) | **Parked (#326):** Label Studio Enterprise SSO is not integrated — the diagnosis kept so the next attempt starts where this one stopped |
+| [label-studio-sso.md](label-studio-sso.md) | Label Studio Enterprise SSO (Authentik SAML) — re-attempt in progress (#326) after a prior vendor-side ACS 500 |
 
 ## Architecture Decision Records
 
