@@ -28,6 +28,8 @@ locals {
     fishsense_analytics    = ["FishSense"]
     fishsense_oauth        = ["FishSense"]
     fishsense_orchestrator = ["FishSense"]
+    e4e_nas                = ["E4E-NAS"] # NAS SSO tile visible only to NAS-access group (matches the nix krg.nasMount sudo gate)
+    garage_ui              = ["E4E-NAS"] # Garage (S3-on-NAS) admin/data browser — same NAS-access gate as e4e_nas
   }
 
   # app local-name → its application UUID (the policy-binding target).
@@ -40,6 +42,8 @@ locals {
     fishsense_analytics    = authentik_application.fishsense_analytics.uuid
     fishsense_oauth        = authentik_application.fishsense_oauth.uuid
     fishsense_orchestrator = authentik_application.fishsense_orchestrator.uuid
+    e4e_nas                = authentik_application.e4e_nas.uuid
+    garage_ui              = authentik_application.garage_ui.uuid
   }
 
   # Flatten to one binding per (app, group) pair, keyed "app:group".
@@ -85,19 +89,10 @@ resource "authentik_policy_binding" "app_group_access" {
 #     order  = 0
 #   }
 #
-# E4E Garage UI + E4E NAS → "Engineers for Exploration NAS"
-# (closest existing: "Engineers for Exploration", "E4E Admin", "E4E Garage Admins"):
-#   data "authentik_group" "e4e_nas" {
-#     name          = "Engineers for Exploration NAS"
-#     include_users = false
-#   }
-#   resource "authentik_policy_binding" "garage_ui_access" {
-#     target = authentik_application.garage_ui.uuid
-#     group  = data.authentik_group.e4e_nas.id
-#     order  = 0
-#   }
-#   resource "authentik_policy_binding" "e4e_nas_access" {
-#     target = authentik_application.e4e_nas.uuid
-#     group  = data.authentik_group.e4e_nas.id
-#     order  = 0
-#   }
+# E4E NAS + E4E Garage UI → "E4E-NAS": DONE (in app_group_access above — the same AD
+# group that gates the kastner-ml krg.nasMount sudo wrapper; keeps the NAS SSO tiles and
+# the mount access consistent). The group must exist in KRG.LOCAL (spec/krg-ad/groups.yml)
+# and be synced into Authentik before `tofu apply`, or the data.authentik_group lookup
+# fails. Note garage-ui ALSO enforces admin-vs-read internally via its OIDC `groups` claim
+# ("E4E Garage Admins"/"E4E Admins", spec/e4e-nas/garage.yml) — this binding is the outer
+# tile/launch gate, that claim is the in-app role gate; they're complementary.

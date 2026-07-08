@@ -15,6 +15,7 @@
     ../../modules/nfs-home.nix
     ../../modules/scratch.nix
     ../../modules/local-cache.nix
+    ../../modules/nas-mount.nix
   ];
 
   # E4E-owned compute box (E4E-used; the KRG lab generally does not use it), so it
@@ -100,6 +101,14 @@
     serverIp = "137.110.161.109";
     allowedGroups = ["Domain Admins" "kastnerml"];
   };
+
+  # Let E4E-NAS members mount e4e-nas CIFS shares into their home without full sudo:
+  # `sudo e4e-nas-mount <share> [dir]` (validated root wrapper, sec=krb5 — no secret on
+  # disk; the wrapper kinit's on demand and krg-krenew keeps the ticket alive). Gated on
+  # the E4E-NAS AD group (spec/krg-ad/groups.yml). Defaults target e4e-nas.ucsd.edu.
+  # NOTE: a mounter must ALSO be able to log in here (krg.adClient.allowedGroups above),
+  # which E4E users already are via the kastnerml group.
+  krg.nasMount.enable = true;
 
   # scratchpool holds the group scratch datasets, imported via krg.scratch's fileSystems
   # entries. Listed here too so the pool still imports if a dataset is ever unmounted.
