@@ -36,6 +36,10 @@ groups:
   - { name: "GPU Users", description: "GPU device access on compute hosts (nvidia.nix cudaAccessGroups -> ad-group-sync)" }
   - { name: "Docker Users", description: "docker daemon access on hosts (docker.nix accessGroups -> ad-group-sync)" }
   - { name: "KastnerML", description: "Access to the kastner-ml host" }
+  # Space-FREE name on purpose (like proxmox-admins): consumed as `%E4E-NAS` in a
+  # sudoers rule (nix krg.nasMount) where an unescaped space would break the rule,
+  # and looked up by name in Authentik (terraform/authentik app_access.tf).
+  - { name: "E4E-NAS", description: "Mount access to the E4E NAS (e4e-nas.ucsd.edu) CIFS shares via the kastner-ml e4e-nas-mount sudo wrapper (nix krg.nasMount); also gates the E4E NAS app tile in Authentik (app_access.tf)" }
   - { name: "Guacamole Admins", description: "Apache Guacamole administrators" }
   # Space-FREE name on purpose: PVE's AD-realm sync rejects group ids with spaces
   # ([A-Za-z0-9._-]+), so a "Proxmox Admins" group would be skipped on sync. The
