@@ -74,11 +74,28 @@ firewall:
         #     prepended from trusted.json `ucsd`. Mirrors the nix
         #     service-host pattern `sshSources = ucsd ++ ops`
         #     (nix/profiles/base.nix:124).
-        # (4) the static rules below (ssh-deny-fall-through, then
-        #     geoip-US-floor). Order in (4) matters: the SSH drop must
-        #     fire BEFORE geoip-US-floor, otherwise geoip-US would
-        #     silently re-open SSH to the entire US (the bug this
-        #     section closes).
+        # (4) ucsd Samba/NFS allows (8 ucsd CIDRs, ports
+        #     111/139/445/662/892/2049/4045) — prepended from
+        #     trusted.json `ucsd`. Lets researchers/admins mount SMB/NFS
+        #     shares directly from campus (or sealab, already covered by
+        #     (1)); NOT open to the geoip-US floor like the rest of DSM
+        #     used to be (2026-07-08 finding: SMB carries real research
+        #     data + has a brutal internet-exposure CVE history —
+        #     EternalBlue/WannaCry — so it gets its own narrower grant,
+        #     not "all of the US").
+        # (5) domain-port allows (AD protocol ports — DNS/Kerberos/LDAP/
+        #     kpasswd/LDAPS/GC) scoped to `machines` ONLY (the DC +
+        #     known fleet hosts), not ucsd — prepended from
+        #     trusted.json `machines`. e4e-nas is an AD MEMBER (see
+        #     spec/e4e-nas/ad.yml), so nothing listens on these inbound
+        #     today; this is a forward-looking restriction.
+        # (6) the static rules below (ssh/smb/nfs-deny-fall-through,
+        #     then lets-encrypt-http-01). There is NO geoip-US floor
+        #     anymore (see note below) — eth0's own adapter policy is
+        #     `drop`, so anything not matched by (1)-(6) is denied by
+        #     default. The deny-fall-through rules exist as explicit,
+        #     self-documenting belts-and-suspenders in case a broader
+        #     allow is ever reintroduced above them.
         global:
           policy: none
           rules:
@@ -97,6 +114,36 @@ firewall:
               port_group: custom
               ports: "22"
               protocol: tcp
+              source_ip_group: all
+              source_ip: all
+
+            # Drop SMB from anyone not explicitly allowed above (ucsd,
+            # via the prepended allow, or sealab/machines/monitoring via
+            # the trusted-net allow). Belt-and-suspenders: eth0's own
+            # default is already `drop`, so this rule is not load-bearing
+            # by itself, but it documents the boundary explicitly and
+            # keeps SMB safe even if a broader allow is ever added above.
+            - name: smb-deny-fall-through
+              enable: true
+              log: false
+              policy: drop
+              port_direction: destination
+              port_group: custom
+              ports: "139,445"
+              protocol: all
+              source_ip_group: all
+              source_ip: all
+
+            # Drop NFS (+ its support ports) from anyone not explicitly
+            # allowed above. Same rationale as smb-deny-fall-through.
+            - name: nfs-deny-fall-through
+              enable: true
+              log: false
+              policy: drop
+              port_direction: destination
+              port_group: custom
+              ports: "111,662,892,2049,4045"
+              protocol: all
               source_ip_group: all
               source_ip: all
 
@@ -147,28 +194,22 @@ firewall:
               source_ip_group: all
               source_ip: all
 
-            # Country gate. Allows researchers/admins from anywhere in
-            # the US for NON-SSH (DSM web file browser, etc.). SSH is
-            # already drop'd above for non-trusted/non-ucsd/non-ops
-            # sources, so this rule's all-ports allow effectively
-            # covers everything EXCEPT SSH (which the earlier drop
-            # caught). See docs/e4e-nas-crowdsec-evaluation.md for why
-            # DSM-native geoip (vs CrowdSec) for the Synology.
-            - name: geoip-US-floor
-              enable: true
-              log: false
-              policy: allow
-              port_direction: destination
-              port_group: all
-              ports: all
-              protocol: all
-              source_ip_group: geoip
-              source_ip: US
+        # --- geoip-US-floor: REMOVED 2026-07-08 -------------------------
+        # Previously this list ended with a `geoip-US-floor` rule:
+        # policy=allow, port_group=all, ports=all, source=geoip US —
+        # i.e. every port except SSH was open to any US-geoip IP. Removed
+        # after an on-box audit found e4e-nas already drawing recurring
+        # automated CGI-exploit-scanner traffic (harmless misses, but
+        # real exposure) and confirmed no compromise — see the
+        # conversation this fix came out of. The floor is now explicit
+        # per-service allows only ((1)-(6) above); eth0's own `drop`
+        # policy is the real default-deny. Do not re-add a blanket
+        # geoip/all-ports allow without deliberately reopening this.
 
         # eth0 is the planned public interface (132.239.17.124; currently
         # disconnected, gets cabled later). Default-DROP everything that
-        # didn't match a global allow rule — that's the actual "US is the
-        # floor" enforcement.
+        # didn't match an earlier allow — this is the actual enforcement
+        # point now that there's no geoip floor beneath it.
         eth0:
           policy: drop
           rules: []
@@ -180,22 +221,17 @@ firewall:
         # cable swap means lab access keeps working through the
         # transition; flip it to drop once eth0 is the live path.
 
-  # Geoip block — the country-allowlist INTENT (what countries are
-  # allowed). The actual ENFORCEMENT lives as the `geoip-US-floor` rule
-  # under `profiles.default.adapters.global.rules` above, because DSM 7.2.2
-  # has no standalone geoip setter (Firewall.Geoip has only {list, get}).
-  # Geoip is a per-RULE source-type, not a config flag — so the rule list
-  # is where it lives.
-  #
-  # At apply time, tasks/main.yml asserts the global geoip rule's
-  # `source_ip` matches `allow_countries | join(',')` — drift between
-  # this block and the rule above gets flagged.
+  # Geoip block — SUPERSEDED 2026-07-08. The country-allowlist floor
+  # (`geoip-US-floor`, a blanket allow-every-port rule for any US-geoip
+  # source) was removed after an audit found it was already drawing
+  # internet scanner traffic. Posture is now explicit per-service allows
+  # ((1)-(6) in the `global` adapter comment above) with a real
+  # default-deny beneath them, not a country-wide floor. `enable: false`
+  # here means tasks/main.yml's geoip-rule drift-check is skipped (no
+  # geoip rule exists to check against). Re-enabling this requires
+  # re-adding a geoip rule AND flipping this back on, deliberately.
   geoip:
-    enable: true
-    # ISO 3166-1 alpha-2. US-only matches the fleet intent. Ops travelers
-    # reach the NAS via the trusted-net allow rules prepended ahead of
-    # the geoip rule (same per-admin escape hatch pattern as nix
-    # krg.firewall.sshSources).
+    enable: false
     allow_countries: [US]
 
 auto_block:

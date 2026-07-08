@@ -59,9 +59,11 @@
 
 # --- Per-adapter firewall rule push (Profile.set + Profile.Apply via HTTP) ---
 # Build the desired per-adapter state from the spec + trusted.json (single
-# source of truth). The spec lists STATIC rules (geoip-US-floor); we prepend
-# DYNAMIC trusted-source allow rules (one per sealab + machines + monitoring
-# IP) so a change to trusted.json flows automatically.
+# source of truth). The spec lists STATIC rules (deny-fall-throughs +
+# lets-encrypt-http-01; the old geoip-US-floor blanket allow was removed
+# 2026-07-08); we prepend DYNAMIC trusted-source allow rules (one per
+# sealab + machines + monitoring IP) so a change to trusted.json flows
+# automatically.
 #
 # The active profile must be NON-EMPTY when firewall.enable=true (default-deny
 # + no rules = locked out). apply_security.py:do_firewall_profile asserts this
@@ -89,9 +91,9 @@
 
 # SSH source restriction — match the nix `krg.firewall.sshSources` pattern
 # for SERVICE hosts (`ucsd + ops`, see nix/profiles/base.nix). The NAS is a
-# service host (storage appliance, not compute), so SSH should NOT be open
-# to the wider "US is the floor" geoip allow — only ucsd + ops + the
-# trusted-net all-ports allows above. Implementation:
+# service host (storage appliance, not compute), so SSH is scoped to
+# ucsd + ops + the trusted-net all-ports allows above, not the whole
+# internet. Implementation:
 #   (a) ops admin personal IPs (chris/sean — `ops` in trusted.json) get a
 #       per-IP TCP-22 allow. Lets admins break-glass from a hotel wifi
 #       without opening DSM web/SMB/etc. to whatever IP they're on.
@@ -100,10 +102,10 @@
 #       than the world. Mirrors `nix/profiles/base.nix` line 124's
 #       `sshSources = ucsd ++ ops`.
 #   (c) a single drop-ssh-fall-through static rule in the spec below
-#       (placed AFTER all allow rules but BEFORE the geoip-US all-ports
-#       allow) catches SSH from anything not matched by (a)/(b) or by the
-#       earlier trusted-net all-ports allows. Without that rule, geoip-US
-#       would silently re-open SSH to the entire US.
+#       (placed after all allow rules) catches SSH from anything not
+#       matched by (a)/(b) or by the earlier trusted-net all-ports
+#       allows. eth0's own adapter policy is `drop`, so this rule is
+#       belt-and-suspenders, same as the smb/nfs-deny-fall-through rules.
 - name: Build ops SSH allow rules (one per ops admin IP, port 22 TCP only)
   tags: [synology_security]
   ansible.builtin.set_fact:
@@ -144,6 +146,58 @@
   loop_control:
     loop_var: ip
 
+- name: Build ucsd Samba/NFS allow rules (one per ucsd CIDR; ucsd-ONLY, no ops — data plane, not an admin break-glass path)
+  tags: [synology_security]
+  ansible.builtin.set_fact:
+    firewall_ucsd_smb_nfs_rules: "{{ firewall_ucsd_smb_nfs_rules | default([]) + [_rule] }}"
+  vars:
+    _rule:
+      name: "ucsd-smb-nfs-{{ ip | regex_replace('[./:]', '_') }}"
+      enable: true
+      log: false
+      policy: allow
+      port_direction: destination
+      port_group: custom
+      # SMB (139, 445) + full NFS support set (111 rpcbind, 662 statd,
+      # 892 mountd, 2049 nfsd, 4045 lockd) — all observed listening on
+      # 0.0.0.0/:: in the live port scan. protocol=all covers tcp+udp
+      # for the rpcbind-family services without needing separate rules.
+      ports: "111,139,445,662,892,2049,4045"
+      protocol: all
+      source_ip_group: ip
+      source_ip: "{{ ip }}"
+  loop: "{{ krg_trusted.ipsets.ucsd | default([]) | map(attribute='cidr') | list }}"
+  loop_control:
+    loop_var: ip
+
+- name: Build domain-port allow rules (DC + trusted machines only; AD protocol traffic, NOT the ucsd-wide SMB/NFS grant above)
+  tags: [synology_security]
+  ansible.builtin.set_fact:
+    firewall_domain_rules: "{{ firewall_domain_rules | default([]) + [_rule] }}"
+  vars:
+    _rule:
+      name: "domain-{{ ip | regex_replace('[./:]', '_') }}"
+      enable: true
+      log: false
+      policy: allow
+      port_direction: destination
+      port_group: custom
+      # AD protocol ports: DNS 53, Kerberos 88, LDAP 389, kpasswd 464,
+      # LDAPS 636, Global Catalog 3268/3269. e4e-nas is a domain MEMBER
+      # (spec/e4e-nas/ad.yml), not the DC, so nothing here is currently
+      # listening inbound — this is a forward-looking restriction so
+      # winbind/directory-service traffic never falls through to a
+      # broader allow if DSM ever binds one of these. `machines` already
+      # includes krg-ldap (the DC, 137.110.161.109), so one loop covers
+      # "the domain controller or trusted machines".
+      ports: "53,88,389,464,636,3268,3269"
+      protocol: all
+      source_ip_group: ip
+      source_ip: "{{ ip }}"
+  loop: "{{ krg_trusted.ipsets.machines | default([]) | map(attribute='cidr') | list }}"
+  loop_control:
+    loop_var: ip
+
 - name: Drift-check geoip rule(s) against geoip.allow_countries (spec internal consistency)
   tags: [synology_security]
   ansible.builtin.assert:
@@ -180,6 +234,8 @@
             'rules': (firewall_trusted_rules
                       + (firewall_ops_ssh_rules | default([]))
                       + (firewall_ucsd_ssh_rules | default([]))
+                      + (firewall_ucsd_smb_nfs_rules | default([]))
+                      + (firewall_domain_rules | default([]))
                       + item.value.rules) if item.key == 'global' else item.value.rules
           }
         })
