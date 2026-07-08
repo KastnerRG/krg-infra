@@ -19,6 +19,19 @@ Subcommands:
                  the active layout names our node. Refuses to mutate an
                  already-defined layout (anti-rebalance guard — capacity
                  bumps are an operator-driven side-effect, not auto-applied).
+  sync-buckets  Create-if-missing buckets from spec.buckets, via the Garage
+                v2 Admin API (not the CLI — JSON, already documented, and the
+                admin API is reachable on loopback since the container uses
+                network_mode: host). Idempotent: existing global aliases are
+                left alone.
+  sync-keys     Create-if-missing access keys from spec.keys + converge each
+                key's per-bucket read/write/owner grants via AllowBucketKey /
+                DenyBucketKey. A key's secret is only ever returned by Garage
+                at CreateKey time, so it's persisted immediately to
+                <keys-dir>/<name>.env (root:root 0400) — see "Key secrets"
+                below. Refuses (FAIL) to proceed if a key already exists on
+                Garage but its local secret file is missing: that's
+                unrecoverable drift, not something to paper over silently.
 
 Why direct `docker compose` and not DSM's SYNO.Docker.Project: the synology-
 community/synology terraform provider hit three bugs against that API
@@ -33,6 +46,14 @@ OK no-change / WOULD-CHANGE <json> / CHANGED <json> / FAIL <json>. The
 render-config output deliberately omits the secret values from any
 WOULD-CHANGE/CHANGED payload (only emits `desired_sha256`, a fingerprint
 of the rendered config that lets operators confirm meaningful change).
+
+Key secrets: sync-keys' CHANGED/WOULD-CHANGE payloads never carry a
+secretAccessKey either — same posture as render-config/render-ui-config.
+Unlike those, though, there's no "known input secret" here to compare
+against: Garage GENERATES the secret at CreateKey time and never shows it
+again. It's written straight to <keys-dir>/<name>.env (root:root 0400) as
+the only durable copy on this box; operators seed it into OpenBao by hand
+(see roles/synology_garage/README.md "One-time seed").
 """
 
 import argparse
@@ -43,6 +64,9 @@ import re
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 
 
 # DSM Container Manager ships docker under non-standard paths that sudo's
@@ -538,6 +562,287 @@ def do_layout(a):
 
 
 # ---------------------------------------------------------------------------
+# Garage v2 Admin API — used by sync-buckets / sync-keys instead of shelling
+# out to `garage bucket ...` / `garage key ...` text output (unlike `layout`,
+# which predates the v2 admin API and still parses CLI text). The admin API
+# is JSON, versioned, and documented (garagehq.deuxfleurs.fr admin-api); the
+# CLI is a thin wrapper over the same calls. Reachable on loopback because
+# the garage container runs with network_mode: host, same as garage-ui's own
+# admin_endpoint (see GARAGE_UI_CONFIG_TEMPLATE above).
+# ---------------------------------------------------------------------------
+def _admin_request(admin_port, admin_token, method, path, query=None, body=None):
+    """POST/GET the Garage admin API. Returns (http_status, parsed_json) for
+    ANY http-level response (including 4xx/5xx) so callers can report a
+    structured FAIL instead of catching an exception. Only genuine transport
+    failures (connection refused, DNS, timeout) raise — callers wrap those."""
+    url = "http://127.0.0.1:%d%s" % (admin_port, path)
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Authorization", "Bearer " + admin_token)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read()
+            return resp.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            parsed = json.loads(raw) if raw else None
+        except ValueError:
+            parsed = {"raw": raw.decode("utf-8", "replace")}
+        return e.code, parsed
+
+
+_PERM_FLAGS = ("read", "write", "owner")
+
+
+def _permissions_dict(perm_list):
+    bad = [p for p in perm_list if p not in _PERM_FLAGS]
+    if bad:
+        raise ValueError("invalid permission(s) %s (valid: %s)" % (bad, list(_PERM_FLAGS)))
+    return {p: (p in perm_list) for p in _PERM_FLAGS}
+
+
+# ---------------------------------------------------------------------------
+# sync-buckets — create-if-missing buckets (Admin API: ListBuckets/CreateBucket)
+# ---------------------------------------------------------------------------
+def do_sync_buckets(a):
+    admin_token = os.environ.get("GARAGE_ADMIN_TOKEN", "")
+    if not admin_token:
+        return _fail({"reason": "required secret env var unset", "vars": ["GARAGE_ADMIN_TOKEN"]})
+    try:
+        desired_names = json.loads(a.buckets_json)
+    except ValueError as e:
+        return _fail({"reason": "invalid --buckets-json", "error": str(e)})
+
+    admin_port = int(a.admin_port)
+    try:
+        status, buckets = _admin_request(admin_port, admin_token, "GET", "/v2/ListBuckets")
+    except (urllib.error.URLError, OSError) as e:
+        return _fail({"reason": "ListBuckets request failed", "error": str(e)})
+    if status != 200:
+        return _fail({"reason": "ListBuckets returned non-200", "status": status, "body": buckets})
+
+    existing_aliases = set()
+    for b in buckets:
+        existing_aliases.update(b.get("globalAliases") or [])
+
+    missing = [n for n in desired_names if n not in existing_aliases]
+    payload = {"buckets_to_create": missing}
+    if not missing:
+        return _emit("no-change", {}, a.check)
+    if a.check:
+        return _emit("would-change", payload, True)
+
+    for name in missing:
+        status, resp = _admin_request(
+            admin_port, admin_token, "POST", "/v2/CreateBucket", body={"globalAlias": name}
+        )
+        if status not in (200, 201):
+            return _fail(
+                {"reason": "CreateBucket failed", "bucket": name, "status": status, "body": resp}
+            )
+    return _emit("changed", payload, False)
+
+
+# ---------------------------------------------------------------------------
+# sync-keys — create-if-missing keys + converge per-bucket read/write/owner
+# grants (Admin API: ListKeys/CreateKey/GetBucketInfo/AllowBucketKey/DenyBucketKey)
+# ---------------------------------------------------------------------------
+def do_sync_keys(a):
+    admin_token = os.environ.get("GARAGE_ADMIN_TOKEN", "")
+    if not admin_token:
+        return _fail({"reason": "required secret env var unset", "vars": ["GARAGE_ADMIN_TOKEN"]})
+    admin_port = int(a.admin_port)
+
+    try:
+        desired_keys = json.loads(a.keys_json)
+    except ValueError as e:
+        return _fail({"reason": "invalid --keys-json", "error": str(e)})
+
+    try:
+        for kspec in desired_keys:
+            for bspec in kspec.get("buckets", []):
+                _permissions_dict(bspec.get("permissions", []))
+    except ValueError as e:
+        return _fail({"reason": str(e)})
+
+    try:
+        status, buckets = _admin_request(admin_port, admin_token, "GET", "/v2/ListBuckets")
+    except (urllib.error.URLError, OSError) as e:
+        return _fail({"reason": "ListBuckets request failed", "error": str(e)})
+    if status != 200:
+        return _fail({"reason": "ListBuckets returned non-200", "status": status, "body": buckets})
+    bucket_id_by_alias = {}
+    for b in buckets:
+        for alias in b.get("globalAliases") or []:
+            bucket_id_by_alias[alias] = b["id"]
+
+    for kspec in desired_keys:
+        for bspec in kspec.get("buckets", []):
+            if bspec["name"] not in bucket_id_by_alias:
+                return _fail(
+                    {
+                        "reason": "bucket not found on Garage — sync-buckets must run "
+                        "before sync-keys (task ordering)",
+                        "key": kspec["name"],
+                        "bucket": bspec["name"],
+                    }
+                )
+
+    try:
+        status, keys = _admin_request(admin_port, admin_token, "GET", "/v2/ListKeys")
+    except (urllib.error.URLError, OSError) as e:
+        return _fail({"reason": "ListKeys request failed", "error": str(e)})
+    if status != 200:
+        return _fail({"reason": "ListKeys returned non-200", "status": status, "body": keys})
+    key_id_by_name = {}
+    for k in keys:
+        name = k.get("name")
+        if name in key_id_by_name:
+            return _fail(
+                {
+                    "reason": "duplicate Garage key name — can't manage declaratively; "
+                    "rename or delete the duplicate on the box first",
+                    "name": name,
+                }
+            )
+        key_id_by_name[name] = k["id"]
+
+    def secret_path(name):
+        return os.path.join(a.keys_dir, name + ".env")
+
+    to_create = [k["name"] for k in desired_keys if k["name"] not in key_id_by_name]
+
+    # Unrecoverable-drift guard: a key that exists on Garage but whose secret
+    # was never persisted (or was lost) can NEVER be re-revealed — Garage
+    # only returns secretAccessKey once, at CreateKey time. Silently doing
+    # nothing leaves an unusable key referenced by the spec; silently
+    # recreating it would silently rotate credentials out from under
+    # whatever external consumer (e.g. Label Studio) already has the old
+    # ones. Surface it as an operator decision instead, same philosophy as
+    # the layout anti-rebalance guard above.
+    existing_missing_secret = [
+        k["name"]
+        for k in desired_keys
+        if k["name"] in key_id_by_name and not os.path.exists(secret_path(k["name"]))
+    ]
+    if existing_missing_secret:
+        return _fail(
+            {
+                "reason": "key(s) exist on Garage but their secret .env is missing locally. "
+                "Garage never re-reveals a secret access key after creation. Restore the "
+                "file (from backup/OpenBao) or delete the key on Garage "
+                "(`docker exec garage /garage key delete <id>`) and re-run to rotate — "
+                "rotating WILL break any external consumer still using the old key.",
+                "keys": existing_missing_secret,
+                "keys_dir": a.keys_dir,
+            }
+        )
+
+    # Diff every declared key x bucket grant against the bucket's current
+    # per-key permissions. New (not-yet-created) keys have no current grants
+    # by definition, so everything desired-true becomes an "allow".
+    grant_ops = []  # (key_name, bucket_name, bucket_id, op, perms_dict)
+    for kspec in desired_keys:
+        name = kspec["name"]
+        key_id = key_id_by_name.get(name)
+        for bspec in kspec.get("buckets", []):
+            desired_perms = _permissions_dict(bspec.get("permissions", []))
+            bucket_id = bucket_id_by_alias[bspec["name"]]
+            current_perms = {"read": False, "write": False, "owner": False}
+            if key_id is not None:
+                status, info = _admin_request(
+                    admin_port, admin_token, "GET", "/v2/GetBucketInfo", query={"id": bucket_id}
+                )
+                if status != 200:
+                    return _fail(
+                        {
+                            "reason": "GetBucketInfo failed",
+                            "bucket": bspec["name"],
+                            "status": status,
+                            "body": info,
+                        }
+                    )
+                for kperm in info.get("keys", []) or []:
+                    if kperm.get("accessKeyId") == key_id:
+                        p = kperm.get("permissions") or {}
+                        current_perms = {f: bool(p.get(f)) for f in _PERM_FLAGS}
+                        break
+            to_allow = {f: True for f in _PERM_FLAGS if desired_perms[f] and not current_perms[f]}
+            to_deny = {f: True for f in _PERM_FLAGS if current_perms[f] and not desired_perms[f]}
+            if to_allow:
+                grant_ops.append((name, bspec["name"], bucket_id, "allow", to_allow))
+            if to_deny:
+                grant_ops.append((name, bspec["name"], bucket_id, "deny", to_deny))
+
+    changed = bool(to_create or grant_ops)
+    payload = {
+        "keys_to_create": to_create,
+        "grant_ops": [
+            {"key": kn, "bucket": bn, "op": op, "permissions": sorted(f for f in p)}
+            for kn, bn, _bid, op, p in grant_ops
+        ],
+    }
+    if not changed:
+        return _emit("no-change", {}, a.check)
+    if a.check:
+        return _emit("would-change", payload, True)
+
+    os.makedirs(a.keys_dir, exist_ok=True)
+    for name in to_create:
+        status, resp = _admin_request(
+            admin_port, admin_token, "POST", "/v2/CreateKey", body={"name": name}
+        )
+        if status not in (200, 201):
+            return _fail(
+                {"reason": "CreateKey failed", "key": name, "status": status, "body": resp}
+            )
+        key_id = resp.get("accessKeyId")
+        secret = resp.get("secretAccessKey")
+        if not key_id or not secret:
+            return _fail(
+                {
+                    "reason": "CreateKey response missing accessKeyId/secretAccessKey — "
+                    "Garage admin API contract may have changed",
+                    "key": name,
+                }
+            )
+        _atomic_write(
+            secret_path(name),
+            "ACCESS_KEY_ID=%s\nSECRET_ACCESS_KEY=%s\n" % (key_id, secret),
+            0o400,
+        )
+        key_id_by_name[name] = key_id
+
+    for key_name, bucket_name, bucket_id, op, perms in grant_ops:
+        key_id = key_id_by_name[key_name]
+        path = "/v2/AllowBucketKey" if op == "allow" else "/v2/DenyBucketKey"
+        status, resp = _admin_request(
+            admin_port,
+            admin_token,
+            "POST",
+            path,
+            body={"bucketId": bucket_id, "accessKeyId": key_id, "permissions": perms},
+        )
+        if status != 200:
+            return _fail(
+                {
+                    "reason": "%s failed" % path,
+                    "key": key_name,
+                    "bucket": bucket_name,
+                    "status": status,
+                    "body": resp,
+                }
+            )
+
+    return _emit("changed", payload, False)
+
+
+# ---------------------------------------------------------------------------
 # render-ui-config — write garage-ui's config.yaml (OIDC + admin_token)
 # ---------------------------------------------------------------------------
 # JWT private key persistence: garage-ui can auto-generate an Ed25519 key on
@@ -829,6 +1134,35 @@ def main(argv):
     ly.add_argument("--capacity", required=True)
     ly.add_argument("--check", action="store_true")
     ly.set_defaults(fn=do_layout)
+
+    sb = sub.add_parser("sync-buckets")
+    sb.add_argument("--admin-port", required=True)
+    sb.add_argument(
+        "--buckets-json",
+        required=True,
+        help='JSON array of bucket (global alias) names, e.g. ["label-studio"]',
+    )
+    # Admin token read from GARAGE_ADMIN_TOKEN env — NOT argv. See do_sync_buckets.
+    sb.add_argument("--check", action="store_true")
+    sb.set_defaults(fn=do_sync_buckets)
+
+    sk = sub.add_parser("sync-keys")
+    sk.add_argument("--admin-port", required=True)
+    sk.add_argument(
+        "--keys-json",
+        required=True,
+        help='JSON array: [{"name":"label-studio","buckets":'
+        '[{"name":"label-studio","permissions":["read","write"]}]}]',
+    )
+    sk.add_argument(
+        "--keys-dir",
+        required=True,
+        help="Directory where each newly-created key's one-time secret is "
+        "persisted as <name>.env (root:root 0400).",
+    )
+    # Admin token read from GARAGE_ADMIN_TOKEN env — NOT argv. See do_sync_keys.
+    sk.add_argument("--check", action="store_true")
+    sk.set_defaults(fn=do_sync_keys)
 
     ru = sub.add_parser("render-ui-config")
     ru.add_argument("--config-path", required=True)
