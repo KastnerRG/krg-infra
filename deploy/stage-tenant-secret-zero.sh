@@ -129,8 +129,13 @@ for row in "${rows[@]}"; do
   # repo (terraform/incus stamps user.krg_repo), broker a fresh token from the org's
   # GitHub App and push it where nixosModules.tenant's runner reads it. Best-effort like
   # secret-zero: a missing App/seed or a booting VM warns, never fails the fleet.
-  repo="$(incus config get "$name" --project "$project" user.krg_repo 2>/dev/null || true)"
-  if [[ -n "$repo" ]]; then
+  # Query the ${REMOTE}: daemon (NOT krg-deploy's local socket) with --project BEFORE the
+  # positional, matching the file-push calls above — this incus rejects the interspersed
+  # `<instance> --project` form with a usage error printed to STDOUT, which would otherwise
+  # be captured into $repo and passed to the minter as a garbage "repo".
+  repo="$(incus config get --project "$project" "${REMOTE}:${name}" user.krg_repo 2>/dev/null || true)"
+  # Guard: only a real owner/repo proceeds — never feed a stray usage/error string to the minter.
+  if [[ "$repo" == */* ]]; then
     if regtok="$("${SCRIPT_DIR}/mint-runner-token.sh" "$repo" 2>/dev/null)" && [[ -n "$regtok" ]]; then
       if printf '%s' "$regtok" | incus file push --project "$project" - \
         "${REMOTE}:${name}${RUNNER_DIR}/registration-token" --create-dirs --uid 0 --gid 0 --mode 0600 2>/dev/null; then
