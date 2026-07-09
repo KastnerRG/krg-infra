@@ -183,6 +183,12 @@ in {
 
       systemd.tmpfiles.rules = [
         "d /var/lib/krg/github-runner 0700 root root -" # krg-deploy pushes the token here (root)
+        # The runner's workDir. createHome makes the home (/var/lib/gh-runner) but NOT this
+        # subdir, and the github-runners unit sandbox bind-mounts workDir — a missing dir
+        # fails at namespace setup (`status=226/NAMESPACE: /var/lib/gh-runner/work: No such
+        # file or directory`) before the runner ever starts. Create both so the mount lands.
+        "d /var/lib/${runnerUser} 0750 ${runnerUser} ${runnerUser} -"
+        "d ${workDir} 0700 ${runnerUser} ${runnerUser} -"
       ];
 
       services.github-runners.${t.name} = {
