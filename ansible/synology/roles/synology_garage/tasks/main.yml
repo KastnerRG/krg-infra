@@ -171,10 +171,17 @@
   tags: [garage_data]
 
 - name: Sync Garage keys + per-bucket grants
+  # NOTE: `garage_spec.get('keys', ...)`, NOT `garage_spec.keys`. Jinja resolves
+  # dotted access as an attribute before a dict item, so `garage_spec.keys`
+  # returns the dict's built-in `.keys` METHOD (a `builtin_function_or_method`
+  # that `to_json` can't serialize — "Object of type ... is not JSON
+  # serializable"), never the spec's `keys:` list. `.get('keys', [])` dodges the
+  # collision and yields [] if the section is absent. (The buckets task above is
+  # safe from this only because `dict` has no `.buckets` method.)
   ansible.builtin.script: >-
     apply_garage.py sync-keys
     --admin-port {{ garage_spec.config.admin.api_bind_addr.split(':')[-1] }}
-    --keys-json {{ (garage_spec.keys | default([])) | to_json | quote }}
+    --keys-json {{ garage_spec.get('keys', []) | to_json | quote }}
     --keys-dir {{ garage_spec.deployment.keys_dir | quote }}
     {{ '--check' if ansible_check_mode else '' }}
   environment:
