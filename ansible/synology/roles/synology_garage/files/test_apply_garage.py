@@ -897,7 +897,12 @@ def _sync_keys_args(**overrides):
     base = {
         "admin_port": "3903",
         "keys_json": json.dumps(
-            [{"name": "label-studio", "buckets": [{"name": "label-studio", "permissions": ["read", "write"]}]}]
+            [
+                {
+                    "name": "label-studio",
+                    "buckets": [{"name": "label-studio", "permissions": ["read", "write"]}],
+                }
+            ]
         ),
         "keys_dir": "/volume1/docker/garage/keys",
         "check": False,
@@ -972,7 +977,9 @@ def test_sync_keys_no_change_when_key_and_grants_match(monkeypatch, capsys):
 
     rc = m.do_sync_keys(_sync_keys_args())
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
-    assert not any(c[1] in ("/v2/CreateKey", "/v2/AllowBucketKey", "/v2/DenyBucketKey") for c in calls)
+    assert not any(
+        c[1] in ("/v2/CreateKey", "/v2/AllowBucketKey", "/v2/DenyBucketKey") for c in calls
+    )
 
 
 def test_sync_keys_revokes_extra_permission(monkeypatch, capsys):
@@ -1006,7 +1013,11 @@ def test_sync_keys_revokes_extra_permission(monkeypatch, capsys):
     assert rc == 0 and out.startswith("CHANGED ")
     deny_calls = [c for c in calls if c[1] == "/v2/DenyBucketKey"]
     assert len(deny_calls) == 1
-    assert deny_calls[0][3] == {"bucketId": "b1", "accessKeyId": "GK1", "permissions": {"owner": True}}
+    assert deny_calls[0][3] == {
+        "bucketId": "b1",
+        "accessKeyId": "GK1",
+        "permissions": {"owner": True},
+    }
     assert not any(c[1] == "/v2/AllowBucketKey" for c in calls)
 
 
@@ -1090,7 +1101,12 @@ def test_sync_keys_check_mode_no_mutation(monkeypatch, capsys):
     payload = json.loads(out.split(" ", 1)[1])
     assert payload["keys_to_create"] == ["label-studio"]
     assert payload["grant_ops"] == [
-        {"key": "label-studio", "bucket": "label-studio", "op": "allow", "permissions": ["read", "write"]}
+        {
+            "key": "label-studio",
+            "bucket": "label-studio",
+            "op": "allow",
+            "permissions": ["read", "write"],
+        }
     ]
     assert writes == []
     assert not any(c[1] in ("/v2/CreateKey", "/v2/AllowBucketKey") for c in calls)
@@ -1099,7 +1115,12 @@ def test_sync_keys_check_mode_no_mutation(monkeypatch, capsys):
 def test_sync_keys_rejects_invalid_permission(monkeypatch, capsys):
     monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
     bad_json = json.dumps(
-        [{"name": "label-studio", "buckets": [{"name": "label-studio", "permissions": ["read", "delete"]}]}]
+        [
+            {
+                "name": "label-studio",
+                "buckets": [{"name": "label-studio", "permissions": ["read", "delete"]}],
+            }
+        ]
     )
     rc = m.do_sync_keys(_sync_keys_args(keys_json=bad_json))
     out = capsys.readouterr().out
