@@ -158,24 +158,38 @@ bucket to exist first). Schema:
 
 ```yaml
 buckets:
-  - name: label-studio        # becomes a Garage global alias
+  - name: fishsense-lite          # becomes a Garage global alias
+  - name: labels-fishsense-lite   # per-project Label Studio hand-off bucket
 
 keys:
-  - name: label-studio        # access-key name
+  - name: fishsense-lite          # access-key name
     buckets:
-      - name: label-studio
-        permissions: [read, write]   # subset of [read, write, owner]
+      - name: fishsense-lite
+        permissions: [read, write]        # subset of [read, write, owner]
+      - name: labels-fishsense-lite
+        permissions: [read, write]
 ```
 
 Fully declarative: re-running with a bucket removed from a key's `buckets:`
 list revokes that grant (`DenyBucketKey`), it isn't just additive.
+
+**Bucket-per-trust-boundary.** Garage grants are per *bucket*, not per prefix.
+Split buckets by which key holder can touch the bytes: a project's internal
+artifacts get their own bucket (only the project's key), while its Label Studio
+images get a separate `labels-<project>` bucket that the off-box Label Studio
+(Heartex SaaS) key reads/writes. There is deliberately **no** shared
+`label-studio` bucket — one key on it would span every project's label data.
+`sync-buckets` is create-if-missing (additive), so dropping a bucket from spec
+does **not** delete it: retiring a bucket is a manual one-time decommission
+(empty it via an S3 client — the UI can't recurse a prefix — then
+`garage bucket delete`).
 
 ### Key secrets
 
 Garage shows an access key's `secretAccessKey` **exactly once**, in the
 `CreateKey` response — there's no API to retrieve it again later.
 `sync-keys` persists it immediately to `<keys_dir>/<name>.env` (root:root
-0400, e.g. `/volume1/docker/garage/keys/label-studio.env`):
+0400, e.g. `/volume1/docker/garage/keys/labels-fishsense-lite.env`):
 
 ```
 ACCESS_KEY_ID=GK...
@@ -196,8 +210,8 @@ Seed the generated secret into OpenBao for durability (mirrors the
 this is audit/recovery only):
 
 ```bash
-ssh e4e-admin@e4e-nas.ucsd.edu 'sudo cat /volume1/docker/garage/keys/label-studio.env'
-bao kv put secret/e4e-nas/garage-keys/label-studio \
+ssh e4e-admin@e4e-nas.ucsd.edu 'sudo cat /volume1/docker/garage/keys/labels-fishsense-lite.env'
+bao kv put secret/e4e-nas/garage-keys/labels-fishsense-lite \
   access_key_id="<ACCESS_KEY_ID>" secret_access_key="<SECRET_ACCESS_KEY>"
 ```
 
@@ -215,8 +229,8 @@ endpoint):
 |---|---|
 | Endpoint URL | `https://s3.e4e.ucsd.edu` |
 | Region | `garage` |
-| Bucket | `label-studio` |
-| Access Key ID / Secret Access Key | from `keys/label-studio.env` above |
+| Bucket | `labels-fishsense-lite` (one label bucket per project) |
+| Access Key ID / Secret Access Key | from `keys/labels-fishsense-lite.env` above |
 | Path-style access | enabled (virtual-host `<bucket>.s3.e4e.ucsd.edu` needs a wildcard cert — #118, not live yet) |
 
 Public reachability of `s3.e4e.ucsd.edu:443` from Heartex's cloud depends on
