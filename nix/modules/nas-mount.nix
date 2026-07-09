@@ -212,12 +212,22 @@ in {
     # allowedGroup is space-free by contract, so security.sudo.extraRules (which does
     # NOT escape spaces) is safe here. A bare command path allows any arguments — the
     # wrapper itself validates them.
+    #
+    # Command is the STABLE /run/current-system/sw/bin path, NOT the Nix store path
+    # (${mountTool}/bin/e4e-nas-mount): sudo matches the `command` field as a literal
+    # string against the invoked path, it does not resolve symlinks to compare
+    # underlying files. Users run the bare `sudo e4e-nas-mount ...` (docs/e4e-nas-mount.md),
+    # which $PATH resolves to the environment.systemPackages profile symlink at
+    # /run/current-system/sw/bin/ — not the store path — so granting the store path here
+    # left every user permanently denied regardless of group membership (observed on
+    # kastner-ml: `sudo -l` showed the store path granted, but the runtime denial quoted
+    # /run/current-system/sw/bin/e4e-nas-mount as the disallowed command).
     security.sudo.extraRules = [
       {
         groups = [cfg.allowedGroup];
         commands = [
           {
-            command = "${mountTool}/bin/e4e-nas-mount";
+            command = "/run/current-system/sw/bin/e4e-nas-mount";
             options = ["NOPASSWD"];
           }
         ];
