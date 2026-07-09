@@ -149,15 +149,38 @@ ui:
 # roles/synology_garage/README.md "Key secrets" for how to retrieve it and
 # seed it into OpenBao.
 #
-# label-studio: read/write storage for the Label Studio Enterprise (Heartex
-# SaaS) project — Label Studio isn't a krg-infra host, so it's configured
-# entirely from its own "Cloud Storage" UI (endpoint https://s3.e4e.ucsd.edu,
-# region garage, path-style, bucket "label-studio").
+# BUCKET-PER-TRUST-BOUNDARY. Garage grants are per BUCKET, not per prefix, so
+# the split is forced by "which key holder can touch these bytes":
+#   - a project's INTERNAL artifacts get their own bucket, reachable only by the
+#     project's own key.
+#   - a project's LABEL images go in a SEPARATE `labels-<project>` bucket that an
+#     OFF-BOX Label Studio (Heartex SaaS) key reads/writes. Per project, so one
+#     Label Studio project's storage credential can't reach another's data.
+# There is deliberately NO shared `label-studio` bucket: a single key on it would
+# span every project's label data (removed 2026-07-09 — it was operator-created
+# drift, never real spec state; see git history for the earlier single-bucket form).
+#
+# fishsense-lite (github.com/UCSD-E4E/fishsense-lite) runs OFF-INFRA (researcher
+# CLI + Temporal workers), so its key is consumed from that project's own config,
+# same as any external consumer — seed it wherever those workers run, not on a host.
 buckets:
-  - name: label-studio
+  - name: fishsense-lite # internal pipeline artifacts (rectified/intermediate outputs)
+  - name: labels-fishsense-lite # label-ready images handed off to Label Studio (Heartex SaaS)
 
 keys:
-  - name: label-studio
+  # Held by the fishsense-lite pipeline: read/write its own artifacts, and
+  # publish label-ready images into the hand-off bucket Label Studio reads.
+  - name: fishsense-lite
     buckets:
-      - name: label-studio
+      - name: fishsense-lite
+        permissions: [read, write]
+      - name: labels-fishsense-lite
+        permissions: [read, write]
+  # Held by Label Studio (Heartex SaaS) in THIS project's Cloud Storage config:
+  # reads the images to label, writes annotations back. Scoped to this one
+  # project's label bucket — cannot see fishsense-lite internal artifacts or any
+  # other project's label data.
+  - name: labels-fishsense-lite
+    buckets:
+      - name: labels-fishsense-lite
         permissions: [read, write]
