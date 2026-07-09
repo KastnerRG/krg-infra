@@ -48,10 +48,11 @@
 # secrets and aren't no_log. Fail loudly here, before anything secret-bearing
 # runs.
 #
-# Tagged with `garage_ui` too because the UI's render-ui-config also depends
-# on `garage_admin_token` via its `environment:` block — so `--tags=garage_ui`
-# should hit the same guard, not skip past it into the no_log-shrouded
-# render-ui-config and fail there with a hidden AnsibleUndefinedVariable.
+# Tagged with `garage_ui` and `garage_data` too because both render-ui-config
+# AND sync-buckets/sync-keys depend on `garage_admin_token` via their own
+# `environment:` blocks — so `--tags=garage_ui` / `--tags=garage_data` alone
+# should each hit the same guard, not skip past it into a no_log-shrouded
+# task and fail there with a hidden AnsibleUndefinedVariable.
 - name: Refuse to deploy Garage without secrets in extra_vars
   ansible.builtin.assert:
     that:
@@ -65,7 +66,7 @@
       outside the repo). Generate with `openssl rand -hex 32`. #110
       (OpenBao migration) eventually replaces this with a vault-backed
       lookup.
-  tags: [garage_ui]
+  tags: [garage_ui, garage_data]
 
 # --- 1. garage.toml ------------------------------------------------------------
 # Secrets pass via ENVIRONMENT (not cmdline argv) — argv is visible to other
@@ -141,7 +142,51 @@
   failed_when: "layout_apply.rc != 0 or 'FAIL' in layout_apply.stdout"
   check_mode: false
 
-# --- 4. admin UI (Noooste/garage-ui) -------------------------------------------
+# --- 4. buckets + keys (sub-PR 5 of #101) ---------------------------------------
+# Uses the Garage v2 Admin API (JSON, loopback — see apply_garage.py's
+# _admin_request), not the CLI: `layout` predates the v2 admin API and still
+# parses `garage` CLI text; buckets/keys don't need to carry that debt.
+# sync-buckets before sync-keys: a key's bucket grants need the bucket to
+# already exist (do_sync_keys FAILs loudly otherwise, rather than guessing
+# an ordering fix).
+- name: Sync Garage buckets (create-if-missing)
+  # Bucket names are pulled out into a task `vars:` (rather than inlined with
+  # `map(attribute='name')` on the script line below) so the free-form command
+  # string itself has no literal `=` in it — ansible-lint's no-free-form check
+  # otherwise misreads `attribute='name'` as a stray module k=v argument.
+  vars:
+    garage_bucket_names: "{{ garage_spec.buckets | default([]) | map(attribute='name') | list }}"
+  ansible.builtin.script: >-
+    apply_garage.py sync-buckets
+    --admin-port {{ garage_spec.config.admin.api_bind_addr.split(':')[-1] }}
+    --buckets-json {{ garage_bucket_names | to_json | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  environment:
+    GARAGE_ADMIN_TOKEN: "{{ garage_admin_token }}"
+  register: buckets_apply
+  changed_when: "'CHANGED' in buckets_apply.stdout or 'WOULD-CHANGE' in buckets_apply.stdout"
+  failed_when: "buckets_apply.rc != 0 or 'FAIL' in buckets_apply.stdout"
+  check_mode: false
+  no_log: true
+  tags: [garage_data]
+
+- name: Sync Garage keys + per-bucket grants
+  ansible.builtin.script: >-
+    apply_garage.py sync-keys
+    --admin-port {{ garage_spec.config.admin.api_bind_addr.split(':')[-1] }}
+    --keys-json {{ (garage_spec.keys | default([])) | to_json | quote }}
+    --keys-dir {{ garage_spec.deployment.keys_dir | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  environment:
+    GARAGE_ADMIN_TOKEN: "{{ garage_admin_token }}"
+  register: keys_apply
+  changed_when: "'CHANGED' in keys_apply.stdout or 'WOULD-CHANGE' in keys_apply.stdout"
+  failed_when: "keys_apply.rc != 0 or 'FAIL' in keys_apply.stdout"
+  check_mode: false
+  no_log: true
+  tags: [garage_data]
+
+# --- 5. admin UI (Noooste/garage-ui) -------------------------------------------
 # Skipped entirely when the spec has no `ui:` block (opt-in surface). Requires
 # one MORE extra_var beyond the cluster secrets: garage_ui_oidc_client_secret.
 # Same security model as the cluster secrets: env vars only, no_log:true.

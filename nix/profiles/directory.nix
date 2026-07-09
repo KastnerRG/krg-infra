@@ -2,10 +2,8 @@
 # Import this in a host's default.nix, then add host-specific networking.
 {...}: {
   imports = [
-    ./base.nix
-    ../modules/users.nix
+    ./server.nix # base + monitored-infra (node-exporter); krg.users + break-glass admin come via base
     ../modules/samba-ad.nix
-    ../users/admin.nix
   ];
 
   krg.base = {

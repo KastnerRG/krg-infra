@@ -1,0 +1,218 @@
+# Proxmox login via an Authentik LDAP outpost.
+#
+# Proxmox VE (web UI + the mobile/CLI apps) authenticates against a PVE *LDAP*
+# realm that points at an Authentik LDAP outpost — NOT raw krg-ldap. Why through
+# Authentik: Authentik's LDAP source FLATTENS nested AD groups during sync, so a
+# user who is in `proxmox-admins` only via `Domain Admins` (nested) appears as a
+# DIRECT member in Authentik's view. PVE can't expand nested groups itself, so it
+# reads the already-flattened directory the outpost serves. (OIDC was dropped
+# because the apps can't do the browser redirect — LDAP is a plain bind, so they
+# work; Authentik stays in the path, which is fine.)
+#
+# Pieces: the LDAP provider + an application binding it + a dedicated LDAP outpost
+# (manual container — see nix/docker-compose/krg-prod/compose.authentik.yml) + a
+# read-only service account PVE binds with. The provider serves a tree under
+# base_dn with users at ou=users and groups at ou=groups.
+#
+# ⚠ BRING-UP: several values here can only be confirmed against the running outpost
+# (the exact tree/attrs Authentik serves, the search-permission codename, the
+# service-account password field). They're marked ⚠; validate with `ldapsearch`
+# against the outpost before wiring PVE. See docs/proxmox-auth.md.
+
+locals {
+  proxmox_ldap_base_dn = "DC=krg,DC=ucsd,DC=edu"
+}
+
+resource "authentik_provider_ldap" "proxmox" {
+  name    = "Provider for Proxmox LDAP"
+  base_dn = local.proxmox_ldap_base_dn
+  # Bind against a DEDICATED password-only flow (below), NOT the default
+  # authentication flow. The default flow includes an Authenticator Validation (MFA)
+  # stage, and an LDAP bind can't satisfy WebAuthn/passkeys (only TOTP/static/Duo) —
+  # a user with a passkey (passkey.tf) fails the bind with "no compatible
+  # authenticator class found / failed to execute flow". PVE is password-only by
+  # decision, so ldap_bind has no MFA stage. RESOURCE flow → reference `.uuid`, not
+  # `.id` (which is the slug; the providers API wants the pk — same lesson as the
+  # flow_stage_bindings).
+  bind_flow   = authentik_flow.ldap_bind.uuid
+  unbind_flow = data.authentik_flow.default_invalidation.id
+  # mfa_support DEFAULTS TO true — explicitly off (password-only, per the auth
+  # decision). The ldap_bind flow also has no MFA stage, so this is belt-and-braces.
+  mfa_support = false
+  # bind_mode/search_mode left at the provider default ("direct") so each bind +
+  # search is validated live against Authentik.
+}
+
+# ── Dedicated bind flow (password-only, NO MFA) ─────────────────────────────────
+# The LDAP outpost executes this flow to authenticate every bind (the search account
+# AND each end user). It mirrors the default authentication flow MINUS the MFA stage:
+# Identification (by username) → Password (inline) → User Login. See the bind_flow
+# note on the provider above for WHY. Pattern mirrors passkey.tf/recovery.tf; bindings
+# target the flow's `.uuid` (its `.id` is the slug, which the bindings API rejects).
+resource "authentik_flow" "ldap_bind" {
+  name           = "Proxmox LDAP bind"
+  title          = "KRG LDAP Authentication"
+  slug           = "krg-ldap-bind"
+  designation    = "authentication"
+  authentication = "require_unauthenticated"
+}
+
+# Password stage — backends MUST include the LDAP source backend: PVE users are
+# AD-synced (their password lives in KRG.LOCAL, not Authentik's DB), so the password
+# is validated against the LDAP source. Inbuilt covers any local Authentik accounts.
+resource "authentik_stage_password" "ldap_bind" {
+  name = "krg-ldap-bind-password"
+  backends = [
+    "authentik.core.auth.InbuiltBackend",
+    "authentik.sources.ldap.auth.LDAPBackend",
+  ]
+}
+
+# Identify by username (the cn the outpost extracts from the bind DN, e.g.
+# c.crutchfield.642); the password is collected + validated INLINE via password_stage,
+# exactly like the default flow's identification stage.
+resource "authentik_stage_identification" "ldap_bind" {
+  name           = "krg-ldap-bind-identification"
+  user_fields    = ["username"]
+  password_stage = authentik_stage_password.ldap_bind.id
+}
+
+resource "authentik_stage_user_login" "ldap_bind" {
+  name = "krg-ldap-bind-login"
+}
+
+resource "authentik_flow_stage_binding" "ldap_bind_identification" {
+  target = authentik_flow.ldap_bind.uuid
+  stage  = authentik_stage_identification.ldap_bind.id
+  order  = 10
+}
+
+resource "authentik_flow_stage_binding" "ldap_bind_login" {
+  target = authentik_flow.ldap_bind.uuid
+  stage  = authentik_stage_user_login.ldap_bind.id
+  order  = 20
+}
+
+# Application backing the LDAP provider. No launch URL / group — it's NOT a
+# dashboard tile (the provider-less `proxmox` app in applications_krg.tf is the
+# tile). Authentik requires an application per provider. Access is gated by the
+# policy bindings at the bottom of this file (REQUIRED for LDAP binds — see there);
+# policy_engine_mode "any" so those bindings are OR'd (the app default, pinned).
+resource "authentik_application" "proxmox_ldap" {
+  name               = "Proxmox LDAP"
+  slug               = "proxmox-ldap"
+  protocol_provider  = authentik_provider_ldap.proxmox.id
+  meta_description   = "LDAP directory for the Proxmox VE realm (not a user-facing app)"
+  policy_engine_mode = "any"
+}
+
+# Dedicated LDAP outpost. LDAP can't use the embedded/proxy outpost — it needs its
+# own container (ghcr.io/goauthentik/ldap), run in the krg-prod compose stack. Its
+# API token is minted in IaC and written to OpenBao by outpost_tokens.tf (no manual
+# "View token" step); krg.vaultAgent renders it into the env file the container
+# reads from secret/krg-prod/authentik-managed/ldap-outpost-token.
+resource "authentik_outpost" "ldap" {
+  name               = "authentik LDAP Outpost"
+  type               = "ldap"
+  protocol_providers = [authentik_provider_ldap.proxmox.id]
+
+  config = jsonencode({
+    authentik_host          = var.authentik_url
+    authentik_host_insecure = false
+    log_level               = "info"
+  })
+}
+
+# ── Bind/search service account ─────────────────────────────────────────────────
+# PVE binds as this account (cn=svc-pve-ldap,ou=users,<base_dn>) to enumerate the
+# proxmox-admins group + members during realm sync. Login itself binds as the END
+# user, not this. Password generated here, written to OpenBao for the pve_ldap
+# ansible role to consume.
+resource "random_password" "svc_pve_ldap" {
+  length  = 32
+  special = false # avoid LDAP/shell-quoting surprises in the bind password
+}
+
+# The bind account must see the WHOLE directory (a plain account only sees itself),
+# else PVE's realm sync finds no proxmox-admins members. The SCOPED way to grant that
+# is the "Search full LDAP directory" permission — but it can only be assigned via the
+# RBAC permission-assign API, which is broken upstream on our version: the user variant
+# (authentik_rbac_permission_user) fails the apply with "inconsistent result after
+# apply", and the role variant's /assign/ endpoint 405s even for the admin token
+# (goauthentik/authentik#18562 — confirmed by a maintainer, no fix as of 2026-05, only
+# a manual-UI workaround that violates IaC).
+#
+# So instead the bind account is a member of authentik's BUILT-IN superuser group
+# "authentik Admins" (is_superuser bypasses the per-object LDAP visibility check, so it
+# can search the full tree). Membership uses the plain /core/ groups API, NOT the broken
+# RBAC /assign/ endpoint, so it applies cleanly in one pass — and the group always exists
+# (authentik creates it at install), so this data source has no ordering dependency.
+# Tradeoff: superuser is broader than search-only; acceptable for a dedicated bind
+# account whose password lives only in OpenBao (krg-prod/proxmox-ldap-bind) + a 0600
+# extra-vars file on fabricant. NARROW back to search_full_directory once #18562 is fixed.
+#
+# NOTE: superuser governs search BREADTH (whole tree vs self), but is NOT sufficient to
+# BIND at all — since 2025.4 the LDAP outpost also requires the principal to have ACCESS
+# to the application (the policy bindings at the bottom of this file). Both are needed.
+data "authentik_group" "authentik_admins" {
+  name          = "authentik Admins"
+  include_users = false # don't pull the whole member list into tofu state
+}
+
+# ⚠ `password` is assumed settable on authentik_user; if the apply rejects it,
+# switch to an app-password token (authentik_token) and bind with that instead.
+resource "authentik_user" "svc_pve_ldap" {
+  username = "svc-pve-ldap"
+  name     = "Proxmox LDAP bind (full-directory search via authentik Admins)"
+  type     = "service_account"
+  path     = "goauthentik.io/service-accounts"
+  password = random_password.svc_pve_ldap.result
+  groups   = [data.authentik_group.authentik_admins.id]
+}
+
+# Bind creds for PVE — read by deploy/deploy-ansible.sh (krg-deploy AppRole) and
+# passed to the pve_ldap role. Under the authentik-managed write-back sub-path,
+# covered by the glob in terraform/openbao/main.tf (no per-path policy entry).
+resource "vault_kv_secret_v2" "proxmox_ldap_bind" {
+  mount = "secret"
+  name  = "krg-prod/authentik-managed/proxmox-ldap-bind"
+  data_json = jsonencode({
+    bind_dn  = "cn=${authentik_user.svc_pve_ldap.username},ou=users,${local.proxmox_ldap_base_dn}"
+    base_dn  = local.proxmox_ldap_base_dn
+    password = random_password.svc_pve_ldap.result
+  })
+}
+
+# ── Application access — REQUIRED for any LDAP bind ──────────────────────────────
+# Since Authentik 2025.4 the LDAP outpost authorizes BINDS against the LDAP
+# application's policy bindings: per the docs, "any user authorized to access the
+# LDAP provider's application can search the directory." With NO bindings, even a
+# superuser bind is rejected with LDAP "insufficient access (50)" — exactly what
+# blocked PVE login here (goauthentik/authentik#14518). is_superuser / the "Search
+# full LDAP directory" permission is NOT sufficient on its own anymore; explicit
+# application access is.
+#
+# TWO binds happen during one PVE login, so BOTH principals need app access:
+#   1. svc-pve-ldap binds + searches for the user        → binding on the account
+#   2. PVE re-binds AS the end user with their password   → binding on proxmox-admins
+# The app's policy_engine_mode = "any" (above) OR's these, so a principal is
+# authorized if it's the bind account OR a proxmox-admins member.
+
+# The login users — the (flattened) proxmox-admins group Authentik serves. Synced
+# from AD via the LDAP source, so it exists independently of this config.
+data "authentik_group" "proxmox_admins" {
+  name          = "proxmox-admins"
+  include_users = false # don't pull the member list into tofu state
+}
+
+resource "authentik_policy_binding" "proxmox_ldap_app_users" {
+  target = authentik_application.proxmox_ldap.uuid
+  group  = data.authentik_group.proxmox_admins.id
+  order  = 0
+}
+
+resource "authentik_policy_binding" "proxmox_ldap_app_bind_account" {
+  target = authentik_application.proxmox_ldap.uuid
+  user   = authentik_user.svc_pve_ldap.id
+  order  = 10
+}

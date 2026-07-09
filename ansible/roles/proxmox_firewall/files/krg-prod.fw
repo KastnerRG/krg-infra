@@ -19,4 +19,14 @@ IN ACCEPT -p tcp -dport 443 -log nolog
 # the access control, not the network. See docs/temporal-mtls.md.
 IN ACCEPT -p tcp -dport 7233 -log nolog
 
+# Authentik LDAP outpost (PVE login). The "KRG Authentik LDAP" realm on fabricant
+# binds the authentik_ldap container's LDAPS port to authenticate Proxmox logins
+# (ansible pve_ldap → krg-prod.ucsd.edu:6636). Source-restricted to fabricant — only
+# the hypervisor's PVE daemon needs it. The container ALSO publishes plaintext 3389
+# (debug), deliberately left to the DROP below so it stays closed at the perimeter.
+# NOTE: this perimeter rule is REQUIRED even though Docker's publish bypasses the
+# in-guest nftables firewall — the Proxmox per-guest firewall (this file) is a
+# separate, default-deny layer in front of the VM. See docs/proxmox-auth.md.
+IN ACCEPT -p tcp -dport 6636 -source 137.110.161.98 -log nolog # LDAPS — authentik LDAP outpost (PVE realm bind, fabricant only)
+
 IN DROP -log nolog

@@ -1,5 +1,6 @@
 x-authentik-image: &authentik-image ghcr.io/goauthentik/server:2026.5.3
 x-authentik-proxy-image: &authentik-proxy-image ghcr.io/goauthentik/proxy:2026.5.3
+x-authentik-ldap-image: &authentik-ldap-image ghcr.io/goauthentik/ldap:2026.5.3
 
 services:
   postgres_authentik:
@@ -161,6 +162,39 @@ services:
     networks:
       - authentik
       - traefik_proxy
+
+  # LDAP outpost — serves the (flattened) directory that the Proxmox PVE LDAP realm
+  # binds against (terraform/authentik/proxmox_ldap.tf). Its own container + token,
+  # like authentik_proxy. Unlike the proxy outpost it is NOT fronted by Traefik —
+  # PVE on fabricant connects straight to the published LDAPS port.
+  #
+  # ⚠ FIREWALL: 6636 is published on all interfaces so fabricant can reach it, but
+  # Docker's publish bypasses the in-guest nftables INPUT (it DNATs via FORWARD), so
+  # this is world-reachable on krg-prod:6636 until a DOCKER-USER/FORWARD rule
+  # restricts the source to fabricant (137.110.161.98) — same open item as dcgm 9400
+  # (see CLAUDE.md "Docker published-port firewall bypass"). The bind is auth-gated
+  # and LDAPS-encrypted, but lock the source down at bring-up.
+  authentik_ldap:
+    image: *authentik-ldap-image
+    container_name: authentik_ldap
+    environment:
+      AUTHENTIK_HOST: https://auth.krg.ucsd.edu
+      AUTHENTIK_INSECURE: "false"
+    env_file:
+      # AUTHENTIK_TOKEN=<ldap outpost token> — minted in IaC by
+      # terraform/authentik/outpost_tokens.tf, written to OpenBao
+      # (secret/krg-prod/authentik-managed/ldap-outpost-token) and rendered here by
+      # krg.vaultAgent. No manual "View token" step. On a from-scratch deploy the
+      # token is minted in phase 3 (after this phase-2 render), so the render is
+      # non-fail-closed and the file may be briefly empty — the deploy re-renders
+      # after phase 3 to converge. See docs/proxmox-auth.md.
+      - /run/krg/krg-prod/authentik-ldap-outpost-token.env
+    ports:
+      - "0.0.0.0:6636:6636" # LDAPS — PVE binds here (ldaps, verify off until the CA is trusted)
+      - "0.0.0.0:3389:3389" # LDAP (plain) — kept for debugging; prefer 6636
+    restart: unless-stopped
+    networks:
+      - authentik
 
 secrets:
   authentik_postgres_admin_password:

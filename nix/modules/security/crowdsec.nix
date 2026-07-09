@@ -25,8 +25,8 @@
 # COVERAGE:
 #   * crowdsecurity/linux + crowdsecurity/sshd hub collections:
 #     ssh-bf (brute-force), ssh-slow-bf, ssh-cve scenarios — the
-#     fail2ban replacement. CrowdSec's ssh-bf has lower FPR than
-#     fail2ban's jail.d/sshd because it correlates events across
+#     fleet ban layer. CrowdSec's ssh-bf has lower FPR than a stock
+#     sshd brute-force jail because it correlates events across
 #     parsers rather than just grep-matching auth.log.
 #   * Community blocklists (CrowdSec CAPI): activated by wiring
 #     `capi.credentialsFile` (see config block below). The setup
@@ -100,8 +100,7 @@ in {
     enable = mkEnableOption ''
       CrowdSec Security Engine — reads journalctl, runs community +
       local scenarios, emits ban decisions consumed by the firewall
-      bouncer. Replaces fail2ban (which is toggled off in base.nix
-      when this is on)
+      bouncer. The sole fleet brute-force/ban layer
     '';
 
     extraCollections = mkOption {
@@ -150,7 +149,7 @@ in {
         collections =
           # The fleet baseline:
           #   * linux — generic Linux log parsing + meta-scenarios.
-          #   * sshd  — ssh-bf, ssh-slow-bf, ssh-cve. Replaces fail2ban.
+          #   * sshd  — ssh-bf, ssh-slow-bf, ssh-cve. The ssh ban layer.
           # Each collection brings its required parsers + scenarios so
           # we don't have to list them piecemeal.
           ["crowdsecurity/linux" "crowdsecurity/sshd"]

@@ -15,6 +15,7 @@
     ../../modules/nfs-home.nix
     ../../modules/scratch.nix
     ../../modules/local-cache.nix
+    ../../modules/nas-mount.nix
   ];
 
   # E4E-owned compute box (E4E-used; the KRG lab generally does not use it), so it
@@ -87,18 +88,27 @@
   # primary resolver (the module puts serverIp in /etc/hosts + prepends it to
   # nameservers) — otherwise SSSD can't resolve the krg.local SRV records.
   #
-  # allowedGroups gates who may SSH in. Locked to Domain Admins for now (fail-safe)
-  # until the E4E groups are created in AD. TODO(AD): add the E4E project/lab groups
-  # (e.g. "FishSense", "Acoustic Species ID", "Huggingface Users", the CSE237D course
-  # group) or an "E4E" umbrella once the ~61 local accounts are migrated to KRG.LOCAL.
+  # allowedGroups gates who may SSH in. The E4E groups now exist in AD (the ~61 local
+  # accounts have been migrated to KRG.LOCAL) — "kastnerml" is the box-specific access
+  # group, "engineers for exploration" the broader E4E umbrella for project leads/staff
+  # who need the box without being a "kastnerml" member proper. Domain Admins stays for
+  # break-glass directory admin access.
   krg.adClient = {
     # AD domain member — verified joined 2026-06-18 (`getent Administrator` resolves).
     # Explicit marker; base.nix defaults enable on.
     enable = true;
     server = "krg-ldap.krg.local";
     serverIp = "137.110.161.109";
-    allowedGroups = ["Domain Admins"];
+    allowedGroups = ["Domain Admins" "kastnerml"];
   };
+
+  # Let E4E-NAS members mount e4e-nas CIFS shares into their home without full sudo:
+  # `sudo e4e-nas-mount <share> [dir]` (validated root wrapper, sec=krb5 — no secret on
+  # disk; the wrapper kinit's on demand and krg-krenew keeps the ticket alive). Gated on
+  # the E4E-NAS AD group (spec/krg-ad/groups.yml). Defaults target e4e-nas.ucsd.edu.
+  # NOTE: a mounter must ALSO be able to log in here (krg.adClient.allowedGroups above),
+  # which E4E users already are via the kastnerml group.
+  krg.nasMount.enable = true;
 
   # scratchpool holds the group scratch datasets, imported via krg.scratch's fileSystems
   # entries. Listed here too so the pool still imports if a dataset is ever unmounted.

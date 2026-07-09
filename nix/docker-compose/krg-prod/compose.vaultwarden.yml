@@ -35,7 +35,7 @@ services:
       # break-glass path alongside SSO.
     env_file:
       # ADMIN_TOKEN (argon2 hash; gates /admin) + SSO_CLIENT_SECRET (from OpenBao
-      # secret/krg-prod/vaultwarden-oidc), rendered from OpenBao to /run by
+      # secret/krg-prod/authentik-managed/vaultwarden-oidc), rendered from OpenBao to /run by
       # krg.vaultAgent. See nix/hosts/krg-prod/default.nix.
       - /run/krg/krg-prod/vaultwarden.env
     volumes:

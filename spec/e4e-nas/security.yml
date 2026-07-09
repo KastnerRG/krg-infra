@@ -74,11 +74,29 @@ firewall:
         #     prepended from trusted.json `ucsd`. Mirrors the nix
         #     service-host pattern `sshSources = ucsd ++ ops`
         #     (nix/profiles/base.nix:124).
-        # (4) the static rules below (ssh-deny-fall-through, then
-        #     geoip-US-floor). Order in (4) matters: the SSH drop must
-        #     fire BEFORE geoip-US-floor, otherwise geoip-US would
-        #     silently re-open SSH to the entire US (the bug this
-        #     section closes).
+        # (4) ucsd Samba/NFS allows (8 ucsd CIDRs, ports
+        #     111/139/445/662/892/2049/4045) — prepended from
+        #     trusted.json `ucsd`. Lets researchers/admins mount SMB/NFS
+        #     shares directly from campus (or sealab, already covered by
+        #     (1)); NOT open to the geoip-US floor like the rest of DSM
+        #     used to be (2026-07-08 finding: SMB carries real research
+        #     data + has a brutal internet-exposure CVE history —
+        #     EternalBlue/WannaCry — so it gets its own narrower grant,
+        #     not "all of the US").
+        # (5) domain-port allows (AD protocol ports — DNS/Kerberos/LDAP/
+        #     kpasswd/LDAPS/GC) scoped to `machines` ONLY (the DC +
+        #     known fleet hosts), not ucsd — prepended from
+        #     trusted.json `machines`. e4e-nas is an AD MEMBER (see
+        #     spec/e4e-nas/ad.yml), so nothing listens on these inbound
+        #     today; this is a forward-looking restriction.
+        # (6) the static rules below: ssh/smb/nfs-deny-fall-through,
+        #     lets-encrypt-http-01 (port 80, worldwide), then
+        #     geoip-US-web (ports 443/6020/6021 ONLY, US-geoip — NOT the
+        #     old all-ports floor). Everything else — SMB, NFS, domain
+        #     ports, any port not explicitly listed above — is denied by
+        #     eth0's own `drop` policy. The deny-fall-through rules exist
+        #     as explicit, self-documenting belts-and-suspenders in case
+        #     a broader allow is ever reintroduced above them.
         global:
           policy: none
           rules:
@@ -97,6 +115,36 @@ firewall:
               port_group: custom
               ports: "22"
               protocol: tcp
+              source_ip_group: all
+              source_ip: all
+
+            # Drop SMB from anyone not explicitly allowed above (ucsd,
+            # via the prepended allow, or sealab/machines/monitoring via
+            # the trusted-net allow). Belt-and-suspenders: eth0's own
+            # default is already `drop`, so this rule is not load-bearing
+            # by itself, but it documents the boundary explicitly and
+            # keeps SMB safe even if a broader allow is ever added above.
+            - name: smb-deny-fall-through
+              enable: true
+              log: false
+              policy: drop
+              port_direction: destination
+              port_group: custom
+              ports: "139,445"
+              protocol: all
+              source_ip_group: all
+              source_ip: all
+
+            # Drop NFS (+ its support ports) from anyone not explicitly
+            # allowed above. Same rationale as smb-deny-fall-through.
+            - name: nfs-deny-fall-through
+              enable: true
+              log: false
+              policy: drop
+              port_direction: destination
+              port_group: custom
+              ports: "111,662,892,2049,4045"
+              protocol: all
               source_ip_group: all
               source_ip: all
 
@@ -147,28 +195,37 @@ firewall:
               source_ip_group: all
               source_ip: all
 
-            # Country gate. Allows researchers/admins from anywhere in
-            # the US for NON-SSH (DSM web file browser, etc.). SSH is
-            # already drop'd above for non-trusted/non-ucsd/non-ops
-            # sources, so this rule's all-ports allow effectively
-            # covers everything EXCEPT SSH (which the earlier drop
-            # caught). See docs/e4e-nas-crowdsec-evaluation.md for why
-            # DSM-native geoip (vs CrowdSec) for the Synology.
-            - name: geoip-US-floor
+            # US-wide web surface: DSM web UI (login portal + the apps it
+            # fronts — FileStation, Synology Drive, Synology Photos; see
+            # app-portal.yml) on its configured ports (dsm-web.yml:
+            # http_port 6020, https_port 6021) PLUS Garage's public HTTPS
+            # front doors (app-portal.yml reverse_proxy: s3.e4e.ucsd.edu +
+            # s3-admin.e4e.ucsd.edu, both on 443) — external collaborators
+            # need S3 access from outside ucsd, same as DSM UI users.
+            # NARROWED 2026-07-08 from the old `geoip-US-floor` (which was
+            # policy=allow, port_group=all, ports=all — every port except
+            # SSH open to any US-geoip source). That blanket form was
+            # removed after an on-box audit found e4e-nas already drawing
+            # recurring internet-scanner traffic and confirmed no
+            # compromise, but the actual user-facing web surface still
+            # needs US-wide reach, so this narrower rule restores exactly
+            # that, scoped to only the three ports it actually uses.
+            - name: geoip-US-web
               enable: true
               log: false
               policy: allow
               port_direction: destination
-              port_group: all
-              ports: all
-              protocol: all
+              port_group: custom
+              ports: "443,6020,6021"
+              protocol: tcp
               source_ip_group: geoip
               source_ip: US
 
         # eth0 is the planned public interface (132.239.17.124; currently
         # disconnected, gets cabled later). Default-DROP everything that
-        # didn't match a global allow rule — that's the actual "US is the
-        # floor" enforcement.
+        # didn't match an earlier allow — SMB/NFS/domain ports and
+        # everything else besides SSH + the DSM UI now hit this default,
+        # instead of falling through to a country-wide floor.
         eth0:
           policy: drop
           rules: []
@@ -180,22 +237,18 @@ firewall:
         # cable swap means lab access keeps working through the
         # transition; flip it to drop once eth0 is the live path.
 
-  # Geoip block — the country-allowlist INTENT (what countries are
-  # allowed). The actual ENFORCEMENT lives as the `geoip-US-floor` rule
-  # under `profiles.default.adapters.global.rules` above, because DSM 7.2.2
-  # has no standalone geoip setter (Firewall.Geoip has only {list, get}).
-  # Geoip is a per-RULE source-type, not a config flag — so the rule list
-  # is where it lives.
-  #
-  # At apply time, tasks/main.yml asserts the global geoip rule's
-  # `source_ip` matches `allow_countries | join(',')` — drift between
-  # this block and the rule above gets flagged.
+  # Geoip block — NARROWED 2026-07-08. The old `geoip-US-floor` (a
+  # blanket allow-every-port rule for any US-geoip source) was replaced
+  # by `geoip-US-web`, scoped to the DSM web UI ports (6020, 6021 — see
+  # dsm-web.yml) plus Garage's public HTTPS front doors (443 — see
+  # app-portal.yml). Everything else (SMB, NFS, domain ports, anything
+  # not explicitly allowed) hits eth0's default-drop instead of this
+  # floor. tasks/main.yml's geoip-rule drift-check (below) still
+  # applies: it asserts every geoip-source rule's country matches
+  # `allow_countries`, it does NOT check port scope — narrowing the
+  # ports on `geoip-US-web` is intentional and won't trip it.
   geoip:
     enable: true
-    # ISO 3166-1 alpha-2. US-only matches the fleet intent. Ops travelers
-    # reach the NAS via the trusted-net allow rules prepended ahead of
-    # the geoip rule (same per-admin escape hatch pattern as nix
-    # krg.firewall.sshSources).
     allow_countries: [US]
 
 auto_block:
@@ -224,8 +277,8 @@ auto_block:
   # Allow-list (never block) + deny-list (always block). The allow-list is
   # COMPUTED in the role from nix/networks/trusted.json (`krg_trusted` —
   # loaded by group_vars/all.yml), so a change to the single source of truth
-  # flows here automatically. Same DRY pattern as the Debian fail2ban
-  # `ignoreip` and nix `krg.firewall.trustedNets`. See synology_security
+  # flows here automatically. Same DRY pattern as the Debian CrowdSec
+  # whitelist and nix `krg.firewall.trustedNets`. See synology_security
   # tasks/main.yml — the role debug-surfaces the resolved IP list.
   # Push to DSM is DEFERRED: SYNO.Core.Security.AutoBlock.Rules errored 5100
   # in 2026-05-28 captures (wrong method/param shape); add a subcommand once

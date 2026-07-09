@@ -1,0 +1,11 @@
+# Your tenant INTERIOR — authoritative, repo-owns-deploy (ADR 0017 §8). The platform
+# runs this stack on your Incus instance; your runner ships updates via merged
+# auto-deploy/* PRs. The edge re-encrypts to your service over the lab PKI, so listen
+# on a plain internal port — the public TLS termination + CNAME are the admin boundary.
+services:
+  app:
+    image: ghcr.io/ucsd-e4e/example:latest # your image
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080" # internal; the edge routes here (do NOT publish to 0.0.0.0)
+    # environment / volumes / depends_on … — your app's shape, your call.

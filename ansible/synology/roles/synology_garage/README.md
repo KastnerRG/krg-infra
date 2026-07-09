@@ -19,8 +19,18 @@ module; DSM py3.8) — five subcommands, run in load-bearing order by
 | `render-config`    | Atomic-write `/volume1/docker/garage/garage.toml` (root:root 0400) from spec.config + 3 secret env vars. | sha256 compare of full file content |
 | `deploy`           | Render `docker-compose.yml` next to the toml; `docker compose up -d` when the compose file or container image drifts, or when the container isn't running. | Diff vs current compose file + `docker inspect` |
 | `layout`           | Single-node `garage layout assign -z <zone> -c <cap> <NODE_ID>` + `garage layout apply --version 1`. | No-op if a layout (version ≥ 1) already exists — anti-rebalance guard |
+| `sync-buckets`     | Create-if-missing buckets from `spec.buckets` via the Garage v2 Admin API (`ListBuckets`/`CreateBucket` over loopback, not CLI text). | Diff of desired names vs existing `globalAliases` |
+| `sync-keys`        | Create-if-missing access keys from `spec.keys` (Admin API `ListKeys`/`CreateKey`) + converge each key's per-bucket read/write/owner grants (`GetBucketInfo`/`AllowBucketKey`/`DenyBucketKey`). Persists each new key's one-time secret to `<keys_dir>/<name>.env` (root:root 0400). | Diff of desired vs current keys + per-bucket permission flags; **FAILs** (does not silently regenerate) if a key exists remotely but its local secret file is missing |
 | `render-ui-config` | Atomic-write `/volume1/docker/garage-ui/config.yaml` (root:root 0400) from spec.ui + GARAGE_ADMIN_TOKEN + GARAGE_UI_OIDC_CLIENT_SECRET env vars. Generates + persists `jwt-key.pem` (Ed25519) once so login sessions survive restarts. Skipped when `ui:` is absent from spec. | sha256 + `jwt-key.pem` existence |
 | `deploy-ui`        | Render `garage-ui/docker-compose.yml`; `docker compose up -d`. Same drift logic as `deploy`. | Diff vs current compose file + `docker inspect` |
+
+`sync-buckets`/`sync-keys` talk to Garage's v2 **Admin API** directly (JSON
+over `http://127.0.0.1:<admin_port>`, `Authorization: Bearer` the same
+`admin_token` render-config already requires) instead of shelling into
+`docker exec garage /garage bucket|key ...` and parsing text output —
+unlike `layout`, which predates the v2 admin API. Reachable on loopback
+because the container runs `network_mode: host`, same as garage-ui's own
+`admin_endpoint`.
 
 The role does **not** use DSM's `SYNO.Docker.Project` API. We invoke
 `docker compose` directly (the underlying primitive). Containers still
@@ -140,6 +150,80 @@ git (a hand-made DSM config would be reaped by the declarative sync anyway):
    `--tags=garage_ui` alone is **not** enough: it skips the v2 bump (in the
    untagged `deploy` task) *and* the reverse proxy.
 
+## Bucket / key management
+
+`spec.buckets` / `spec.keys` declare Garage buckets and access keys (#101
+sub-PR 5). Applied by `sync-buckets` then `sync-keys` (bucket grants need the
+bucket to exist first). Schema:
+
+```yaml
+buckets:
+  - name: label-studio        # becomes a Garage global alias
+
+keys:
+  - name: label-studio        # access-key name
+    buckets:
+      - name: label-studio
+        permissions: [read, write]   # subset of [read, write, owner]
+```
+
+Fully declarative: re-running with a bucket removed from a key's `buckets:`
+list revokes that grant (`DenyBucketKey`), it isn't just additive.
+
+### Key secrets
+
+Garage shows an access key's `secretAccessKey` **exactly once**, in the
+`CreateKey` response — there's no API to retrieve it again later.
+`sync-keys` persists it immediately to `<keys_dir>/<name>.env` (root:root
+0400, e.g. `/volume1/docker/garage/keys/label-studio.env`):
+
+```
+ACCESS_KEY_ID=GK...
+SECRET_ACCESS_KEY=...
+```
+
+If a key already exists on Garage but that file is missing locally (lost,
+never seeded, wrong box), `sync-keys` **FAILs** rather than silently doing
+nothing (the key is unusable — no consumer can ever get the secret half) or
+silently recreating it (which would rotate credentials out from under
+whatever already has the old ones, e.g. Label Studio's Cloud Storage config).
+Recover by restoring the `.env` from backup/OpenBao, or deliberately rotate:
+delete the key on Garage (`docker exec garage /garage key delete <id>`),
+re-run the role, and update the consumer with the new credentials.
+
+Seed the generated secret into OpenBao for durability (mirrors the
+"One-time seed" pattern above — nothing reads it back automatically today,
+this is audit/recovery only):
+
+```bash
+ssh e4e-admin@e4e-nas.ucsd.edu 'sudo cat /volume1/docker/garage/keys/label-studio.env'
+bao kv put secret/e4e-nas/garage-keys/label-studio \
+  access_key_id="<ACCESS_KEY_ID>" secret_access_key="<SECRET_ACCESS_KEY>"
+```
+
+(No OpenBao policy change needed — krg-deploy's existing `secret/data/e4e-nas/*`
+read grant already covers this path.)
+
+### Connecting an external consumer (e.g. Label Studio)
+
+Label Studio here is the hosted Enterprise SaaS (`app.heartex.com`), not a
+krg-infra host — there's no compose/nix wiring on that side. Configure it
+from Label Studio's own **Cloud Storage** settings (S3-compatible / custom
+endpoint):
+
+| field | value |
+|---|---|
+| Endpoint URL | `https://s3.e4e.ucsd.edu` |
+| Region | `garage` |
+| Bucket | `label-studio` |
+| Access Key ID / Secret Access Key | from `keys/label-studio.env` above |
+| Path-style access | enabled (virtual-host `<bucket>.s3.e4e.ucsd.edu` needs a wildcard cert — #118, not live yet) |
+
+Public reachability of `s3.e4e.ucsd.edu:443` from Heartex's cloud depends on
+the e4e-nas firewall's `geoip-US-web` rule (`spec/e4e-nas/security.yml`) —
+confirm that's applied (`ansible-playbook playbook.yml --tags synology_security
+--check --diff`) if the connection test fails from Label Studio's side.
+
 ## Cluster bootstrap idempotency
 
 After the first `apply` runs `garage layout assign` + `garage layout apply`,
@@ -175,6 +259,11 @@ ansible-playbook playbook.yml --tags=synology_garage \
 ansible-playbook playbook.yml --tags=garage_ui \
   -e @~/.config/krg/secrets-garage.yml
 
+# Buckets/keys only (e.g. adding a new consumer's bucket without touching
+# the cluster/UI containers)
+ansible-playbook playbook.yml --tags=garage_data \
+  -e @~/.config/krg/secrets-garage.yml
+
 # Dry run
 ansible-playbook playbook.yml --tags=synology_garage --check --diff \
   -e @~/.config/krg/secrets-garage.yml
@@ -200,11 +289,8 @@ invalidates all live sessions (a logout-everyone, not a secret rotation).
 
 ## Out of scope
 
-- **Buckets / access keys / policies / quotas** — TODO under
-  [`spec/e4e-nas/garage.yml`](../../../../spec/e4e-nas/garage.yml) `buckets:` /
-  `keys:`. Tracked in #101 sub-PR 5; will extend this role with `buckets` /
-  `keys` subcommands (`garage bucket create`, `garage key new`,
-  `garage bucket allow`).
+- **Bucket-level quotas / storage policies beyond read/write/owner grants**
+  — `spec.buckets` entries are name-only today; no `quotas:` field yet.
 - **DSM AppPortal reverse-proxy IaC + cert assignment** for the UI's public
   port — manual one-shot for now (steps in *First-time UI setup*); DSM exposes
   no provider/API for it.
@@ -229,5 +315,16 @@ Pytest suite under `files/test_apply_garage.py` covers:
 - secret `"`/`\n`/`\r` injection rejection (TOML + YAML defense)
 - UI config render (OIDC + admin_token injection, JWT key persistence gating, env-var contract enforcement, secret redaction in payload)
 - UI deploy drift detection
+- bucket sync (create-if-missing, no-change when present, check-mode preview)
+- key sync (create + one-time secret persistence, permission-grant convergence
+  including revocation, the "remote key exists but local secret missing" FAIL
+  guard, duplicate-name and missing-bucket FAILs, secret redaction in payload)
 
 Run from the repo root: `pytest ansible/synology/roles/synology_garage/files/test_apply_garage.py`
+
+**Not yet verified against a live box:** the exact Admin API response shapes
+(`ListBuckets`/`GetBucketInfo`/`CreateKey` field names) are taken from the
+published OpenAPI spec, not a live capture — validate with `--check --diff`
+against the real e4e-nas test rig before an unattended apply, same discipline
+as `synology_sso`'s "API shape verified... run a round-trip before flipping
+into the unattended converge."

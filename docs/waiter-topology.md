@@ -91,7 +91,7 @@ flowchart TB
 **`/persist` → `/` bind mounts** (what survives the rollback — see
 [`modules/impermanence.nix`](../nix/modules/impermanence.nix)):
 `/var/log`, `/var/lib/nixos` (uid/gid map), `/var/lib/systemd`,
-`/var/lib/fail2ban` (ban DB), `/var/lib/sss` (SSSD offline cache),
+`/var/lib/sss` (SSSD offline cache),
 `/var/lib/krg` (compose working dir + secrets + monitoring data),
 `/root`, `/etc/nixos`, `/var/lib/krg-admin` (break-glass home); files
 `/etc/machine-id`, the SSH host keys, `/etc/krb5.keytab` (AD membership).
@@ -173,7 +173,7 @@ Notes:
 waiter is **physical with a public UCSD IP** — there is no Proxmox perimeter in
 front of it (that layer only guards VMs). Its single defense layer is the in-guest
 nftables firewall ([`krg.firewall`](../nix/modules/security/firewall.nix)) plus
-key-only SSH and fail2ban. SSH is intentionally open to the world (compute hosts
+key-only SSH and CrowdSec. SSH is intentionally open to the world (compute hosts
 serve researchers from anywhere); RDP and the monitoring ports are restricted.
 
 ```mermaid

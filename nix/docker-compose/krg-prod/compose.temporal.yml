@@ -16,9 +16,9 @@
 # Secrets: rendered by the OpenBao Agent (tmpfs, fail-closed — see krg.vaultAgent),
 # NEVER a .secrets/ file. Split one var per file so no image sees a var it doesn't
 # own (the guacamole legacy-prefix lesson):
-#   db.env     → POSTGRES_PASSWORD            (postgres, from secret/krg-prod/temporal)
+#   db.env     → POSTGRES_PASSWORD            (postgres, from secret/krg-prod/authentik-managed/temporal)
 #   server.env → POSTGRES_PWD                 (server, same value, Temporal's var name)
-#   ui.env     → TEMPORAL_AUTH_CLIENT_SECRET  (ui, from secret/krg-prod/temporal-oidc)
+#   ui.env     → TEMPORAL_AUTH_CLIENT_SECRET  (ui, from secret/krg-prod/authentik-managed/temporal-oidc)
 #
 # Frontend mTLS material is ALSO vault-agent-rendered, to /run/krg/temporal/tls/
 # (issued by the lab-internal CA in terraform/openbao/pki.tf), mounted read-only

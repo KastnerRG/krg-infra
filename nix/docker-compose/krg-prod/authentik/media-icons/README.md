@@ -40,16 +40,32 @@ owner — used here only to label first-party links to those services).
 | `outline.svg`         | Outline              | `outline`                |
 | `mlflow.svg`          | MLflow               | `ml-flow-wordmark`       |
 | `synology.svg`        | E4E NAS (Synology)   | `synology`               |
-| `garage.svg`          | Garage UI            | `garage`                 |
+| `garage.svg`          | E4E Garage UI        | `garage`                 |
 | `apache-superset.svg` | FishSense Analytics  | `apache-superset`        |
+| `fishsense.svg`       | FishSense (+ Orchestrator) | (UCSD-E4E asset)² |
 | `vaultwarden.svg`     | Vaultwarden          | `vaultwarden`            |
 | `guacamole.svg`       | Guacamole            | `apache-guacamole`       |
 | `temporal.svg`        | Temporal             | (Temporal brand assets)¹ |
+| `proxmox.svg`         | Proxmox              | `proxmox`                |
+| `fleet.svg`           | Fleet (MDM)          | `fleetdm`                |
+| `incus.svg`           | Incus                | `incus`                  |
+| `label-studio.svg`    | Label Studio         | (HumanSignal asset)³     |
 
 ¹ `temporal.svg` is Temporal's official "Symbol (dark)" mark from the Temporal
 brand assets, not dashboard-icons. Note it's a near-black (`#141414`) glyph — fine
 on a light dashboard, low-contrast on the dark theme; swap for a light variant if
 that reads poorly.
 
+² `fishsense.svg` is the FishSense project's own logo (the `fishsense-lite-web`
+public asset, github.com/UCSD-E4E/fishsense-lite), not dashboard-icons — a
+first-party mark for a first-party app. It's a wide wordmark (207×123), so it
+scales down inside the square tile. Shared by the FishSense site and the
+FishSense Orchestrator (no orchestrator-specific logo exists).
+
+³ `label-studio.svg` is Label Studio's official "Heidi the opossum" mascot mark
+(`images/heartex_icon_opossum_green.svg` from github.com/HumanSignal/label-studio,
+the project's de-facto app/favicon icon), not dashboard-icons — dashboard-icons has
+no `label-studio`/`humansignal` entry as of 2026-06. Square (156×156), clean vector.
+
 Not yet iconed (no clean off-the-shelf logo in dashboard-icons — follow-up):
-FishSense (main), FishSense Orchestrator, Qualcomm Docs, KRG Roster.
+KRG Roster.

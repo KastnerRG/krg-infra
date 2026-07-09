@@ -19,8 +19,8 @@ add-later path. The two tiers:
 
 | Tier | Hosts | Default SSH access |
 |------|-------|--------------------|
-| Strict (base) | krg-prod, e4e-prod, krg-ldap, krg-vault, krg-deploy | `ucsd` IPSet + `ops` IPSet only (nftables source restriction) |
-| Relaxed (compute) | waiter | globally reachable, **gated by CrowdSec** (community CAPI blocklists + local ssh-bf scenario + trusted-net whitelist) |
+| Strict (base) | krg-prod, e4e-prod, krg-ldap, krg-vault, krg-deploy, krg-nat | `ucsd` IPSet + `ops` IPSet only (nftables source restriction) |
+| Relaxed (compute) | waiter, kastner-ml | globally reachable, **gated by CrowdSec** (community CAPI blocklists + local ssh-bf scenario + trusted-net whitelist) |
 
 Why two tiers: compute hosts are research-user-facing, including visiting
 researchers and lab members traveling within the US. Service hosts are
@@ -79,7 +79,7 @@ It serves two roles:
    which trip it was for:
    ```diff
     "ops": [
-      { "cidr": "97.252.106.89",  "comment": "admin remote (chris)" },
+      { "cidr": "97.170.130.76",  "comment": "admin remote (chris)" },
       { "cidr": "107.132.34.148", "comment": "admin remote (sean)"},
    +  { "cidr": "203.0.113.42",   "comment": "admin remote (you) — japan trip 2026-Q3" }
     ],
@@ -124,9 +124,9 @@ decision before opening the door.
 
 - Fleet baseline:
   [`nix/profiles/base.nix`](../nix/profiles/base.nix) — enables the
-  CrowdSec stack (`krg.crowdsec`, `krg.crowdsecBouncer`), sets
-  `krg.base.serviceHost = true` as the fleet default, and disables
-  fail2ban (superseded by CrowdSec).
+  CrowdSec stack (`krg.crowdsec`, `krg.crowdsecBouncer`) as the sole
+  ban layer, and sets `krg.base.serviceHost = true` as the fleet
+  default.
 - Strict-tier SSH source restriction:
   [`nix/modules/security/firewall.nix`](../nix/modules/security/firewall.nix)
   via `sshSources` (populated from `ucsd` + `ops` in `base.nix` when

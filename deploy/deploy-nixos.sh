@@ -22,8 +22,11 @@
 # never here — so a health gate can't deadlock the converge meant to satisfy it.
 #
 # krg-deploy ITSELF is intentionally excluded (not in ORDER): it runs this deploy,
-# and a self-switch can restart the github-runner service mid-job. krg-deploy stays
-# current via the nightly system.autoUpgrade in nix/profiles/base.nix.
+# and a self-switch can restart the github-runner service mid-job — so it must never
+# be switched INLINE here. On the push path it self-updates via the multistage flow
+# (deploy/deploy-self-update.sh schedules a DETACHED switch; deploy/await-self-update.sh
+# gates the resume) and, as a fallback, the nightly system.autoUpgrade in
+# nix/profiles/base.nix.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -159,6 +162,43 @@ stage_vault_secret_zero() {
   echo "  staged vault-agent secret-zero for ${host} (AppRole ${rolename})"
 }
 
+# Dump on-box failure context when a switch fails, so the cause is visible in the
+# CI log instead of needing a live login. READ-ONLY and best-effort: it only reads
+# unit/container state (never mutates), and its own failure (e.g. host unreachable)
+# never changes the deploy's exit — the caller exits 1 regardless. Surfaces the
+# failed systemd units + their journals, and for Docker hosts the container table
+# plus logs of any non-Up/unhealthy container (the krg-prod compose stacks fail as a
+# unit; the actual cause is in a single container's log — e.g. a mysqld that aborts
+# on an unknown flag, which is invisible from `systemctl status` alone).
+dump_failure_diagnostics() {
+  local target="$1"
+  echo "::group::diagnostics: ${target} (read-only)"
+  ssh "${sshopts[@]}" "$target" bash -s <<'REMOTE' 2>&1 || echo "  (diagnostics collection failed — host may be unreachable)"
+set +e
+echo "===== systemctl --failed ====="
+sudo systemctl --failed --no-pager
+echo
+echo "===== journals for failed units (last 80 lines each) ====="
+for u in $(systemctl list-units --state=failed --no-legend --plain | awk '{print $1}'); do
+  echo "----- $u -----"
+  sudo journalctl -u "$u" --no-pager -n 80
+  echo
+done
+if command -v docker >/dev/null 2>&1; then
+  echo "===== docker ps -a ====="
+  sudo docker ps -a --format 'table {{.Names}}\t{{.Status}}'
+  echo
+  echo "===== logs of stopped/unhealthy containers (last 60 lines each) ====="
+  for c in $(sudo docker ps -a --format '{{.Names}}\t{{.Status}}' | awk -F '\t' '$2 !~ /^Up / || $2 ~ /unhealthy/ {print $1}'); do
+    echo "----- $c -----"
+    sudo docker logs --tail 60 "$c" 2>&1
+    echo
+  done
+fi
+REMOTE
+  printf '\n::endgroup::\n'
+}
+
 # Fail-fast: stop on the first failed host. Order is dependency-first (vault/AD
 # before the services that use them), so a failure early means the dependents
 # would be deploying against a broken base — don't.
@@ -187,8 +227,21 @@ for host in "${ORDER[@]}"; do
         --sudo; then
     echo "FAILED: ${host} — stopping; remaining hosts not deployed"
     printf '\n::endgroup::\n'
+    dump_failure_diagnostics "$target"
     exit 1
   fi
   echo "OK: ${host}"
+  # Re-run the vault-agent so a ROTATED secret (the KV value changed, but the agent's
+  # unit didn't, so `switch` left the oneshot alone) is re-rendered, and each render's
+  # reloadCommand fires for the consumer whose secret actually changed. Best-effort: a
+  # failed re-render leaves the prior /run files in place (consumers keep the last-good
+  # secret), so WARN rather than fail the deploy.
+  if [[ "$(nix eval "${FLAKE}#nixosConfigurations.${host}.config.krg.vaultAgent.enable" 2>/dev/null || echo false)" == "true" ]]; then
+    if ssh -o BatchMode=yes "$target" sudo systemctl restart openbao-agent; then
+      echo "  re-rendered vault-agent secrets on ${host}"
+    else
+      echo "  WARN: vault-agent re-render failed on ${host} — consumers keep prior secrets; check 'systemctl status openbao-agent'" >&2
+    fi
+  fi
   printf '\n::endgroup::\n'
 done

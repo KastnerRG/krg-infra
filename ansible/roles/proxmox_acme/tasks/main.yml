@@ -1,0 +1,104 @@
+# Proxmox-native ACME (Let's Encrypt) cert for pveproxy. See defaults/main.yml for
+# the design. STAGING-FIRST: stand up against LE staging, verify the UI serves the
+# staging chain, then set proxmox_acme_environment=production and re-run (this role
+# re-orders with --force on the environment switch).
+#
+# IaC-strict: this role IS the cert config — don't `pvenode acme cert order` by hand
+# as the fix. Port 80 (HTTP-01 challenge) is opened in the host's host.fw via
+# proxmox_host_fw_rules (host_vars), not here — keep the two together.
+
+- name: Validate required inputs
+  ansible.builtin.assert:
+    that:
+      - proxmox_acme_domain | length > 0
+      - proxmox_acme_contact | length > 0
+    fail_msg: >-
+      proxmox_acme_enable is true but proxmox_acme_domain / proxmox_acme_contact
+      are unset — set them in host_vars/<host>.yml.
+
+# --- ACME account (one per environment; idempotent on the account file) ---------
+# Account files live under /etc/pve/priv/acme/<name> (pmxcfs) — NO .json extension
+# (verified on PVE 9: the files are `production` / `staging`). Staging and prod are
+# distinct accounts so flipping the environment selects the right one cleanly.
+- name: Check whether the ACME account is already registered
+  ansible.builtin.stat:
+    path: "/etc/pve/priv/acme/{{ proxmox_acme_account_name }}"
+  register: _acme_account
+
+- name: Register the ACME account
+  # ToS must be agreed interactively; feed 'y' on stdin. The directory URL pins
+  # staging vs production for this account.
+  ansible.builtin.command:
+    cmd: >-
+      pvenode acme account register
+      {{ proxmox_acme_account_name }}
+      {{ proxmox_acme_contact }}
+      --directory {{ proxmox_acme_directory }}
+    stdin: "y\n"
+  when: not _acme_account.stat.exists
+  register: _acme_register
+  # Tolerate a concurrent/pre-existing account so a wrong stat can't fail the run
+  # (the account file is the source of truth; "already exists" means it's there).
+  changed_when: "'already exists' not in (_acme_register.stderr | default(''))"
+  failed_when: >-
+    _acme_register.rc is defined and _acme_register.rc != 0
+    and 'already exists' not in (_acme_register.stderr | default(''))
+
+# --- Node ACME config: which account + domains, via the standalone (HTTP-01) plugin
+- name: Read the node's current ACME config
+  ansible.builtin.command: "pvenode config get"
+  register: _node_cfg
+  changed_when: false
+  failed_when: false
+
+- name: Point the node at this account + domain (standalone HTTP-01)
+  ansible.builtin.command:
+    cmd: >-
+      pvenode config set
+      --acme account={{ proxmox_acme_account_name }},domains={{ proxmox_acme_domain }}
+  when: >-
+    ('account=' + proxmox_acme_account_name) not in _node_cfg.stdout
+    or ('domains=' + proxmox_acme_domain) not in _node_cfg.stdout
+  changed_when: true
+
+# --- Decide whether a (re-)order is needed, from the LIVE pveproxy cert -----------
+# The ACME cert installs as /etc/pve/local/pveproxy-ssl.pem. Absent → still on the
+# self-signed pve-ssl.pem. We re-order when: no ACME cert yet, the issuer doesn't
+# match the target environment (covers self-signed AND a staging→prod flip), or it
+# expires within the renewal window.
+- name: Check for an installed pveproxy cert
+  ansible.builtin.stat:
+    path: /etc/pve/local/pveproxy-ssl.pem
+  register: _pveproxy_cert
+
+- name: Inspect the installed pveproxy cert (issuer + expiry)
+  # -checkend rc: 0 = valid past the window, 1 = expires within it. stdout carries
+  # the issuer line we match the LE environment marker against.
+  ansible.builtin.command:
+    cmd: >-
+      openssl x509 -in /etc/pve/local/pveproxy-ssl.pem -noout -issuer
+      -checkend {{ proxmox_acme_renew_before_days | int * 86400 }}
+  register: _cert_info
+  changed_when: false
+  failed_when: false
+  when: _pveproxy_cert.stat.exists
+
+- name: Determine whether the cert needs (re-)issuing
+  ansible.builtin.set_fact:
+    _acme_need_order: >-
+      {{ (not _pveproxy_cert.stat.exists)
+         or (_cert_info.rc | default(1)) == 1
+         or (proxmox_acme_environment == 'staging'
+             and 'STAGING' not in (_cert_info.stdout | default('') | upper))
+         or (proxmox_acme_environment == 'production'
+             and ("LET'S ENCRYPT" not in (_cert_info.stdout | default('') | upper)
+                  or 'STAGING' in (_cert_info.stdout | default('') | upper))) }}
+
+# --- Order + install the cert (PVE reloads pveproxy itself; renewal is automatic) -
+# --force re-orders regardless of remaining lifetime — required for the staging→prod
+# swap (the staging cert isn't "expiring", but we still want to replace it).
+- name: Order the Let's Encrypt certificate
+  ansible.builtin.command:
+    cmd: "pvenode acme cert order --force"
+  when: _acme_need_order | bool
+  changed_when: true

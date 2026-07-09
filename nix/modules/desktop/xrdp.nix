@@ -150,6 +150,23 @@ in {
       # comes from AD. This also means the group always exists when something references it.
       users.groups.rdp_users = {};
       krg.users.defaultGroups = ["rdp_users"];
+
+      # Researchers reach this box through a SHARED XFCE desktop — one of them powering
+      # the host off or rebooting it kills everyone else's session (and the box only comes
+      # back via out-of-band/IPMI). XFCE's logout dialog surfaces Shut Down / Restart /
+      # Suspend / Hibernate buttons; it shows them based on what logind reports as allowed,
+      # which logind answers via polkit. Deny those actions for everyone who isn't an admin
+      # so the buttons disappear and the only desktop exit is Log Out. Admins (wheel — the
+      # break-glass krg-admin) keep the ability to reboot, and `systemctl`/`reboot` over SSH
+      # is unaffected (that path is gated by sudo, not these desktop-session polkit actions).
+      security.polkit.enable = true;
+      security.polkit.extraConfig = ''
+        polkit.addRule(function(action, subject) {
+          if (/^org\.freedesktop\.login1\.(power-off|reboot|halt|suspend|hibernate)/.test(action.id)) {
+            return subject.isInGroup("wheel") ? polkit.Result.YES : polkit.Result.NO;
+          }
+        });
+      '';
     })
 
     (mkIf (cfg.enable && tls.enable) {
@@ -166,6 +183,11 @@ in {
           {
             destination = "/run/xrdp-tls/bundle.pem";
             perms = "0640";
+            # xrdp runs as the unprivileged `xrdp` user and must traverse this dir to
+            # read the split cert/key. The default 0750 root:root dir locks it out, so
+            # open traversal (the documented non-root-reader case). The files inside
+            # stay 0640 root:xrdp, so contents remain group-gated.
+            dirPerms = "0755";
             contents = ''
               {{- with secret "pki_int/issue/host" ${certSecretArgs} }}
               {{ .Data.certificate }}
@@ -197,6 +219,11 @@ in {
             cd /run/xrdp-tls
             ${pkgs.gawk}/bin/awk '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/' bundle.pem > cert.pem
             ${pkgs.gawk}/bin/awk '/-BEGIN [A-Z ]*PRIVATE KEY-/,/-END [A-Z ]*PRIVATE KEY-/' bundle.pem > key.pem
+            # awk runs as root, so the split files land root:root. The xrdp daemon
+            # drops to the unprivileged `xrdp` user/group, so it must own the group
+            # to read its own key — without this, TLS init fails and every RDP
+            # connection (Guacamole or SSH-tunneled) dies during negotiation.
+            chown root:xrdp cert.pem key.pem
             chmod 0640 cert.pem key.pem
           '';
         };

@@ -1,24 +1,23 @@
-# Generated secret for Guacamole — the Postgres database password.
+# Guacamole's Postgres password MOVED to the early terraform/secrets workspace so it
+# exists before the fail-closed krg-prod vault-agent (P2) renders it. These `removed`
+# blocks drop the resources from THIS workspace's state WITHOUT destroying the live KV
+# entry (terraform/secrets owns it; the db_password is imported there to preserve it).
+# Delete these blocks once the migration has applied in every environment. See
+# terraform/secrets/README.md.
 #
-# This is the value the OpenBao Agent on krg-prod renders to
-# /run/krg/guacamole/guacamole.env (krg.vaultAgent in nix/hosts/krg-prod/default.nix),
-# which both the guacamole webapp (POSTGRESQL_PASSWORD) and the postgres container
-# (POSTGRES_PASSWORD) read. Brand new + internal, so generating it here is pure
-# creation, not a rotation of a live value. krg-prod's AppRole policy already reads
-# secret/data/krg-prod/* (terraform/openbao/main.tf), so no policy change is needed.
-#
-# Guacamole's OIDC client secret is NOT here — implicit flow doesn't use one (see
-# vault_secrets.tf "guacamole_oidc").
+# (Guacamole's OIDC is implicit-flow — no client_secret consumed — so guacamole-oidc
+# stays in vault_secrets.tf; only the DB password is a fail-closed consumer.)
 
-resource "random_password" "guacamole_db" {
-  length  = 32
-  special = false
+removed {
+  from = random_password.guacamole_db
+  lifecycle {
+    destroy = false
+  }
 }
 
-resource "vault_kv_secret_v2" "guacamole" {
-  mount = "secret"
-  name  = "krg-prod/guacamole"
-  data_json = jsonencode({
-    db_password = random_password.guacamole_db.result
-  })
+removed {
+  from = vault_kv_secret_v2.guacamole
+  lifecycle {
+    destroy = false
+  }
 }

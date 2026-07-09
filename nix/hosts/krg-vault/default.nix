@@ -2,9 +2,9 @@ _: let
   trusted = builtins.fromJSON (builtins.readFile ../../networks/trusted.json);
 in {
   imports = [
-    ../../profiles/base.nix
-    ../../modules/users.nix
-    ../../users/admin.nix
+    # server tier (= old base + node-exporter): an always-on monitored infra VM.
+    # krg.users + the break-glass admin now come via base.nix (imported by server).
+    ../../profiles/server.nix
     ./hardware-configuration.nix
   ];
 

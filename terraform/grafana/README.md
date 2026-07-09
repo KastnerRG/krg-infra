@@ -14,7 +14,7 @@ of click-ops in the Grafana UI.
 - **Dashboard** — `krg-waiter`, loaded from
   [`dashboards/krg-waiter.json`](dashboards/krg-waiter.json) (`dashboards.tf`).
 - **SSO** — generic OAuth via Authentik (`sso.tf`), reading the OIDC client
-  secret from OpenBao at `secret/krg-prod/grafana-oidc`. Role mapping (JMESPath
+  secret from OpenBao at `secret/krg-prod/authentik-managed/grafana-oidc`. Role mapping (JMESPath
   on the userinfo `groups` claim): AD `Domain Admins` → `GrafanaAdmin`,
   everyone else → `Viewer`.
 

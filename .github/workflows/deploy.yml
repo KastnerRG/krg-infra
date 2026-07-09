@@ -12,6 +12,18 @@ name: Deploy fleet
 # anything touches the fleet — a single workflow_run event only tells us about one
 # workflow, so we re-check all three via the API. A broken commit therefore never
 # deploys.
+#
+# MULTISTAGE (control-node self-update, ADR 0011). The deploy is split into three
+# jobs so the control node can update ITSELF without the switch killing the job:
+#   deploy-pre       (self-hosted) gate + foundation + substrate + secrets, then
+#                    BUILD krg-deploy and, if changed, SCHEDULE a detached self-switch.
+#   await-selfupdate (GitHub-hosted "cloud machine") wait-loop that watches the
+#                    runner drop offline and return online — the barrier that keeps
+#                    deploy-post off a control node that is mid-switch. Runs only
+#                    when a self-update was actually scheduled.
+#   deploy-post      (self-hosted) verify the self-update took, then systems +
+#                    config + reconcile + the fleet verify phase.
+# See deploy/README.md and deploy/deploy-self-update.sh for the mechanics.
 on:
   workflow_run:
     workflows: ["Build NixOS configurations", "Python unit tests", "Lint"]
@@ -28,8 +40,9 @@ permissions:
   actions: read
 
 jobs:
-  deploy:
-    name: Apply to fleet
+  # ══ Job 1 — pre-substrate + control-node self-update scheduling ════════════
+  deploy-pre:
+    name: Apply to fleet (pre + self-update)
     runs-on: [self-hosted, krg-deploy]
     # Fast pre-filter: only a push event (this excludes workflow_dispatch of the CI
     # workflows) on main, and only when the triggering run was green. NOTE: re-runs
@@ -42,6 +55,10 @@ jobs:
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.conclusion == 'success'
+    outputs:
+      ok: ${{ steps.gate.outputs.ok }}
+      selfupdate: ${{ steps.selfupdate.outputs.selfupdate }}
+      target: ${{ steps.selfupdate.outputs.target }}
     steps:
       - name: Check out the commit that passed CI
         uses: actions/checkout@v6
@@ -126,19 +143,18 @@ jobs:
       #                        its in-guest firewall) — hoisted ahead of Ansible so
       #                        the shared prerequisite is up first.
       #   phase 1  substrate   Ansible (Proxmox hypervisor, firewall, NFS exports).
-      #   phase 2  systems     NixOS members (krg-prod, waiter, kastner-ml) — the
-      #                        compute boxes mount /home from phase 1's NFS exports.
-      #   phase 3  config      OpenTofu (configures the services via their APIs).
-      #   phase 4  verify      ALL membership/health gates, every host — ONCE, here.
+      #   phase 1.5 secrets    OpenTofu terraform/secrets (generation before use).
+      #   phase 1.9 self-update BUILD krg-deploy; schedule a detached self-switch if
+      #                        it changed (this job's tail — see below).
+      #   phase 2  systems     NixOS members (deploy-post job).
+      #   phase 3  config      OpenTofu configures the services (deploy-post job).
+      #   phase 4  verify      ALL membership/health gates, once (deploy-post job).
       #
       # Stage gating: each phase runs only if the gate passed AND every earlier phase
       # succeeded. The explicit success() is load-bearing — a step with a custom if:
       # does not reliably inherit the "previous steps succeeded" default, so without
       # it a failed earlier phase would NOT stop the next. Combined with each script's
-      # internal fail-fast, one failed host/target halts the whole deploy. Phases 0–3
-      # CONVERGE (health gates warn, don't fail — ADR 0011 principle #2/#3); phase 4
-      # is where every cross-layer gate runs FATALLY, after the stages that satisfy
-      # them have applied.
+      # internal fail-fast, one failed host/target halts the whole deploy.
 
       # ── phase 0: foundation (NixOS krg-vault + krg-ldap) ──────────────────────
       # krg-ldap carries the in-guest AD firewall the Ansible phase depends on (it
@@ -153,88 +169,158 @@ jobs:
 
       # ── phase 1: substrate (Ansible) ──────────────────────────────────────────
       # The Proxmox hypervisor (hosts the VMs), the perimeter firewall, and — load-
-      # bearing — the NFS exports the compute boxes mount as /home (waiter <-
-      # fabricant rpool/nfs/home; kastner-ml <- e4e-nas e4e-home). Ordered AFTER
+      # bearing — the NFS exports the compute boxes mount as /home. Ordered AFTER
       # phase 0 so fabricant can already reach the DC through krg-ldap's firewall.
       # AD membership converges in warn-mode here (ad_require_joined default-false);
       # the strict gate is phase 4.
       - name: Phase 1 — substrate (Ansible)
         if: success() && steps.gate.outputs.ok == 'true'
         env:
-          # Include e4e-nas in the converge. Inert until krg-deploy's OpenBao
-          # AppRole creds are provisioned (graceful skip otherwise — see
-          # deploy/deploy-ansible.sh).
-          #
-          # FULL converge (no SYNOLOGY_TAGS). The bring-up scoping (#165) is lifted:
-          # a read-only `--check --diff` of the whole playbook came back clean —
-          # 0 failures, 0 deletions (including the declarative-delete roles
-          # shares/acls/nfs/app_portal/quotas — spec is reconciled with live), and
-          # only benign config drift on roles already proven on a real apply. SNMP
-          # stays disabled in spec (#151) and mail deferred in group_vars (#163);
-          # those are role-internal gates, not tag scoping.
           DEPLOY_SYNOLOGY: "true"
-          # Converge KRG.LOCAL Active Directory structure (ansible/krg-ad/, ADR
-          # 0010) too — its gate block already exists in deploy-ansible.sh, but
-          # without this flag the new subtree never runs in the fleet deploy. No
-          # secrets needed (structural only); the apply is non-authoritative
-          # (adds, never deletes) so it can't clobber roster-set human group
-          # membership. Requires krg-deploy to reach krg-ldap over SSH as
-          # krg-admin (host key in known_hosts) — same push model as fabricant.
           DEPLOY_KRG_AD: "true"
         run: ./deploy/deploy-ansible.sh
 
-      # ── phase 2: systems (NixOS members) ──────────────────────────────────────
-      # The remaining hosts now that the substrate exists: krg-prod (the services
-      # OpenTofu configures in phase 3) and the compute boxes, which mount /home from
-      # phase 1's NFS exports. OEC staged here; daemons verified in phase 4.
-      - name: Phase 2 — systems (NixOS members)
+      # ── phase 1.5: secrets (OpenTofu — early, BEFORE the consumers) ────────────
+      # terraform/secrets GENERATES the krg-prod secrets the fail-closed krg.vaultAgent
+      # renders in phase 2, so it MUST run before phase 2. It depends only on OpenBao
+      # (krg-vault, phase 0) + the krg-deploy AppRole — no running service. Steady
+      # state is a no-op; a missing AppRole / unseeded target skips gracefully.
+      - name: Phase 1.5 — secrets (OpenTofu)
         if: success() && steps.gate.outputs.ok == 'true'
         env:
-          DEPLOY_NIXOS_HOSTS: "krg-prod waiter kastner-ml"
+          TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
+          TOFU_TARGETS: "secrets"
+        run: ./deploy/deploy-tofu.sh
+
+      # ── phase 1.9: control-node self-update (BUILD + schedule; never switch inline)
+      # Build krg-deploy from the CI-green checkout and, if it differs from the
+      # running system, schedule a DETACHED self-switch (systemd-run --on-active) that
+      # outlives this job and the runner restart it causes. Emits selfupdate= and
+      # target= for the downstream jobs. Runs LAST in this job so the substrate the
+      # control node needs is already in place, and so the switch only fires after
+      # this job has reported success. See deploy/deploy-self-update.sh.
+      - name: Phase 1.9 — schedule control-node self-update
+        id: selfupdate
+        if: success() && steps.gate.outputs.ok == 'true'
+        run: ./deploy/deploy-self-update.sh
+
+  # ══ Job 2 — external watcher ("cloud machine") ═════════════════════════════
+  # Runs on a GitHub-hosted runner because krg-deploy's own runner is the thing
+  # going down. Only runs when a self-update was actually scheduled. It watches the
+  # runner registration state (offline → online) via the GitHub API — it can't reach
+  # krg-deploy directly (firewall). This is the barrier that holds deploy-post until
+  # the control node is back. Needs a token with Administration:read (see README).
+  await-selfupdate:
+    name: Await control-node self-update
+    needs: deploy-pre
+    if: >-
+      needs.deploy-pre.outputs.ok == 'true' &&
+      needs.deploy-pre.outputs.selfupdate == 'scheduled'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the commit that passed CI
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Wait for krg-deploy to return
+        env:
+          # Administration:read PAT — the default GITHUB_TOKEN cannot read the
+          # self-hosted-runners API. Wire this Actions secret before relying on the
+          # self-update path (deploy/README.md).
+          GH_TOKEN: ${{ secrets.DEPLOY_RUNNER_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: ./deploy/await-self-update.sh
+
+  # ══ Job 3 — post-substrate (systems + config + verify) ═════════════════════
+  # Resumes on the (now-updated) control node. Runs when the gate passed, deploy-pre
+  # succeeded, and the watcher either succeeded or was skipped (no self-update).
+  # always() is needed so a SKIPPED await-selfupdate doesn't skip this job too.
+  deploy-post:
+    name: Apply to fleet (systems + config + verify)
+    needs: [deploy-pre, await-selfupdate]
+    if: >-
+      always() &&
+      needs.deploy-pre.result == 'success' &&
+      needs.deploy-pre.outputs.ok == 'true' &&
+      (needs.await-selfupdate.result == 'success' || needs.await-selfupdate.result == 'skipped')
+    runs-on: [self-hosted, krg-deploy]
+    steps:
+      - name: Check out the commit that passed CI
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      # Safety net: confirm the scheduled self-update actually took (a detached
+      # switch can't fail the job that scheduled it, and the watcher only proves the
+      # runner returned — not that it's on the RIGHT generation). Fails the deploy if
+      # krg-deploy is running anything other than the target deploy-pre built.
+      - name: Verify control-node self-update
+        env:
+          DEPLOY_SELF_TARGET: ${{ needs.deploy-pre.outputs.target }}
+        run: ./deploy/deploy-self-verify.sh
+
+      # ── phase 2: systems (NixOS members) ──────────────────────────────────────
+      # The remaining hosts now that the substrate exists: the service hosts (krg-prod,
+      # which OpenTofu configures in phase 3; e4e-prod, the student-tenant edge; krg-nat,
+      # the Incus platform host that runs the tenant instances) and the compute boxes,
+      # which mount /home from phase 1's NFS exports. OEC staged here; daemons verified in
+      # phase 4.
+      - name: Phase 2 — systems (NixOS members)
+        env:
+          DEPLOY_NIXOS_HOSTS: "krg-prod e4e-prod krg-nat waiter kastner-ml"
         run: ./deploy/deploy-nixos.sh
+
+      # ── phase 2.7: publish the Incus golden template (ADR 0017 §7) ─────────────
+      # Build the hardened golden image (nixosConfigurations.krg-golden) and (re)point
+      # krg-nat's `krg-golden` alias at it — BEFORE phase 3, so terraform/incus can
+      # launch a tenant slot from it. Idempotent + cheap: `nix build` is an instant
+      # cache hit when the golden config is unchanged, and the import is skipped when
+      # the published image already came from that store path — so the qcow only
+      # rebuilds when the baseline actually changes. Best-effort: image publish is
+      # orthogonal to the fleet config, and phase 3's incus target is inert until a
+      # tenant references the image, so a publish hiccup must not fail the deploy.
+      - name: Phase 2.7 — publish golden template (Incus)
+        run: ./deploy/incus-publish-golden.sh || echo "::warning::golden-template publish failed (non-fatal); see log"
 
       # ── phase 3: config (OpenTofu) ────────────────────────────────────────────
       # State is local on krg-deploy (ADR 0005) + encrypted with the
       # TOFU_STATE_PASSPHRASE Actions secret. Creds come from OpenBao (krg-deploy
-      # AppRole) — no secrets on disk. WHICH targets apply is the explicit opt-in
-      # below (like SYNOLOGY_TAGS scopes the synology converge): a listed target
-      # whose KV secret isn't seeded skips with a notice. openbao is NOT listed here —
-      # it needs a privileged bootstrap token and is applied manually (see
-      # deploy/deploy-tofu.sh header). Widen this as each target's service + KV
-      # secret come online. See deploy/README.md "OpenTofu".
+      # AppRole). authentik applies before grafana (grafana reads the grafana-oidc
+      # authentik produces). `incus` reconciles the platform boundary (incusbr0 +
+      # profiles + tenant projects/instances) — cert-based auth, no special token; it
+      # depends on the one-time openbao bootstrap having added the incus-client role.
+      # An unseeded/unreachable target skips with a notice. openbao is NOT listed — it
+      # needs a privileged bootstrap token and is applied manually.
       - name: Phase 3 — config (OpenTofu)
-        if: success() && steps.gate.outputs.ok == 'true'
         env:
           TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
-          # authentik mints the OIDC client secrets (and roster passwords) and
-          # writes them back into OpenBao — krg-deploy's AppRole policy was widened
-          # to manage exactly those paths (terraform/openbao/main.tf). It applies
-          # before grafana because grafana reads the grafana-oidc authentik produces
-          # — so grafana MUST stay ordered after authentik here. An unseeded target
-          # (authentik: no authentik-admin-token / -bind in KV; grafana: no
-          # grafana-admin / grafana-oidc) skips with a notice, so listing it is safe
-          # ahead of seeding. openbao is NOT listed — it needs a privileged bootstrap
-          # token and is applied manually (see deploy/deploy-tofu.sh header).
-          #
-          # temporal manages namespaces on the krg-prod cluster; deploy-tofu.sh's
-          # temporal) case mints a short-lived temporal-client cert from the lab CA
-          # (krg-deploy AppRole holds the issue grant) to reach the mTLS frontend.
-          # Prereqs: openbao applied (the PKI role + grant) and krg-prod up with the
-          # frontend reachable on :7233 — both land in earlier stages / manual openbao.
-          # A missing AppRole token skips it gracefully; a failed apply halts the deploy.
-          TOFU_TARGETS: "authentik grafana e4e-nas temporal"
+          TOFU_TARGETS: "authentik grafana e4e-nas temporal incus"
         run: ./deploy/deploy-tofu.sh
+
+      # ── phase 3.5: reconcile phase-3-generated secrets into their consumers ────
+      # The lone secret that can only exist after phase 3 is an Authentik OUTPOST
+      # token (Authentik mints it). This re-runs openbao-agent on krg-prod so the
+      # now-present tokens render and the reloadCommands restart the outpost
+      # containers — a from-scratch deploy converges both outposts in ONE run.
+      # Best-effort (warns, never fails): steady state is a no-op.
+      - name: Phase 3.5 — reconcile generated secrets (outpost tokens)
+        run: ./deploy/deploy-rerender-secrets.sh
+
+      # ── phase 3.6: stage tenant provision creds (Incus) ───────────────────────
+      # Pushes two bootstrap creds into each tenant instance that the tenant can't
+      # self-grant: (1) the vault-agent AppRole secret-zero that mints <tenant>.vm (ADR
+      # 0021 §3), and (2) a github-runner registration token brokered from the org's
+      # GitHub App for instances tagged with user.krg_repo (ADR 0022 §3). Both via
+      # `incus file push`. Runs AFTER phase 3 creates the instances; best-effort like the
+      # golden-publish leg (a booting/absent instance or unseeded App retries next deploy,
+      # and the in-instance consumers fail closed until it lands — no fleet impact).
+      - name: Phase 3.6 — stage tenant provision creds (Incus)
+        run: ./deploy/stage-tenant-secret-zero.sh || echo "::warning::tenant provision-cred staging failed (non-fatal); see log"
 
       # ── phase 4: verify (all health/membership gates, once) ───────────────────
       # The SINGLE verification phase — runs AFTER every layer has converged, for the
       # whole fleet: OEC daemons (Qualys + Trellix) on every host + the control node,
-      # and AD machine-keytab membership (`adcli testjoin`) on every host CONFIGURED
-      # as a member — NixOS (gated on krg.adClient.enable) AND the Proxmox hosts. This
-      # is where the cross-layer AD gate lives (ADR 0011 principle #2): by now
-      # krg-ldap's firewall (phase 0) and the Ansible AD converge (phase 1) have both
-      # applied, so the gate can't deadlock the stages that satisfy it. FATAL here —
-      # a missing OEC daemon or a broken join fails the deploy. DEPLOY_VERIFY_AD=false
-      # is the first-bring-up escape hatch (before any host has joined).
+      # and AD machine-keytab membership (`adcli testjoin`) on every configured
+      # member. FATAL here. DEPLOY_VERIFY_AD=false is the first-bring-up escape hatch.
       - name: Phase 4 — verify fleet (OEC + AD membership)
-        if: success() && steps.gate.outputs.ok == 'true'
         run: ./deploy/deploy-verify.sh

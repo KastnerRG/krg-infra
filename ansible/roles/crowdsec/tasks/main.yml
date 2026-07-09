@@ -1,10 +1,8 @@
 # CrowdSec on Debian/PVE — the Proxmox-layer counterpart of
 # nix/modules/security/{crowdsec,crowdsec-bouncer}.nix.
 # Same policy intent ("no public access — US is the floor", issue #74)
-# implemented reactively via community CTI + local scenarios. Replaces
-# fail2ban (see fail2ban_enabled gating in roles/fail2ban; flipped off
-# in group_vars/all.yml when crowdsec is on so the two don't race for
-# iptables rules).
+# implemented reactively via community CTI + local scenarios. This is
+# the sole Proxmox-layer brute-force/ban layer.
 #
 # WHY iptables, NOT nftables: PVE's pve-firewall is iptables-legacy.
 # Using the nftables bouncer would create disjoint kernel tables that
@@ -348,11 +346,10 @@
 
 # When crowdsec_enabled is false on a host that was previously running
 # CrowdSec: stop + disable both services so the bouncer's iptables rules
-# don't race with whatever's replacing it (typically fail2ban during a
-# rollback — see the docs note in group_vars/all.yml). Mirrors the same
-# stop-but-keep-package pattern as roles/fail2ban — flipping the var
-# back to true is a fast re-enable, no apt fetch. Package purge stays
-# operator-driven.
+# are cleanly torn down (a maintenance / roll-back convenience — there
+# is no other ban layer to fall back to). Flipping the var back to true
+# is a fast re-enable, no apt fetch; packages stay installed. Package
+# purge stays operator-driven.
 - name: CrowdSec (disabled) — stop + disable both services, keep packages for rollback
   when: not crowdsec_enabled
   block:

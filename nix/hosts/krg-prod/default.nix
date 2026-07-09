@@ -11,7 +11,7 @@
   promConfig = ../../docker-compose/krg-prod/prometheus;
 in {
   imports = [
-    ../../profiles/server.nix
+    ../../profiles/services.nix
     ../../modules/services/vault-agent.nix
     ./hardware-configuration.nix
   ];
@@ -19,6 +19,13 @@ in {
   # KRG lab-wide production host (the old "fabricant" services). E4E
   # project-specific services live on the separate e4e-prod host.
   krg.adminAccount = "krg-admin";
+
+  # Put the break-glass admin in the docker group on this host so it can drive
+  # the compose stacks (docker compose ps/logs/restart) without sudo. Merges with
+  # the ["wheel"] set in users/admin.nix (listOf concatenates across definitions).
+  # NOTE: docker group membership is effectively root on the host — fine here since
+  # krg-admin is already an unrestricted-sudo wheel account anyway.
+  krg.users.users.krg-admin.groups = ["docker"];
 
   # AD domain member — verified joined 2026-06-18 (`getent Administrator` resolves).
   # Explicit marker; base.nix already defaults krg.adClient.enable on. Login stays
@@ -71,6 +78,7 @@ in {
     "L+ /var/lib/krg/krg-prod/compose.temporal.yml     - - - - ${composeDir}/compose.temporal.yml"
     "L+ /var/lib/krg/krg-prod/compose.outline.yml      - - - - ${composeDir}/compose.outline.yml"
     "L+ /var/lib/krg/krg-prod/compose.mlflow.yml       - - - - ${composeDir}/compose.mlflow.yml"
+    "L+ /var/lib/krg/krg-prod/compose.fleet.yml        - - - - ${composeDir}/compose.fleet.yml"
 
     # Read-only config dirs: symlink from working dir → Nix store.
     # Docker bind-mount follows symlinks so ./blackbox-exporter resolves to the store
@@ -120,15 +128,27 @@ in {
     # the outpost first started (it had been crash-looping on a missing token).
     "d  /var/lib/krg/krg-prod/authentik/proxy-tmp           0750 1000  1000 -"
 
-    # Outline: docker.env is read-only; data dirs are writable
+    # Outline: docker.env is read-only; the app data dir is a writable bind mount
+    # (the outline app runs as uid 1000, matching this dir). Postgres data is NOT here
+    # — it's a docker named volume (outline_postgres_data) so postgres:18's uid-999
+    # user owns it; a 1000-owned bind mount made postgres exit 1 ("mkdir … Permission
+    # denied"). See compose.outline.yml.
     "d  /var/lib/krg/krg-prod/outline                       0750 root   docker -"
     "L+ /var/lib/krg/krg-prod/outline/docker.env            - - - - ${composeDir}/outline/docker.env"
     "d  /var/lib/krg/krg-prod/outline/outline_data          0750 1000 1000 -"
-    "d  /var/lib/krg/krg-prod/outline/postgres              0750 1000 1000 -"
 
-    # MLflow: working dir for postgres data volumes; config/Dockerfile is in the Nix store
+    # MLflow: working dir for postgres data volumes; config/Dockerfile + the postgres
+    # initdb scripts are in the Nix store (docker follows the symlinks at mount time).
     "d  /var/lib/krg/krg-prod/mlflow                        0750 root   docker -"
     "L+ /var/lib/krg/krg-prod/mlflow/config                 - - - - ${composeDir}/mlflow/config"
+    "L+ /var/lib/krg/krg-prod/mlflow/initdb                 - - - - ${composeDir}/mlflow/initdb"
+
+    # Fleet (ADR 0012): read-only non-secret config from the store; MySQL data is
+    # writable and owned by the mysql:8.4 image's uid (999). The fleet/ dir itself is
+    # root:docker like the other config parents. Secrets render to /run via krg.vaultAgent.
+    "d  /var/lib/krg/krg-prod/fleet                         0750 root   docker -"
+    "L+ /var/lib/krg/krg-prod/fleet/fleet.env               - - - - ${composeDir}/fleet/fleet.env"
+    "d  /var/lib/krg/krg-prod/fleet/mysql                   0750 999  999  -"
 
     # Grafana, Prometheus data (writable)
     "d  /var/lib/krg/krg-prod/grafana-storage               0750 1000 1000 -"
@@ -172,17 +192,21 @@ in {
   # openbao-agent and fails closed if bao is sealed/unreachable at boot (the same
   # contract Guacamole already has). See krg.vaultAgent for the render list and
   # docs/openbao-bringup.md "Seed the krg-prod stack secrets" for the one-time
-  # seeding of the LIVE values (SECRET_KEY, DB passwords, outpost token, admin
-  # token) — these are seeded at their current values, NOT regenerated.
+  # seeding of the LIVE values (SECRET_KEY, DB passwords, admin token) — these are
+  # seeded at their current values, NOT regenerated. (BOTH outpost tokens — proxy
+  # and LDAP — are NOT hand-seeded: terraform/authentik/outpost_tokens.tf mints them
+  # and writes them under the authentik-managed/* glob.)
   #
   # Guacamole + Temporal are include'd into this project (compose.yml) and also take
   # NO .secrets/ file — their Postgres passwords and Temporal's OIDC client secret
   # render from OpenBao to /run by krg.vaultAgent, alongside the others.
   #
-  # Still hand-placed in /var/lib/krg/krg-prod/.secrets/ (stacks not yet migrated;
-  # both are currently disabled in compose.yml):
-  #   outline_secrets.env               (SECRET_KEY, UTILS_SECRET, OIDC_CLIENT_SECRET, DATABASE_URL, ...)
-  #   mlflow.env                        (POSTGRES_PASSWORD, OIDC_* vars)
+  # MLflow, Outline, and Fleet are on vault-agent too (renders /run/krg/mlflow/{db,mlflow}.env,
+  # /run/krg/outline/{db,outline}.env, and /run/krg/fleet/{db,server}.env from
+  # terraform/secrets-generated values) — none take a .secrets/ file.
+  #
+  # There are NO hand-placed /var/lib/krg/krg-prod/.secrets/ files anymore — every stack
+  # secret renders from OpenBao to /run via krg.vaultAgent (below).
   #
   # Also create /var/lib/krg/krg-prod/.env with:
   #   USER_ID=<UID of the account that owns the working directory>
@@ -217,9 +241,9 @@ in {
   # Bootstrap: git clone https://github.com/UCSD-E4E/E4E-Roster-V3.git /var/lib/krg/e4e-roster
   # then create /var/lib/krg/e4e-roster/.env from Vault (see terraform/authentik/).
   # Update: git -C /var/lib/krg/e4e-roster pull && systemctl restart e4e-roster
-  # Secrets in Vault: secret/krg-prod/roster (db_password, session_secret)
-  #                   secret/krg-prod/roster-oidc (client_id, client_secret)
-  #                   secret/krg-prod/roster-ldap (bind_password) — generated by Terraform; use when creating svc_roster in AD
+  # Secrets in Vault: secret/krg-prod/authentik-managed/roster (db_password, session_secret)
+  #                   secret/krg-prod/authentik-managed/roster-oidc (client_id, client_secret)
+  #                   secret/krg-prod/authentik-managed/roster-ldap (bind_password) — generated by Terraform; use when creating svc_roster in AD
   # GitHub + Slack integration pending (see GitHub issue #74).
   krg.composeStacks.e4e-roster = {
     description = "E4E Roster V3 — backend + postgres";
@@ -259,7 +283,7 @@ in {
         destination = "/run/krg/guacamole/web.env";
         perms = "0640";
         contents = ''
-          {{- with secret "secret/data/krg-prod/guacamole" }}
+          {{- with secret "secret/data/krg-prod/authentik-managed/guacamole" }}
           POSTGRESQL_PASSWORD={{ .Data.data.db_password }}
           {{- end }}
         '';
@@ -268,20 +292,20 @@ in {
         destination = "/run/krg/guacamole/db.env";
         perms = "0640";
         contents = ''
-          {{- with secret "secret/data/krg-prod/guacamole" }}
+          {{- with secret "secret/data/krg-prod/authentik-managed/guacamole" }}
           POSTGRES_PASSWORD={{ .Data.data.db_password }}
           {{- end }}
         '';
       }
-      # Temporal — postgres password (secret/krg-prod/temporal {db_password}, generated
-      # by terraform/authentik/temporal_secrets.tf) + OIDC client secret
-      # (secret/krg-prod/temporal-oidc {client_secret}, minted by Authentik in
-      # vault_secrets.tf). One var per file so no image sees a var it doesn't own.
+      # Temporal — postgres password (secret/krg-prod/authentik-managed/temporal {db_password},
+      # generated by terraform/authentik/temporal_secrets.tf) + OIDC client secret
+      # (secret/krg-prod/authentik-managed/temporal-oidc {client_secret}, minted by Authentik
+      # in vault_secrets.tf). One var per file so no image sees a var it doesn't own.
       {
         destination = "/run/krg/temporal/db.env";
         perms = "0640";
         contents = ''
-          {{- with secret "secret/data/krg-prod/temporal" }}
+          {{- with secret "secret/data/krg-prod/authentik-managed/temporal" }}
           POSTGRES_PASSWORD={{ .Data.data.db_password }}
           {{- end }}
         '';
@@ -290,7 +314,7 @@ in {
         destination = "/run/krg/temporal/server.env";
         perms = "0640";
         contents = ''
-          {{- with secret "secret/data/krg-prod/temporal" }}
+          {{- with secret "secret/data/krg-prod/authentik-managed/temporal" }}
           POSTGRES_PWD={{ .Data.data.db_password }}
           {{- end }}
         '';
@@ -299,10 +323,14 @@ in {
         destination = "/run/krg/temporal/ui.env";
         perms = "0640";
         contents = ''
-          {{- with secret "secret/data/krg-prod/temporal-oidc" }}
+          {{- with secret "secret/data/krg-prod/authentik-managed/temporal-oidc" }}
           TEMPORAL_AUTH_CLIENT_SECRET={{ .Data.data.client_secret }}
           {{- end }}
         '';
+        # OIDC secret rotates → reload temporal-ui so it picks up the new env (Compose
+        # won't recreate it on an env-content change). Fires only when this render
+        # actually changes; deploy/deploy-nixos.sh re-runs the agent each switch.
+        reloadCommand = "${pkgs.docker}/bin/docker restart temporal-ui";
       }
 
       # Temporal frontend mTLS (the lab-internal CA in terraform/openbao/pki.tf).
@@ -387,16 +415,56 @@ in {
           {{- end }}
         '';
       }
-      # Proxy outpost token (Admin → Outposts → View token). LIVE: must match the
-      # token Authentik issued for the embedded outpost.
+      # Proxy outpost token — consumed by the authentik_proxy container
+      # (forward-auth for guacamole/fishsense). MINTED IN IaC by
+      # terraform/authentik/outpost_tokens.tf (same pattern as the LDAP outpost
+      # below); written to secret/krg-prod/authentik-managed/proxy-outpost-token.
+      # errorOnMissingKey = false + the `if` guard + reloadCommand for the same
+      # reason as the LDAP render: the token is generated in phase 3, after this
+      # phase-2 render. See outpost_tokens.tf for the one-time cutover note (the old
+      # pre-glob path secret/krg-prod/authentik-outpost-token is now orphaned).
       {
         destination = "/run/krg/krg-prod/authentik-outpost-token.env";
         perms = "0640";
+        errorOnMissingKey = false;
         contents = ''
-          {{- with secret "secret/data/krg-prod/authentik-outpost-token" }}
+          {{- with secret "secret/data/krg-prod/authentik-managed/proxy-outpost-token" }}
+          {{- if .Data.data.token }}
           AUTHENTIK_TOKEN={{ .Data.data.token }}
           {{- end }}
+          {{- end }}
         '';
+        reloadCommand = "${pkgs.docker}/bin/docker restart authentik_proxy";
+      }
+
+      # LDAP outpost token — consumed by the authentik_ldap container
+      # (compose.authentik.yml) so PVE's LDAP realm has something to bind against.
+      # MINTED IN IaC: terraform/authentik/outpost_tokens.tf creates an api token for
+      # the outpost's service account and writes it here (no manual "View token").
+      #
+      # errorOnMissingKey = false — the ONE non-fail-closed render on krg-prod. The
+      # token is generated in phase 3, AFTER this phase-2 render, so on a from-scratch
+      # deploy this path is briefly empty; an empty AUTHENTIK_TOKEN makes the outpost
+      # fail LOUDLY (offline in Admin → Outposts, PVE bind fails) — never silently
+      # wrong — and deploy/deploy-rerender-secrets.sh re-renders krg-prod after phase 3
+      # so it converges in one run. The `if` guard renders an EMPTY file (not the
+      # literal `<no value>`) while the token is absent, so the compose env_file still
+      # exists and the stack comes up. Steady state (token present) is identical to
+      # fail-closed. The reloadCommand restarts the outpost when the token first lands
+      # / rotates (Compose won't recreate it on an env-content change). See
+      # docs/proxmox-auth.md and outpost_tokens.tf for the full rationale.
+      {
+        destination = "/run/krg/krg-prod/authentik-ldap-outpost-token.env";
+        perms = "0640";
+        errorOnMissingKey = false;
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik-managed/ldap-outpost-token" }}
+          {{- if .Data.data.token }}
+          AUTHENTIK_TOKEN={{ .Data.data.token }}
+          {{- end }}
+          {{- end }}
+        '';
+        reloadCommand = "${pkgs.docker}/bin/docker restart authentik_ldap";
       }
 
       # ── Grafana ──────────────────────────────────────────────────────────────
@@ -430,8 +498,114 @@ in {
           {{- with secret "secret/data/krg-prod/vaultwarden" }}
           ADMIN_TOKEN={{ .Data.data.admin_token | replaceAll "$" "$$" }}
           {{- end }}
-          {{- with secret "secret/data/krg-prod/vaultwarden-oidc" }}
+          {{- with secret "secret/data/krg-prod/authentik-managed/vaultwarden-oidc" }}
           SSO_CLIENT_SECRET={{ .Data.data.client_secret | replaceAll "$" "$$" }}
+          {{- end }}
+        '';
+        # The OIDC client_secret rotates → reload vaultwarden to pick up the new env.
+        # (ADMIN_TOKEN above is operator-seeded and stable; a client_secret rotation is
+        # the only change that fires this.) Fires only on an actual render change.
+        reloadCommand = "${pkgs.docker}/bin/docker restart vaultwarden";
+      }
+
+      # ── MLflow ─────────────────────────────────────────────────────────────────
+      # All MLflow secrets are GENERATED by terraform/secrets (mlflow.tf) — a fresh
+      # bring-up, so nothing is operator-seeded. db_password + secret_key live at
+      # authentik-managed/mlflow; the OIDC client_secret at authentik-managed/mlflow-oidc.
+      #
+      # Postgres password — its own file (the postgres image must not see a var it
+      # doesn't own). The mlflow + mlflow_auth databases share the one role.
+      {
+        destination = "/run/krg/mlflow/db.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik-managed/mlflow" }}
+          POSTGRES_PASSWORD={{ .Data.data.db_password }}
+          {{- end }}
+        '';
+      }
+      # MLflow server env: the two password-bearing connection URIs (the Dockerfile
+      # expands MLFLOW_BACKEND_STORE_URI into --backend-store-uri and reads
+      # OIDC_USERS_DB_URI directly), the Flask SECRET_KEY, and the OIDC client secret.
+      # The DB password is alphanumeric (terraform/secrets special=false), so no URL
+      # encoding and no compose `$`-interpolation hazard.
+      {
+        destination = "/run/krg/mlflow/mlflow.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik-managed/mlflow" }}
+          MLFLOW_BACKEND_STORE_URI=postgresql://mlflow:{{ .Data.data.db_password }}@mlflow_postgres:5432/mlflow
+          OIDC_USERS_DB_URI=postgresql://mlflow:{{ .Data.data.db_password }}@mlflow_postgres:5432/mlflow_auth
+          SECRET_KEY={{ .Data.data.secret_key }}
+          {{- end }}
+          {{- with secret "secret/data/krg-prod/authentik-managed/mlflow-oidc" }}
+          OIDC_CLIENT_SECRET={{ .Data.data.client_secret }}
+          {{- end }}
+        '';
+      }
+
+      # ── Outline ────────────────────────────────────────────────────────────────
+      # All Outline secrets are GENERATED by terraform/secrets (outline.tf) — a fresh
+      # bring-up, so nothing is operator-seeded. db_password + secret_key + utils_secret
+      # live at authentik-managed/outline; the OIDC client_secret at
+      # authentik-managed/outline-oidc.
+      #
+      # Postgres password — its own file (the postgres image must not see a var it
+      # doesn't own); outline_postgres uses it as POSTGRES_PASSWORD for the outline_user
+      # role at first init (never rotate — outline.tf guards that).
+      {
+        destination = "/run/krg/outline/db.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik-managed/outline" }}
+          POSTGRES_PASSWORD={{ .Data.data.db_password }}
+          {{- end }}
+        '';
+      }
+      # Outline server env: the password-bearing DATABASE_URL, the SECRET_KEY /
+      # UTILS_SECRET cookie/token signers (hex-32 from outline.tf), and the OIDC client
+      # secret. db_password is alphanumeric (special=false), so no URL-encoding in the
+      # connection string and no compose `$`-interpolation hazard.
+      {
+        destination = "/run/krg/outline/outline.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik-managed/outline" }}
+          DATABASE_URL=postgres://outline_user:{{ .Data.data.db_password }}@outline_postgres:5432/outline
+          SECRET_KEY={{ .Data.data.secret_key }}
+          UTILS_SECRET={{ .Data.data.utils_secret }}
+          {{- end }}
+          {{- with secret "secret/data/krg-prod/authentik-managed/outline-oidc" }}
+          OIDC_CLIENT_SECRET={{ .Data.data.client_secret }}
+          {{- end }}
+        '';
+      }
+
+      # ── Fleet (ADR 0012) ─────────────────────────────────────────────────────────
+      # All GENERATED by terraform/secrets (fleet.tf) — a fresh bring-up, nothing
+      # operator-seeded. SAML SSO (no OIDC client secret). Path is under
+      # authentik-managed/ only because that's the policy-globbed krg-prod namespace.
+      # Split db.env (MySQL) / server.env (Fleet) so no image sees a var it doesn't own.
+      {
+        destination = "/run/krg/fleet/db.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik-managed/fleet" }}
+          MYSQL_ROOT_PASSWORD={{ .Data.data.mysql_root_password }}
+          MYSQL_PASSWORD={{ .Data.data.db_password }}
+          {{- end }}
+        '';
+      }
+      # FLEET_MYSQL_PASSWORD is the same value as MYSQL_PASSWORD (Fleet connects as the
+      # `fleet` role); FLEET_SERVER_PRIVATE_KEY encrypts MDM assets (generate-once in
+      # fleet.tf, never rotated). Consumed by both `fleet` and `fleet_migrate`.
+      {
+        destination = "/run/krg/fleet/server.env";
+        perms = "0640";
+        contents = ''
+          {{- with secret "secret/data/krg-prod/authentik-managed/fleet" }}
+          FLEET_MYSQL_PASSWORD={{ .Data.data.db_password }}
+          FLEET_SERVER_PRIVATE_KEY={{ .Data.data.server_private_key }}
           {{- end }}
         '';
       }

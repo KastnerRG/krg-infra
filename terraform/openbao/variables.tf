@@ -40,6 +40,17 @@ variable "temporal_client_domains" {
   default     = ["krg-deploy", "temporal-worker", "temporal-ui"]
 }
 
+variable "incus_client_domains" {
+  description = <<-EOT
+    Identity names the incus-client CLIENT certs may carry (cert CN). krg-deploy's
+    terraform/incus provider mints one to authenticate to the krg-nat Incus API.
+    krg-nat only checks the cert chains to the fleet CA; scoping the issuable names
+    keeps the role least-privilege.
+  EOT
+  type        = list(string)
+  default     = ["krg-deploy"]
+}
+
 variable "host_allowed_domains" {
   description = <<-EOT
     Domains the general-purpose `host` SERVER role (pki.tf) may issue under, with
@@ -139,5 +150,35 @@ variable "pki_ad_group_roles" {
     # this path. RENAME to the real KRG.LOCAL group once AD groups are finalized
     # (the binding matches no one until that group exists).
     "Temporal Users" = ["user"]
+  }
+}
+
+variable "tenants" {
+  description = <<-EOT
+    The e4e-prod student-project tenants (mirrors the Nix krg.tenants roster). Each
+    gets an AppRole `tenant-<name>` + a least-privilege policy: mint its own
+    `tenant-internal` cert and read its own KV path. `kv_prefix` is the path under the
+    `secret` kv-v2 mount — it MUST equal the mkTenant contract's `boundary.kvPrefix`
+    (`tenants/<name>`, nix/lib/mk-tenant.nix), because the in-VM vault-agent reads
+    `secret/<kv_prefix>/*` and this policy is the only thing that grants it. Populated
+    as tenants land (an admin copies the tenant's onboarding request in here).
+  EOT
+  type = map(object({
+    kv_prefix = string
+    # temporal = true also grants pki_int/issue/temporal-client on this tenant's policy
+    # (a "<name>-worker" client cert) and adds "<name>-worker" to the temporal-client
+    # role's allowed CNs (pki.tf). Mirrors the mkTenant `temporal` request (ADR 0023).
+    temporal = optional(bool, false)
+  }))
+
+  # fishsense — tenant #1 (docs/onboarding-fishsense.md §2a). kv_prefix mirrors
+  # mkTenant's boundary.kvPrefix so `secret/tenants/fishsense/*` (the fishsense.vm
+  # cert + app secrets its vault-agent renders) is readable by the tenant-fishsense
+  # AppRole and nothing else. temporal = true — its workers connect to krg-prod Temporal.
+  default = {
+    fishsense = {
+      kv_prefix = "tenants/fishsense"
+      temporal  = true
+    }
   }
 }

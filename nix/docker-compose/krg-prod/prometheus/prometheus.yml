@@ -17,6 +17,7 @@ scrape_configs:
           - e4e-prod.ucsd.edu:9100
           - krg-ldap.ucsd.edu:9100
           - krg-vault.ucsd.edu:9100
+          - krg-nat.ucsd.edu:9100 # Incus platform host (hypervisor tier)
       # krg-prod runs Prometheus itself, in a container. Its host node_exporter is
       # on the HOST's 0.0.0.0:9100 — unreachable as `localhost` (that's the
       # container's own namespace → connection refused) and unreachable via the
@@ -185,3 +186,21 @@ scrape_configs:
       - targets:
           - authentik_server:9300
           - authentik_worker:9300
+
+  # Incus daemon on krg-nat (incus_*): the HYPERVISOR's view of every tenant instance —
+  # per-instance + per-project CPU/memory/disk/network/filesystem, plus daemon health —
+  # WITHOUT reaching into the NAT'd guests. Enabled by krg.incus.metrics on krg-nat
+  # (modules/incus.nix): a dedicated /1.0/metrics listener on :8444, opened only to this
+  # monitoring host and served UNAUTHENTICATED (the firewall is the boundary, same as
+  # node_exporter). HTTPS with a self-signed Incus server cert → insecure_skip_verify
+  # (identity is pinned by the firewall source, not the cert). Powers KRG · Incus
+  # (terraform/grafana/dashboards/incus.json).
+  - job_name: 'incus'
+    scrape_interval: 15s
+    metrics_path: /1.0/metrics
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true
+    static_configs:
+      - targets:
+          - krg-nat.ucsd.edu:8444

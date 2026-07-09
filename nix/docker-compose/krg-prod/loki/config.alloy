@@ -1,32 +1,18 @@
 // Grafana Alloy log-shipping config — replaces the EOL Promtail (end-of-life
-// 2026-03-02). Functional parity with the old loki/promtail-config.yaml:
-//   1. tail /var/log/*log   2. read the systemd journal   → push to Loki.
+// 2026-03-02). Reads the systemd journal → pushes to Loki.
 // Alloy persists read offsets under --storage.path (set in compose.grafana.yml),
 // the same role the old promtail positions.yaml served.
+//
+// NOTE: there is deliberately no /var/log/*log file source. On this NixOS host
+// everything (incl. container logs via docker.service) goes to the journal;
+// /var/log/*log matched only the binary /var/log/lastlog, so the old `varlogs`
+// job shipped nothing. Removed rather than left as an empty, confusing label.
 
 // Where everything is forwarded.
 loki.write "default" {
 	endpoint {
 		url = "http://loki:3100/loki/api/v1/push"
 	}
-}
-
-// --- /var/log/*log files ------------------------------------------------------
-local.file_match "varlogs" {
-	path_targets = [{
-		__path__ = "/var/log/*log",
-		job      = "varlogs",
-	}]
-}
-
-loki.source.file "varlogs" {
-	targets    = local.file_match.varlogs.targets
-	forward_to = [loki.write.default.receiver]
-	// tail_from_end: on first boot (no stored offset yet) skip the existing
-	// /var/log backlog so Alloy doesn't buffer the whole history into RAM and OOM —
-	// matches the old promtail `tail_from_end: true`. After first run the stored
-	// offset means a restart reads only the gap.
-	tail_from_end = true
 }
 
 // --- systemd journal ----------------------------------------------------------

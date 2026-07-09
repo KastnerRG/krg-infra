@@ -62,44 +62,80 @@ resource "vault_approle_auth_backend_role" "kastner_ml" {
   token_max_ttl  = 86400
 }
 
+# (No krg-nat AppRole: Incus OIDC is a PUBLIC client with no client secret — verified
+# on-box — so krg-nat needs no vault-agent render and thus no KV access. The role +
+# policy added in the initial OIDC PR were removed once that was found.)
+
 # ── Policies ───────────────────────────────────────────────────────────────────
 
 locals {
   # Secrets the terraform/authentik target GENERATES and writes back into OpenBao
-  # (OIDC client_id/secret per app, plus the roster db/session/ldap passwords).
-  # krg-deploy runs that target via deploy/deploy-tofu.sh, so its AppRole needs to
-  # manage exactly these paths. Enumerated on purpose — NOT secret/data/krg-prod/*
-  # — so the deploy runner can write the OIDC entries without gaining write on every
-  # production secret (#187, least-privilege). MUST stay in sync with the
-  # vault_kv_secret_v2 resources in terraform/authentik/{vault,roster,guacamole}_secrets.tf:
-  # add a path here when a new app's secret is added there, or its apply 403s.
+  # (OIDC client_id/secret per app, plus roster/guacamole/temporal/proxmox-ldap-bind
+  # passwords). krg-deploy runs that target via deploy/deploy-tofu.sh, so its AppRole
+  # needs write on exactly these paths — but NOT secret/data/krg-prod/* (the deploy
+  # runner must not be able to write every production secret; #187, least-privilege).
+  #
+  # The krg-prod generated secrets all live under the GLOBBABLE sub-path
+  # secret/krg-prod/authentik-managed/<name> (authentik_managed_glob_prefixes below),
+  # so the policy is one wildcard rather than a per-path enumeration: adding a new
+  # app's secret there needs NO terraform/openbao apply. Only e4e-nas's two generated
+  # secrets stay enumerated here — they're stable, and their flat paths are referenced
+  # across the synology effort's docs. Sync rule: you only edit THIS list for a new
+  # e4e-nas secret (or a brand-new prefix); krg-prod additions under authentik-managed/
+  # are covered by the glob automatically.
   authentik_managed_secrets = [
-    "krg-prod/grafana-oidc",
-    "krg-prod/outline-oidc",
-    "krg-prod/mlflow-oidc",
-    "krg-prod/roster-oidc",
-    "krg-prod/roster",
-    "krg-prod/roster-ldap",
-    "krg-prod/vaultwarden-oidc",
-    "krg-prod/guacamole-oidc",
-    "krg-prod/guacamole",
-    "krg-prod/temporal-oidc",
-    "krg-prod/temporal",
     "e4e-nas/garage-ui-oidc",
     "e4e-nas/dsm-sso-oidc",
+    # (The transitional pre-migration FLAT krg-prod paths are gone: #323 moved every
+    # krg-prod generated secret to krg-prod/authentik-managed/<name> — now covered by
+    # the glob below — and the old flat paths were destroyed in that apply. This list
+    # is back to just the two e4e-nas secrets that stay enumerated.)
+  ]
+
+  # Globbable sub-paths the authentik target writes its GENERATED secrets under. Each
+  # becomes `secret/{data,metadata}/<prefix>/*`. OpenBao ACL paths take a trailing `*`
+  # (matches the rest of the path) and `+` (matches ONE path segment, anywhere) — so a
+  # dedicated subtree is how we get a wildcard without broadening to all of krg-prod/*,
+  # and `+` lets one rule span a variable segment (e.g. the tenant name). New secrets
+  # written under any prefix here need NO terraform/openbao apply — that's the point.
+  authentik_managed_glob_prefixes = [
+    "krg-prod/authentik-managed",
+    # Per-tenant OIDC secrets Authentik generates for an e4e tenant, written UNDER the
+    # tenant's own KV (secret/tenants/<name>/oidc/*) so the tenant's vault-agent reads
+    # them with its existing secret/data/tenants/<name>/* grant. SCOPED to .../oidc so
+    # the authentik writer can't touch the tenant's own app secrets (postgres, etc.).
+    #
+    # `+` matches the tenant-name segment, so this ONE rule covers EVERY tenant
+    # (fishsense, smartfin, roster, …) — adding a tenant needs NO terraform/openbao
+    # apply, the same self-service the krg-prod/authentik-managed glob already gives new
+    # apps. (Was pinned to `tenants/fishsense/oidc`; a per-tenant entry meant every new
+    # tenant tripped the privileged openbao apply — the #438 deploy 403. Templating it
+    # ends that class of manual apply.)
+    "tenants/+/oidc",
   ]
 
   # Render the per-path rules as one string to interpolate into the policy heredoc
   # below (a single ${...} substitution — avoids %{for} directives fighting the
-  # <<- heredoc dedent). Full lifecycle on the data path (create/update on apply,
-  # read on refresh, delete on destroy) + metadata delete so the resource can be
-  # fully removed. Vault's HCL ignores the flat indentation of the rendered block.
-  authentik_secret_rules = join("\n", flatten([
-    for p in local.authentik_managed_secrets : [
-      "path \"secret/data/${p}\" { capabilities = [\"create\", \"read\", \"update\", \"delete\"] }",
-      "path \"secret/metadata/${p}\" { capabilities = [\"read\", \"delete\"] }",
+  # <<- heredoc dedent). Full lifecycle on BOTH the data and metadata paths
+  # (create/update on apply, read on refresh, delete on destroy). The metadata path
+  # needs create/update — NOT just read/delete — because the hashicorp/vault v5
+  # provider's vault_kv_secret_v2 manages custom_metadata, writing it with a
+  # `PUT secret/metadata/<p>` on every create/update (older OIDC secrets predate v5,
+  # so they never hit this). Vault's HCL ignores the flat indentation of the block.
+  authentik_secret_rules = join("\n", flatten(concat(
+    [
+      for p in local.authentik_managed_secrets : [
+        "path \"secret/data/${p}\" { capabilities = [\"create\", \"read\", \"update\", \"delete\"] }",
+        "path \"secret/metadata/${p}\" { capabilities = [\"create\", \"read\", \"update\", \"delete\"] }",
+      ]
+    ],
+    [
+      for p in local.authentik_managed_glob_prefixes : [
+        "path \"secret/data/${p}/*\" { capabilities = [\"create\", \"read\", \"update\", \"delete\"] }",
+        "path \"secret/metadata/${p}/*\" { capabilities = [\"create\", \"read\", \"update\", \"delete\"] }",
+      ]
     ]
-  ]))
+  )))
 }
 
 resource "vault_policy" "krg_deploy" {
@@ -125,8 +161,8 @@ resource "vault_policy" "krg_deploy" {
     # providers.tf reads grafana-admin → provider auth. Scoped to this one path,
     # NOT all of secret/krg-prod/* — the deploy runner shouldn't be able to read
     # every production secret (#187, least-privilege). grafana-oidc (the OTHER
-    # value grafana's sso.tf reads) is produced+managed by the authentik target,
-    # so it's covered by the authentik_managed_secrets block below (read included).
+    # value grafana's sso.tf reads) is produced+managed by the authentik target, so
+    # it's covered by the authentik-managed write-back glob below (read included).
     path "secret/data/krg-prod/grafana-admin" {
       capabilities = ["read"]
     }
@@ -140,10 +176,11 @@ resource "vault_policy" "krg_deploy" {
     }
 
     # Write-back for the terraform/authentik target (#187). authentik mints OIDC
-    # client secrets + the roster passwords and stores them here; grafana then
-    # reads grafana-oidc from the same set. Paths are enumerated (least-privilege)
-    # and rendered from local.authentik_managed_secrets — see that comment for the
-    # sync rule.
+    # client secrets + the roster/guacamole/temporal/proxmox-ldap-bind passwords and
+    # stores them here; grafana then reads grafana-oidc from the same set. The krg-prod
+    # generated secrets are covered by a single glob (secret/krg-prod/authentik-managed/*),
+    # so new apps need no openbao apply; e4e-nas's two stay enumerated. Both are
+    # rendered from the locals above (least-privilege — NOT secret/data/krg-prod/*).
     ${local.authentik_secret_rules}
 
     # PKI: issue Temporal mTLS client certs (rules defined in pki.tf)

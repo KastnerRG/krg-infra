@@ -10,6 +10,38 @@ locals {
     data.authentik_property_mapping_provider_scope.email.id,
     data.authentik_property_mapping_provider_scope.profile.id,
   ]
+
+  # Like std_scopes, but swaps the managed email scope for email_verified below
+  # (asserts email_verified=true). Use for any app that federates AD/LDAP users
+  # AND refuses SSO when the email_verified claim is false (Outline, Vaultwarden).
+  std_scopes_verified = [
+    data.authentik_property_mapping_provider_scope.openid.id,
+    authentik_property_mapping_provider_scope.email_verified.id,
+    data.authentik_property_mapping_provider_scope.profile.id,
+  ]
+}
+
+# Shared verified-email OIDC scope. Authentik's MANAGED email scope reports
+# email_verified=false for AD/LDAP-synced users (it never ran an email-verification
+# flow against them), and some relying parties (Outline, Vaultwarden) refuse SSO —
+# or refuse to provision a NEW user — unless email_verified is true. Our member
+# emails are admin-entered from AD (known-good), so we assert verified here. This
+# replaces the former Vaultwarden-specific `vaultwarden_email` scope so any future
+# AD-federated app can reuse it via local.std_scopes_verified.
+#
+# Issue #185 tracks doing REAL email verification at Authentik and dropping this
+# (and Vaultwarden's compose SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION flag, which only
+# covers a *missing* claim, not an explicit false — which is why it didn't fix this).
+resource "authentik_property_mapping_provider_scope" "email_verified" {
+  name        = "OIDC Scope — email (verified, AD-federated)"
+  scope_name  = "email"
+  description = "Standard email claim, asserting email_verified=true (admin-entered AD emails)."
+  expression  = <<-EOT
+    return {
+      "email": request.user.email,
+      "email_verified": True,
+    }
+  EOT
 }
 
 # ── Grafana ────────────────────────────────────────────────────────────────────
@@ -35,18 +67,31 @@ resource "authentik_application" "grafana" {
   meta_launch_url   = "https://monitoring.krg.ucsd.edu"
   meta_description  = "KRG lab metrics and dashboards"
   meta_icon         = "krg-icons/grafana.svg"
-  group             = "KRG"
+  group             = "KRG Services"
 }
 
 # ── Outline ────────────────────────────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "outline" {
-  name                   = "Provider for Outline"
-  client_id              = "outline"
-  authorization_flow     = data.authentik_flow.default_authorization.id
-  invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://wiki.fabricant.ucsd.edu/auth/oidc.callback" }]
-  property_mappings      = local.std_scopes
+  name = "Provider for Outline"
+  # client_secret is minted by terraform/secrets and read back here (it must exist
+  # before the fail-closed krg-prod vault-agent renders it); client_id stays static.
+  client_id          = "outline"
+  client_secret      = data.vault_kv_secret_v2.outline_oidc.data["client_secret"]
+  authorization_flow = data.authentik_flow.default_authorization.id
+  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  # docs.krg.ucsd.edu (post DNS migration); Outline's OIDC callback path is
+  # /auth/oidc.callback. Strict match → must equal the Host Outline is served on.
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://docs.krg.ucsd.edu/auth/oidc.callback" }]
+  # std_scopes_verified (not std_scopes): Outline refuses to provision a NEW user
+  # when email_verified is false, which Authentik reports for every AD/LDAP-synced
+  # account — so first-time logins failed with "email address has not been verified"
+  # while existing members were unaffected. See the email_verified scope above.
+  property_mappings = local.std_scopes_verified
+  # RS256 signing key — Outline (openid-client) verifies the ID token against the
+  # provider's jwks_uri. Without it Authentik falls back to HS256 + empty JWKS →
+  # "Invalid ID token" (the same failure garage-ui/vaultwarden/temporal/mlflow hit).
+  signing_key            = data.authentik_certificate_key_pair.default.id
   sub_mode               = "user_email"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
@@ -56,21 +101,39 @@ resource "authentik_application" "outline" {
   name              = "Outline"
   slug              = "outline"
   protocol_provider = authentik_provider_oauth2.outline.id
-  meta_launch_url   = "https://wiki.fabricant.ucsd.edu"
+  meta_launch_url   = "https://docs.krg.ucsd.edu"
   meta_description  = "KRG lab wiki and documentation"
   meta_icon         = "krg-icons/outline.svg"
-  group             = "KRG"
+  group             = "KRG Services"
 }
 
 # ── MLflow ─────────────────────────────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "mlflow" {
-  name                   = "Provider for MLflow"
-  client_id              = "mlflow"
-  authorization_flow     = data.authentik_flow.default_authorization.id
-  invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://mlflow.krg.ucsd.edu/callback" }]
-  property_mappings      = local.std_scopes
+  name = "Provider for MLflow"
+  # client_secret is minted by terraform/secrets and read back here (it must exist
+  # before the fail-closed krg-prod vault-agent renders it); client_id stays static.
+  client_id             = "mlflow"
+  client_secret         = data.vault_kv_secret_v2.mlflow_oidc.data["client_secret"]
+  authorization_flow    = data.authentik_flow.default_authorization.id
+  invalidation_flow     = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://mlflow.krg.ucsd.edu/callback" }]
+  # std_scopes ONLY — do NOT also add the explicit "groups (KRG)" scope here. The
+  # managed `profile` scope (part of std_scopes) ALREADY emits a `groups` claim, so
+  # requesting both makes Authentik concatenate the two → every group appears TWICE in
+  # the claim. mlflow-oidc-auth's set_user_groups then inserts the same (user_id,
+  # group_id) twice → unique-constraint violation on `user_groups` → the whole login
+  # rolls back with "Failed to update user/groups". profile's groups claim already
+  # carries the AD group names the access gate (OIDC_GROUP_NAME = "MLflow Users" /
+  # OIDC_ADMIN_GROUP_NAME = "MLflow Admins") matches, so single-sourcing it is correct.
+  # (Apps like vaultwarden/garage-ui add the explicit scope and tolerate the dupe
+  # because they only read the claim; mlflow writes it into a UNIQUE-constrained table,
+  # so it must be dup-free.)
+  property_mappings = local.std_scopes
+  # RS256 signing key — mlflow-oidc-auth (authlib) verifies the ID token against the
+  # provider's jwks_uri. Without it Authentik falls back to HS256 + empty JWKS →
+  # "Invalid ID token" (the same failure garage-ui/vaultwarden/temporal hit).
+  signing_key            = data.authentik_certificate_key_pair.default.id
   sub_mode               = "user_username"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
@@ -83,7 +146,7 @@ resource "authentik_application" "mlflow" {
   meta_launch_url   = "https://mlflow.krg.ucsd.edu"
   meta_description  = "ML experiment tracking"
   meta_icon         = "krg-icons/mlflow.svg"
-  group             = "KRG"
+  group             = "KRG Services"
 }
 
 # ── Vaultwarden ──────────────────────────────────────────────────────────────────
@@ -94,36 +157,20 @@ resource "authentik_application" "mlflow" {
 # once upstream Vaultwarden supports it) needs no Authentik change. See
 # docs/vaultwarden-sso.md.
 
-# Custom email scope: Authentik's managed email scope reports email_verified=false
-# for AD/LDAP-synced users (it never verified the address), and Vaultwarden refuses
-# SSO login unless email_verified is true. Our member emails are admin-entered
-# (known-good), so assert verified here. Issue #185 tracks doing real email
-# verification at Authentik and dropping this (and the compose
-# SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION flag, which only covers a *missing* claim,
-# not an explicit false — which is why it didn't fix this).
-resource "authentik_property_mapping_provider_scope" "vaultwarden_email" {
-  name        = "OIDC Scope — email (verified, Vaultwarden)"
-  scope_name  = "email"
-  description = "Standard email claim, asserting email_verified=true (admin-entered AD emails)."
-  expression  = <<-EOT
-    return {
-      "email": request.user.email,
-      "email_verified": True,
-    }
-  EOT
-}
-
 resource "authentik_provider_oauth2" "vaultwarden" {
-  name                  = "Provider for Vaultwarden"
+  name = "Provider for Vaultwarden"
+  # client_secret is minted by terraform/secrets and read back here (it must exist
+  # before the fail-closed krg-prod vault-agent renders it); client_id stays static.
   client_id             = "vaultwarden"
+  client_secret         = data.vault_kv_secret_v2.vaultwarden_oidc.data["client_secret"]
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://vaultwarden.krg.ucsd.edu/identity/connect/oidc-signin" }]
-  # Like std_scopes, but swaps the managed email scope for vaultwarden_email
-  # (asserts email_verified=true) + adds the AD-sourced groups scope.
+  # Like std_scopes, but swaps the managed email scope for the shared email_verified
+  # scope (asserts email_verified=true) + adds the AD-sourced groups scope.
   property_mappings = [
     data.authentik_property_mapping_provider_scope.openid.id,
-    authentik_property_mapping_provider_scope.vaultwarden_email.id,
+    authentik_property_mapping_provider_scope.email_verified.id,
     data.authentik_property_mapping_provider_scope.profile.id,
     authentik_property_mapping_provider_scope.groups.id,
   ]
@@ -150,7 +197,7 @@ resource "authentik_application" "vaultwarden" {
   meta_launch_url  = "https://vaultwarden.krg.ucsd.edu/#/sso?identifier=00000000-01DC-01DC-01DC-000000000000"
   meta_description = "KRG lab password manager"
   meta_icon        = "krg-icons/vaultwarden.svg"
-  group            = "KRG"
+  group            = "Access & Security"
 }
 
 # ── Guacamole ────────────────────────────────────────────────────────────────────
@@ -189,7 +236,7 @@ resource "authentik_application" "guacamole" {
   meta_launch_url   = "https://remote.krg.ucsd.edu"
   meta_description  = "Remote desktop / SSH gateway"
   meta_icon         = "krg-icons/guacamole.svg"
-  group             = "KRG"
+  group             = "Access & Security"
 }
 
 # OUTER forward-auth gate. A SEPARATE Authentik application from the OIDC one above
@@ -225,8 +272,11 @@ resource "authentik_application" "guacamole_gate" {
 # nix/docker-compose/krg-prod/compose.temporal.yml.
 
 resource "authentik_provider_oauth2" "temporal" {
-  name                   = "Provider for Temporal"
+  name = "Provider for Temporal"
+  # client_secret is minted by terraform/secrets and read back here (it must exist
+  # before the fail-closed krg-prod vault-agent renders it); client_id stays static.
   client_id              = "temporal"
+  client_secret          = data.vault_kv_secret_v2.temporal_oidc.data["client_secret"]
   authorization_flow     = data.authentik_flow.default_authorization.id
   invalidation_flow      = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://workflows.krg.ucsd.edu/auth/sso/callback" }]
@@ -244,34 +294,74 @@ resource "authentik_application" "temporal" {
   meta_launch_url   = "https://workflows.krg.ucsd.edu"
   meta_description  = "KRG lab workflow engine"
   meta_icon         = "krg-icons/temporal.svg"
-  group             = "KRG"
+  group             = "KRG Services"
   open_in_new_tab   = true
 }
 
 # ── Proxmox ────────────────────────────────────────────────────────────────────
-# Commented out — Proxmox auth is currently managed via Ansible/PVE realm config.
-# Uncomment when ready to bring SSO login to the PVE web UI under IaC.
+# LINK-ONLY tile (no provider). Proxmox auth does NOT go through Authentik OIDC —
+# the PVE web UI + the Proxmox mobile/CLI apps can't do the OIDC browser-redirect
+# flow, so login is handled by a native PVE Active Directory realm against krg-ldap
+# (ansible `pve_ad` role; AD group `proxmox-admins` → Administrator). This tile just
+# keeps Proxmox visible+clickable on the Authentik dashboard (the lab launcher):
+# clicking opens the PVE UI, where the user signs in with their KRG.LOCAL account.
 #
-# resource "authentik_provider_oauth2" "proxmox" {
-#   name               = "Provider for Proxmox"
-#   client_id          = "proxmox"
-#   authorization_flow = data.authentik_flow.default_authorization.id
-#   invalidation_flow  = data.authentik_flow.default_invalidation.id
-#   redirect_uris = [
-#     "https://fabricant.ucsd.edu:8006",
-#     "https://synthesis.ucsd.edu:8006",
-#   ]
-#   property_mappings      = local.std_scopes
-#   sub_mode               = "user_email"
-#   access_token_validity  = "hours=1"
-#   refresh_token_validity = "days=30"
-# }
+# An application with no `protocol_provider` is a plain launch-URL bookmark — that's
+# intentional here. See docs/proxmox-auth.md. (History: this was an OIDC app; the
+# Authentik provider/scopes/secret were removed when auth moved to the AD realm —
+# the goauthentik 2026.5 grant_types/ak_groups/evaluator quirks made OIDC group-sync
+# more trouble than it was worth, and OIDC never served the apps anyway.)
+resource "authentik_application" "proxmox" {
+  name             = "Proxmox"
+  slug             = "proxmox"
+  meta_launch_url  = "https://fabricant.ucsd.edu:8006"
+  meta_description = "Proxmox VE hypervisor management"
+  meta_icon        = "krg-icons/proxmox.svg"
+  group            = "Infrastructure"
+  open_in_new_tab  = true
+}
+
+# ── Incus — the tenant-platform control plane (ADR 0017 §5 / ADR 0013) ────────────
+# Human admin auth for the krg-nat Incus API/UI. ADR 0017 (Consequences) decided Incus
+# authenticates via OIDC→Authentik DIRECTLY — NOT the Authentik LDAP outpost, which is
+# Proxmox-specific (ADR 0014: PVE's Android app can't do the OIDC redirect + PVE can't
+# expand nested groups; neither blocker applies to Incus).
 #
-# resource "authentik_application" "proxmox" {
-#   name              = "Proxmox"
-#   slug              = "proxmox"
-#   protocol_provider = authentik_provider_oauth2.proxmox.id
-#   meta_launch_url   = "https://fabricant.ucsd.edu:8006"
-#   meta_description  = "Proxmox VE hypervisor management"
-#   group             = "Virtual Machines"
-# }
+# PUBLIC CLIENT — NO client_secret. Incus's OIDC is the authorization-code flow of a
+# PUBLIC client (verified on-box: `incus config set oidc.client.secret` → "unknown key";
+# Incus has no such config, and the Authelia/upstream integration guides configure it as
+# public with token_endpoint_auth_method=none). So `client_type = "public"` and there is
+# NO minted secret / vault-agent render (that confidential-client machinery was removed).
+# The RS256 signing_key stays (the client verifies the ID token via jwks_uri). The
+# `groups` scope is included so a future scriptlet/OpenFGA authz can key on AD groups;
+# WHO may authenticate is gated by the app-access binding (Domain Admins) below.
+resource "authentik_provider_oauth2" "incus" {
+  name               = "Provider for Incus"
+  client_id          = "incus"
+  client_type        = "public"
+  authorization_flow = data.authentik_flow.default_authorization.id
+  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  # grant_types is REQUIRED and defaults EMPTY on create in goauthentik 2026.x — an empty
+  # list makes Authentik reject every authorization request with "Invalid grant_type for
+  # provider" → "The request is otherwise malformed" (diagnosed in the Authentik log for a
+  # real login). Incus does authorization_code (response_type=code, +PKCE) and refresh_token
+  # (it requests scope=offline_access). Any NEW OIDC provider here needs this set explicitly.
+  grant_types            = ["authorization_code", "refresh_token"]
+  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://krg-nat.ucsd.edu:8443/oidc/callback" }]
+  property_mappings      = concat(local.std_scopes, [authentik_property_mapping_provider_scope.groups.id])
+  signing_key            = data.authentik_certificate_key_pair.default.id
+  sub_mode               = "user_email"
+  access_token_validity  = "minutes=60"
+  refresh_token_validity = "days=30"
+}
+
+resource "authentik_application" "incus" {
+  name              = "Incus"
+  slug              = "incus" # LOAD-BEARING: issuer = ${var.authentik_url}/application/o/incus/
+  protocol_provider = authentik_provider_oauth2.incus.id
+  meta_launch_url   = "https://krg-nat.ucsd.edu:8443"
+  meta_description  = "Incus platform control plane (tenant VMs)"
+  meta_icon         = "krg-icons/incus.svg" # official Incus mark (dashboard-icons)
+  group             = "Infrastructure"
+  open_in_new_tab   = true
+}

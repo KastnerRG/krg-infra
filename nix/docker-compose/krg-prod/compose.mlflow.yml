@@ -1,23 +1,26 @@
 services:
   mlflow_postgres:
-    # Major bump 16 → 18: requires the one-time dump/restore in
-    # docs/postgres-16-to-18-migration.md before this stack starts (18 won't read a
-    # 16.x data dir).
     image: postgres:18.4
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-mlflow}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: mlflow
       POSTGRES_DB: mlflow
       # postgres:18 changed its default data layout and rejects data at the legacy
-      # /var/lib/postgresql/data mount — pin PGDATA back to keep the pre-18 layout.
-      # See docs/postgres-16-to-18-migration.md. (Stack disabled today; fixed so it
-      # doesn't break on re-enable.)
+      # /var/lib/postgresql/data mount — pin PGDATA back to the classic layout.
       PGDATA: /var/lib/postgresql/data
+    # The DB password is rendered from OpenBao to /run by krg.vaultAgent (its own file,
+    # so the postgres image never sees a var it doesn't own). MLflow is a fresh
+    # bring-up: postgres initializes the data dir with this password on first start, so
+    # it must never rotate (terraform/secrets/mlflow.tf guards that).
+    env_file:
+      - /run/krg/mlflow/db.env
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Create the separate mlflow_auth DB (mlflow-oidc-auth's user/permission store)
+      # on first init — postgres only auto-creates POSTGRES_DB (mlflow).
+      - ./mlflow/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mlflow}"]
+      test: ["CMD-SHELL", "pg_isready -U mlflow"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -27,20 +30,32 @@ services:
   mlflow:
     build: ./mlflow/config
     restart: unless-stopped
+    # Secret-bearing env (rendered by krg.vaultAgent to /run): the password-embedding
+    # MLFLOW_BACKEND_STORE_URI + OIDC_USERS_DB_URI, plus SECRET_KEY and
+    # OIDC_CLIENT_SECRET. The Dockerfile expands the two URIs into --backend-store-uri /
+    # --artifacts-destination (MLflow reads neither from the environment).
+    env_file:
+      - /run/krg/mlflow/mlflow.env
     environment:
-      MLFLOW_BACKEND_STORE_URI: postgresql://${POSTGRES_USER:-mlflow}:${POSTGRES_PASSWORD}@mlflow_postgres:5432/mlflow
-      OIDC_USERS_DB_URI: postgresql://${POSTGRES_USER:-mlflow}:${POSTGRES_PASSWORD}@mlflow_postgres:5432/mlflow_auth
       MLFLOW_ARTIFACTS_DESTINATION: /mlflow/artifacts
+      # MLflow validates the Host header and CORS origin (real env vars it reads).
       MLFLOW_SERVER_ALLOWED_HOSTS: "mlflow.krg.ucsd.edu"
       MLFLOW_SERVER_CORS_ALLOWED_ORIGINS: "https://mlflow.krg.ucsd.edu"
-      OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
-      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
-      SECRET_KEY: ${SECRET_KEY}
-      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI}
-      OIDC_GROUP_NAME: ${OIDC_GROUP_NAME}
-      OIDC_ADMIN_GROUP_NAME: ${OIDC_ADMIN_GROUP_NAME}
-      OIDC_SCOPE: ${OIDC_SCOPE}
+      # Non-secret OIDC config. The client_secret + SECRET_KEY come from env_file above.
+      OIDC_CLIENT_ID: mlflow
+      OIDC_DISCOVERY_URL: "https://auth.krg.ucsd.edu/application/o/mlflow/.well-known/openid-configuration"
+      OIDC_REDIRECT_URI: "https://mlflow.krg.ucsd.edu/callback"
+      # SPACE-separated (OAuth2 spec form), NOT comma: authlib does scope.split() on
+      # whitespace and only generates the OIDC nonce when "openid" is a resulting list
+      # element. A comma-joined string is one opaque token → no nonce → authlib never
+      # parses the id_token into userinfo → the login fails with "No user information
+      # received". Must include `groups` so Authentik emits the AD-group claim the
+      # access gates below match.
+      OIDC_SCOPE: "openid email profile groups"
+      # AD-sourced Authentik groups (spec/krg-ad/groups.yml). Members of "MLflow Users"
+      # get standard access; "MLflow Admins" get admin.
+      OIDC_GROUP_NAME: "MLflow Users"
+      OIDC_ADMIN_GROUP_NAME: "MLflow Admins"
     volumes:
       - mlflow_artifacts:/mlflow/artifacts
     depends_on:

@@ -131,7 +131,7 @@ materialize() { # <target>
       # authentik target's write-back; grafana-admin is seeded manually.
       [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping grafana" >&2; return 1; }
       _kv secret/krg-prod/grafana-admin password >/dev/null || return 1
-      _kv secret/krg-prod/grafana-oidc client_id >/dev/null || return 1
+      _kv secret/krg-prod/authentik-managed/grafana-oidc client_id >/dev/null || return 1
       ;;
     authentik)
       [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping authentik" >&2; return 1; }
@@ -180,6 +180,39 @@ materialize() { # <target>
       fi
       export VAULT_TOKEN="$TOFU_OPENBAO_TOKEN"   # override the AppRole token, this subshell only
       ;;
+    secrets)
+      # terraform/secrets GENERATES the krg-prod secrets and writes them to OpenBao via
+      # the vault provider (VAULT_ADDR + the AppRole VAULT_TOKEN already exported above).
+      # No TF_VAR_* and nothing to pre-read — it only writes. Runs EARLY (before the
+      # NixOS members that consume the secrets); see terraform/secrets/README.md.
+      [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping secrets" >&2; return 1; }
+      ;;
+    incus)
+      # Declarative auth — no hand-made `incus remote`, no ~/.config (same
+      # mTLS-over-fleet-PKI model as temporal). Mint a short-lived CLIENT cert from
+      # OpenBao (pki_int/issue/incus-client) and lay it into an EPHEMERAL config dir the
+      # provider reads (TF_VAR_incus_config_dir → provider config_dir). krg-nat trusts it
+      # because the cert chains to the fleet CA it runs as server.ca
+      # (core.trust_ca_certificates — nix/modules/incus.nix), so there is NO per-cert
+      # `incus config trust add`. The provider needs cert FILES (no PEM-string args),
+      # hence the temp dir — removed when this target's subshell exits.
+      [[ -n "${VAULT_TOKEN:-}" ]] || { echo "  no VAULT_TOKEN (AppRole) — skipping incus" >&2; return 1; }
+      local icj
+      icj="$(bao write -format=json pki_int/issue/incus-client common_name=krg-deploy ttl=1h 2>/dev/null)" \
+        || { echo "  could not issue incus-client cert — skipping incus" >&2; return 1; }
+      # NOT `local`: the EXIT trap (subshell-scoped) must still see icdir after this
+      # function returns, so the temp dir is cleaned after the apply.
+      icdir="$(mktemp -d)"
+      trap 'rm -rf "${icdir:-}"' EXIT
+      # client.crt = leaf + issuing CA so krg-nat can chain the leaf to its server.ca.
+      {
+        jq -r '.data.certificate' <<<"$icj"
+        jq -r '.data.issuing_ca' <<<"$icj"
+      } >"${icdir}/client.crt"
+      jq -r '.data.private_key' <<<"$icj" >"${icdir}/client.key"
+      chmod 600 "${icdir}/client.key"
+      export TF_VAR_incus_config_dir="$icdir"
+      ;;
     *)
       echo "  no materialization rule for ${1} — skipping" >&2
       return 1
@@ -223,8 +256,108 @@ for t in "${TARGETS[@]}"; do
     chmod 700 "$state_dir"   # owner-only even if it pre-existed with looser perms
     export TF_DATA_DIR="${state_dir}/.terraform"   # provider cache off the ephemeral checkout
     tofu -chdir="$dir" init -input=false
-    tofu -chdir="$dir" apply -auto-approve -input=false \
-         -state="${state_dir}/terraform.tfstate"
+    # TOFU_IMPORT: one-time, value-preserving state adoptions before plan/apply. Each
+    # line is "ADDR KVPATH FIELD" — the script reads FIELD from KVPATH in OpenBao
+    # (VAULT_TOKEN already set) and `tofu import`s it into ADDR, adopting an existing
+    # live value WITHOUT rotating it (e.g. a DB password when generation moves to
+    # terraform/secrets). Reading from OpenBao keeps the secret out of the caller's
+    # shell/env. Idempotent: an ADDR already in state is skipped. Runs against the
+    # real -state + TF_ENCRYPTION, so no hand-rolled encryption dance.
+    if [[ -n "${TOFU_IMPORT:-}" ]]; then
+      while read -r imp_addr imp_path imp_field; do
+        [[ -z "$imp_addr" ]] && continue
+        if tofu -chdir="$dir" state list -state="${state_dir}/terraform.tfstate" 2>/dev/null \
+             | grep -qxF "$imp_addr"; then
+          echo "  import: ${imp_addr} already in state — skipping"
+          continue
+        fi
+        imp_val="$(_kv "$imp_path" "$imp_field")" \
+          || { echo "  import: cannot read ${imp_path} (${imp_field}) — skipping ${imp_addr}" >&2; continue; }
+        # random_id resources (e.g. Outline's secret_key / utils_secret) take their
+        # IMPORT ID as base64url(raw bytes), but we store the value as .hex in KV. Convert
+        # hex -> base64url(no pad) so the import reconstructs the SAME bytes; importing the
+        # raw hex string would yield DIFFERENT bytes -> a "replace" on the next apply ->
+        # silent rotation that re-corrupts whatever the key encrypts. random_password takes
+        # its value verbatim, so only random_id needs this.
+        if [[ "$imp_addr" == random_id.* ]]; then
+          imp_val="$(printf '%s' "$imp_val" \
+            | python3 -c 'import sys,base64; print(base64.urlsafe_b64encode(bytes.fromhex(sys.stdin.read().strip())).rstrip(b"=").decode())')" \
+            || { echo "  import: hex->base64url conversion failed for ${imp_addr} (need python3) — skipping" >&2; continue; }
+        fi
+        tofu -chdir="$dir" import -input=false -state="${state_dir}/terraform.tfstate" \
+             "$imp_addr" "$imp_val"
+      done <<< "$TOFU_IMPORT"
+    fi
+    # TOFU_PLAN_ONLY: dry-run a target against its REAL (encrypted, persistent) state
+    # without applying — for validating a change before it lands. It still reads the
+    # encrypted state (so the passphrase guard above applies) but never writes it.
+    # Do NOT run a bare `tofu plan` by hand in the target dir: that uses empty local
+    # state and reports "create everything", which is meaningless (and dangerous to
+    # apply). Always go through this so the real -state + TF_ENCRYPTION are wired.
+    if [[ -n "${TOFU_PLAN_ONLY:-}" ]]; then
+      tofu -chdir="$dir" plan -input=false \
+           -state="${state_dir}/terraform.tfstate"
+    else
+      # ── Generate-once secret guard (secrets target only) ───────────────────────────
+      # terraform/secrets MINTS secrets into OpenBao; in steady state an apply is a
+      # no-op. The catastrophic case is a plan that would CREATE a secret whose OpenBao
+      # path ALREADY EXISTS — the state has lost track of a secret a live service was
+      # already provisioned with, so "create" silently ROTATES it: a rotated DB password
+      # locks the service out, a rotated encryption key (secret_key / server_private_key)
+      # makes existing data undecryptable. That is exactly the outline+fleet incident.
+      #
+      # We ask OpenBao — the authority for "this secret was already issued" — rather than
+      # reach cross-host into the consumers (which don't exist yet on a fresh deploy). A
+      # genuinely NEW service is unaffected: its KV path doesn't exist, so it CREATEs
+      # cleanly and comes up automatically. Bypass only for a deliberate rotation
+      # (TOFU_REPLACE) or an explicit, reasoned TOFU_SECRETS_APPROVE — and prefer
+      # TOFU_IMPORT to ADOPT the live value instead of rotating it.
+      if [[ "$t" == "secrets" && -z "${TOFU_SECRETS_APPROVE:-}" && -z "${TOFU_REPLACE:-}" ]]; then
+        guard_plan="${state_dir}/.guard.tfplan"
+        if tofu -chdir="$dir" plan -input=false -compact-warnings \
+             -state="${state_dir}/terraform.tfstate" -out="$guard_plan" >/dev/null; then
+          clobber=""
+          while IFS= read -r kvpath; do
+            [[ -z "$kvpath" ]] && continue
+            bao kv metadata get "$kvpath" >/dev/null 2>&1 && clobber+="    ${kvpath}"$'\n'
+          done < <(tofu -chdir="$dir" show -json "$guard_plan" 2>/dev/null \
+                     | jq -r '.resource_changes[]
+                              | select(.type=="vault_kv_secret_v2" and .change.actions==["create"])
+                              | .change.after.mount + "/" + .change.after.name')
+          rm -f "$guard_plan"
+          if [[ -n "$clobber" ]]; then
+            echo "ERROR: ${t} would CREATE secrets that ALREADY EXIST in OpenBao:" >&2
+            printf '%s' "$clobber" >&2
+            echo "       State has lost track of secrets a live service already uses; applying" >&2
+            echo "       would ROTATE them and lock out / corrupt that service (outline+fleet)." >&2
+            echo "       ADOPT the live values instead — this does NOT rotate them:" >&2
+            echo "         TOFU_TARGETS=secrets TOFU_PLAN_ONLY=1 \\" >&2
+            echo "           TOFU_IMPORT=\"<addr> <kvpath> <field>\" ./deploy/deploy-tofu.sh" >&2
+            echo "       (random_id secrets convert automatically; see terraform/secrets/README.md.)" >&2
+            echo "       To deliberately create over the existing value, set TOFU_SECRETS_APPROVE=<reason>." >&2
+            exit 5   # distinct from skip(0) / apply-fail(1) / encryption(3)
+          fi
+        else
+          rm -f "$guard_plan"
+          echo "  note: secret guard plan failed — proceeding; the apply below will surface the error" >&2
+        fi
+      fi
+      # TOFU_REPLACE: force-replace specific resource addresses on this apply — to
+      # ROTATE a generate-once secret (e.g. a leaked/exposed random_password) or rebuild
+      # a tainted resource. Space-separated addresses; scope the run to ONE target (the
+      # addresses must exist in it). This goes through the real -state + TF_ENCRYPTION +
+      # AppRole token, so it is the CORRECT way to rotate — a bare `tofu apply -replace`
+      # in the target dir uses empty local state (wrong state DB) and silently misfires.
+      #   e.g. TOFU_TARGETS=secrets \
+      #        TOFU_REPLACE="random_password.fleet_db random_password.fleet_server_private_key" \
+      #        ./deploy/deploy-tofu.sh
+      replace_args=()
+      if [[ -n "${TOFU_REPLACE:-}" ]]; then
+        for addr in $TOFU_REPLACE; do replace_args+=("-replace=${addr}"); done
+      fi
+      tofu -chdir="$dir" apply -auto-approve -input=false \
+           -state="${state_dir}/terraform.tfstate" "${replace_args[@]}"
+    fi
   ) || rc=$?
   printf '\n::endgroup::\n'
   if [[ $rc -ne 0 ]]; then

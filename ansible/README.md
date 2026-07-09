@@ -22,7 +22,7 @@ ansible/
   inventory/
     hosts.yml                 # the Proxmox hosts (group: proxmox) — fill in
     group_vars/               # MUST live next to the inventory so ansible-playbook loads it
-      all.yml                 # generic baseline vars (admin keys, timezone, fail2ban, trusted nets)
+      all.yml                 # generic baseline vars (admin keys, timezone, crowdsec, trusted nets)
       proxmox.yml             # PVE-specific vars (firewall IPSets / VM map — with proxmox_firewall)
     host_vars/
       fabricant.yml           # fabricant-ONLY vars (NFS shares, ZFS limits, host.fw rules)
@@ -33,18 +33,18 @@ ansible/
                               #   monitoring stack below (import_role, in order)
     krg_admin/                # break-glass krg-admin (sudo, key-only) — mirrors nix/users/admin.nix
     ssh_hardening/            # disable password auth, root key-only (the breach fix)
-    crowdsec/                 # community CTI + local scenarios (replaces fail2ban as the active jail)
-    fail2ban/                 # sshd brute-force jail (SUPERSEDED by crowdsec; gated off fleet-wide)
+    crowdsec/                 # community CTI + local scenarios — the fleet brute-force/ban layer
     monitoring/               # node + ipmi exporters (systemd) — on every host
     oec_qualys_trellix/       # campus-mandated Qualys + Trellix (set oec_installer)
     ad_client/                # SSSD AD client — every host joins KRG.LOCAL (key-only SSH, keys from AD)
     proxmox_firewall/         # PVE cluster.fw + per-guest <vmid>.fw + per-node host.fw (proxmox group)
     zfs_limits/               # quota/reservation on existing ZFS datasets (fabricant ONLY play)
     nfs_server/               # NFSv4 exports on ZFS datasets (fabricant ONLY play)
+    ipmi_lan/                 # enforce the BMC's static LAN IP in-band via ipmitool (fabricant ONLY play; nix counterpart: krg.ipmiLan)
 ```
 
 Every host gets the baseline by applying a single role, `base`, which composes
-`krg_admin`, `ssh_hardening`, `crowdsec` (+ the superseded `fail2ban`),
+`krg_admin`, `ssh_hardening`, `crowdsec`,
 `monitoring`, `oec_qualys_trellix`, and `ad_client` in a deliberate order (see
 `roles/base/tasks/main.yml`). `proxmox_firewall` is the
 one perimeter concern that stays a separate, `proxmox`-group-only play in
@@ -73,8 +73,8 @@ Admin SSH keys are **shared** with the NixOS layer — edit `nix/keys/admins.jso
 
 1. `ansible-galaxy collection install -r requirements.yml`
 2. Add the host(s) to `inventory/hosts.yml` (currently: one host, `fabricant`).
-3. Set the real ops key(s) in `nix/keys/admins.json` and `krg_trusted_nets` in
-   `inventory/group_vars/all.yml`.
+3. Set the real ops key(s) in `nix/keys/admins.json` and the trusted nets in
+   `nix/networks/trusted.json` (read into `krg_trusted` by `inventory/group_vars/all.yml`).
 
 > **Anti-lockout:** `ssh_hardening` authorizes your key *before* turning password
 > auth off, asserts a key is set, and validates `sshd -t` before restarting (a
@@ -94,7 +94,7 @@ ansible-playbook playbooks/site.yml
 The roles are all built and wired in. **Inputs are now filled** — `inventory/hosts.yml`
 has `fabricant` (running in `ansible_connection: local` mode on the PVE host itself),
 real ed25519 keys are in `nix/keys/admins.json`, and `nix/networks/trusted.json` has
-real CIDRs/IPSets (read by `krg_trusted_nets`). What remains is on-box validation, not
+real CIDRs/IPSets (read into `krg_trusted`). What remains is on-box validation, not
 new code:
 
 - **`oec_installer`**: point at the local vendor archive on fabricant (no archive →
@@ -110,5 +110,5 @@ new code:
   the datasets/quotas, that `pve-firewall compile` shows the 2049 ACCEPT before the
   default drop, and that a client can mount `fabricant:/srv/nfs/home`. Widen the
   export + host.fw client lists (keep them in sync) as more hosts mount.
-- TOTP 2FA on the PVE realm; PVE web-UI fail2ban jail; PVE patching + persistence
+- TOTP 2FA on the PVE realm; PVE web-UI brute-force jail; PVE patching + persistence
   hunting (post-breach).

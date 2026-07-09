@@ -7,18 +7,15 @@
   ...
 }: {
   imports = [
-    ./base.nix
-    ../modules/docker.nix
-    ../modules/users.nix
+    ./server.nix # base + monitored-infra (node-exporter)
+    ./docker-host.nix # Docker daemon + compose runner + IPMI exporter
     ../modules/zfs.nix
-    ../modules/services/compose-stack.nix
-    ../modules/services/ipmi-exporter.nix
     ../modules/hardware/nvidia.nix
     ../modules/hardware/fpga.nix
+    ../modules/hardware/ipmi-lan.nix
     ../modules/desktop/xrdp.nix
     ../modules/nix-ld.nix
-    ../users/admin.nix
-    # Lab users come from Samba AD; only the local break-glass admin stays.
+    # Lab users come from Samba AD; the local break-glass admin comes via base.nix.
   ];
 
   krg.base = {
@@ -63,8 +60,6 @@
     autoSnapshot.enable = true;
   };
 
-  # krg.fail2ban is OFF fleet-wide (superseded by CrowdSec — see base.nix).
-
   krg.nvidia = {
     enable = true;
     openDriver = true;
@@ -89,7 +84,7 @@
   # Native IPMI exporter systemd service (from waiter monitoring.yaml)
   krg.ipmiExporter.enable = true;
 
-  # node_exporter is native via base.nix (services.prometheus.exporters.node on 9100,
+  # node_exporter is native via server.nix (services.prometheus.exporters.node on 9100,
   # systemd collector) — same as every other host. Deliberately NOT in waiter's Docker
   # stack: the repo's rule is native systemd exporters, Docker only when needed.
 

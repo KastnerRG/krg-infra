@@ -1,5 +1,5 @@
 {
-  "_comment": "Single source of truth for trusted networks / Proxmox IPSets. Consumers: ansible proxmox_firewall (templates cluster.fw IPSETs), ansible group_vars (trusted nets, fail2ban allow-list), nix krg.firewall (monitoring source, service SSH restriction). Edit here only. Lives under nix/ because the flake can only read its own subtree. monitoring_host = the IP that runs Prometheus and scrapes the node/ipmi exporters (currently krg-prod, which hosts the monitoring compose stack).",
+  "_comment": "Single source of truth for trusted networks / Proxmox IPSets. Consumers: ansible proxmox_firewall (templates cluster.fw IPSETs), ansible group_vars (trusted nets → crowdsec_whitelist_cidrs), nix krg.firewall (monitoring source, service SSH restriction). Edit here only. Lives under nix/ because the flake can only read its own subtree. monitoring_host = the IP that runs Prometheus and scrapes the node/ipmi exporters (currently krg-prod, which hosts the monitoring compose stack).",
   "monitoring_host": "137.110.161.106",
   "ipsets": {
     "public": [
@@ -26,7 +26,7 @@
       { "cidr": "132.239.17.123",  "comment": "kastner-ml.ucsd.edu (compute; domain member)" }
     ],
     "ops": [
-      { "cidr": "97.252.106.89", "comment": "admin remote (chris)" },
+      { "cidr": "97.170.130.76", "comment": "admin remote (chris)" },
       { "cidr": "107.132.34.148", "comment": "admin remote (sean)"}
     ],
     "machines": [
@@ -36,6 +36,7 @@
       { "cidr": "137.110.161.109", "comment": "krg-ldap.ucsd.edu" },
       { "cidr": "137.110.161.122", "comment": "krg-deploy.ucsd.edu" },
       { "cidr": "137.110.161.123", "comment": "krg-vault.ucsd.edu" },
+      { "cidr": "137.110.161.105", "comment": "krg-nat.ucsd.edu (Incus platform host; domain member)" },
       { "cidr": "132.239.17.123",  "comment": "kastner-ml.ucsd.edu (compute; domain member)" }
     ]
   }

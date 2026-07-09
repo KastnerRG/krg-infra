@@ -1,13 +1,16 @@
 # Postgres 16 → 18 major upgrade (krg-prod compose stacks)
 
-The dependency-upgrade PR moves the krg-prod Postgres containers to the **18.x**
-major:
+The dependency-upgrade PR moves **three** of the krg-prod Postgres containers to the
+**18.x** major — **authentik, mlflow, and outline** (outline was already on 18). The
+other two krg-prod Postgres containers, `guacamole_postgres` (`compose.guacamole.yml`,
+`postgres:16`) and `temporal-postgres` (`compose.temporal.yml`, `postgres:16.14`),
+**stay on 16** and are out of scope here.
 
 | Service | Stack file | Data volume | Old → new |
 |---|---|---|---|
 | `postgres_authentik` | `compose.authentik.yml` | `./authentik/postgres/data/` (bind) | 16.11 → 18.4 |
 | `mlflow_postgres` | `compose.mlflow.yml` | `postgres_data` (named volume) | 16.11 → 18.4 |
-| `outline_postgres` | `compose.outline.yml` | `./outline/postgres/` (bind) | 18 → 18.4 (patch only — **no migration**) |
+| `outline_postgres` | `compose.outline.yml` | `outline_postgres_data` (named volume) | 18 → 18.4 (patch only — **no migration**) |
 
 > **Why this is a manual step.** A Postgres data directory is **not**
 > forward-compatible across majors. The official `postgres:18` image will **refuse

@@ -27,6 +27,7 @@ resource "authentik_application" "e4e_nas" {
   meta_launch_url   = "https://e4e-nas.ucsd.edu:6021"
   meta_description  = "E4E network-attached storage"
   meta_icon         = "krg-icons/synology.svg"
+  group             = "E4E Storage"
 }
 
 # ── Garage UI (Noooste/garage-ui admin/data browser) ──────────────────────────
@@ -48,7 +49,7 @@ resource "authentik_property_mapping_provider_scope" "groups" {
   description = "User's Authentik groups (AD-synced); consumed by app role gates (e.g. garage-ui)."
   expression  = <<-EOT
     return {
-      "groups": [group.name for group in request.user.ak_groups.all()],
+      "groups": [group.name for group in request.user.groups.all()],
     }
   EOT
 }
@@ -73,12 +74,15 @@ resource "authentik_provider_oauth2" "garage_ui" {
 }
 
 resource "authentik_application" "garage_ui" {
-  name              = "Garage UI"
+  # Display name only — slug/client_id stay "garage-ui" (load-bearing: issuer URL
+  # + OpenBao secret path secret/e4e-nas/garage-ui-oidc, see vault_secrets.tf).
+  name              = "E4E Garage UI"
   slug              = "garage-ui"
   protocol_provider = authentik_provider_oauth2.garage_ui.id
   meta_launch_url   = "https://s3-admin.e4e.ucsd.edu"
   meta_description  = "Garage S3 bucket/key admin + object browser"
   meta_icon         = "krg-icons/garage.svg"
+  group             = "E4E Storage"
 }
 
 # ── FishSense Analytics (Superset) ────────────────────────────────────────────
@@ -101,7 +105,7 @@ resource "authentik_application" "fishsense_analytics" {
   protocol_provider = authentik_provider_oauth2.fishsense_analytics.id
   meta_launch_url   = "https://analytics.fishsense.e4e.ucsd.edu"
   meta_icon         = "krg-icons/apache-superset.svg"
-  group             = "FishSense"
+  group             = "E4E FishSense"
 }
 
 # ── FishSense OAuth (main site) ───────────────────────────────────────────────
@@ -123,7 +127,8 @@ resource "authentik_application" "fishsense_oauth" {
   slug              = "fishsense-oauth"
   protocol_provider = authentik_provider_oauth2.fishsense_oauth.id
   meta_launch_url   = "https://fishsense.e4e.ucsd.edu"
-  group             = "FishSense"
+  meta_icon         = "krg-icons/fishsense.svg"
+  group             = "E4E FishSense"
 }
 
 # ── FishSense Orchestrator (proxy) ────────────────────────────────────────────
@@ -133,7 +138,7 @@ resource "authentik_provider_proxy" "fishsense_orchestrator" {
   name               = "Provider for FishSense Orchestrator"
   authorization_flow = data.authentik_flow.default_authorization.id
   invalidation_flow  = data.authentik_flow.default_invalidation.id
-  external_host      = "https://orchestrator.fishsense.e4e.ucsd.edu"
+  external_host      = "https://api.fishsense.e4e.ucsd.edu" # the orchestrator API host (forward-auth matches on this)
   mode               = "forward_single"
 }
 
@@ -141,26 +146,11 @@ resource "authentik_application" "fishsense_orchestrator" {
   name              = "FishSense Orchestrator"
   slug              = "fishsense-orchestrator"
   protocol_provider = authentik_provider_proxy.fishsense_orchestrator.id
-  meta_launch_url   = "https://orchestrator.fishsense.e4e.ucsd.edu"
-  group             = "FishSense"
-}
-
-# ── Qualcomm Docs (proxy) ─────────────────────────────────────────────────────
-
-resource "authentik_provider_proxy" "qualcomm_docs" {
-  name               = "Provider for Qualcomm Docs"
-  authorization_flow = data.authentik_flow.default_authorization.id
-  invalidation_flow  = data.authentik_flow.default_invalidation.id
-  external_host      = "https://qcomm.docs.fabricant.ucsd.edu"
-  mode               = "forward_single"
-}
-
-resource "authentik_application" "qualcomm_docs" {
-  name              = "Qualcomm Docs"
-  slug              = "qualcomm-docs"
-  protocol_provider = authentik_provider_proxy.qualcomm_docs.id
-  meta_launch_url   = "https://qcomm.docs.fabricant.ucsd.edu"
-  group             = "Qualcomm"
+  meta_launch_url   = "https://api.fishsense.e4e.ucsd.edu"
+  # Reuse the FishSense brand mark — no orchestrator-specific logo exists (same
+  # pattern as guacamole_gate reusing guacamole.svg).
+  meta_icon = "krg-icons/fishsense.svg"
+  group     = "E4E FishSense"
 }
 
 # ── KRG Roster ────────────────────────────────────────────────────────────────
@@ -186,5 +176,52 @@ resource "authentik_application" "e4e_roster" {
   protocol_provider = authentik_provider_oauth2.e4e_roster.id
   meta_launch_url   = "https://roster.krg.ucsd.edu/login"
   meta_description  = "KRG lab roster and account management"
-  group             = "KRG"
+  group             = "Infrastructure"
+}
+
+# ── Fleet (device management / MDM) ───────────────────────────────────────────
+# mdm.e4e.ucsd.edu — the lab-owned MDM control plane (ADR 0012). Fleet's console
+# SSO is SAML 2.0 ONLY (every other app here is OIDC) — hence the repo's first
+# authentik_provider_saml. Fleet keys each user on the SAML NameID and REQUIRES it
+# to be the user's email address, so NameID = the default Email mapping. (Caveat:
+# our AD emails are admin-managed; treat them as stable while Fleet uses them as the
+# identity handle — same concern noted on the vaultwarden sub_mode.)
+#
+# HARDENING FOLLOW-UP: Fleet is the device control plane — restrict console access to
+# a Fleet-admins AD group via an authentik_policy_binding (see [[ad-structure-is-iac]]),
+# rather than leaving it open to all authenticated users. JIT role-mapping is Fleet
+# Premium (see fleet/sso_settings in docs/fleet-mdm.md).
+resource "authentik_provider_saml" "fleet" {
+  name               = "Provider for Fleet"
+  authorization_flow = data.authentik_flow.default_authorization.id
+  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  # Fleet's Assertion Consumer Service endpoint (the SAML callback).
+  acs_url = "https://mdm.e4e.ucsd.edu/api/v1/fleet/sso/callback"
+  # Audience MUST equal Fleet's configured entity_id (fleet sso_settings).
+  audience   = "https://mdm.e4e.ucsd.edu"
+  sp_binding = "post"
+  # No issuer override: authentik auto-generates the IdP issuer/EntityID, and Fleet
+  # reads it from the metadata_url it's pointed at (docs/fleet-mdm.md). The SAML
+  # provider has `issuer_override` (not `issuer`); we don't need to override it.
+  # Sign assertions with Authentik's default keypair; Fleet verifies against the IdP
+  # signing cert published in the metadata_url it's pointed at.
+  signing_kp      = data.authentik_certificate_key_pair.default.id
+  name_id_mapping = data.authentik_property_mapping_provider_saml.email.id
+  property_mappings = [
+    data.authentik_property_mapping_provider_saml.email.id,
+    data.authentik_property_mapping_provider_saml.username.id,
+    data.authentik_property_mapping_provider_saml.name.id,
+  ]
+}
+
+resource "authentik_application" "fleet" {
+  name = "Fleet"
+  # slug is load-bearing: the SAML metadata URL embeds /application/saml/fleet/
+  # (fleet sso_settings metadata_url — docs/fleet-mdm.md).
+  slug              = "fleet"
+  protocol_provider = authentik_provider_saml.fleet.id
+  meta_launch_url   = "https://mdm.e4e.ucsd.edu"
+  meta_description  = "Lab device management / MDM (lab-owned endpoints)"
+  meta_icon         = "krg-icons/fleet.svg"
+  group             = "Access & Security"
 }

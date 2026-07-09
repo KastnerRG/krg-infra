@@ -2425,7 +2425,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Uplink (eno1np0)",
+      "title": "Uplink (eno1)",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -2505,7 +2505,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "rate(node_network_receive_bytes_total{instance=\"kastner-ml.ucsd.edu:9100\",device=\"eno1np0\"}[$__rate_interval])",
+          "expr": "rate(node_network_receive_bytes_total{instance=\"kastner-ml.ucsd.edu:9100\",device=\"eno1\"}[$__rate_interval])",
           "legendFormat": "Rx",
           "instant": false,
           "range": true,
@@ -2517,7 +2517,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "rate(node_network_transmit_bytes_total{instance=\"kastner-ml.ucsd.edu:9100\",device=\"eno1np0\"}[$__rate_interval])",
+          "expr": "rate(node_network_transmit_bytes_total{instance=\"kastner-ml.ucsd.edu:9100\",device=\"eno1\"}[$__rate_interval])",
           "legendFormat": "Tx",
           "instant": false,
           "range": true,

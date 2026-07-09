@@ -1,0 +1,125 @@
+# Proxmox VE LDAP realm (Authentik outpost) + group-sync → admin ACL.
+#
+# Realm config + sync write to /etc/pve (cluster filesystem), so they're
+# cluster-wide. The whole thing no-ops unless the bind password is supplied
+# (deploy-ansible.sh materializes it from OpenBao) — so `--check`/local runs and a
+# control node without OpenBao creds still converge the rest of the baseline.
+- name: Configure the Proxmox LDAP realm
+  when: (pve_ldap_bind_password | default('') | length) > 0
+  block:
+    - name: List existing realms
+      ansible.builtin.command: pveum realm list --output-format json
+      register: _pve_realms
+      changed_when: false
+      check_mode: false # read-only; must run under --check so the branches resolve
+
+    - name: Capture the current krg realm entry (if any)
+      ansible.builtin.set_fact:
+        _pve_krg_realm: >-
+          {{ (_pve_realms.stdout | from_json
+              | selectattr('realm', 'equalto', pve_ldap_realm) | list | first) | default({}) }}
+
+    # Realm TYPE is create-only — `pveum realm modify` can't turn an `ad` realm into
+    # `ldap`. The previous design created `krg` as type `ad`; delete it so we can
+    # recreate it as `ldap`. (No-op once it's already `ldap`.)
+    - name: Remove a stale non-ldap realm of the same id (ad→ldap migration)
+      ansible.builtin.command: "pveum realm delete {{ pve_ldap_realm }}"
+      when: _pve_krg_realm.type is defined and _pve_krg_realm.type != 'ldap'
+      changed_when: true
+
+    # Shared option list for add + modify (modify takes the same flags minus --type).
+    # no_log: carries --password.
+    - name: Build the LDAP realm option arguments
+      ansible.builtin.set_fact:
+        _pve_ldap_opts: >-
+          {{
+            ['--server1', pve_ldap_server1,
+             '--port', (pve_ldap_port | string),
+             '--mode', pve_ldap_mode,
+             '--verify', (pve_ldap_verify | int | string),
+             '--base_dn', pve_ldap_base_dn,
+             '--bind_dn', pve_ldap_bind_dn,
+             '--password', pve_ldap_bind_password,
+             '--user_attr', pve_ldap_user_attr,
+             '--default', (pve_ldap_default_realm | int | string),
+             '--comment', 'KRG Authentik LDAP (managed by ansible pve_ldap)',
+             '--filter', pve_ldap_user_filter,
+             '--group_filter', pve_ldap_group_filter,
+             '--group_dn', pve_ldap_group_dn,
+             '--group_classes', pve_ldap_group_classes,
+             '--sync-defaults-options', ('enable-new=' + (pve_ldap_sync_enable_new | int | string))]
+            + (['--server2', pve_ldap_server2] if (pve_ldap_server2 | length) > 0 else [])
+          }}
+      no_log: true
+
+    - name: Re-list realms (after a possible migration delete)
+      ansible.builtin.command: pveum realm list --output-format json
+      register: _pve_realms2
+      changed_when: false
+      check_mode: false
+
+    - name: Add the LDAP realm (when absent)
+      ansible.builtin.command:
+        argv: "{{ ['pveum', 'realm', 'add', pve_ldap_realm, '--type', 'ldap'] + _pve_ldap_opts }}"
+      when: pve_ldap_realm not in (_pve_realms2.stdout | from_json | map(attribute='realm') | list)
+      no_log: true # argv carries --password
+      changed_when: true
+
+    # Reconcile when present — re-pushes every flag incl. a rotated --password.
+    # changed_when: false: the stored password isn't read back, so we can't detect
+    # drift; this unconditional sync is how a rotated bind password propagates.
+    - name: Reconcile the LDAP realm (when present)
+      ansible.builtin.command:
+        argv: "{{ ['pveum', 'realm', 'modify', pve_ldap_realm] + _pve_ldap_opts }}"
+      when: pve_ldap_realm in (_pve_realms2.stdout | from_json | map(attribute='realm') | list)
+      no_log: true
+      changed_when: false
+
+    # Sync so the admin group + members exist as PVE principals before we ACL them.
+    # Output is non-secret (counts) — keep it visible; it's the main bring-up signal.
+    - name: Sync the realm (users + groups)
+      ansible.builtin.command: >-
+        pveum realm sync {{ pve_ldap_realm }}
+        --scope {{ pve_ldap_sync_scope }}
+        --enable-new {{ pve_ldap_sync_enable_new | int }}
+      changed_when: true
+
+    # Grant the synced admin group Administrator. failed_when surfaces the real cause
+    # (e.g. the synced group id differs from pve_ldap_admin_pve_group — see ⚠ defaults).
+    - name: Grant the admin group its role on the tree
+      ansible.builtin.command: >-
+        pveum aclmod {{ pve_ldap_admin_acl_path }}
+        --groups {{ pve_ldap_admin_pve_group }}
+        --roles {{ pve_ldap_admin_role }}
+      changed_when: false # aclmod is idempotent and reports nothing
+
+    # Migration cleanup: retire the OIDC realm this whole effort replaced (idempotent;
+    # 'authentik' is a distinct name). Runs only after the LDAP realm is in place.
+    - name: Remove the superseded OIDC realm
+      ansible.builtin.command: pveum realm delete authentik
+      register: _pve_old_realm
+      changed_when: _pve_old_realm.rc == 0
+      failed_when: >-
+        _pve_old_realm.rc != 0
+        and 'does not exist' not in (_pve_old_realm.stderr | default(''))
+        and 'no such realm' not in (_pve_old_realm.stderr | lower | default(''))
+
+    # ── Periodic re-sync (membership changes in AD/Authentik propagate) ──────────
+    - name: Install the realm-sync service + timer
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - pve-realm-sync.service
+        - pve-realm-sync.timer
+      notify: Reload systemd
+
+    - name: Enable + start the realm-sync timer
+      ansible.builtin.systemd_service:
+        name: pve-realm-sync.timer
+        enabled: true
+        state: started
+        daemon_reload: true

@@ -1,8 +1,12 @@
-{pkgs, ...}: {
+{
+  pkgs,
+  config,
+  ...
+}: {
   imports = [
-    ../../profiles/base.nix
-    ../../modules/users.nix
-    ../../users/admin.nix
+    # server tier (= old base + node-exporter): an always-on monitored infra VM.
+    # krg.users + the break-glass admin now come via base.nix (imported by server).
+    ../../profiles/server.nix
     ./hardware-configuration.nix
   ];
 
@@ -50,9 +54,15 @@
     ansible
     opentofu
     openbao # bao CLI — talks to krg-vault for secrets management
+    incus # incus CLI — the control plane for the krg-nat Incus platform: one-time
+    #        trust bootstrap (`incus remote add krg-nat <token>`) that populates the
+    #        config dir the terraform/incus provider reads, plus ongoing management.
     python3 # ansible runtime dependency
     sshpass # needed by some ansible connection scenarios
     jq
+    openssl # operator-supplied TF_VAR_ldap_ca_cert for the openbao tofu bootstrap
+    # (deploy-tofu.sh's openbao leg doesn't auto-materialize it):
+    #   TF_VAR_ldap_ca_cert="$(openssl s_client -connect krg-ldap.krg.local:636 </dev/null 2>/dev/null | openssl x509)"
   ];
 
   # Point bao at krg-vault so every shell session works without manual export.
@@ -111,7 +121,22 @@
       hostNames = ["e4e-nas.ucsd.edu" "132.239.17.124"];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILcS4fE6LEZa4QavcZr4Xi8Bv84ZReg75Wwky5a7rgoH";
     };
-    # e4e-prod omitted — host not provisioned yet (also absent from deploy ORDER).
+    # E4E student-project tenant platform (Proxmox VM). Deployed as e4e-admin
+    # (deploy/lib.sh USER_OVERRIDE). Key captured from the first install
+    # (2026-06-23); if the host is REINSTALLED the key changes — refresh from
+    # `cat /etc/ssh/ssh_host_ed25519_key.pub` on the live host (cf. krg-prod above).
+    e4e-prod = {
+      hostNames = ["e4e-prod.ucsd.edu" "137.110.161.107"];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK/Vl31g2FSV51OdRO7iuIBjSF2JbtvIDRQTZozkMpQb";
+    };
+    # Incus platform host (Proxmox VM). Deployed as krg-admin (default; no
+    # USER_OVERRIDE). Key captured from the first install (2026-07-01); if the host is
+    # REINSTALLED the key changes — refresh from `cat /etc/ssh/ssh_host_ed25519_key.pub`
+    # on the live host (cf. krg-prod above).
+    krg-nat = {
+      hostNames = ["krg-nat.ucsd.edu" "137.110.161.105"];
+      publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM00Znu//PplzyO4SaszlHV9pR6DGGu1gcJKHhIdlnc3";
+    };
   };
 
   # ── GitHub Actions self-hosted runner ──────────────────────────────────────
@@ -231,6 +256,80 @@
       Persistent = true; # catch up if the machine was off at fire time
     };
   };
+
+  # ── Control-node self-update (multistage push deploy, ADR 0011) ─────────────
+  # The push deploy (deploy/deploy-self-update.sh) cannot switch krg-deploy INLINE:
+  # the github-runner that runs it is a hardened sandbox (NoNewPrivileges +
+  # ProtectSystem=strict), so it can neither escalate (sudo) nor run a system switch
+  # in its own mount namespace. Instead the runner (as krg-admin) asks PID 1 to run
+  # THIS root, host-context oneshot via `systemctl start --no-block` — authorized by
+  # the polkit rule below, NO sudo, and with the runner's own hardening left intact.
+  #
+  # The service: delays briefly (so the triggering deploy job finishes and reports),
+  # stops the runner for the whole switch (a clean offline→online the external watcher
+  # deploy/await-self-update.sh keys on), switches to the flake's krg-deploy config
+  # (SAME source as the nightly system.autoUpgrade — github main, pinned lock), brings
+  # the runner back on the new code, and records status for deploy/deploy-self-verify.sh.
+  # Switch-only — never reboots the control node.
+  #
+  # BOOTSTRAP: this unit + polkit rule must already be ON krg-deploy before the push
+  # path can trigger it — land it via one nightly autoUpgrade or a manual
+  # `nixos-rebuild switch` first (deploy-self-update.sh fails with a clear message
+  # until then).
+  systemd.services.krg-deploy-selfupdate = {
+    description = "krg-deploy control-node self-update (detached switch)";
+    # Do NOT let a `switch` that changes this very unit stop/restart the in-flight
+    # self-update — that would kill the switch mid-run.
+    restartIfChanged = false;
+    stopIfChanged = false;
+    path = [pkgs.nixos-rebuild pkgs.systemd pkgs.coreutils pkgs.git pkgs.openssh config.nix.package];
+    serviceConfig = {
+      Type = "oneshot";
+      # Give the triggering deploy job time to finish + report success before we take
+      # the runner offline. The rest of the deploy is gated on the external watcher,
+      # not this delay, so a generous value is free.
+      ExecStartPre = "${pkgs.coreutils}/bin/sleep 45";
+    };
+    script = ''
+      set -uo pipefail
+      STATUS=/var/lib/krg/selfupdate.status
+      RUNNER=github-runner-krg-deploy.service
+      install -d -m 0755 /var/lib/krg
+      printf 'running\n' >"$STATUS"
+      # Offline for the whole switch so the watcher observes a clean offline→online
+      # (a no-op / runner-unit-unchanged switch would otherwise never restart it).
+      systemctl stop "$RUNNER" || true
+      if nixos-rebuild switch --flake ${config.krg.base.flakeUrl}#krg-deploy --refresh; then
+        printf 'ok %s\n' "$(readlink -f /run/current-system)" >"$STATUS"
+        rc=0
+      else
+        printf 'failed switch\n' >"$STATUS"
+        rc=1
+      fi
+      # Bring the runner back on the new code (idempotent if the switch already did).
+      systemctl start "$RUNNER" || true
+      exit "$rc"
+    '';
+  };
+
+  # Authorize the runner user (krg-admin) to start ONLY that one unit — no sudo, so
+  # the runner keeps its NoNewPrivileges/ProtectSystem sandbox. Scoped to the single
+  # unit + user; everything else still requires root.
+  #
+  # polkit MUST be enabled for the rule below to take effect: without a running
+  # polkitd, systemd denies a non-root `systemctl start` of a system unit outright
+  # ("Access denied") and the extraConfig rule is never consulted. security.polkit is
+  # off by default on this server, so enable it explicitly here.
+  security.polkit.enable = true;
+  security.polkit.extraConfig = ''
+    polkit.addRule(function(action, subject) {
+      if (action.id == "org.freedesktop.systemd1.manage-units" &&
+          action.lookup("unit") == "krg-deploy-selfupdate.service" &&
+          subject.user == "krg-admin") {
+        return polkit.Result.YES;
+      }
+    });
+  '';
 
   system.stateVersion = "25.11";
 }

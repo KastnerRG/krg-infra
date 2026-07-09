@@ -7,7 +7,7 @@ VMs — notably the `krg-ldap` AD DC.
 
 - Inventory: [`ansible/inventory/hosts.yml`](../ansible/inventory/hosts.yml) · [`host_vars/fabricant.yml`](../ansible/inventory/host_vars/fabricant.yml)
 - Plays: [`ansible/playbooks/site.yml`](../ansible/playbooks/site.yml)
-- Roles: [`nfs_server`](../ansible/roles/nfs_server) · [`zfs_limits`](../ansible/roles/zfs_limits) · [`proxmox_firewall`](../ansible/roles/proxmox_firewall)
+- Roles: [`nfs_server`](../ansible/roles/nfs_server) · [`zfs_limits`](../ansible/roles/zfs_limits) · [`proxmox_firewall`](../ansible/roles/proxmox_firewall) · [`proxmox_acme`](../ansible/roles/proxmox_acme)
 
 > **Related:** [waiter](waiter-topology.md) · [krg-ldap](krg-ldap-topology.md). `krg-prod`
 > (137.110.161.106) runs Prometheus; `waiter` (137.110.161.67) is the physical
@@ -103,6 +103,8 @@ flowchart TB
       kv["krg-vault (101)<br/>137.110.161.123"]
       kd["krg-deploy (102)<br/>137.110.161.122"]
       kp["krg-prod (103)<br/>137.110.161.106"]
+      ep["e4e-prod (104)<br/>137.110.161.107"]
+      kn["krg-nat (105)<br/>137.110.161.105"]
     end
   end
 
@@ -119,6 +121,8 @@ flowchart TB
 | port | service | source | layer |
 |---|---|---|---|
 | 2049/tcp | NFSv4 | **waiter only** (137.110.161.67) | host.fw (first) |
+| 9221/tcp | prometheus-pve-exporter | `krg-prod` (monitoring_host) | host.fw (first) |
+| 80/tcp | ACME HTTP-01 | **public** (LE multi-perspective) | host.fw (first) |
 | 22/tcp | SSH | `ucsd` + `ops` IPSets | cluster.fw |
 | 8006/tcp | PVE web UI | `ucsd` + `ops` IPSets | cluster.fw |
 | 9100/tcp | node-exporter | `krg-prod` (monitoring_host) | cluster.fw |
@@ -131,8 +135,17 @@ cluster's terminal `IN DROP` never shadows the NFS ACCEPT. IPSets (`public`,
 `sealab`, `ucsd`, `ops`) are templated from the shared
 [`nix/networks/trusted.json`](../nix/networks/trusted.json).
 
+> **Web-UI TLS:** the PVE UI (`pveproxy` :8006) serves a **Let's Encrypt** cert
+> for `fabricant.ucsd.edu`, obtained + auto-renewed by PVE-native ACME (the
+> [`proxmox_acme`](../ansible/roles/proxmox_acme) role) over **HTTP-01 standalone**.
+> Port 80 is the *only* publicly-open port — it carries the ACME challenge alone
+> (no source restriction, because LE validates from unpredictable IPs); the UI
+> itself stays locked to `ucsd` + `ops`. Bring-up is **staging-first**
+> (`proxmox_acme_environment` in `host_vars`), then flipped to `production`.
+
 > **Bootstrap dependency:** fabricant is an SSSD AD client of `krg-ldap`, which
 > runs as a VM **on fabricant itself** — so host identity depends on a guest it
 > hosts. The local break-glass `krg-admin` (key-only, off AD) is the deliberate
 > escape hatch. The per-VM `<vmid>.fw` files (100 krg-ldap, 101 krg-vault,
-> 102 krg-deploy, 103 krg-prod) only apply if each VM's NIC has `firewall=1` set.
+> 102 krg-deploy, 103 krg-prod, 104 e4e-prod, 105 krg-nat) only apply if each VM's
+> NIC has `firewall=1` set.

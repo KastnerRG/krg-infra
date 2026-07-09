@@ -4,16 +4,16 @@
 #   - terraform/grafana/ DOES read grafana-oidc from vault programmatically
 #     (data "vault_kv_secret_v2" in grafana/sso.tf — wired through to the
 #     grafana_sso_settings resource).
-#   - Outline, MLflow, and any other compose-stack consumer still read from
-#     local /var/lib/krg/krg-prod/.secrets/*.env files at container start.
-#     The vault entries here are staged for future vault-agent/template
-#     rendering of those files; until then they must be populated manually
-#     (e.g. `bao kv get -field=client_secret secret/krg-prod/outline-oidc`
-#     into the matching .secrets file).
+#   - MLflow and Outline are now fail-closed P2 (vault-agent) consumers, so their OIDC
+#     secrets moved to the early terraform/secrets workspace (mlflow.tf / outline.tf) —
+#     see the removed{}+data blocks below, mirroring temporal/vaultwarden.
+#   - Any remaining not-yet-migrated compose-stack consumer reads from local
+#     /var/lib/krg/krg-prod/.secrets/*.env at container start; its vault entry here is
+#     staged for future vault-agent rendering (populate manually until migrated).
 
 resource "vault_kv_secret_v2" "grafana_oidc" {
   mount = "secret"
-  name  = "krg-prod/grafana-oidc"
+  name  = "krg-prod/authentik-managed/grafana-oidc"
   data_json = jsonencode({
     client_id     = authentik_provider_oauth2.grafana.client_id
     client_secret = authentik_provider_oauth2.grafana.client_secret
@@ -21,29 +21,49 @@ resource "vault_kv_secret_v2" "grafana_oidc" {
   })
 }
 
-resource "vault_kv_secret_v2" "outline_oidc" {
-  mount = "secret"
-  name  = "krg-prod/outline-oidc"
-  data_json = jsonencode({
-    client_id     = authentik_provider_oauth2.outline.client_id
-    client_secret = authentik_provider_oauth2.outline.client_secret
-    issuer_url    = "${var.authentik_url}/application/o/outline/"
-  })
+# Outline's OIDC client secret is now MINTED by the early terraform/secrets workspace
+# (it became a fail-closed P2 consumer: krg-prod vault-agent renders it as
+# OIDC_CLIENT_SECRET into /run/krg/outline/outline.env). This workspace READS it back
+# to set on the provider below. The `removed` block drops the old writer from state
+# without destroying the live KV entry (terraform/secrets owns it). See
+# terraform/secrets/README.md and outline.tf.
+removed {
+  from = vault_kv_secret_v2.outline_oidc
+  lifecycle {
+    destroy = false
+  }
 }
 
-resource "vault_kv_secret_v2" "mlflow_oidc" {
+# Read the Outline OIDC client_secret minted by terraform/secrets, to set on the
+# provider below. krg-deploy's policy already grants read on authentik-managed/* .
+data "vault_kv_secret_v2" "outline_oidc" {
   mount = "secret"
-  name  = "krg-prod/mlflow-oidc"
-  data_json = jsonencode({
-    client_id     = authentik_provider_oauth2.mlflow.client_id
-    client_secret = authentik_provider_oauth2.mlflow.client_secret
-    issuer_url    = "${var.authentik_url}/application/o/mlflow/"
-  })
+  name  = "krg-prod/authentik-managed/outline-oidc"
+}
+
+# MLflow's OIDC client secret is now MINTED by the early terraform/secrets workspace
+# (it's a fail-closed P2 consumer: krg-prod vault-agent renders it as OIDC_CLIENT_SECRET
+# into /run/krg/mlflow/mlflow.env). This workspace READS it back to set on the provider
+# (see the data source + `client_secret =` on authentik_provider_oauth2.mlflow in
+# applications_krg.tf). The `removed` block drops the old writer from state without
+# destroying the live KV entry (terraform/secrets owns it). See terraform/secrets/README.md.
+removed {
+  from = vault_kv_secret_v2.mlflow_oidc
+  lifecycle {
+    destroy = false
+  }
+}
+
+# Read the MLflow OIDC client_secret minted by terraform/secrets, to set on the
+# provider below. krg-deploy's policy already grants read on authentik-managed/* .
+data "vault_kv_secret_v2" "mlflow_oidc" {
+  mount = "secret"
+  name  = "krg-prod/authentik-managed/mlflow-oidc"
 }
 
 resource "vault_kv_secret_v2" "roster_oidc" {
   mount = "secret"
-  name  = "krg-prod/roster-oidc"
+  name  = "krg-prod/authentik-managed/roster-oidc"
   data_json = jsonencode({
     client_id     = authentik_provider_oauth2.e4e_roster.client_id
     client_secret = authentik_provider_oauth2.e4e_roster.client_secret
@@ -51,31 +71,48 @@ resource "vault_kv_secret_v2" "roster_oidc" {
   })
 }
 
-# Vaultwarden — Authentik mints this client secret (brand new). Consumed by the
-# compose service as SSO_CLIENT_SECRET (populated into
-# /var/lib/krg/krg-prod/.secrets/vaultwarden.env; see docs/vaultwarden-sso.md).
-resource "vault_kv_secret_v2" "vaultwarden_oidc" {
-  mount = "secret"
-  name  = "krg-prod/vaultwarden-oidc"
-  data_json = jsonencode({
-    client_id     = authentik_provider_oauth2.vaultwarden.client_id
-    client_secret = authentik_provider_oauth2.vaultwarden.client_secret
-    issuer_url    = "${var.authentik_url}/application/o/vaultwarden/"
-  })
+# Vaultwarden's OIDC client secret is now MINTED by the early terraform/secrets
+# workspace (it's a fail-closed P2 consumer: krg-prod vault-agent renders it as
+# SSO_CLIENT_SECRET). This workspace READS it back to set on the provider below. The
+# `removed` block drops the old writer from state without destroying the live KV entry
+# (terraform/secrets owns + rotates it). See terraform/secrets/README.md.
+removed {
+  from = vault_kv_secret_v2.vaultwarden_oidc
+  lifecycle {
+    destroy = false
+  }
 }
 
-# Temporal — Authentik mints this client secret (brand new). The OpenBao Agent on
-# krg-prod renders it to /run/krg/temporal/ui.env as TEMPORAL_AUTH_CLIENT_SECRET for
-# the temporal-ui compose service (krg.vaultAgent in nix/hosts/krg-prod/default.nix).
-resource "vault_kv_secret_v2" "temporal_oidc" {
+# Read the Vaultwarden OIDC client_secret minted by terraform/secrets, to set on the
+# provider below. krg-deploy's policy already grants read on authentik-managed/* .
+data "vault_kv_secret_v2" "vaultwarden_oidc" {
   mount = "secret"
-  name  = "krg-prod/temporal-oidc"
-  data_json = jsonencode({
-    client_id     = authentik_provider_oauth2.temporal.client_id
-    client_secret = authentik_provider_oauth2.temporal.client_secret
-    issuer_url    = "${var.authentik_url}/application/o/temporal/"
-  })
+  name  = "krg-prod/authentik-managed/vaultwarden-oidc"
 }
+
+# Temporal's OIDC client secret is now MINTED by the early terraform/secrets workspace
+# (so it exists before the fail-closed krg-prod vault-agent renders it). This workspace
+# no longer writes it — it READS it back to set on the provider (see the data source +
+# `client_secret =` on authentik_provider_oauth2.temporal in applications_krg.tf). The
+# `removed` block drops the old writer from state without destroying the live KV entry
+# (terraform/secrets owns + rotates it). See terraform/secrets/README.md.
+removed {
+  from = vault_kv_secret_v2.temporal_oidc
+  lifecycle {
+    destroy = false
+  }
+}
+
+# Read the Temporal OIDC client_secret minted by terraform/secrets, to set on the
+# provider below. krg-deploy's policy already grants read on authentik-managed/* .
+data "vault_kv_secret_v2" "temporal_oidc" {
+  mount = "secret"
+  name  = "krg-prod/authentik-managed/temporal-oidc"
+}
+
+# (Incus has NO OIDC client secret — it's a PUBLIC client, authorization-code flow. The
+# incus-oidc secret + its data source were removed when that was found on-box; see
+# authentik_provider_oauth2.incus in applications_krg.tf.)
 
 # garage-ui — the ONLY garage secret tofu generates (Authentik mints it; brand
 # new, so writing it is pure creation, not a rotation of a live value). Path is
@@ -115,7 +152,7 @@ resource "vault_kv_secret_v2" "dsm_sso_oidc" {
 # value Guacamole actually needs (the Postgres password) is in guacamole_secrets.tf.
 resource "vault_kv_secret_v2" "guacamole_oidc" {
   mount = "secret"
-  name  = "krg-prod/guacamole-oidc"
+  name  = "krg-prod/authentik-managed/guacamole-oidc"
   data_json = jsonencode({
     client_id     = authentik_provider_oauth2.guacamole.client_id
     client_secret = authentik_provider_oauth2.guacamole.client_secret
@@ -123,5 +160,37 @@ resource "vault_kv_secret_v2" "guacamole_oidc" {
   })
 }
 
-# outpost token: retrieved manually from Admin → Outposts → View token after apply.
-# Store with: bao kv put secret/krg-prod/authentik-outpost-token token=<value>
+# (Proxmox no longer has an OIDC secret here — auth moved to a native PVE Active
+# Directory realm; the bind-account password lives at secret/krg-prod/pve-ad-bind,
+# seeded manually and read by the ansible pve_ad role. See docs/proxmox-auth.md.)
+
+# Outpost tokens (proxy + ldap) are minted in IaC by outpost_tokens.tf and written
+# under the authentik-managed/* glob — no manual "View token" step here anymore.
+
+# ── FishSense (e4e tenant) OIDC secrets ───────────────────────────────────────
+# Unlike the krg-prod apps above, FishSense runs on its OWN Incus instance and reads
+# secrets with the tenant-fishsense AppRole (secret/data/tenants/fishsense/*). So its
+# generated OIDC client secrets are written UNDER the tenant KV (secret/tenants/
+# fishsense/oidc/*), which that AppRole already grants — the tenant's in-VM vault-agent
+# renders them for the web app + Superset. The .../oidc sub-path is added to
+# authentik_managed_glob_prefixes (terraform/openbao/main.tf) so the krg-deploy writer
+# can create them WITHOUT reaching the tenant's own app secrets. (ADR 0023-adjacent.)
+resource "vault_kv_secret_v2" "fishsense_oidc_web" {
+  mount = "secret"
+  name  = "tenants/fishsense/oidc/web"
+  data_json = jsonencode({
+    client_id     = authentik_provider_oauth2.fishsense_oauth.client_id
+    client_secret = authentik_provider_oauth2.fishsense_oauth.client_secret
+    issuer_url    = "${var.authentik_url}/application/o/fishsense-oauth/"
+  })
+}
+
+resource "vault_kv_secret_v2" "fishsense_oidc_analytics" {
+  mount = "secret"
+  name  = "tenants/fishsense/oidc/analytics"
+  data_json = jsonencode({
+    client_id     = authentik_provider_oauth2.fishsense_analytics.client_id
+    client_secret = authentik_provider_oauth2.fishsense_analytics.client_secret
+    issuer_url    = "${var.authentik_url}/application/o/fishsense-analytics/"
+  })
+}

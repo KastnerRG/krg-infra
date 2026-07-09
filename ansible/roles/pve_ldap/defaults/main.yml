@@ -1,0 +1,68 @@
+# Proxmox VE login via an Authentik LDAP outpost (NOT raw krg-ldap, NOT OIDC).
+#
+# PVE binds an LDAP realm against the Authentik LDAP outpost on krg-prod
+# (compose authentik_ldap, terraform/authentik/proxmox_ldap.tf). Authentik
+# FLATTENS nested AD groups, so members of `proxmox-admins` via the nested
+# `Domain Admins` appear as DIRECT members in the outpost's view — which PVE can
+# sync and ACL. Works in the web UI AND the apps (plain bind). PAM stays
+# break-glass. See docs/proxmox-auth.md.
+#
+# ⚠ Many values need on-box confirmation against the running outpost (the exact
+# tree/attrs Authentik serves, the username attribute, the filters). Marked ⚠ —
+# validate with `ldapsearch` against the outpost before trusting them.
+
+pve_ldap_realm: "krg" # realm id in /etc/pve/domains.cfg (cluster-wide)
+pve_ldap_server1: "krg-prod.ucsd.edu" # the Authentik LDAP outpost host
+pve_ldap_server2: ""
+pve_ldap_port: 6636 # LDAPS published by the outpost
+pve_ldap_mode: "ldaps" # ldap | ldap+starttls | ldaps
+pve_ldap_verify: false # outpost cert not trusted on fabricant yet — encrypted, unverified
+
+pve_ldap_base_dn: "DC=krg,DC=ucsd,DC=edu" # matches the LDAP provider's base_dn
+
+# Bind/search account (Authentik service account svc-pve-ldap). bind_dn + password
+# come from OpenBao (secret/krg-prod/authentik-managed/proxmox-ldap-bind, written by
+# terraform/authentik) via deploy/deploy-ansible.sh. EMPTY → the realm step no-ops
+# (so --check / local runs converge the rest).
+pve_ldap_bind_dn: ""
+pve_ldap_bind_password: ""
+
+# ⚠ The attribute holding the login username in Authentik's LDAP tree. Authentik
+# serves users as cn=<username>; confirm via ldapsearch and adjust if it's `uid`.
+pve_ldap_user_attr: "cn"
+
+pve_ldap_default_realm: true # pre-select on the PVE login screen; PAM stays in the dropdown
+
+# ── Group sync → admin ──────────────────────────────────────────────────────────
+# Authentik tree: users under ou=users, groups under ou=groups.
+#
+# group_classes is PINNED (not PVE's default) — this is THE fix for "group syncs but
+# stays empty → you are not an administrator". PVE's group sync ANDs group_filter
+# with (|(objectclass=<c>)...) over group_classes, and the Authentik LDAP outpost
+# returns ZERO results for the WHOLE filter if any (objectclass=<c>) term names a
+# class it doesn't know — instead of treating that term as merely false. PVE's
+# default group_classes is `groupOfNames, group, univentionGroup, ipausergroup`; the
+# FreeIPA/Univention classes (univentionGroup, ipausergroup) the Authentik group
+# lacks poisoned the search → 0 groups → proxmox-admins-krg never got its members →
+# the "/ Administrator" ACL applied to nobody. Pin to ONLY classes Authentik's group
+# carries. (The USER pass was unaffected: PVE's default user_classes —
+# inetorgperson/posixaccount/person/user — are all present on Authentik users.)
+# Verified by ldapsearch: PVE's filter matches with these two classes and returns 0
+# the moment univentionGroup/ipausergroup are added. group_dn = ou=groups IS a valid
+# search base (confirmed); the per-user ou=virtual-groups entries can't match the
+# cn=proxmox-admins filter.
+pve_ldap_admin_ldap_group: "proxmox-admins"
+pve_ldap_group_dn: "ou=groups,DC=krg,DC=ucsd,DC=edu"
+pve_ldap_group_classes: "group, groupOfNames"
+pve_ldap_group_filter: "(&(objectClass=group)(cn=proxmox-admins))"
+pve_ldap_user_filter: "(&(objectClass=user)(memberOf=cn=proxmox-admins,ou=groups,DC=krg,DC=ucsd,DC=edu))"
+pve_ldap_sync_scope: "both"
+pve_ldap_sync_enable_new: true
+
+# ⚠ PVE names a synced group "<cn>-<realm>" → proxmox-admins-krg. Confirm after the
+# first sync (`pveum group list`); the ACL targets this id.
+pve_ldap_admin_pve_group: "proxmox-admins-krg"
+pve_ldap_admin_role: "Administrator"
+pve_ldap_admin_acl_path: "/"
+
+pve_ldap_sync_on_calendar: "*:0/30" # re-sync membership every 30 min

@@ -1,89 +1,35 @@
-# Server profile: web services, monitoring, reverse proxy (krg-prod, e4e-prod).
-# Import this in a host's default.nix, then add host-specific compose stacks.
-{
-  config,
-  lib,
-  ...
-}: {
+# Server profile: the "always-on, monitored, never-roaming lab host" tier.
+#
+# It sits BETWEEN base (anything that runs the KRG baseline — including a roaming
+# laptop) and the role leaves (directory / services / compute). The ONLY thing it
+# adds over base is the monitored-infra delta: the Prometheus node-exporter scrape
+# surface, wired to the monitoring host.
+#
+# WHY THE SECURITY POSTURE IS *NOT* HERE: perimeter hardening (deny-inbound
+# firewall, CrowdSec + bouncer, SSH source-restriction, key-only sshd) deliberately
+# lives in base.nix, not this tier. The sealab network is flat-public — every host
+# has a directly internet-reachable IP, no NAT — so a public-facing workstation
+# needs that baseline just as much as a server does. Hardening is universal; this
+# tier is the monitoring/role delta only. Revisit the split if NAT/segmentation
+# ever lands (then a NAT'd endpoint could legitimately relax inbound).
+#
+# Consumers: directory.nix, services.nix, compute.nix, and the plain server VMs
+# (krg-vault, krg-deploy) import this instead of base.nix.
+{lib, ...}: let
+  trusted = builtins.fromJSON (builtins.readFile ../networks/trusted.json);
+in {
   imports = [
     ./base.nix
-    ../modules/docker.nix
-    ../modules/users.nix
-    ../modules/services/compose-stack.nix
-    ../modules/services/ipmi-exporter.nix
-    ../users/admin.nix
-    # Human users come from Samba AD; only the local break-glass admin stays.
+    ../modules/services/node-exporter.nix
   ];
 
-  krg.base = {
-    enable = true;
-    autoUpgrade = true;
-    # serviceHost defaults to true via the option default in profiles/base.nix
-    # — service hosts use that default to source-restrict in-guest SSH to
-    # ucsd + ops; compute hosts explicitly override to false.
-  };
+  # Prometheus node exporter on every monitored host (native systemd service). It
+  # opens its scrape port (9100) only to monitoringSourceIp (node-exporter.nix), so
+  # no per-host firewall entry is needed. A host that runs node_exporter another way
+  # can override this with mkForce.
+  krg.nodeExporter.enable = lib.mkDefault true;
 
-  krg.docker = {
-    enable = true;
-  };
-
-  # krg.nodeExporter.enable is set by base.nix (true on every host).
-  #
-  # IPMI exporter only on PHYSICAL hosts. The current server hosts (krg-prod,
-  # e4e-prod) are Proxmox VMs with no BMC, so the exporter would just error with
-  # nothing to read — and 9290 isn't opened to the scraper here anyway. RESTORE:
-  # this auto-enables if a physical server-profile host is ever added (then also
-  # add 9290 to monitoringPorts below). The hypervisors' real BMCs are monitored
-  # by the Ansible `monitoring` role, not from inside a guest.
-  krg.ipmiExporter.enable = lib.mkDefault (!config.krg.base.isVM);
-
-  # Qualys + Trellix are enabled for all machines in base.nix.
-  # Provide the installer archive in the host config:
-  #   krg.oecQualysTrellix.installerArchive = /path/to/oec-qualys-trellix.tar.gz;
-
-  # Ingress for the server role. The in-guest firewall is ON on every host
-  # (base.nix); serviceHost stays at its option default of true (from
-  # base.nix), which source-restricts SSH (22) to ucsd + ops via sshSources;
-  # the Proxmox perimeter is the additive outer layer.
-  krg.firewall = {
-    # 443: Traefik ingress for Authentik-gated lab services. Globally
-    # reachable at the firewall layer; what filters attackers behind it
-    # in THIS PR is the CrowdSec community blocklist (CAPI) — ~30K-50K
-    # known-malicious IPs dropped by the bouncer regardless of
-    # destination port. NO Traefik-specific scenario is enabled here
-    # (the fleet baseline only acquires sshd logs); brute-force
-    # protection against Authentik itself depends on Authentik's own
-    # rate-limiting until we add the `crowdsecurity/traefik` collection +
-    # a Traefik access-log acquisition. Tracked as a follow-up.
-    # Use lib.mkDefault so this merges with base.nix's own mkDefault [22]
-    # rather than replacing it. NixOS listOf merge semantics: a plain
-    # assignment OVERRIDES mkDefault (mkDefault is dropped); two
-    # mkDefaults CONCATENATE. Empirically verified:
-    #   plain [443] + mkDefault [22]      → [443]       (BUG: SSH lost)
-    #   mkAfter [443] + mkDefault [22]    → [443]       (mkAfter doesn't help)
-    #   mkDefault [443] + mkDefault [22]  → [443, 22]   ← what we want
-    # Without mkDefault here, a plain `[443]` would silently drop 22 from
-    # cfg.allowedTCPPorts. On a serviceHost (the normal case) SSH still
-    # works because mkSourcedRules emits the per-source 22 rule
-    # independently — but if anyone ever toggled serviceHost off on a
-    # server-profile host, 22 would vanish from the input rules
-    # entirely. mkDefault is the load-bearing fix even though it looks
-    # like style.
-    allowedTCPPorts = lib.mkDefault [443];
-    # 80: DOCUMENTED EXCEPTION to the "no public access" policy. Traefik
-    # handles ACME HTTP-01 on this port for the lab's public-facing
-    # domains. Let's Encrypt's multi-perspective validation issues
-    # challenges from validators in US + EU + Asia with unpredictable
-    # source IPs and requires ALL perspectives to succeed; ANY source
-    # restriction (geo allowlist, accidental community-blocklist hit)
-    # would risk failing renewals within ~60-90 days (cert lifetime).
-    # Mirrors the krg-vault publicPorts pattern. DNS-01 migration was
-    # considered + rejected (closed issue #89); HTTP-01 + publicPorts
-    # opt-in is the long-term answer.
-    publicPorts = [80]; # reason: ACME HTTP-01 (LE multi-perspective validators are global)
-    # node-exporter's 9100 is opened to the monitoring host automatically by
-    # nix/modules/services/node-exporter.nix (issue #234) — no per-profile entry
-    # needed. (The old 9000 "service exporter" was the Ansible deploy-monitor,
-    # gone under autoUpgrade.)
-  };
+  # Prometheus scrape source — from the shared trusted-networks file so the
+  # monitoring host isn't duplicated across nix / ansible / PVE.
+  krg.firewall.monitoringSourceIp = lib.mkDefault trusted.monitoring_host;
 }

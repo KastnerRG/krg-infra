@@ -8,7 +8,7 @@
 #
 # GOTCHA — if it isn't reproducible and isn't listed here, IT IS GONE on reboot.
 # That's the whole point, but it bites: SSH host keys, machine-id, the AD keytab,
-# Docker images, fail2ban's ban DB, monitoring data all live in mutable state and
+# Docker images, monitoring data, CrowdSec state all live in mutable state and
 # would silently reset. The list below is curated for THIS host (server + Docker +
 # AD client); add to it when you add stateful services.
 {
@@ -136,8 +136,6 @@ in {
           # dynamically-allocated users/groups get DIFFERENT ids next boot ->
           # wrong file ownership everywhere. Non-negotiable.
           "/var/lib/systemd" # random-seed, timer stamps, coredumps, clock, etc.
-          "/var/lib/fail2ban" # ban DB — bans should outlive reboots (this rebuild
-          # is post-breach; losing the jail state every boot defeats it).
           "/root" # root's shell history / state (sudo target; no root SSH).
           "/etc/nixos" # for local/break-glass `nixos-rebuild` (autoUpgrade pulls
           # from GitHub, but keep on-box edits durable).

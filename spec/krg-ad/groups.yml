@@ -36,9 +36,24 @@ groups:
   - { name: "GPU Users", description: "GPU device access on compute hosts (nvidia.nix cudaAccessGroups -> ad-group-sync)" }
   - { name: "Docker Users", description: "docker daemon access on hosts (docker.nix accessGroups -> ad-group-sync)" }
   - { name: "KastnerML", description: "Access to the kastner-ml host" }
+  # Space-FREE name on purpose (like proxmox-admins): consumed as `%E4E-NAS` in a
+  # sudoers rule (nix krg.nasMount) where an unescaped space would break the rule,
+  # and looked up by name in Authentik (terraform/authentik app_access.tf).
+  - { name: "E4E-NAS", description: "Mount access to the E4E NAS (e4e-nas.ucsd.edu) CIFS shares via the kastner-ml e4e-nas-mount sudo wrapper (nix krg.nasMount); also gates the E4E NAS app tile in Authentik (app_access.tf)" }
   - { name: "Guacamole Admins", description: "Apache Guacamole administrators" }
+  # Space-FREE name on purpose: PVE's AD-realm sync rejects group ids with spaces
+  # ([A-Za-z0-9._-]+), so a "Proxmox Admins" group would be skipped on sync. The
+  # ansible pve_ad role syncs this group from KRG.LOCAL into PVE and ACLs it
+  # Administrator on /. Add hypervisor admins as DIRECT members (PVE sync does not
+  # expand nested groups). RENAME NOTE: the old "Proxmox Admins" group (OIDC era) is
+  # retired — rename it to this in AD (preserves membership) or move members over,
+  # then delete the old one by hand (this apply is non-authoritative; it won't).
+  - { name: "proxmox-admins", description: "Administrator on the Proxmox VE web UI + apps via the PVE Active Directory realm (ansible pve_ad). Direct members only." }
   - { name: "Temporal Users", description: "May mint a lab-PKI client cert to reach the Temporal mTLS frontend (OpenBao ldap auth -> pki_int/issue/user; terraform/openbao var.pki_ad_group_roles)" }
   - { name: "ARM PDK Access", description: "Read access to the export-controlled ARM PDK VeraCrypt vault on waiter (nix krg.armpdkVault.accessGroups -> ad-group-sync 'armpdk' group); membership is the ARM agreement/TCP authorized-user list" }
+  - { name: "Label Studio Admins", description: "Administrator in the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio emits this name in the Groups attribute; map it to the Administrator org role in Label Studio Organization -> Roles)" }
+  - { name: "MLflow Users", description: "Standard (non-admin) access to mlflow.krg.ucsd.edu via Authentik OIDC; emitted in the groups claim and matched by the mlflow-oidc-auth OIDC_GROUP_NAME (nix/docker-compose/krg-prod/compose.mlflow.yml)" }
+  - { name: "MLflow Admins", description: "Administrator access in MLflow via Authentik OIDC; matched by the mlflow-oidc-auth OIDC_ADMIN_GROUP_NAME" }
 
   # --- Lab / org groups ---
   - { name: "Kastner Research Group", description: "Kastner Research Group members; owns /scratch/krg (gid group)" }

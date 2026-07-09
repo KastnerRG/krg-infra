@@ -1,9 +1,13 @@
 services:
   outline:
     image: docker.getoutline.com/outlinewiki/outline:1.8.1
+    # docker.env = non-secret config (URL, OIDC endpoints, SMTP, REDIS_URL, file
+    # storage). outline.env = secret-bearing, rendered from OpenBao to /run by
+    # krg.vaultAgent (DATABASE_URL, SECRET_KEY, UTILS_SECRET, OIDC_CLIENT_SECRET) — so
+    # the stack fails closed if bao is down (no .secrets/ file anymore).
     env_file:
       - ./outline/docker.env
-      - ./.secrets/outline_secrets.env
+      - /run/krg/outline/outline.env
     volumes:
       - ./outline/outline_data:/var/lib/outline/data
     depends_on:
@@ -20,12 +24,9 @@ services:
       - traefik_proxy
 
   outline_redis:
-    image: redis:8.8
-    env_file:
-      - ./outline/docker.env
-      - ./.secrets/outline_secrets.env
+    image: valkey/valkey:9.1
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
       timeout: 30s
       retries: 3
@@ -34,21 +35,38 @@ services:
 
   outline_postgres:
     image: postgres:18.4
+    # POSTGRES_PASSWORD is rendered from OpenBao to /run by krg.vaultAgent (its own
+    # file, so the postgres image never sees a var it doesn't own). Fresh bring-up:
+    # postgres initializes the data dir with this password on first start, so it must
+    # never rotate (terraform/secrets/outline.tf guards that).
+    #
+    # Data lives on a NAMED VOLUME, not a host bind mount: postgres:18 runs as its
+    # non-root `postgres` user (uid 999), and a named volume inherits the image's
+    # 999:999 ownership so that user can write it. A bind mount instead takes the HOST
+    # dir's ownership (the tmpfiles dir was 1000:1000), which uid 999 can't chown →
+    # `mkdir: cannot create directory '/var/lib/postgresql': Permission denied` → the
+    # container exits 1 and Outline never gets a DB. Same named-volume + PGDATA pin
+    # pattern mlflow_postgres uses (compose.mlflow.yml).
     env_file:
-      - ./outline/docker.env
-      - ./.secrets/outline_secrets.env
+      - /run/krg/outline/db.env
     volumes:
-      - ./outline/postgres:/var/lib/postgresql
+      - outline_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-d", "outline", "-U", "user"]
+      test: ["CMD", "pg_isready", "-d", "outline", "-U", "outline_user"]
       interval: 30s
       timeout: 20s
       retries: 3
     environment:
       POSTGRES_USER: 'outline_user'
       POSTGRES_DB: 'outline'
+      # postgres:18 changed its default data layout; pin PGDATA to the classic path so
+      # the named volume holds the cluster directly (matches mlflow_postgres).
+      PGDATA: /var/lib/postgresql/data
     networks:
       - outline
+
+volumes:
+  outline_postgres_data:
 
 networks:
   outline:

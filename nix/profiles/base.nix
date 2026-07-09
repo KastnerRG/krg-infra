@@ -1,6 +1,6 @@
 # CROSS-REFERENCE: the OS baseline here (timezone, packages incl tmux, SSH
-# hardening, auto-updates, sysctl, fail2ban, firewall) has a Proxmox/Debian
-# counterpart under ansible/roles/ (base, ssh_hardening, fail2ban, krg_admin).
+# hardening, auto-updates, sysctl, CrowdSec, firewall) has a Proxmox/Debian
+# counterpart under ansible/roles/ (base, ssh_hardening, crowdsec, krg_admin).
 # When you change the baseline on either side, apply the equivalent to the other.
 {
   config,
@@ -16,12 +16,16 @@ with lib; let
 in {
   imports = [
     ../modules/security/oec-qualys-trellix.nix
-    ../modules/security/fail2ban.nix
     ../modules/security/firewall.nix
     ../modules/security/crowdsec.nix
     ../modules/security/crowdsec-bouncer.nix
-    ../modules/services/node-exporter.nix
     ../modules/sssd-ad-client.nix
+    # Break-glass admin + krg.users on EVERY KRG machine (servers, compute, AND
+    # workstations/laptops — a portable box needs a local recovery account too).
+    # node-exporter is NOT here: it's the monitored-infra delta, moved to
+    # profiles/server.nix (an end-user endpoint isn't a Prometheus scrape target).
+    ../modules/users.nix
+    ../users/admin.nix
   ];
 
   options.krg.base = {
@@ -52,8 +56,8 @@ in {
         Whether this host is a Proxmox/QEMU virtual machine. Enables the QEMU
         guest agent (graceful shutdown, IP reporting to the hypervisor). It does
         NOT disable the NixOS firewall — the in-guest firewall stays on for
-        defense-in-depth and so fail2ban has a backend (Proxmox adds an
-        additive perimeter layer on top, it does not replace the guest firewall).
+        defense-in-depth and so the CrowdSec bouncer has a backend (Proxmox adds
+        an additive perimeter layer on top, it does not replace the guest firewall).
       '';
     };
 
@@ -94,7 +98,10 @@ in {
     # SSH hardening (replaces Ansible SSH hardening task): key-only auth,
     # and only ed25519 public keys are accepted — RSA/ECDSA are rejected.
     services.openssh = {
-      enable = true;
+      # mkDefault so the mobility tier can drop the listener: profiles/laptop.nix
+      # sets `enable = mkForce false` — a portable box on the flat-public sealab
+      # network must not run an internet-reachable sshd. Every other tier keeps it.
+      enable = mkDefault true;
       # krg.firewall owns SSH gating (fleet policy — issue #74). 22 lives
       # in `krg.firewall.allowedTCPPorts` (compute hosts: globally open,
       # CrowdSec drops attackers) or moves to `sshSources` (service hosts:
@@ -119,37 +126,14 @@ in {
     # krg.oecQualysTrellix.installerArchive per host or they stay dormant.
     krg.oecQualysTrellix.enable = true;
 
-    # Prometheus node exporter on every machine (native systemd service). It
-    # opens its scrape port (9100) to the monitoring host itself (issue #234,
-    # node-exporter.nix), so no per-host firewall entry is needed. A host that
-    # runs node_exporter another way can override this with mkForce.
-    krg.nodeExporter.enable = mkDefault true;
-
-    # Fail2ban is SUPERSEDED by the CrowdSec stack (krg.crowdsec, below).
-    # CrowdSec is a fail2ban superset: same SSH brute-force jail surface,
-    # plus community blocklists and fleet-wide CTI sharing.
-    # Running both creates conflicting ban tables (fail2ban manages iptables;
-    # the bouncer manages its own nftables sets) — toggle to OFF here and
-    # leave the module in place for one release cycle so we can flip back
-    # quickly if CrowdSec misbehaves in prod. Remove the module entirely
-    # once CrowdSec has cooked for a quarter.
-    krg.fail2ban.enable = mkDefault false;
-    krg.fail2ban.ignoreIP =
-      mkDefault
-      (["127.0.0.1/8" "::1"] ++ map (e: e.cidr) trusted.ipsets.sealab);
-
     # In-guest firewall (krg.firewall → nftables) on EVERY host, VMs included.
-    # Defense-in-depth: this owns *which ports* a service exposes and gives
-    # fail2ban a backend to insert bans into (the dictionary attack that drove
-    # this rebuild is exactly what fail2ban mitigates). On Proxmox VMs the
+    # Defense-in-depth: this owns *which ports* a service exposes and gives the
+    # CrowdSec bouncer a backend to insert bans into (the dictionary attack that
+    # drove this rebuild is exactly what CrowdSec's ssh-bf jail mitigates). On Proxmox VMs the
     # hypervisor firewall is an *additive* perimeter that owns *which sources*
     # may reach the VM — it does not replace this layer. A host can still set
     # krg.firewall.enable = false explicitly if it really must.
     krg.firewall.enable = mkDefault true;
-
-    # Prometheus scrape source — sourced from the shared trusted-networks file
-    # so the monitoring host isn't duplicated across nix / ansible / PVE.
-    krg.firewall.monitoringSourceIp = mkDefault trusted.monitoring_host;
 
     # Fleet-wide CrowdSec stack (partial answer to issue #74's
     # "no public access — US is the floor"). Every host runs:
@@ -193,7 +177,7 @@ in {
 
     # If a host opens RDP (krg.firewall.allowRDP — compute boxes with the XRDP
     # desktop), restrict 3389 to the trusted UCSD nets in-guest. RDP isn't
-    # key-only and has no fail2ban jail, so it must never be globally open on a
+    # key-only and has no brute-force jail, so it must never be globally open on a
     # public-IP box. UCSD only (not ops/off-campus) — reach it over VPN/campus or
     # the planned Guacamole. Inert until allowRDP = true; override per host if needed.
     krg.firewall.rdpSources = mkDefault (map (e: e.cidr) trusted.ipsets.ucsd);

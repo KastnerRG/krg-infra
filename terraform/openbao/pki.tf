@@ -101,9 +101,12 @@ resource "vault_pki_secret_backend_role" "temporal_frontend" {
 # terraform/temporal provider (run by krg-deploy) and any worker/UI. server_flag
 # off so these can't masquerade as the frontend.
 resource "vault_pki_secret_backend_role" "temporal_client" {
-  backend            = vault_mount.pki_int.path
-  name               = "temporal-client"
-  allowed_domains    = var.temporal_client_domains
+  backend = vault_mount.pki_int.path
+  name    = "temporal-client"
+  # Static callers (krg-deploy, temporal-worker, temporal-ui) PLUS a per-tenant
+  # "<name>-worker" CN for each tenant that opted into Temporal (ADR 0023 §2) — that
+  # is the CN the tenant's in-VM vault-agent mints.
+  allowed_domains    = concat(var.temporal_client_domains, [for k, v in var.tenants : "${k}-worker" if v.temporal])
   allow_bare_domains = true
   allow_subdomains   = false
   server_flag        = false
@@ -111,6 +114,27 @@ resource "vault_pki_secret_backend_role" "temporal_client" {
   key_type           = "ec"
   key_bits           = 256
   ttl                = 60 * 60 * 24 * 7  # 7d issued (short — callers re-issue)
+  max_ttl            = 60 * 60 * 24 * 30 # 30d ceiling
+}
+
+# incus-client — CLIENT cert the terraform/incus provider (run by krg-deploy) uses to
+# authenticate to the krg-nat Incus API. krg-nat trusts the fleet CA for machine
+# clients (nix/modules/incus.nix: server.ca + core.trust_ca_certificates), so a cert
+# minted here is accepted with NO per-cert `incus config trust add` — the same
+# mTLS-over-fleet-PKI pattern as temporal-client, minted by deploy-tofu.sh each apply
+# into an ephemeral config dir (no ~/.config drift). server_flag off so a client
+# identity can't masquerade as the API server.
+resource "vault_pki_secret_backend_role" "incus_client" {
+  backend            = vault_mount.pki_int.path
+  name               = "incus-client"
+  allowed_domains    = var.incus_client_domains
+  allow_bare_domains = true
+  allow_subdomains   = false
+  server_flag        = false
+  client_flag        = true
+  key_type           = "ec"
+  key_bits           = 256
+  ttl                = 60 * 60 * 24 * 7  # 7d issued (short — re-minted per apply)
   max_ttl            = 60 * 60 * 24 * 30 # 30d ceiling
 }
 
@@ -159,6 +183,26 @@ resource "vault_pki_secret_backend_role" "user" {
   max_ttl            = 60 * 60 * 24 * 7 # 7d ceiling
 }
 
+# tenant-internal — SERVER cert for an e4e-prod tenant microVM's inner Traefik (ADR
+# 0008). The edge re-encrypts to the VM over this leaf, validated against the fleet CA
+# root. Deliberately SCOPED to the private `.vm` namespace only (allow_subdomains over
+# "vm") plus IP SANs (the edge dials the VM by its bridge IP) — so a tenant AppRole can
+# mint ONLY its own internal cert, never a cert for a fleet domain (which the broad
+# `host` role would allow). Least privilege for a semi-trusted tenant.
+resource "vault_pki_secret_backend_role" "tenant_internal" {
+  backend          = vault_mount.pki_int.path
+  name             = "tenant-internal"
+  allowed_domains  = ["vm"]
+  allow_subdomains = true # <tenant>.vm
+  allow_ip_sans    = true # the bridge IP the edge connects to
+  server_flag      = true
+  client_flag      = false
+  key_type         = "ec"
+  key_bits         = 256
+  ttl              = 60 * 60 * 24 * 30 # 30d issued
+  max_ttl          = 60 * 60 * 24 * 90 # 90d ceiling
+}
+
 # ── Policy grants folded into the krg-deploy / krg-prod policies (main.tf) ─────
 # Kept here so all PKI specifics live in one file; interpolated via
 # ${local.pki_*_rules} into the heredocs in main.tf (same module, same pattern
@@ -170,6 +214,11 @@ locals {
   pki_krg_deploy_rules = <<-EOT
     # Issue Temporal mTLS CLIENT certs (terraform/temporal provider auth) — see pki.tf
     path "pki_int/issue/temporal-client" {
+      capabilities = ["create", "update"]
+    }
+
+    # Issue Incus API mTLS CLIENT certs (terraform/incus provider auth) — see pki.tf
+    path "pki_int/issue/incus-client" {
       capabilities = ["create", "update"]
     }
   EOT
@@ -198,6 +247,27 @@ locals {
   pki_xrdp_host_rules = <<-EOT
     # Issue the host's `host` SERVER cert (XRDP TLS; vault-agent renders it) — see pki.tf
     path "pki_int/issue/host" {
+      capabilities = ["create", "update"]
+    }
+  EOT
+
+  # e4e-prod tenant VMs: each tenant's in-VM vault-agent mints ONLY its own
+  # `tenant-internal` SERVER cert (`<tenant>.vm`, scoped above) — the inner Traefik
+  # serves it and the edge re-encrypts to it. Folded into each tenant policy (tenants.tf).
+  pki_tenant_internal_rules = <<-EOT
+    # Issue the tenant VM's internal-TLS cert (vault-agent renders it) — see pki.tf
+    path "pki_int/issue/tenant-internal" {
+      capabilities = ["create", "update"]
+    }
+  EOT
+
+  # Folded into a tenant policy only when that tenant set temporal = true (tenants.tf).
+  # The temporal-client role's allowed CNs include "<name>-worker" (below), so the
+  # in-VM vault-agent mints exactly that worker cert (ADR 0023 §2). Shared role — see
+  # ADR 0023 §3 / #434 on the (deferred) per-namespace authorizer.
+  pki_temporal_client_rules = <<-EOT
+    # Issue this tenant's Temporal client cert (vault-agent renders it) — see pki.tf
+    path "pki_int/issue/temporal-client" {
       capabilities = ["create", "update"]
     }
   EOT
