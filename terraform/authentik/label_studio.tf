@@ -120,9 +120,19 @@ resource "authentik_application" "label_studio" {
   # Studio in docs/label-studio-sso.md.
   slug              = "label-studio"
   protocol_provider = authentik_provider_saml.label_studio.id
-  # Dashboard tile → Label Studio's login, which SP-initiates SSO back to us (the
-  # reliable SaaS flow). New tab since it leaves the lab domain.
-  meta_launch_url  = "https://app.heartex.com/"
+  # Dashboard tile → Authentik's IdP-initiated SSO endpoint, which POSTs an
+  # unsolicited assertion straight to Label Studio's ACS. Clicking the tile logs
+  # you in; it does NOT dump you on app.heartex.com's login page to re-enter the
+  # company domain. New tab since the flow ends off the lab domain.
+  #
+  # This is the flow the earlier attempt tried and abandoned: the ACS 500'd on the
+  # unsolicited assertion, and IdP-initiated was blamed. That verdict is suspect —
+  # the metadata URL Label Studio was pointed at 302-redirected and its loader
+  # never followed it (fixed 2026-07-09), so it had no IdP signing cert to verify
+  # ANY assertion against. Retry it here; if the 500 returns, the next knob is
+  # sign_response (many SPs require the Response, not just the Assertion, signed
+  # on an unsolicited POST), then default_relay_state on the provider.
+  meta_launch_url  = "${var.authentik_url}/application/saml/label-studio/init/"
   meta_description = "Data annotation / labeling (Label Studio Enterprise)"
   meta_icon        = "krg-icons/label-studio.svg"
   group            = "KRG Services"

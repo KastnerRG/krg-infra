@@ -104,12 +104,21 @@ order:
    `Label Studio *`-prefixed AD groups (`spec/krg-ad/groups.yml`) if finer-grained
    roles are needed. Names must match byte-for-byte.
 5. **Test both flows.** SP-initiated, from Label Studio's own **Login URL** /
-   "Log in with SSO" (company domain `krg.ucsd.edu`) — this is the flow the first
-   attempt never got to exercise cleanly. Then the Authentik dashboard tile
-   (IdP-initiated, → `app.heartex.com`) — the first attempt's diagnosis suspects
-   Heartex doesn't support unsolicited IdP-initiated assertions, so don't be
-   surprised if only SP-initiated works; confirm with support if it 500s again.
-   Confirm a fresh AD user lands with the expected role from their group mapping.
+   "Log in with SSO" (company domain `krg.ucsd.edu`) — **confirmed working
+   2026-07-09**, once the metadata URL was switched to the direct one. Then the
+   Authentik dashboard tile, which is now **IdP-initiated** (→
+   `…/application/saml/label-studio/init/`, an unsolicited assertion POSTed
+   straight to the ACS). Confirm a fresh AD user lands with the expected role from
+   their group mapping.
+
+   If the tile 500s: the first attempt blamed unsolicited assertions, but it was
+   testing against a metadata URL Label Studio could never load (so it had no IdP
+   signing cert). Retry order before blaming Heartex — flip `sign_response = true`
+   on the provider (many SPs require the Response signed, not just the Assertion,
+   on an unsolicited POST), then set `default_relay_state`. Only then is
+   "Heartex doesn't support IdP-initiated" a supported conclusion; SP-initiated
+   still works regardless, so revert `meta_launch_url` to `https://app.heartex.com/`
+   to leave a working tile while you ask support.
 
 ## Notes / gotchas
 
@@ -117,10 +126,14 @@ order:
   name (`request.user.name`); they only populate the Label Studio display name —
   identity is the email. If the AD sync ever lands `givenName`/`sn` into
   `request.user.attributes`, switch those two expressions to read them.
-- **IdP-initiated** login may not be supported by Label Studio (see Status above).
-  The dashboard tile sends users to `app.heartex.com`, letting Label Studio
-  SP-initiate the flow back to us — the more reliable path. To try true
-  IdP-initiated later, set `default_relay_state` on the provider.
+- **IdP-initiated** is what the dashboard tile now does (`meta_launch_url` →
+  `…/application/saml/label-studio/init/`), so clicking the tile signs you in
+  rather than dropping you on Heartex's login page to retype the company domain.
+  Note the tradeoff: an unsolicited assertion carries no `InResponseTo`, so it
+  can't be bound to a request the SP issued — the usual login-CSRF caveat for
+  IdP-initiated SAML. Acceptable here (Label Studio is a labeling tool, not a
+  control plane); don't copy this to Fleet, which is the device control plane.
+  SP-initiated keeps working either way — it's the fallback if the tile regresses.
 - **App icon** is Label Studio's "Heidi the opossum" mascot mark, vendored from the
   HumanSignal repo (dashboard-icons has no entry) — see the media-icons README.
 - **Deprovisioning:** SAML SSO authenticates but doesn't deprovision — removing a
