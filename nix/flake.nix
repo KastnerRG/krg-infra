@@ -156,6 +156,8 @@
           && builtins.isString "${sys.config.systemd.services.example-selfupdate.script}"
           # a tenant that requested temporal gets the temporal-client render (ADR 0023 §2)
           && builtins.any (r: r.destination == "/run/tenant/temporal/tls.crt") sys.config.krg.vaultAgent.renders
+          # committed config MUST apply on converge (issue #458): the tenant stack force-recreates
+          && nixpkgs.lib.hasInfix "--force-recreate" sys.config.systemd.services.example.serviceConfig.ExecStart
           # the nightly auto-upgrade targets the TENANT's own flake, not krg-infra's (else it
           # fails silently every night — no system patches). #<name> = the tenant's own config.
           && sys.config.system.autoUpgrade.flake == "github:UCSD-E4E/example#example";

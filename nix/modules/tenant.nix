@@ -137,6 +137,12 @@ in {
         composeFiles = [(toString t.interior.compose)];
         after = ["openbao-agent.service"];
         requires = ["openbao-agent.service"];
+        # repo-owns-deploy REQUIRES committed config to apply on converge. Without this,
+        # `up -d` silently ignores bind-mounted config changes (the project-dir symlink
+        # retargets but compose sees no spec change) — issue #458, which crash-looped a
+        # fishsense worker on stale config. On for every tenant; the trade-off (whole-stack
+        # recreate on a changed converge) is documented on the option in compose-stack.nix.
+        recreateOnConfigChange = true;
       };
 
       # In-instance vault-agent mints the tenant's OWN tenant-internal server cert

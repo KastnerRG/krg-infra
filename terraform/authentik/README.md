@@ -25,6 +25,11 @@ This target manages what lives *inside* Authentik:
 - Custom **flows**: self-service password recovery (`recovery.tf`) and
   passwordless **passkey** login (`passkey.tf`) — see below. Both are wired into
   the live login screen via `brand.tf` (the one fleet-wide stage it manages).
+- **SSO session lifetime** (`session.tf`): 12h base session + a "Remember me"
+  checkbox extending opted-in sessions to ~30 days. This is the real "stay logged
+  in" knob (the `session_duration` on the default login flow's `user_login`
+  stage) — distinct from the per-app `refresh_token_validity` in
+  `applications_*.tf`. Requires a one-time `tofu import`, documented in the file.
 
 ## Passkey (passwordless WebAuthn) login — `passkey.tf`
 
