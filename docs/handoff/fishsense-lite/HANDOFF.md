@@ -289,3 +289,18 @@ KV-v2 reads use the `secret/data/<path>` form with fields under `.Data.data`. Th
 **fail-closed** (`errorOnMissingKey` defaults true): a missing secret takes the stack down rather
 than starting with an empty value — so seed everything first. A rotated secret re-renders on the
 next deploy and restarts the stack.
+
+## 10. Staying patched (system packages / kernel)
+
+Your **container images** carry your app; the **system** underneath (kernel, `bash`, `openssl`,
+…) is NixOS, updated by moving your `nixpkgs` pin — not `apt`. Full model + commands:
+[`docs/tenant-updates.md`](../../tenant-updates.md). The short version:
+
+- **Applying is automatic.** The nightly `system.autoUpgrade` now builds from **your** flake
+  (`github:UCSD-E4E/fishsense-lite#fishsense`) — merged changes roll out at 04:00 (or immediately
+  via an `auto-deploy/**` push). A new **kernel** needs a reboot (`incus restart`); user-space
+  doesn't.
+- **Advancing the pin is yours.** Nothing moves `nixpkgs` for you. Merge the weekly
+  `update-flake` PR (the template ships `.github/workflows/update-flake.yml`, which runs
+  `nix flake update krg-infra`), or run it yourself. **Skip it and the instance freezes on old,
+  unpatched packages.**

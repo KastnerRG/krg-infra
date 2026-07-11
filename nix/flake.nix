@@ -155,7 +155,10 @@
           && sys.config.services.github-runners.example.url == "https://github.com/UCSD-E4E/example"
           && builtins.isString "${sys.config.systemd.services.example-selfupdate.script}"
           # a tenant that requested temporal gets the temporal-client render (ADR 0023 §2)
-          && builtins.any (r: r.destination == "/run/tenant/temporal/tls.crt") sys.config.krg.vaultAgent.renders;
+          && builtins.any (r: r.destination == "/run/tenant/temporal/tls.crt") sys.config.krg.vaultAgent.renders
+          # the nightly auto-upgrade targets the TENANT's own flake, not krg-infra's (else it
+          # fails silently every night — no system patches). #<name> = the tenant's own config.
+          && sys.config.system.autoUpgrade.flake == "github:UCSD-E4E/example#example";
       in
         assert shapeOk;
         assert moduleOk;

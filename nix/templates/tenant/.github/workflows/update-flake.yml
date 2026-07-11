@@ -1,0 +1,42 @@
+# Weekly bump of the krg-infra pin → pulls new nixpkgs (kernel/bash/openssl/CVE fixes)
+# via `nixpkgs.follows = "krg-infra/nixpkgs"`. Opens a PR; merge it and the next converge
+# (nightly system.autoUpgrade, or an auto-deploy/** push) rolls the new packages out.
+# This is "Axis B" in docs/tenant-updates.md — the ONE update step the platform can't do
+# for you. Runs on GitHub-hosted runners (NOT your in-slot self-hosted runner).
+name: Update krg-infra pin
+
+on:
+  schedule:
+    - cron: "0 8 * * 1" # Mondays 08:00 UTC
+  workflow_dispatch: {} # let a maintainer trigger an out-of-cycle bump
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      # Bump only the krg-infra input; nixpkgs moves with it via the follows.
+      - name: nix flake update krg-infra
+        run: nix flake update krg-infra
+
+      - name: Open update PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: auto/flake-update
+          title: "chore(flake): bump krg-infra pin (system package updates)"
+          commit-message: "chore(flake): bump krg-infra pin"
+          body: |
+            Automated weekly bump of the `krg-infra` input → pulls new `nixpkgs`
+            (kernel, bash, openssl, CVE fixes) via the `follows`.
+
+            Merge to roll out on the next converge (nightly `system.autoUpgrade`, or push an
+            `auto-deploy/**` branch to apply immediately). Reboot for a new kernel to take
+            effect. See `docs/tenant-updates.md`.
+          delete-branch: true
