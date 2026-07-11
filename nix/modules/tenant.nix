@@ -58,10 +58,26 @@ in {
     {
       # Baseline + identity. Hostname follows the tenant slug; the network is DHCP from
       # the Incus NAT (the platform assigns the RFC1918 address — see terraform/incus).
-      krg.base = {
-        enable = true;
-        isVM = true; # Incus VM-type instance (the untrusted-tenant isolation tier)
-      };
+      krg.base =
+        {
+          enable = true;
+          isVM = true; # Incus VM-type instance (the untrusted-tenant isolation tier)
+
+          # The nightly system.autoUpgrade (bash/kernel/security patches) must build from the
+          # TENANT's OWN flake, not krg-infra's. base.nix defaults flakeUrl to krg-infra, whose
+          # flake has NO `#<tenant>` attribute — so a tenant's nightly upgrade would fail SILENTLY
+          # every night (the stale-generation trap base.nix warns about: no patches until someone
+          # notices). Only auto-upgrade when the tenant ships a repo-owns-deploy flake to pull
+          # from; a repo-less tenant has no self-flake, so leave it off there.
+          autoUpgrade = mkDefault hasRepo;
+        }
+        // optionalAttrs hasRepo {
+          # `github:<owner>/<repo>` (the tenant flake is at the repo ROOT) → the nightly builds
+          # `…#${hostName}` = `…#${t.name}`, the tenant's own nixosConfiguration. NOTE: this makes
+          # the upgrade TARGET valid and rolls out merged changes nightly, but advancing nixpkgs
+          # itself still needs the tenant to bump its krg-infra pin — see docs/tenant-updates.md.
+          flakeUrl = mkDefault "github:${t.interior.repo}";
+        };
       krg.adminAccount = mkDefault "krg-admin"; # admins own boundary + break-glass recovery
       krg.docker.enable = true;
 

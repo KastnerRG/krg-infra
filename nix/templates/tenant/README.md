@@ -33,3 +33,10 @@ nix flake init -t github:KastnerRG/krg-infra?dir=nix#tenant
 `inputs.krg-infra.url` is pinned to a rev — that rev **is** your stable contract. Bump it
 deliberately to pick up deploy-contract changes; the surface is narrow and secret-free, so
 the bump never drags in lab host configs.
+
+## Staying patched
+
+Bumping that pin is also how your **system** packages (kernel, `bash`, `openssl`, …) update —
+NixOS rebuilds atomically from the new `nixpkgs`, there's no `apt`. `.github/workflows/update-flake.yml`
+opens a weekly PR that does the bump for you; merge it and the nightly auto-upgrade rolls it out
+(reboot for a new kernel). Full model: [`docs/tenant-updates.md`](../../../docs/tenant-updates.md).
