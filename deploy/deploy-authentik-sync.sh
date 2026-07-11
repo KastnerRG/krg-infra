@@ -49,6 +49,8 @@ target="$(target_for "$host")"
 echo "::group::Authentik LDAP sync (${slug}) on ${host} (${target})"
 # krg-admin is not in the docker group; it has passwordless sudo (see lib.sh) — go
 # through sudo so the exec works without widening the break-glass account.
+# container/slug are in-script constants; expanding them client-side is intended (SC2029).
+# shellcheck disable=SC2029
 if ssh "${sshopts[@]}" "$target" "sudo docker exec ${container} ak ldap_sync ${slug}"; then
   echo "OK: Authentik LDAP sync completed — new AD groups are now visible to tofu."
 else
