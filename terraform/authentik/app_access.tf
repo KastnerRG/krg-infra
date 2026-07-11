@@ -30,6 +30,11 @@ locals {
     fishsense_orchestrator = ["FishSense"]
     e4e_nas                = ["E4E-NAS"] # NAS SSO tile visible only to NAS-access group (matches the nix krg.nasMount sudo gate)
     garage_ui              = ["E4E-NAS"] # Garage (S3-on-NAS) admin/data browser — same NAS-access gate as e4e_nas
+    # Both groups exist in KRG.LOCAL (spec/krg-ad/groups.yml) and must be synced into
+    # Authentik before apply. The label_studio_groups SAML mapping (label_studio.tf) also
+    # emits both names to Label Studio, where they map to org roles — this binding is the
+    # outer tile/launch gate; that attribute is the in-app role gate (complementary).
+    label_studio = ["Label Studio Users", "Label Studio Admins"]
   }
 
   # app local-name → its application UUID (the policy-binding target).
@@ -44,6 +49,7 @@ locals {
     fishsense_orchestrator = authentik_application.fishsense_orchestrator.uuid
     e4e_nas                = authentik_application.e4e_nas.uuid
     garage_ui              = authentik_application.garage_ui.uuid
+    label_studio           = authentik_application.label_studio.uuid
   }
 
   # Flatten to one binding per (app, group) pair, keyed "app:group".

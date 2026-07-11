@@ -51,6 +51,7 @@ groups:
   - { name: "proxmox-admins", description: "Administrator on the Proxmox VE web UI + apps via the PVE Active Directory realm (ansible pve_ad). Direct members only." }
   - { name: "Temporal Users", description: "May mint a lab-PKI client cert to reach the Temporal mTLS frontend (OpenBao ldap auth -> pki_int/issue/user; terraform/openbao var.pki_ad_group_roles)" }
   - { name: "Label Studio Admins", description: "Administrator in the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio emits this name in the Groups attribute; map it to the Administrator org role in Label Studio Organization -> Roles)" }
+  - { name: "Label Studio Users", description: "Standard (non-admin) access to the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio's Groups mapping emits every name starting with 'Label Studio', so no tofu change is needed; map this name to a standard org role in Label Studio Organization -> Roles)" }
   - { name: "MLflow Users", description: "Standard (non-admin) access to mlflow.krg.ucsd.edu via Authentik OIDC; emitted in the groups claim and matched by the mlflow-oidc-auth OIDC_GROUP_NAME (nix/docker-compose/krg-prod/compose.mlflow.yml)" }
   - { name: "MLflow Admins", description: "Administrator access in MLflow via Authentik OIDC; matched by the mlflow-oidc-auth OIDC_ADMIN_GROUP_NAME" }
 
