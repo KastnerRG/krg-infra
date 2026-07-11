@@ -53,6 +53,27 @@ with lib; let
         type = types.listOf types.str;
         default = [];
       };
+
+      # Force `docker compose up -d` to recreate containers on converge (issue #458).
+      # `up -d` only recreates a service when the compose SPEC changes — but committed
+      # config is bind-mounted via a stable project-dir path (a tmpfiles `L+` symlink
+      # whose store-path target changes on every edit). Compose can't see that the
+      # symlink retargeted, so a container keeps its OLD config until force-recreated —
+      # silent config drift on every deploy (it crash-looped a fishsense worker on stale
+      # config while the fix "deployed" with no effect).
+      #
+      # With this on, ExecStart adds `--force-recreate`. The stack unit only re-runs when
+      # its content-addressed source tree actually changed, so this recreates on a real
+      # change — not on every converge. TRADE-OFF: it recreates the WHOLE stack (a brief
+      # restart of every service, stateful ones included), not just the service whose
+      # config changed. Off by default (krg-prod's big stateful stack keeps its behavior);
+      # nixosModules.tenant turns it ON — repo-owns-deploy tenants MUST have committed
+      # config apply on deploy. Per-service granularity = migrate that config to a
+      # top-level compose `configs:` (compose content-hashes those), then this is moot.
+      recreateOnConfigChange = mkOption {
+        type = types.bool;
+        default = false;
+      };
     };
   };
 
@@ -118,7 +139,7 @@ in {
             Type = "oneshot";
             RemainAfterExit = true;
             WorkingDirectory = stack.workingDirectory;
-            ExecStart = "${composeCmd stack} up -d --remove-orphans";
+            ExecStart = "${composeCmd stack} up -d --remove-orphans${optionalString stack.recreateOnConfigChange " --force-recreate"}";
             ExecStop = "${composeCmd stack} down";
             ExecReload = pkgs.writeShellScript "reload-${name}" ''
               ${composeCmd stack} pull

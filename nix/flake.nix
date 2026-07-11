@@ -155,7 +155,9 @@
           && sys.config.services.github-runners.example.url == "https://github.com/UCSD-E4E/example"
           && builtins.isString "${sys.config.systemd.services.example-selfupdate.script}"
           # a tenant that requested temporal gets the temporal-client render (ADR 0023 §2)
-          && builtins.any (r: r.destination == "/run/tenant/temporal/tls.crt") sys.config.krg.vaultAgent.renders;
+          && builtins.any (r: r.destination == "/run/tenant/temporal/tls.crt") sys.config.krg.vaultAgent.renders
+          # committed config MUST apply on converge (issue #458): the tenant stack force-recreates
+          && nixpkgs.lib.hasInfix "--force-recreate" sys.config.systemd.services.example.serviceConfig.ExecStart;
       in
         assert shapeOk;
         assert moduleOk;
