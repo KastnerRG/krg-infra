@@ -282,6 +282,19 @@ jobs:
       - name: Phase 2.7 — publish golden template (Incus)
         run: ./deploy/incus-publish-golden.sh || echo "::warning::golden-template publish failed (non-fatal); see log"
 
+      # ── phase 2.9: sync AD → Authentik (LDAP source) ──────────────────────────
+      # Bridge the ordering gap between the Ansible krg-ad phase (creates AD groups,
+      # phase 1) and the OpenTofu authentik phase (looks them up, phase 3): a brand-
+      # new AD group reaches Authentik only via the LDAP source sync, which otherwise
+      # runs on Authentik's own multi-hour timer — so tofu's data.authentik_group
+      # lookup races it and fails "No matching groups found" (took the deploy red when
+      # the "Label Studio Users" gate landed — its AD group + tile binding in one PR).
+      # Drive a synchronous full sync now: after phase 2 rebuilt krg-prod (Authentik
+      # freshly up) and before phase 3 reads the group. Best-effort — warns but never
+      # fails; phase 3 is the authoritative gate. See deploy/deploy-authentik-sync.sh.
+      - name: Phase 2.9 — sync AD → Authentik (LDAP source)
+        run: ./deploy/deploy-authentik-sync.sh
+
       # ── phase 3: config (OpenTofu) ────────────────────────────────────────────
       # State is local on krg-deploy (ADR 0005) + encrypted with the
       # TOFU_STATE_PASSPHRASE Actions secret. Creds come from OpenBao (krg-deploy
