@@ -175,8 +175,14 @@ else
     # is reused verbatim, so re-runs never rotate. Needs create/update on
     # secret/data/e4e-nas/garage-keys/* in the krg-deploy policy (terraform/openbao)
     # — a NEW capability, so apply TOFU_TARGETS=openbao BEFORE the first deploy or
-    # the put 403s. Key names come from the spec (yq); openssl mints the id/secret
-    # in Garage's shape (GK+24hex / 64hex).
+    # the put 403s. Key names come from the spec via yq-go (mikefarah — NOT jq
+    # syntax: `.keys[].name`, no `// empty`, and it yields nothing for an absent
+    # `keys:`); openssl mints the id/secret in Garage's shape (GK+24hex / 64hex).
+    # Capture the names FIRST and fail-closed: a process-substitution `< <(yq …)`
+    # swallows yq's exit code, so a bad expression once silently produced an empty
+    # list → sync-keys then FAILed on missing creds (the 2026-07-13 red deploy).
+    key_names="$(nix run nixpkgs#yq-go -- '.keys[].name' "${REPO_ROOT}/spec/e4e-nas/garage.yml")" \
+      || { echo "FATAL: could not read garage key names from spec (yq-go)" >&2; exit 1; }
     garage_keys='{}'
     while IFS= read -r kname; do
       [[ -n "$kname" ]] || continue
@@ -191,7 +197,7 @@ else
         kd="$(jq -nc --arg a "$akid" --arg s "$asec" '{access_key_id:$a, secret_access_key:$s}')"
       fi
       garage_keys="$(jq -c --arg n "$kname" --argjson d "$kd" '. + {($n): $d}' <<<"$garage_keys")"
-    done < <(nix run nixpkgs#yq-go -- -r '.keys[]?.name // empty' "${REPO_ROOT}/spec/e4e-nas/garage.yml")
+    done <<< "$key_names"
 
     jq -n \
       --argjson g "$(jq '.data.data' <<<"$garage")" \
