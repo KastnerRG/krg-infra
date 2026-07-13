@@ -24,7 +24,7 @@ terraform {
   required_providers {
     incus = {
       source  = "lxc/incus"
-      version = "~> 0.3"
+      version = "~> 1.0"
     }
   }
   required_version = ">= 1.11.0"
@@ -41,16 +41,18 @@ provider "incus" {
   # is anchored to the fleet CA (server.ca) on krg-nat.
   accept_remote_certificate = true
 
-  # The lxc/incus provider takes the remote's host, scheme and port as SEPARATE fields —
-  # `address` must be a BARE HOST. Passing a full `https://host:port` URL here (as this
-  # once did) makes the provider fail to build an https remote and fall back to the local
-  # UNIX socket, which on krg-deploy doesn't exist → "the incus daemon doesn't appear to
-  # be started (socket path: https://krg-nat.ucsd.edu:8443)". scheme/port are explicit.
+  # The remote used when a resource doesn't name one. In lxc/incus 1.x this moved to a
+  # provider-level `default_remote` (the per-remote `default = true` of 0.x was removed
+  # when the provider config was reworked).
+  default_remote = "krg-nat"
+
+  # lxc/incus 1.x reworked the remote schema: `address` is now a FULL URL
+  # (`scheme://host:port`) — the separate `scheme`/`port` fields of the 0.x provider are
+  # gone. This INVERTS the old 0.x gotcha (where a full URL silently fell back to the unix
+  # socket and passing a bare host was required); on 1.x the bare host is what fails, so we
+  # build the URL from the mirrored host+port vars here. See variables.tf.
   remote {
     name    = "krg-nat"
-    scheme  = "https"
-    address = var.incus_api_address
-    port    = var.incus_api_port
-    default = true
+    address = "https://${var.incus_api_address}:${var.incus_api_port}"
   }
 }
