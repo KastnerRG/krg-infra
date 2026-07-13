@@ -1,6 +1,6 @@
 services:
   outline:
-    image: docker.getoutline.com/outlinewiki/outline:1.8.1
+    image: docker.getoutline.com/outlinewiki/outline:1.9.0
     # docker.env = non-secret config (URL, OIDC endpoints, SMTP, REDIS_URL, file
     # storage). outline.env = secret-bearing, rendered from OpenBao to /run by
     # krg.vaultAgent (DATABASE_URL, SECRET_KEY, UTILS_SECRET, OIDC_CLIENT_SECRET) — so

@@ -1,6 +1,6 @@
 services:
   grafana:
-    image: grafana/grafana-enterprise:13.0
+    image: grafana/grafana-enterprise:13.1.0
     container_name: grafana
     user: '1000'
     restart: unless-stopped
@@ -42,7 +42,7 @@ services:
   # promtail positions file). Runs as root so it can read the systemd journal +
   # root-owned files under /var/log; data dir is the only writable mount.
   alloy:
-    image: grafana/alloy:v1.17.0
+    image: grafana/alloy:v1.17.1
     volumes:
       - /var/log:/var/log:ro
       - /etc/machine-id:/etc/machine-id:ro
@@ -57,7 +57,7 @@ services:
       - loki_network
 
   prometheus:
-    image: prom/prometheus:v3.12.0
+    image: prom/prometheus:v3.13.1
     # NOTE: deliberately NO `user:` line. The prom/prometheus image already runs as
     # its built-in `nobody` (uid 65534), and the ./prometheus-data bind mount is
     # owned 65534 to match (see nix/hosts/krg-prod/default.nix tmpfiles). Pinning

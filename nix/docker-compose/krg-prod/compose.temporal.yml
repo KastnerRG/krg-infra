@@ -50,7 +50,7 @@ services:
     networks: [temporal_internal]
 
   temporal:
-    image: temporalio/auto-setup:1.29.7
+    image: temporalio/auto-setup:1.31.2
     container_name: temporal
     restart: unless-stopped
     environment:
@@ -107,7 +107,7 @@ services:
       - prometheus_network
 
   temporal-ui:
-    image: temporalio/ui:2.51.0
+    image: temporalio/ui:2.52.0
     container_name: temporal-ui
     restart: unless-stopped
     environment:
