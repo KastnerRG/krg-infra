@@ -186,6 +186,13 @@
     {{ '--check' if ansible_check_mode else '' }}
   environment:
     GARAGE_ADMIN_TOKEN: "{{ garage_admin_token }}"
+    # Per-key {access_key_id, secret_access_key} the control node provisioned in
+    # OpenBao (secret/e4e-nas/garage-keys/<name>) and passed as the
+    # garage_key_credentials extra_var — env, NOT argv (same posture as the admin
+    # token). apply_garage.py IMPORTS keys from these + renders <name>.env from
+    # them, so OpenBao is the durable source of truth (#75). deploy-ansible.sh
+    # builds it; an operator local run supplies it in the -e @… secrets file.
+    GARAGE_KEY_CREDENTIALS_JSON: "{{ garage_key_credentials | to_json }}"
   register: keys_apply
   changed_when: "'CHANGED' in keys_apply.stdout or 'WOULD-CHANGE' in keys_apply.stdout"
   failed_when: "keys_apply.rc != 0 or 'FAIL' in keys_apply.stdout"

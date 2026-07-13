@@ -20,7 +20,7 @@ module; DSM py3.8) — five subcommands, run in load-bearing order by
 | `deploy`           | Render `docker-compose.yml` next to the toml; `docker compose up -d` when the compose file or container image drifts, or when the container isn't running. | Diff vs current compose file + `docker inspect` |
 | `layout`           | Single-node `garage layout assign -z <zone> -c <cap> <NODE_ID>` + `garage layout apply --version 1`. | No-op if a layout (version ≥ 1) already exists — anti-rebalance guard |
 | `sync-buckets`     | Create-if-missing buckets from `spec.buckets` via the Garage v2 Admin API (`ListBuckets`/`CreateBucket` over loopback, not CLI text). | Diff of desired names vs existing `globalAliases` |
-| `sync-keys`        | Create-if-missing access keys from `spec.keys` (Admin API `ListKeys`/`CreateKey`) + converge each key's per-bucket read/write/owner grants (`GetBucketInfo`/`AllowBucketKey`/`DenyBucketKey`). Persists each new key's one-time secret to `<keys_dir>/<name>.env` (root:root 0400). | Diff of desired vs current keys + per-bucket permission flags; **FAILs** (does not silently regenerate) if a key exists remotely but its local secret file is missing |
+| `sync-keys`        | Import-if-missing access keys from `spec.keys` using the credentials the control node provisioned in OpenBao (Admin API `ListKeys`/`ImportKey`) + converge each key's per-bucket read/write/owner grants (`GetBucketInfo`/`AllowBucketKey`/`DenyBucketKey`). Renders `<keys_dir>/<name>.env` (root:root 0400) from OpenBao truth. | Diff of desired vs current keys + `.env` content + per-bucket permission flags; a lost `keys_dir` is **restored** (no rotation). **FAILs** only if a key on Garage has a different id than OpenBao holds (out-of-band rotation) |
 | `render-ui-config` | Atomic-write `/volume1/docker/garage-ui/config.yaml` (root:root 0400) from spec.ui + GARAGE_ADMIN_TOKEN + GARAGE_UI_OIDC_CLIENT_SECRET env vars. Generates + persists `jwt-key.pem` (Ed25519) once so login sessions survive restarts. Skipped when `ui:` is absent from spec. | sha256 + `jwt-key.pem` existence |
 | `deploy-ui`        | Render `garage-ui/docker-compose.yml`; `docker compose up -d`. Same drift logic as `deploy`. | Diff vs current compose file + `docker inspect` |
 
@@ -44,8 +44,8 @@ plan is to swap to the official `Deuxfleurs/garage-webadmin` once it leaves
 
 ## Secrets
 
-Four secrets reach the role as ansible extra_vars (NOT in spec, NOT in git),
-all carried via the task's `environment:` directive — never argv, never
+Secrets reach the role as ansible extra_vars (NOT in spec, NOT in git), all
+carried via the task's `environment:` directive — never argv, never
 `ps`-visible. **OpenBao (`krg-vault`) is the source of truth**; the operator
 file is only a local fallback for interactive runs.
 
@@ -55,6 +55,16 @@ file is only a local fallback for interactive runs.
 | `garage_admin_token`           | `secret/e4e-nas/garage` (`admin_token`)           | operator-seeded (pre-existing value)              | 32 |
 | `garage_metrics_token`         | `secret/e4e-nas/garage` (`metrics_token`)         | operator-seeded (pre-existing value)              | 32 |
 | `garage_ui_oidc_client_secret` | `secret/e4e-nas/garage-ui-oidc` (`client_secret`) | **OpenTofu** (`terraform/authentik`, Authentik mints it) | 16 |
+| `garage_key_credentials`       | `secret/e4e-nas/garage-keys/<name>` (`access_key_id`, `secret_access_key`) | **the control node** (`deploy/deploy-ansible.sh`, create-once) | — |
+
+`garage_key_credentials` is a map `{"<name>": {"access_key_id", "secret_access_key"}}`
+covering every key in `spec.keys`. The control node **create-once-provisions** each
+under `secret/e4e-nas/garage-keys/<name>` and `sync-keys` **imports** the key from it
+(`ImportKey`, not `CreateKey`) — so OpenBao, not the box, is the durable copy and a
+wiped `keys_dir` is recoverable ([#75](https://github.com/KastnerRG/krg-infra/issues/75)).
+This needs the **create/update** capability on `secret/data/e4e-nas/garage-keys/*` in the
+krg-deploy policy — a NEW grant, so apply `TOFU_TARGETS=openbao` **before** the first
+consuming deploy or the `bao kv put` 403s.
 
 Why generate one but seed three: the OIDC client secret is **brand new**, so
 OpenTofu creates it as part of registering the Authentik provider
@@ -88,6 +98,10 @@ values** instead. The role fails fast if any is missing; render tasks are
   garage_admin_token: "<hex>"
   garage_metrics_token: "<hex>"
   garage_ui_oidc_client_secret: "<bao kv get … garage-ui-oidc>"
+  # Per-key import creds. On the prod path deploy-ansible.sh provisions these in
+  # OpenBao and passes them automatically; supply them here only for a local run:
+  garage_key_credentials:
+    labels-fishsense-lite: { access_key_id: "GK…", secret_access_key: "…" }
   ```
 
 ### One-time seed of the existing cluster tokens
@@ -186,37 +200,36 @@ does **not** delete it: retiring a bucket is a manual one-time decommission
 
 ### Key secrets
 
-Garage shows an access key's `secretAccessKey` **exactly once**, in the
-`CreateKey` response — there's no API to retrieve it again later.
-`sync-keys` persists it immediately to `<keys_dir>/<name>.env` (root:root
-0400, e.g. `/volume1/docker/garage/keys/labels-fishsense-lite.env`):
+**OpenBao is the durable source of truth**, not the box. The control node
+(`deploy/deploy-ansible.sh`) create-once-provisions each key's
+`{access_key_id, secret_access_key}` under `secret/e4e-nas/garage-keys/<name>`
+and hands it to `sync-keys`, which **imports** the key with those credentials
+(`ImportKey`) rather than letting Garage generate a one-time secret it alone
+holds. `<keys_dir>/<name>.env` (root:root 0400, e.g.
+`/volume1/docker/garage/keys/labels-fishsense-lite.env`) is a render of that
+OpenBao value:
 
 ```
 ACCESS_KEY_ID=GK...
 SECRET_ACCESS_KEY=...
 ```
 
-If a key already exists on Garage but that file is missing locally (lost,
-never seeded, wrong box), `sync-keys` **FAILs** rather than silently doing
-nothing (the key is unusable — no consumer can ever get the secret half) or
-silently recreating it (which would rotate credentials out from under
-whatever already has the old ones, e.g. Label Studio's Cloud Storage config).
-Recover by restoring the `.env` from backup/OpenBao, or deliberately rotate:
-delete the key on Garage (`docker exec garage /garage key delete <id>`),
-re-run the role, and update the consumer with the new credentials.
+Because the secret lives in OpenBao, a **lost `keys_dir` is restored with no
+rotation** on the next run — the `.env` is just re-rendered. (This is what
+made the old `CreateKey`-persists-locally design brittle: a wiped `keys_dir`
+was unrecoverable and hard-failed every deploy — the [#75] driver.) `sync-keys`
+only **FAILs** on genuine divergence: a key present on Garage whose id differs
+from the one OpenBao holds (someone rotated it out-of-band). Reconcile by
+deleting the key on Garage (`docker exec garage /garage key delete <id>`) and
+re-running — it re-imports the OpenBao credential — or update OpenBao to the
+live id.
 
-Seed the generated secret into OpenBao for durability (mirrors the
-"One-time seed" pattern above — nothing reads it back automatically today,
-this is audit/recovery only):
+To **rotate** a key deliberately (e.g. a leak): delete it on Garage AND delete
+its OpenBao entry (`bao kv metadata delete secret/e4e-nas/garage-keys/<name>`),
+then re-run — the control node mints a fresh credential and imports it. Update
+the consumer (e.g. Label Studio's Cloud Storage config) with the new values.
 
-```bash
-ssh e4e-admin@e4e-nas.ucsd.edu 'sudo cat /volume1/docker/garage/keys/labels-fishsense-lite.env'
-bao kv put secret/e4e-nas/garage-keys/labels-fishsense-lite \
-  access_key_id="<ACCESS_KEY_ID>" secret_access_key="<SECRET_ACCESS_KEY>"
-```
-
-(No OpenBao policy change needed — krg-deploy's existing `secret/data/e4e-nas/*`
-read grant already covers this path.)
+[#75]: https://github.com/KastnerRG/krg-infra/issues/75
 
 ### Connecting an external consumer (e.g. Label Studio)
 

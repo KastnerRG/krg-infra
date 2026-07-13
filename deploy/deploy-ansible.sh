@@ -164,11 +164,41 @@ else
     ad_join="";     ad_join="$(bao kv get -field=join_password   secret/e4e-nas/ad             2>/dev/null || true)"
     hb='{}'; if _hb="$(bao kv get -format=json secret/e4e-nas/hyper-backup 2>/dev/null)"; then hb="$(jq '.data.data' <<<"$_hb")"; fi
 
+    # --- Provision/reconcile per-key Garage credentials in OpenBao (#75) ------
+    # OpenBao is the DURABLE source of truth for each Garage access key's secret:
+    # a lost NAS keys_dir must be recoverable (that drift took the fleet deploy
+    # red on 2026-07-11/13). For every key in the spec, read-or-CREATE-ONCE its
+    # {access_key_id, secret_access_key} under secret/e4e-nas/garage-keys/<name>
+    # and hand the map to sync-keys as the garage_key_credentials extra_var —
+    # apply_garage.py then IMPORTS the key from it (never CreateKey, which loses
+    # the secret) and renders <name>.env from it. Create-once: an existing entry
+    # is reused verbatim, so re-runs never rotate. Needs create/update on
+    # secret/data/e4e-nas/garage-keys/* in the krg-deploy policy (terraform/openbao)
+    # — a NEW capability, so apply TOFU_TARGETS=openbao BEFORE the first deploy or
+    # the put 403s. Key names come from the spec (yq); openssl mints the id/secret
+    # in Garage's shape (GK+24hex / 64hex).
+    garage_keys='{}'
+    while IFS= read -r kname; do
+      [[ -n "$kname" ]] || continue
+      if kc="$(bao kv get -format=json "secret/e4e-nas/garage-keys/$kname" 2>/dev/null)"; then
+        kd="$(jq -c '.data.data' <<<"$kc")"
+      else
+        akid="GK$(openssl rand -hex 12)"
+        asec="$(openssl rand -hex 32)"
+        bao kv put "secret/e4e-nas/garage-keys/$kname" \
+              access_key_id="$akid" secret_access_key="$asec" >/dev/null \
+          || { echo "FATAL: cannot write secret/e4e-nas/garage-keys/$kname — krg-deploy needs create/update on secret/data/e4e-nas/garage-keys/* (apply TOFU_TARGETS=openbao first)" >&2; exit 1; }
+        kd="$(jq -nc --arg a "$akid" --arg s "$asec" '{access_key_id:$a, secret_access_key:$s}')"
+      fi
+      garage_keys="$(jq -c --arg n "$kname" --argjson d "$kd" '. + {($n): $d}' <<<"$garage_keys")"
+    done < <(nix run nixpkgs#yq-go -- -r '.keys[]?.name // empty' "${REPO_ROOT}/spec/e4e-nas/garage.yml")
+
     jq -n \
       --argjson g "$(jq '.data.data' <<<"$garage")" \
       --argjson u "$(jq '.data.data' <<<"$users")" \
       --argjson s "$(jq '.data.data' <<<"$snmp")" \
       --argjson hb "$hb" \
+      --argjson gk "$garage_keys" \
       --arg oidc "$oidc_secret" \
       --arg dsmsso "$dsm_sso" \
       --arg adjoin "$ad_join" \
@@ -176,6 +206,7 @@ else
         garage_rpc_secret:       $g.rpc_secret,
         garage_admin_token:      $g.admin_token,
         garage_metrics_token:    $g.metrics_token,
+        garage_key_credentials:  $gk,
         synology_user_passwords: $u,
         nas_admin_password:      $u["e4e-admin"],
         snmp_v3_auth_password:   $s.auth_password,
