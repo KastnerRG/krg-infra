@@ -24,14 +24,15 @@ Subcommands:
                 admin API is reachable on loopback since the container uses
                 network_mode: host). Idempotent: existing global aliases are
                 left alone.
-  sync-keys     Create-if-missing access keys from spec.keys + converge each
-                key's per-bucket read/write/owner grants via AllowBucketKey /
-                DenyBucketKey. A key's secret is only ever returned by Garage
-                at CreateKey time, so it's persisted immediately to
-                <keys-dir>/<name>.env (root:root 0400) — see "Key secrets"
-                below. Refuses (FAIL) to proceed if a key already exists on
-                Garage but its local secret file is missing: that's
-                unrecoverable drift, not something to paper over silently.
+  sync-keys     Import-if-missing access keys from spec.keys, using the
+                credentials the control node provisioned in OpenBao and passed
+                via GARAGE_KEY_CREDENTIALS_JSON (ImportKey, not CreateKey), then
+                converge each key's per-bucket read/write/owner grants via
+                AllowBucketKey / DenyBucketKey. OpenBao is the source of truth;
+                <keys-dir>/<name>.env (root:root 0400) is a render of it, so a
+                lost keys_dir is restored with no rotation. FAILs only on real
+                divergence: a key present on Garage whose id differs from the
+                one OpenBao holds (out-of-band rotation).
 
 Why direct `docker compose` and not DSM's SYNO.Docker.Project: the synology-
 community/synology terraform provider hit three bugs against that API
@@ -49,11 +50,10 @@ of the rendered config that lets operators confirm meaningful change).
 
 Key secrets: sync-keys' CHANGED/WOULD-CHANGE payloads never carry a
 secretAccessKey either — same posture as render-config/render-ui-config.
-Unlike those, though, there's no "known input secret" here to compare
-against: Garage GENERATES the secret at CreateKey time and never shows it
-again. It's written straight to <keys-dir>/<name>.env (root:root 0400) as
-the only durable copy on this box; operators seed it into OpenBao by hand
-(see roles/synology_garage/README.md "One-time seed").
+The credential itself comes IN from OpenBao (control node → env var, never
+argv), so OpenBao — not the box — is the durable copy; the <name>.env is a
+0400 render of it that ImportKey/restore rewrites. See
+roles/synology_garage/README.md "Secrets".
 """
 
 import argparse
@@ -649,8 +649,10 @@ def do_sync_buckets(a):
 
 
 # ---------------------------------------------------------------------------
-# sync-keys — create-if-missing keys + converge per-bucket read/write/owner
-# grants (Admin API: ListKeys/CreateKey/GetBucketInfo/AllowBucketKey/DenyBucketKey)
+# sync-keys — import-if-missing keys from OpenBao-provisioned credentials +
+# converge per-bucket read/write/owner grants (Admin API: ListKeys / ImportKey /
+# GetBucketInfo / AllowBucketKey / DenyBucketKey). OpenBao is source of truth; the
+# <name>.env on the NAS is a render of it, so a lost keys_dir is recoverable (#75).
 # ---------------------------------------------------------------------------
 def do_sync_keys(a):
     admin_token = os.environ.get("GARAGE_ADMIN_TOKEN", "")
@@ -662,6 +664,42 @@ def do_sync_keys(a):
         desired_keys = json.loads(a.keys_json)
     except ValueError as e:
         return _fail({"reason": "invalid --keys-json", "error": str(e)})
+
+    # Per-key credentials the control node provisioned in OpenBao (secret/e4e-nas/
+    # garage-keys/<name>) and passed in via GARAGE_KEY_CREDENTIALS_JSON — env, NOT
+    # argv (same discipline as GARAGE_ADMIN_TOKEN). OpenBao is the source of truth:
+    # keys are IMPORTED with these creds rather than server-generated, and the
+    # on-NAS <name>.env is only a render of them — so a lost keys_dir is always
+    # recoverable (the old unrecoverable-drift FAIL is gone). See README "Secrets"
+    # and #75. Shape: {"<name>": {"access_key_id": "...", "secret_access_key": "..."}}.
+    creds_raw = os.environ.get("GARAGE_KEY_CREDENTIALS_JSON", "")
+    if not creds_raw:
+        return _fail(
+            {"reason": "required secret env var unset", "vars": ["GARAGE_KEY_CREDENTIALS_JSON"]}
+        )
+    try:
+        key_creds = json.loads(creds_raw)
+    except ValueError as e:
+        return _fail({"reason": "invalid GARAGE_KEY_CREDENTIALS_JSON", "error": str(e)})
+
+    # Every declared key must have a complete credential supplied. The control
+    # node create-once-provisions these, so a gap means a provisioning / policy
+    # problem upstream — fail loudly rather than import a half-key.
+    missing_cred = [
+        kspec["name"]
+        for kspec in desired_keys
+        if not (key_creds.get(kspec["name"]) or {}).get("access_key_id")
+        or not (key_creds.get(kspec["name"]) or {}).get("secret_access_key")
+    ]
+    if missing_cred:
+        return _fail(
+            {
+                "reason": "no credential supplied in GARAGE_KEY_CREDENTIALS_JSON for key(s) — "
+                "the control node must provision secret/e4e-nas/garage-keys/<name> before "
+                "sync-keys (see deploy/deploy-ansible.sh)",
+                "keys": missing_cred,
+            }
+        )
 
     try:
         for kspec in desired_keys:
@@ -715,37 +753,47 @@ def do_sync_keys(a):
     def secret_path(name):
         return os.path.join(a.keys_dir, name + ".env")
 
-    to_create = [k["name"] for k in desired_keys if k["name"] not in key_id_by_name]
+    def env_body(name):
+        c = key_creds[name]
+        return "ACCESS_KEY_ID=%s\nSECRET_ACCESS_KEY=%s\n" % (
+            c["access_key_id"],
+            c["secret_access_key"],
+        )
 
-    # Unrecoverable-drift guard: a key that exists on Garage but whose secret
-    # was never persisted (or was lost) can NEVER be re-revealed — Garage
-    # only returns secretAccessKey once, at CreateKey time. Silently doing
-    # nothing leaves an unusable key referenced by the spec; silently
-    # recreating it would silently rotate credentials out from under
-    # whatever external consumer (e.g. Label Studio) already has the old
-    # ones. Surface it as an operator decision instead, same philosophy as
-    # the layout anti-rebalance guard above.
-    existing_missing_secret = [
-        k["name"]
+    # Keys not yet on Garage are IMPORTED with the OpenBao-provisioned creds
+    # (POST /v2/ImportKey — accessKeyId/secretAccessKey in the JSON body, never
+    # argv). A key already on Garage must match the id OpenBao holds; a mismatch
+    # is out-of-band drift (someone rotated the key without updating OpenBao) and
+    # is surfaced, not silently reconciled — same philosophy as the layout
+    # anti-rebalance guard.
+    to_import = [k["name"] for k in desired_keys if k["name"] not in key_id_by_name]
+    id_mismatch = [
+        {"key": k["name"], "on_garage": key_id_by_name[k["name"]], "in_openbao": want}
         for k in desired_keys
-        if k["name"] in key_id_by_name and not os.path.exists(secret_path(k["name"]))
+        for want in [key_creds[k["name"]]["access_key_id"]]
+        if k["name"] in key_id_by_name and key_id_by_name[k["name"]] != want
     ]
-    if existing_missing_secret:
+    if id_mismatch:
         return _fail(
             {
-                "reason": "key(s) exist on Garage but their secret .env is missing locally. "
-                "Garage never re-reveals a secret access key after creation. Restore the "
-                "file (from backup/OpenBao) or delete the key on Garage "
-                "(`docker exec garage /garage key delete <id>`) and re-run to rotate — "
-                "rotating WILL break any external consumer still using the old key.",
-                "keys": existing_missing_secret,
-                "keys_dir": a.keys_dir,
+                "reason": "key(s) exist on Garage with a different access key id than OpenBao "
+                "holds — out-of-band rotation. Reconcile by deleting the key on Garage "
+                "(`docker exec garage /garage key delete <id>`) and re-running (re-imports the "
+                "OpenBao credential), or update OpenBao to match the live id.",
+                "keys": id_mismatch,
             }
         )
 
+    # The <name>.env is a render of OpenBao truth: (re)write any that is missing
+    # or stale (_read returns None for an absent file). This restores a wiped
+    # keys_dir with NO rotation — the failure mode that used to be unrecoverable.
+    env_to_write = [
+        k["name"] for k in desired_keys if _read(secret_path(k["name"])) != env_body(k["name"])
+    ]
+
     # Diff every declared key x bucket grant against the bucket's current
-    # per-key permissions. New (not-yet-created) keys have no current grants
-    # by definition, so everything desired-true becomes an "allow".
+    # per-key permissions. Not-yet-imported keys have no current grants by
+    # definition, so everything desired-true becomes an "allow".
     grant_ops = []  # (key_name, bucket_name, bucket_id, op, perms_dict)
     for kspec in desired_keys:
         name = kspec["name"]
@@ -779,9 +827,10 @@ def do_sync_keys(a):
             if to_deny:
                 grant_ops.append((name, bspec["name"], bucket_id, "deny", to_deny))
 
-    changed = bool(to_create or grant_ops)
+    changed = bool(to_import or env_to_write or grant_ops)
     payload = {
-        "keys_to_create": to_create,
+        "keys_to_import": to_import,
+        "env_to_write": env_to_write,
         "grant_ops": [
             {"key": kn, "bucket": bn, "op": op, "permissions": sorted(f for f in p)}
             for kn, bn, _bid, op, p in grant_ops
@@ -793,30 +842,29 @@ def do_sync_keys(a):
         return _emit("would-change", payload, True)
 
     os.makedirs(a.keys_dir, exist_ok=True)
-    for name in to_create:
+    for name in to_import:
+        c = key_creds[name]
         status, resp = _admin_request(
-            admin_port, admin_token, "POST", "/v2/CreateKey", body={"name": name}
+            admin_port,
+            admin_token,
+            "POST",
+            "/v2/ImportKey",
+            body={
+                "accessKeyId": c["access_key_id"],
+                "secretAccessKey": c["secret_access_key"],
+                "name": name,
+            },
         )
         if status not in (200, 201):
             return _fail(
-                {"reason": "CreateKey failed", "key": name, "status": status, "body": resp}
+                {"reason": "ImportKey failed", "key": name, "status": status, "body": resp}
             )
-        key_id = resp.get("accessKeyId")
-        secret = resp.get("secretAccessKey")
-        if not key_id or not secret:
-            return _fail(
-                {
-                    "reason": "CreateKey response missing accessKeyId/secretAccessKey — "
-                    "Garage admin API contract may have changed",
-                    "key": name,
-                }
-            )
-        _atomic_write(
-            secret_path(name),
-            "ACCESS_KEY_ID=%s\nSECRET_ACCESS_KEY=%s\n" % (key_id, secret),
-            0o400,
-        )
-        key_id_by_name[name] = key_id
+        key_id_by_name[name] = c["access_key_id"]
+
+    # Render the <name>.env cache from OpenBao truth (imported keys + any that
+    # drifted / went missing). Secrets go through the env, never the payload.
+    for name in env_to_write:
+        _atomic_write(secret_path(name), env_body(name), 0o400)
 
     for key_name, bucket_name, bucket_id, op, perms in grant_ops:
         key_id = key_id_by_name[key_name]

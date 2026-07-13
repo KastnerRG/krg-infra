@@ -167,6 +167,12 @@ buckets:
   - name: fishsense-lite # internal pipeline artifacts (rectified/intermediate outputs)
   - name: labels-fishsense-lite # label-ready images handed off to Label Studio (Heartex SaaS)
 
+# Access keys. Only the NAME + bucket grants are declared here (git is truth);
+# the actual {access_key_id, secret_access_key} is NOT in the spec. The control
+# node create-once-provisions each in OpenBao (secret/e4e-nas/garage-keys/<name>)
+# and synology_garage IMPORTS the key from it — so OpenBao is the durable source
+# of truth and a lost NAS keys_dir is recoverable. See roles/synology_garage/
+# README.md "Key secrets" (#75).
 keys:
   # Held by the fishsense-lite pipeline: read/write its own artifacts, and
   # publish label-ready images into the hand-off bucket Label Studio reads.

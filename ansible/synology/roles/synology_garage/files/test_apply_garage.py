@@ -912,22 +912,31 @@ def _sync_keys_args(**overrides):
 
 
 _LS_BUCKET = {"id": "b1", "globalAliases": ["label-studio"]}
+# The control node provisions these in OpenBao and passes them via
+# GARAGE_KEY_CREDENTIALS_JSON; sync-keys IMPORTS from them + renders <name>.env.
+_LS_CREDS = {"label-studio": {"access_key_id": "GK1", "secret_access_key": "SUPERSECRETVALUE"}}
+_LS_ENV = "ACCESS_KEY_ID=GK1\nSECRET_ACCESS_KEY=SUPERSECRETVALUE\n"
 
 
-def test_sync_keys_creates_key_persists_secret_and_grants(monkeypatch, capsys):
+def _set_creds(monkeypatch, mapping=None):
+    monkeypatch.setenv(
+        "GARAGE_KEY_CREDENTIALS_JSON", json.dumps(_LS_CREDS if mapping is None else mapping)
+    )
+
+
+def test_sync_keys_imports_key_and_grants(monkeypatch, capsys):
     monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    _set_creds(monkeypatch)
     fake, calls = _fake_admin(
         {
             ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
             ("GET", "/v2/ListKeys"): (200, []),
-            ("POST", "/v2/CreateKey"): (
-                200,
-                {"accessKeyId": "GK1", "secretAccessKey": "SUPERSECRETVALUE"},
-            ),
+            ("POST", "/v2/ImportKey"): (200, {"accessKeyId": "GK1"}),
             ("POST", "/v2/AllowBucketKey"): (200, {}),
         }
     )
     monkeypatch.setattr(m, "_admin_request", fake)
+    monkeypatch.setattr(m, "_read", lambda p: None)  # .env absent → render it
     writes = []
     monkeypatch.setattr(m, "_atomic_write", lambda p, c, mode: writes.append((p, c, mode)))
     monkeypatch.setattr(m.os, "makedirs", lambda p, exist_ok=False: None)
@@ -937,12 +946,21 @@ def test_sync_keys_creates_key_persists_secret_and_grants(monkeypatch, capsys):
     assert rc == 0 and out.startswith("CHANGED ")
     assert "SUPERSECRETVALUE" not in out  # secret never in the emitted payload
 
+    # Imported with the OpenBao-provided creds (in the JSON body, never argv).
+    import_calls = [c for c in calls if c[1] == "/v2/ImportKey"]
+    assert len(import_calls) == 1
+    assert import_calls[0][3] == {
+        "accessKeyId": "GK1",
+        "secretAccessKey": "SUPERSECRETVALUE",
+        "name": "label-studio",
+    }
+    assert not any(c[1] == "/v2/CreateKey" for c in calls)  # never server-generates
+
     assert len(writes) == 1
     path, content, mode = writes[0]
     assert path == os.path.join("/volume1/docker/garage/keys", "label-studio.env")
     assert mode == 0o400
-    assert "ACCESS_KEY_ID=GK1" in content
-    assert "SECRET_ACCESS_KEY=SUPERSECRETVALUE" in content
+    assert content == _LS_ENV
 
     allow_calls = [c for c in calls if c[1] == "/v2/AllowBucketKey"]
     assert len(allow_calls) == 1
@@ -953,8 +971,9 @@ def test_sync_keys_creates_key_persists_secret_and_grants(monkeypatch, capsys):
     }
 
 
-def test_sync_keys_no_change_when_key_and_grants_match(monkeypatch, capsys):
+def test_sync_keys_no_change_when_key_env_and_grants_match(monkeypatch, capsys):
     monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    _set_creds(monkeypatch)
     fake, calls = _fake_admin(
         {
             ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
@@ -973,12 +992,12 @@ def test_sync_keys_no_change_when_key_and_grants_match(monkeypatch, capsys):
         }
     )
     monkeypatch.setattr(m, "_admin_request", fake)
-    monkeypatch.setattr(m.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(m, "_read", lambda p: _LS_ENV)  # .env already matches OpenBao
 
     rc = m.do_sync_keys(_sync_keys_args())
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
     assert not any(
-        c[1] in ("/v2/CreateKey", "/v2/AllowBucketKey", "/v2/DenyBucketKey") for c in calls
+        c[1] in ("/v2/ImportKey", "/v2/AllowBucketKey", "/v2/DenyBucketKey") for c in calls
     )
 
 
@@ -986,6 +1005,7 @@ def test_sync_keys_revokes_extra_permission(monkeypatch, capsys):
     """Current grant has owner=True, desired is only [read, write] — the sync
     is fully declarative (Deny removes what's not listed), not additive-only."""
     monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    _set_creds(monkeypatch)
     fake, calls = _fake_admin(
         {
             ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
@@ -1005,7 +1025,7 @@ def test_sync_keys_revokes_extra_permission(monkeypatch, capsys):
         }
     )
     monkeypatch.setattr(m, "_admin_request", fake)
-    monkeypatch.setattr(m.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(m, "_read", lambda p: _LS_ENV)  # .env matches → only grants change
     monkeypatch.setattr(m.os, "makedirs", lambda p, exist_ok=False: None)
 
     rc = m.do_sync_keys(_sync_keys_args())
@@ -1021,33 +1041,98 @@ def test_sync_keys_revokes_extra_permission(monkeypatch, capsys):
     assert not any(c[1] == "/v2/AllowBucketKey" for c in calls)
 
 
-def test_sync_keys_fails_when_secret_file_missing_for_existing_key(monkeypatch, capsys):
-    """Unrecoverable-drift guard: Garage never re-reveals a secret, so a key
-    that exists remotely with no local .env must FAIL loudly, not silently
-    no-op (unusable key) or silently recreate (rotates a live consumer's
-    credentials out from under it)."""
+def test_sync_keys_restores_env_from_openbao_when_missing(monkeypatch, capsys):
+    """A key that exists on Garage (id matches OpenBao) but whose local .env is
+    gone is RESTORED from OpenBao truth — no rotation, no ImportKey. This is the
+    exact drift that used to be an unrecoverable FAIL."""
     monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    _set_creds(monkeypatch)
     fake, calls = _fake_admin(
         {
             ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
             ("GET", "/v2/ListKeys"): (200, [{"id": "GK1", "name": "label-studio"}]),
+            ("GET", "/v2/GetBucketInfo"): (
+                200,
+                {
+                    "keys": [
+                        {
+                            "accessKeyId": "GK1",
+                            "permissions": {"read": True, "write": True, "owner": False},
+                        }
+                    ]
+                },
+            ),
         }
     )
     monkeypatch.setattr(m, "_admin_request", fake)
-    monkeypatch.setattr(m.os.path, "exists", lambda p: False)
+    monkeypatch.setattr(m, "_read", lambda p: None)  # .env missing
+    writes = []
+    monkeypatch.setattr(m, "_atomic_write", lambda p, c, mode: writes.append((p, c, mode)))
+    monkeypatch.setattr(m.os, "makedirs", lambda p, exist_ok=False: None)
+
+    rc = m.do_sync_keys(_sync_keys_args())
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["keys_to_import"] == []  # key already on Garage — no rotation
+    assert payload["env_to_write"] == ["label-studio"]
+    assert not any(c[1] in ("/v2/ImportKey", "/v2/CreateKey") for c in calls)
+    assert len(writes) == 1 and writes[0][1] == _LS_ENV
+
+
+def test_sync_keys_fails_on_id_mismatch(monkeypatch, capsys):
+    """Key exists on Garage with a different id than OpenBao holds → out-of-band
+    rotation. Surface it, don't silently diverge."""
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    _set_creds(monkeypatch)  # OpenBao id = GK1
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
+            ("GET", "/v2/ListKeys"): (200, [{"id": "GKold", "name": "label-studio"}]),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_keys(_sync_keys_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["keys"] == [{"key": "label-studio", "on_garage": "GKold", "in_openbao": "GK1"}]
+    assert "out-of-band rotation" in payload["reason"]
+    # Must fail BEFORE touching GetBucketInfo / any mutation endpoint.
+    assert not any(c[1] == "/v2/GetBucketInfo" for c in calls)
+
+
+def test_sync_keys_fails_when_credential_missing_for_declared_key(monkeypatch, capsys):
+    """The control node must provision every declared key's credential in OpenBao;
+    a gap fails loudly rather than importing a half-key."""
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    _set_creds(monkeypatch, {})  # no credential for label-studio
+    fake, calls = _fake_admin({("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET])})
+    monkeypatch.setattr(m, "_admin_request", fake)
 
     rc = m.do_sync_keys(_sync_keys_args())
     out = capsys.readouterr().out
     assert rc == 1 and out.startswith("FAIL ")
     payload = json.loads(out.split(" ", 1)[1])
     assert payload["keys"] == ["label-studio"]
-    assert "never re-reveals" in payload["reason"]
-    # Must fail BEFORE touching GetBucketInfo / any mutation endpoint.
-    assert not any(c[1] == "/v2/GetBucketInfo" for c in calls)
+    assert "no credential supplied" in payload["reason"]
+    assert not calls  # fails before any admin call
+
+
+def test_sync_keys_fails_clean_when_credentials_env_unset(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    monkeypatch.delenv("GARAGE_KEY_CREDENTIALS_JSON", raising=False)
+    rc = m.do_sync_keys(_sync_keys_args())
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["vars"] == ["GARAGE_KEY_CREDENTIALS_JSON"]
 
 
 def test_sync_keys_fails_on_missing_bucket_reference(monkeypatch, capsys):
     monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    _set_creds(monkeypatch)
     fake, _calls = _fake_admin({("GET", "/v2/ListBuckets"): (200, [])})
     monkeypatch.setattr(m, "_admin_request", fake)
 
@@ -1061,6 +1146,7 @@ def test_sync_keys_fails_on_missing_bucket_reference(monkeypatch, capsys):
 
 def test_sync_keys_fails_on_duplicate_key_name(monkeypatch, capsys):
     monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    _set_creds(monkeypatch)
     fake, _calls = _fake_admin(
         {
             ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
@@ -1085,6 +1171,7 @@ def test_sync_keys_fails_on_duplicate_key_name(monkeypatch, capsys):
 
 def test_sync_keys_check_mode_no_mutation(monkeypatch, capsys):
     monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    _set_creds(monkeypatch)
     fake, calls = _fake_admin(
         {
             ("GET", "/v2/ListBuckets"): (200, [_LS_BUCKET]),
@@ -1092,6 +1179,7 @@ def test_sync_keys_check_mode_no_mutation(monkeypatch, capsys):
         }
     )
     monkeypatch.setattr(m, "_admin_request", fake)
+    monkeypatch.setattr(m, "_read", lambda p: None)
     writes = []
     monkeypatch.setattr(m, "_atomic_write", lambda p, c, mode: writes.append((p, c, mode)))
 
@@ -1099,7 +1187,8 @@ def test_sync_keys_check_mode_no_mutation(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0 and out.startswith("WOULD-CHANGE ")
     payload = json.loads(out.split(" ", 1)[1])
-    assert payload["keys_to_create"] == ["label-studio"]
+    assert payload["keys_to_import"] == ["label-studio"]
+    assert payload["env_to_write"] == ["label-studio"]
     assert payload["grant_ops"] == [
         {
             "key": "label-studio",
@@ -1109,11 +1198,12 @@ def test_sync_keys_check_mode_no_mutation(monkeypatch, capsys):
         }
     ]
     assert writes == []
-    assert not any(c[1] in ("/v2/CreateKey", "/v2/AllowBucketKey") for c in calls)
+    assert not any(c[1] in ("/v2/ImportKey", "/v2/AllowBucketKey") for c in calls)
 
 
 def test_sync_keys_rejects_invalid_permission(monkeypatch, capsys):
     monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    _set_creds(monkeypatch)
     bad_json = json.dumps(
         [
             {
