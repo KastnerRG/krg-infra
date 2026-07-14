@@ -50,7 +50,12 @@ services:
     networks: [temporal_internal]
 
   temporal:
-    image: temporalio/auto-setup:1.31.2
+    # NOTE: pin to a tag that EXISTS on Docker Hub. The `temporalio/auto-setup`
+    # IMAGE tops out at 1.29.7 — it does NOT track the Temporal *server* release
+    # (1.31.x); #465 bumped this to 1.31.2 (a server version), whose manifest is
+    # unknown, so `docker compose up -d` crash-looped and exhausted the pull limit.
+    # Bump only to tags confirmed on hub.docker.com/r/temporalio/auto-setup/tags.
+    image: temporalio/auto-setup:1.29.7
     container_name: temporal
     restart: unless-stopped
     environment:
