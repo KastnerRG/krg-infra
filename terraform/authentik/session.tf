@@ -26,12 +26,20 @@
 #      defaults are encoded here; verify they weren't changed in the UI). If `tofu plan`
 #      proposes changing anything OTHER than session_duration / remember_me_offset after
 #      import, STOP and re-capture — do not accept the diff.
-#   3. One-time import (already-existing object, not a create):
-#        tofu import authentik_stage_user_login.default_authentication <pk>
+#   3. Adoption is now DECLARATIVE — the `import` block at the bottom of this file
+#      adopts the built-in stage on first apply (pk resolved by the data source), so
+#      no manual `tofu import` is needed. If plan still shows a CREATE, the data
+#      source didn't find the stage — re-check the name.
 #
 # The existing flow_stage_binding that puts this stage in the login flow is left
 # UNMANAGED (same as brand.tf leaves the identification stage's binding unmanaged) —
 # we only need to edit the stage's fields, not rewire the flow.
+
+# Resolve the built-in stage's pk by name so the import block below can adopt it
+# without a hand-copied UUID (the pk is generated per-install).
+data "authentik_stage" "default_authentication" {
+  name = "default-authentication-login"
+}
 
 resource "authentik_stage_user_login" "default_authentication" {
   name = "default-authentication-login"
@@ -44,4 +52,15 @@ resource "authentik_stage_user_login" "default_authentication" {
   terminate_other_sessions = false
   network_binding          = "no_binding"
   geoip_binding            = "no_binding"
+}
+
+# ADOPT the built-in stage instead of CREATE-ing it — it always pre-exists, so a
+# plain apply 400s "stage with this name already exists" (deploy 29316839210).
+# The import block makes the first apply IMPORT-then-update; the data source
+# supplies its pk at plan time so nothing is hand-copied. Idempotent: once the
+# resource is in state the block is a no-op. This is the declarative form of the
+# one-time `tofu import` the header used to require (now removed from the runbook).
+import {
+  to = authentik_stage_user_login.default_authentication
+  id = data.authentik_stage.default_authentication.id
 }
