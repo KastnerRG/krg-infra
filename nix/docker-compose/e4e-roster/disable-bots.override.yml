@@ -1,0 +1,24 @@
+# krg-infra DEPLOYMENT OVERRIDE for the out-of-tree E4E-Roster-V3 compose
+# (/var/lib/krg/e4e-roster/docker-compose.yml). Merged AFTER it by
+# krg.composeStacks.e4e-roster (see nix/hosts/krg-prod/default.nix).
+#
+# WHY: the roster's GitHub + Slack integrations are pending credentials
+# (issue #74). Both bots hard-fail at startup without their tokens —
+#   github-app: "Missing required env var: GITHUB_APP_ID"
+#   slackbot:   "You must provide an appToken when socketMode is set to true"
+# — so they crash-loop, which failed e4e-roster.service and BLOCKED the whole
+# fleet deploy at Phase 2 (run 29313414519). The backend + db are unaffected.
+#
+# HOW: park both services behind a compose profile. krg.composeStacks runs
+# `docker compose up -d` with NO `--profile`, so a service carrying a profile is
+# NOT started (and its crash-looping container is removed by the stack's
+# `--remove-orphans`). Nothing `depends_on` these two, so excluding them is safe.
+#
+# RE-ENABLE once the tokens are provisioned (the real #74 work): drop this
+# override (or activate the `pending-credentials` profile) after adding
+# GITHUB_APP_ID / the Slack appToken to the roster .env.
+services:
+  github-app:
+    profiles: ["pending-credentials"]
+  slackbot:
+    profiles: ["pending-credentials"]
