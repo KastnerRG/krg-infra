@@ -43,6 +43,27 @@ in {
       default = "0.0.0.0:9323";
     };
 
+    registryMirrors = mkOption {
+      type = types.listOf types.str;
+      default = ["https://mirror.gcr.io"];
+      example = ["https://registry-cache.krg.ucsd.edu"];
+      description = ''
+        Docker daemon `registry-mirrors` — pull-through caches the daemon tries
+        BEFORE Docker Hub for `docker.io` images. Defaults to Google's public
+        mirror.gcr.io to dodge Docker Hub's anonymous pull-rate limit (100 pulls /
+        6h per IP), which took a krg-prod deploy red when a batch of image bumps
+        needed fresh pulls on one public IP (see krg-infra deploy 29298397434).
+
+        Only affects Docker Hub (`docker.io`) images — ghcr.io / quay.io / nvcr.io
+        pulls are unaffected — and the daemon falls back to Docker Hub directly on a
+        mirror miss or outage, so it's safe. Set to [] to disable.
+
+        NOTE: like every daemon.settings change here, this takes effect only on an
+        explicit `systemctl restart docker` / reboot, NOT on a plain nixos-rebuild
+        switch (restartIfChanged=false below keeps running containers alive).
+      '';
+    };
+
     defaultPublishAddress = mkOption {
       type = types.str;
       default = "127.0.0.1";
@@ -77,6 +98,9 @@ in {
       daemon.settings = mkMerge [
         {
           "metrics-addr" = cfg.metricsAddr;
+          # Pull-through mirror(s) tried before Docker Hub for docker.io images —
+          # keeps batch image bumps from tripping Docker Hub's anonymous pull limit.
+          "registry-mirrors" = cfg.registryMirrors;
           # Bind unspecified published ports to loopback by default (see option doc):
           # the in-guest firewall can't govern Docker's DNAT'd ports, so keep them
           # off the external interface unless a compose file explicitly opts in.
