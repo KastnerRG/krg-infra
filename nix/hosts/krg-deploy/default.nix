@@ -187,6 +187,11 @@
       python3
       jq
       openssl # deploy-ansible.sh mints garage-key secrets (openssl rand -hex)
+      curl # deploy/mint-runner-token.sh calls the GitHub App API (App JWT → installation
+      #       → runner registration token). Load-bearing: the runner is ProtectSystem=strict
+      #       so PATH is JUST this list — without curl the mint fails ONLY in the deploy
+      #       (Phase 3.6), not in an operator's login shell, so it looks like an App/seed
+      #       problem when it isn't ("skip runner token … could not mint").
       sshpass
       gnused
       gawk
