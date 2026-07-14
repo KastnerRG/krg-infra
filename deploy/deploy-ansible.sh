@@ -177,27 +177,41 @@ else
     # — a NEW capability, so apply TOFU_TARGETS=openbao BEFORE the first deploy or
     # the put 403s. Key names come from the spec via yq-go (mikefarah — NOT jq
     # syntax: `.keys[].name`, no `// empty`, and it yields nothing for an absent
-    # `keys:`); openssl mints the id/secret in Garage's shape (GK+24hex / 64hex).
+    # `keys:`). Randomness via python3 (a hard dep of the deploy already — see
+    # deploy-tofu.sh; the github-runner PATH has NO openssl, which silently minted
+    # empty secrets and FAILed sync-keys, run 29295226313). id/secret in Garage's
+    # shape: GK+24hex / 64hex.
     # Capture the names FIRST and fail-closed: a process-substitution `< <(yq …)`
     # swallows yq's exit code, so a bad expression once silently produced an empty
     # list → sync-keys then FAILed on missing creds (the 2026-07-13 red deploy).
     key_names="$(nix run nixpkgs#yq-go -- '.keys[].name' "${REPO_ROOT}/spec/e4e-nas/garage.yml")" \
       || { echo "FATAL: could not read garage key names from spec (yq-go)" >&2; exit 1; }
+    _randhex() { python3 -c "import secrets;print(secrets.token_hex($1))"; }
     garage_keys='{}'
+    provisioned=()
     while IFS= read -r kname; do
       [[ -n "$kname" ]] || continue
+      akid=""; asec=""
       if kc="$(bao kv get -format=json "secret/e4e-nas/garage-keys/$kname" 2>/dev/null)"; then
-        kd="$(jq -c '.data.data' <<<"$kc")"
-      else
-        akid="GK$(openssl rand -hex 12)"
-        asec="$(openssl rand -hex 32)"
+        akid="$(jq -r '.data.data.access_key_id // ""' <<<"$kc")"
+        asec="$(jq -r '.data.data.secret_access_key // ""' <<<"$kc")"
+      fi
+      # (Re)generate when absent OR malformed — self-heals a bad earlier write
+      # (e.g. the empty secrets a missing `openssl` produced). create-once
+      # otherwise: a well-formed existing credential is reused verbatim (no rotation).
+      if [[ ! "$akid" =~ ^GK[0-9a-f]{24}$ || ${#asec} -lt 32 ]]; then
+        akid="GK$(_randhex 12)"
+        asec="$(_randhex 32)"
         bao kv put "secret/e4e-nas/garage-keys/$kname" \
               access_key_id="$akid" secret_access_key="$asec" >/dev/null \
           || { echo "FATAL: cannot write secret/e4e-nas/garage-keys/$kname — krg-deploy needs create/update on secret/data/e4e-nas/garage-keys/* (apply TOFU_TARGETS=openbao first)" >&2; exit 1; }
-        kd="$(jq -nc --arg a "$akid" --arg s "$asec" '{access_key_id:$a, secret_access_key:$s}')"
       fi
-      garage_keys="$(jq -c --arg n "$kname" --argjson d "$kd" '. + {($n): $d}' <<<"$garage_keys")"
+      garage_keys="$(jq -c --arg n "$kname" --arg a "$akid" --arg s "$asec" \
+            '. + {($n): {access_key_id: $a, secret_access_key: $s}}' <<<"$garage_keys")"
+      provisioned+=("$kname")
     done <<< "$key_names"
+    # Non-secret observability: names only (already in git), never the values.
+    echo "garage: ${#provisioned[@]} key credential(s) ready in OpenBao: ${provisioned[*]:-<none>}"
 
     jq -n \
       --argjson g "$(jq '.data.data' <<<"$garage")" \
