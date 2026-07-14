@@ -83,6 +83,17 @@ you never re-type your password. This is the same renewal mechanism described in
 [Keeping long jobs authenticated](kerberos-long-jobs.md). When you fully log out,
 renewal stops (the ticket cache lives in `/tmp` and expires on its own).
 
+### What if the network to the NAS actually drops?
+
+A separate per-user timer (`krg-nas-mount-healthcheck`) checks every few minutes
+that each mount you're still using is actually responding, and transparently
+unmounts + remounts it if it's wedged — this covers a real SMB session drop (network
+blip, NAS-side idle timeout), which a valid Kerberos ticket alone does NOT fix (see
+[Troubleshooting](#troubleshooting)). You may see a brief hiccup on the next access
+after a drop while it heals (up to ~3 minutes); no action needed on your end. If you
+want it fixed immediately rather than waiting for the timer, unmount + remount
+yourself (see [Troubleshooting](#troubleshooting)).
+
 ### Why a ticket instead of a credentials file?
 
 The mount uses **`sec=krb5`** — Kerberos. Your identity comes from your login
@@ -100,6 +111,7 @@ your home directory, which we deliberately avoid.
 | `kinit` fails / *"Preauthentication failed"* | Wrong AD password, or your account is locked. Try `kinit` on its own to confirm. |
 | `mount error(13): Permission denied` | You have a ticket, but the **share's SMB permissions** on the NAS don't grant you access. This is a NAS-side ACL (`spec/e4e-nas/`), not the wrapper. |
 | `mount error(126)` / `Key has expired` on a long mount | Your ticket lapsed and wasn't renewed. Re-run `kinit`; check `klist`. `krg-krenew` should keep it alive while you're logged in. |
+| `Host is down`, then `Required key not available` (but `klist` shows a valid ticket!) | The SMB session itself dropped (network blip, NAS-side idle timeout) and left a stale, negatively-cached kernel key — not a Kerberos problem, so re-`kinit`/`krg-krenew` won't fix it. `krg-nas-mount-healthcheck` self-heals this within ~3 minutes; to fix it immediately, unmount + remount yourself: `sudo e4e-nas-mount -u <mountpoint> && sudo e4e-nas-mount <share> <mountpoint>`. |
 | `refuses: mountpoint must be under your home` | The mountpoint has to resolve to a path inside your home directory. Pick a spot under `~`. |
 | `refuses: invalid share name` | Share names are bare (`[A-Za-z0-9._-]`), no slashes or `..`. Pass just the share name. |
 

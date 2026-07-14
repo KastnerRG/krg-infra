@@ -25,10 +25,29 @@
 # storing a per-user secret); an existing ticket is reused with no prompt. After
 # that, the per-user `krg-krenew` service (`perUserRenew`, on by default) keeps the
 # renewable ticket alive in the background for the whole session — up to the
-# krb5.conf renew_lifetime (7d) — so long-lived mounts never drop and the user never
-# touches Kerberos again. All of this works because the ccache is a deterministic
-# per-uid FILE (sssd-ad-client.nix default_ccache_name), shared by kinit, krenew,
-# and the cifs.upcall reconnect path alike.
+# krb5.conf renew_lifetime (7d) — so a VALID TICKET never lapses. All of this works
+# because the ccache is a deterministic per-uid FILE (sssd-ad-client.nix
+# default_ccache_name), shared by kinit, krenew, and the cifs.upcall reconnect path.
+#
+# THIS DOES NOT FULLY COVER a dropped SMB session, though. If the connection to the
+# NAS actually drops (network blip, NAS-side idle timeout), the kernel's keyutils
+# request-key facility can end up serving a NEGATIVELY CACHED result for the cifs
+# session's key — so the next access fails immediately with ENOKEY ("Required key
+# not available") WITHOUT re-invoking cifs.upcall at all, even though the user's TGT
+# is perfectly valid (observed on kastner-ml: `ls <mountpoint>` failed with "Host is
+# down" then "Required key not available", while `klist` showed a valid ticket, and
+# `journalctl -k -t cifs.upcall` showed repeated kernel SessSetup=-126 errors with NO
+# corresponding upcall invocations — i.e. the kernel wasn't even asking Kerberos
+# again). krenew can't fix this: it only renews the ticket, not the wedged session.
+# A full unmount+remount forces a fresh key request and clears it.
+#
+# AUTO-RECONNECT (`autoReconnect`, on by default): the wrapper records each
+# successful mount (target + share) to /run/e4e-nas-mounts/<uid>.list (root-owned,
+# world-readable — only mount paths/share names, not sensitive) and forgets it again
+# on unmount. A per-user `krg-nas-mount-healthcheck` timer periodically stats each
+# still-mounted entry; if the stat hangs/errors (the wedge symptom above), it
+# self-heals by calling back into this SAME wrapper (`-u` then a fresh mount) via the
+# user's existing NOPASSWD sudo grant — no new privilege needed.
 #
 # UX:  sudo e4e-nas-mount <share> [mountpoint]   # prompts for AD password iff no ticket
 #      sudo e4e-nas-mount -u <mountpoint>
@@ -62,6 +81,13 @@ with lib; let
       server=${escapeShellArg cfg.server}
       smbver=${escapeShellArg cfg.smbVersion}
 
+      # Mount-tracking state for the auto-reconnect health-check (autoReconnect).
+      # World-readable by design: only mount paths + share names land here (not
+      # sensitive), and the per-user health-check timer reads its own uid's file as
+      # an unprivileged user, not root. `install -d` (not `mkdir -p -m`, which only
+      # applies -m to the deepest component) sets the mode unconditionally.
+      install -d -m 0755 /run/e4e-nas-mounts
+
       usage() {
         echo "usage: sudo e4e-nas-mount <share> [mountpoint]" >&2
         echo "       sudo e4e-nas-mount -u <mountpoint>" >&2
@@ -82,6 +108,17 @@ with lib; let
       : "''${SUDO_GID:?run this via sudo, not as root directly}"
       : "''${SUDO_USER:?run this via sudo, not as root directly}"
 
+      state="/run/e4e-nas-mounts/$SUDO_UID.list"
+
+      # Drop any existing line for $target from the state file (used both when
+      # forgetting an unmounted target and before re-recording a remount). Silent
+      # no-op if the file doesn't exist yet or $target isn't present (set -e-safe:
+      # grep -v returns 1 when nothing remains, which isn't an error here).
+      forget_target() {
+        { grep -vF "$target " "$state" 2>/dev/null || true; } >"$state.tmp"
+        mv -f "$state.tmp" "$state"
+      }
+
       caller_home="$(getent passwd "$SUDO_UID" | cut -d: -f6)"
       if [ -z "$caller_home" ] || [ ! -d "$caller_home" ]; then
         echo "e4e-nas-mount: cannot resolve your home directory" >&2
@@ -101,6 +138,7 @@ with lib; let
           exit 1
         fi
         umount -- "$target"
+        forget_target
         echo "unmounted $target"
         exit 0
       fi
@@ -164,8 +202,58 @@ with lib; let
       # sec=krb5 + cruid=<caller>: cifs.upcall reads the CALLER's credential cache to
       # get the service ticket — no password/secret on disk. uid/gid map file ownership
       # to the caller so the mount is theirs.
-      exec mount -t cifs "//$server/$share" "$target" \
-        -o "sec=krb5,cruid=$SUDO_UID,uid=$SUDO_UID,gid=$SUDO_GID,vers=$smbver,file_mode=0700,dir_mode=0700,nosuid,nodev"
+      #
+      # Not `exec`: the auto-reconnect health-check needs this mount recorded to
+      # $state AFTER a successful mount, so the process must return here rather than
+      # being replaced by mount(8).
+      if mount -t cifs "//$server/$share" "$target" \
+        -o "sec=krb5,cruid=$SUDO_UID,uid=$SUDO_UID,gid=$SUDO_GID,vers=$smbver,file_mode=0700,dir_mode=0700,nosuid,nodev"; then
+        forget_target
+        printf '%s %s\n' "$target" "$share" >>"$state"
+        chmod 0644 "$state"
+      else
+        exit 1
+      fi
+    '';
+  };
+
+  # Runs per-user (unprivileged) via the krg-nas-mount-healthcheck timer. Detects a
+  # wedged cifs session (see the module-header comment on negatively-cached kernel
+  # keys after a dropped SMB connection) and self-heals by calling back into the
+  # wrapper via the user's own NOPASSWD sudo grant — no new privilege needed.
+  healthCheckTool = pkgs.writeShellApplication {
+    name = "e4e-nas-mount-healthcheck";
+    runtimeInputs = [pkgs.util-linux pkgs.coreutils];
+    text = ''
+      uid="$(id -u)"
+      state="/run/e4e-nas-mounts/$uid.list"
+      [ -f "$state" ] || exit 0
+
+      while IFS=' ' read -r mp share; do
+        [ -n "''${mp:-}" ] || continue
+
+        # Not mounted anymore (the user ran -u themselves, or a reboot cleared
+        # /run) — nothing to heal. The wrapper already forgets on -u; this only
+        # catches an entry orphaned some other way.
+        if ! findmnt -no FSTYPE --target "$mp" 2>/dev/null | grep -q '^cifs$'; then
+          continue
+        fi
+
+        # A healthy mount answers a bounded stat immediately. The wedge this
+        # guards against (stale negatively-cached kernel key after an SMB session
+        # drop) makes every access fail fast with ENOKEY/EHOSTDOWN — either way,
+        # the timeout below catches it.
+        if timeout 5 ls -- "$mp" >/dev/null 2>&1; then
+          continue
+        fi
+
+        echo "e4e-nas-mount-healthcheck: $mp ($share) looks wedged — reconnecting" >&2
+        # /run/wrappers/bin/sudo: the setuid NixOS sudo wrapper, not a nix store
+        # path — same reasoning as the sudoers `command` entry below (a store path
+        # here would fail the same way once security.wrappers regenerates it).
+        /run/wrappers/bin/sudo /run/current-system/sw/bin/e4e-nas-mount -u "$mp" || true
+        /run/wrappers/bin/sudo /run/current-system/sw/bin/e4e-nas-mount "$share" "$mp" || true
+      done <"$state"
     '';
   };
 in {
@@ -202,6 +290,18 @@ in {
         user's Kerberos TGT renewed for the session (via krenew), so a krb5 mount stays
         reconnectable past the 10h ticket lifetime without the user re-authenticating.
         The wrapper obtains the initial ticket (kinit) on demand; this keeps it alive.
+      '';
+    };
+
+    autoReconnect = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Run a per-user `systemd --user` timer (`krg-nas-mount-healthcheck`) that
+        periodically checks each mount the wrapper made this session and, if it's
+        wedged (a stale negatively-cached kernel key after the SMB session actually
+        drops — see the module header comment; `perUserRenew`/krenew alone does NOT
+        cover this), transparently unmounts and remounts it via the same wrapper.
       '';
     };
   };
@@ -250,6 +350,25 @@ in {
         ExecStart = "${pkgs.kstart}/bin/krenew -K 60";
         Restart = "always";
         RestartSec = 300;
+      };
+    };
+
+    # Auto-reconnect a wedged mount (see module header: a dropped SMB session can
+    # leave a negatively-cached kernel key that krenew's ticket renewal can't clear).
+    # Runs per-user, same lifecycle as krg-krenew (starts at login, stops at logout).
+    systemd.user.services.krg-nas-mount-healthcheck = mkIf cfg.autoReconnect {
+      description = "Detect and reconnect a wedged e4e-nas cifs mount";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${healthCheckTool}/bin/e4e-nas-mount-healthcheck";
+      };
+    };
+    systemd.user.timers.krg-nas-mount-healthcheck = mkIf cfg.autoReconnect {
+      description = "Periodic health-check for e4e-nas cifs mounts";
+      wantedBy = ["timers.target"];
+      timerConfig = {
+        OnBootSec = "2min";
+        OnUnitActiveSec = "3min";
       };
     };
   };
