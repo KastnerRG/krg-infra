@@ -121,6 +121,20 @@ in {
       # One service per compose stack
       (mapAttrs (name: stack: {
           inherit (stack) description;
+          # BOUND the restart loop. `up -d` re-pulls every not-yet-present image on
+          # each run, so a stack that can't come up (e.g. a throttled registry pull)
+          # would otherwise restart forever every RestartSec and re-pull the whole
+          # batch each time — a self-inflicted runaway that exhausted Docker Hub's
+          # anonymous pull limit and took krg-prod's deploy red (deploy 29298397434).
+          # systemd's DEFAULT start-limiter (5 starts / 10s) never trips here because
+          # RestartSec (30s) spaces restarts wider than the 10s window. Widen the
+          # window so it actually gives up: at most `startLimitBurst` starts per
+          # `startLimitIntervalSec`, then the unit stays `failed` (surfaced to the
+          # operator) instead of hammering the registry. `systemctl reset-failed
+          # <stack>` (or the next deploy) clears it. A transient blip still rides out
+          # within the burst; a persistent failure stops fast.
+          startLimitIntervalSec = 3600;
+          startLimitBurst = 5;
           # `after` orders us behind network-online.target; `wants` is what actually
           # pulls that target into the boot transaction. Without the wants, systemd
           # warns ("ordered after network-online.target but doesn't depend on it")
