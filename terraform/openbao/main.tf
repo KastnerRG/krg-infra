@@ -157,16 +157,24 @@ resource "vault_policy" "krg_deploy" {
       capabilities = ["read"]
     }
 
-    # WRITE the per-key Garage access credentials. Unlike the rest of e4e-nas/*
-    # (read-only above), krg-deploy CREATE-ONCE-provisions each Garage access key's
-    # {access_key_id, secret_access_key} here (deploy/deploy-ansible.sh) so a lost
-    # NAS keys_dir is recoverable and OpenBao (not the box) is the durable source of
-    # truth (#75; apply_garage.py then ImportKeys from it). Scoped to just this
-    # subpath (least-privilege): the rest of e4e-nas stays read-only; read is already
-    # granted by the e4e-nas/* rule above. NEW capability -> needs a privileged
-    # openbao apply before the first consuming deploy, else the put 403s.
+    # READ + WRITE the per-key Garage access credentials. krg-deploy
+    # CREATE-ONCE-provisions each Garage access key's {access_key_id,
+    # secret_access_key} here (deploy/deploy-ansible.sh) so a lost NAS keys_dir is
+    # recoverable and OpenBao (not the box) is the durable source of truth (#75;
+    # apply_garage.py then ImportKeys from it).
+    #
+    # `read` MUST be listed HERE even though secret/data/e4e-nas/* grants read too:
+    # OpenBao/Vault picks the MOST SPECIFIC matching path and uses ONLY its
+    # capabilities (they are NOT unioned across different path patterns). So this
+    # longer, more-specific glob SHADOWS the broader e4e-nas/* read for these paths
+    # — without `read` here, deploy-ansible.sh's create-once `bao kv get` 403s,
+    # reads back nothing, and REGENERATES the credential every run → OpenBao's id
+    # churns and never matches the key already imported on Garage → sync-keys fails
+    # forever with "different access key id … out-of-band rotation" (the bug this
+    # fixes). Scoped to just this subpath (least-privilege). Capability change ->
+    # needs a privileged openbao apply before the next consuming deploy.
     path "secret/data/e4e-nas/garage-keys/*" {
-      capabilities = ["create", "update"]
+      capabilities = ["create", "update", "read"]
     }
 
     # Read the Grafana ADMIN password the terraform/grafana target consumes:
