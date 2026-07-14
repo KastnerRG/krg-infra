@@ -56,6 +56,13 @@ run "ansible-lint (ansible/krg-ad/)" bash -c 'cd ansible/krg-ad && nix run nixpk
 mapfile -t sh_files < <(git ls-files '*.sh')
 run "shellcheck" nix run nixpkgs#shellcheck -- "${sh_files[@]}"
 
+# --- Docker image tags (NETWORK: verify each compose image:tag exists) ------
+# The only check here that hits the network. nix build/flake check are hermetic,
+# so a nonexistent image tag passes every other gate and only fails at
+# deploy-time `docker compose up` (see scripts/check-image-tags.sh). skopeo is
+# put on PATH for the whole script (it loops over the refs internally).
+run "docker image tags exist" nix shell nixpkgs#skopeo --command "$root/scripts/check-image-tags.sh"
+
 if [ "$fail" -ne 0 ]; then
   printf '\n\033[1;31mLINT FAILED\033[0m\n'
   exit 1
