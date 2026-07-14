@@ -186,6 +186,7 @@
       openbao
       python3
       jq
+      openssl # deploy-ansible.sh mints garage-key secrets (openssl rand -hex)
       sshpass
       gnused
       gawk

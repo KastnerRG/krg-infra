@@ -177,16 +177,16 @@ else
     # — a NEW capability, so apply TOFU_TARGETS=openbao BEFORE the first deploy or
     # the put 403s. Key names come from the spec via yq-go (mikefarah — NOT jq
     # syntax: `.keys[].name`, no `// empty`, and it yields nothing for an absent
-    # `keys:`). Randomness via python3 (a hard dep of the deploy already — see
-    # deploy-tofu.sh; the github-runner PATH has NO openssl, which silently minted
-    # empty secrets and FAILed sync-keys, run 29295226313). id/secret in Garage's
-    # shape: GK+24hex / 64hex.
+    # `keys:`). Randomness via openssl (added to the github-runner's extraPackages
+    # in nix/hosts/krg-deploy/default.nix — its service PATH is isolated to that
+    # list, and openssl being absent once silently minted EMPTY secrets and FAILed
+    # sync-keys, run 29295226313). id/secret in Garage's shape: GK+24hex / 64hex.
     # Capture the names FIRST and fail-closed: a process-substitution `< <(yq …)`
     # swallows yq's exit code, so a bad expression once silently produced an empty
     # list → sync-keys then FAILed on missing creds (the 2026-07-13 red deploy).
     key_names="$(nix run nixpkgs#yq-go -- '.keys[].name' "${REPO_ROOT}/spec/e4e-nas/garage.yml")" \
       || { echo "FATAL: could not read garage key names from spec (yq-go)" >&2; exit 1; }
-    _randhex() { python3 -c "import secrets;print(secrets.token_hex($1))"; }
+    _randhex() { openssl rand -hex "$1"; }
     garage_keys='{}'
     provisioned=()
     while IFS= read -r kname; do
