@@ -75,6 +75,16 @@ resource "authentik_stage_authenticator_validate" "passwordless" {
 
 resource "authentik_stage_user_login" "passwordless" {
   name = "krg-passwordless-login"
+
+  # Session parity with the password path (session.tf's default-authentication-login):
+  # a 12h base session plus a "Stay signed in?" checkbox extending an opted-in session
+  # to ~30 days. Without these the provider defaults to session_duration = "seconds=0"
+  # (session dies when the browser closes) AND remember_me_offset = "seconds=0" (no
+  # checkbox at all), so a security-key login was strictly worse than a password login.
+  # This resource is fully ours (built by this file), so no import is needed — unlike
+  # the built-in default-authentication-login stage session.tf had to adopt.
+  session_duration   = "hours=12"
+  remember_me_offset = "days=30"
 }
 
 resource "authentik_flow_stage_binding" "passwordless_validate" {
