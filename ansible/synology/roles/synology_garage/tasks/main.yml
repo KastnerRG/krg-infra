@@ -195,9 +195,23 @@
     GARAGE_KEY_CREDENTIALS_JSON: "{{ garage_key_credentials | to_json }}"
   register: keys_apply
   changed_when: "'CHANGED' in keys_apply.stdout or 'WOULD-CHANGE' in keys_apply.stdout"
-  failed_when: "keys_apply.rc != 0 or 'FAIL' in keys_apply.stdout"
+  # Do NOT fail HERE. This task is no_log (its `environment:` carries the admin
+  # token + key creds), so a failure here shows only "censored" — which has hidden
+  # every sync-keys error behind an opaque wall. Defer the failure to the next
+  # task, which surfaces the reason. apply_garage.py's FAIL payload is secret-free
+  # by design (reason/status/Garage-error-body/key+bucket NAMES only — see its
+  # module docstring), so echoing stdout leaks nothing.
+  failed_when: false
   check_mode: false
   no_log: true
+  tags: [garage_data]
+
+- name: Surface a Garage sync-keys failure (payload is secret-free by design)
+  when: "keys_apply.rc != 0 or 'FAIL' in (keys_apply.stdout | default(''))"
+  ansible.builtin.fail:
+    msg: >-
+      garage sync-keys FAILED (rc={{ keys_apply.rc | default('?') }}):
+      {{ keys_apply.stdout | default('') }} {{ keys_apply.stderr | default('') }}
   tags: [garage_data]
 
 # --- 5. admin UI (Noooste/garage-ui) -------------------------------------------
