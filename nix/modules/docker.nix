@@ -64,6 +64,22 @@ in {
       '';
     };
 
+    pruneImagesOlderThan = mkOption {
+      type = types.str;
+      default = "168h";
+      example = "720h";
+      description = ''
+        Age filter for the weekly `docker-image-prune` timer: unused images older
+        than this are removed. Docker's `builder.gc` (daemon.settings above) only
+        trims BUILD cache — nothing reclaims *pulled* images a container no longer
+        references, so every image bump/tag left its old layers on disk forever
+        (~12 GB reclaimable on krg-prod, rootfs at 93%). This is nix.gc for the
+        Docker layer. Keeps recent images so a quick rollback still finds its image
+        locally; images referenced by a running/stopped container are never removed.
+        Empty string prunes regardless of age (no `until` filter).
+      '';
+    };
+
     defaultPublishAddress = mkOption {
       type = types.str;
       default = "127.0.0.1";
@@ -153,6 +169,28 @@ in {
     # not bounce the daemon, so it needs no override. (Belt-and-suspenders for the
     # reboot vector: the nightly autoUpgrade runs with allowReboot=false.)
     systemd.services.docker.restartIfChanged = false;
+
+    # ── Reclaim unused Docker images weekly (see krg.docker.pruneImagesOlderThan) ──
+    # `builder.gc` above only trims build cache; this prunes pulled images no
+    # container references. `-a` = all unreferenced (not just dangling); `until`
+    # keeps recent images for rollback. Running containers' images are untouched.
+    # Unlike the daemon, a prune never bounces containers, so restartIfChanged is moot.
+    systemd.services.docker-image-prune = {
+      description = "Prune unused Docker images";
+      after = ["docker.service"];
+      requires = ["docker.service"];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${pkgs.docker}/bin/docker image prune -af${optionalString (cfg.pruneImagesOlderThan != "") " --filter until=${cfg.pruneImagesOlderThan}"}";
+      };
+    };
+    systemd.timers.docker-image-prune = {
+      wantedBy = ["timers.target"];
+      timerConfig = {
+        OnCalendar = "weekly";
+        Persistent = true; # run on next boot if the machine was off at the scheduled time
+      };
+    };
 
     # Bridge the accessGroups AD groups into the local docker group (Docker daemon
     # access). The boot+timer sync engine + its fail-safe/union semantics live in the
