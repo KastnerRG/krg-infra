@@ -293,6 +293,14 @@ in {
     # SSSD supplies identity, not the home directory — create it on first login.
     security.pam.services.sshd.makeHomeDir = true;
     security.pam.services.login.makeHomeDir = true;
+    # The XRDP desktop authenticates through its OWN PAM stack (xrdp-sesman), which
+    # does NOT inherit sshd/login's pam_mkhomedir. Without this, an AD user who reaches
+    # a box straight through the Guacamole→RDP gateway (never SSH'd in first) has no
+    # NFS home; sesman then can't start Xorg (no place for .Xauthority/.xorgxrdp) and
+    # the client gets "X server could not be started". Guard the whole attr on
+    # services.xrdp.enable so we don't materialise a phantom pam service (and a stray
+    # /etc/pam.d/xrdp-sesman) on non-desktop hosts.
+    security.pam.services.xrdp-sesman = mkIf config.services.xrdp.enable {makeHomeDir = true;};
 
     # Sudo for AD admin groups (PASSWORD required — distinct from the key-only
     # break-glass admin's NOPASSWD rule in users/admin.nix). Group names with spaces

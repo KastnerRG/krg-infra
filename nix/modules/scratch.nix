@@ -47,6 +47,11 @@
 with lib; let
   cfg = config.krg.scratch;
 
+  # Captured from the TOP-LEVEL config here because the projectType submodule below
+  # rebinds `config` to the per-project config (which has no services.xrdp). Used in
+  # perUser.loginServices' default so the desktop (xrdp-sesman) login path is covered.
+  xrdpEnabled = config.services.xrdp.enable;
+
   # Hardened NFS options for the cold overflow area — identical posture to
   # modules/nfs-home.nix: _netdev+nofail so a down server never blocks boot, hard so
   # no silent loss once mounted, nconnect for throughput, bounded mount-timeout so a
@@ -295,7 +300,10 @@ with lib; let
             };
             loginServices = mkOption {
               type = types.listOf types.str;
-              default = ["sshd" "login"];
+              # Includes xrdp-sesman automatically when the desktop is on, so per-user
+              # scratch dirs are created on the RDP login path too, not just SSH/login.
+              default = ["sshd" "login"] ++ optional xrdpEnabled "xrdp-sesman";
+              defaultText = literalExpression ''["sshd" "login"] ++ optional config.services.xrdp.enable "xrdp-sesman"'';
               description = "PAM services the per-user-dir session hook is added to.";
             };
             homeLink = mkOption {
