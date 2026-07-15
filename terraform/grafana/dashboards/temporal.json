@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "Temporal server (auto-setup image) on krg-prod: namespace + workflow-outcome counts, gRPC request/error rates, frontend + persistence latency, and Go runtime. Scraped over the docker network at temporal:8000 (job=\"temporal\"). Metric names verified against the live :8000/metrics endpoint (auto-setup 1.29.7): Temporal's tally/Prometheus exporter emits BARE counter names (service_requests / service_errors / workflow_success / workflow_failed / workflow_cancel — NO _total suffix), histograms as *_bucket (service_latency / persistence_latency), and its OWN Go-runtime gauges (num_goroutines / memory_heapinuse), not the standard go_* / process_* names. Only success/failed/cancel workflow-outcome counters are emitted by this version; timeout/terminate/continued-as-new are absent.",
+  "description": "Temporal server (auto-setup image) on krg-prod: namespace + workflow-outcome counts (headline tiles follow the time picker via $__range; the outcomes table shows fixed 1h/24h/7d/30d windows), success rate, workflow duration percentiles, gRPC request/error rates, frontend + persistence latency, and Go runtime. Scraped over the docker network at temporal:8000 (job=\"temporal\"). Metric names verified against the live :8000/metrics endpoint (auto-setup 1.29.7): Temporal's tally/Prometheus exporter emits BARE counter names (service_requests / service_errors / workflow_success / workflow_failed / workflow_cancel — NO _total suffix), histograms as *_bucket (service_latency / persistence_latency), and its OWN Go-runtime gauges (num_goroutines / memory_heapinuse), not the standard go_* / process_* names. Only success/failed/cancel workflow-outcome counters are emitted by this version; timeout/terminate/continued-as-new are absent.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -188,8 +188,8 @@
     },
     {
       "type": "stat",
-      "title": "Workflows completed (1h)",
-      "description": "Successful workflow completions in the last hour, summed across namespaces.",
+      "title": "Workflows completed",
+      "description": "Successful workflow completions over the selected time range (follows the dashboard time picker, top-right). round(increase) — counts survive server restarts.",
       "datasource": {
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
@@ -217,7 +217,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 4,
         "x": 12,
         "y": 1
       },
@@ -245,18 +245,18 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum(increase(workflow_success{job=\"temporal\"}[1h]))",
+          "expr": "round(sum(increase(workflow_success{job=\"temporal\"}[$__range])))",
           "legendFormat": "completed",
-          "instant": false,
-          "range": true,
+          "instant": true,
+          "range": false,
           "refId": "A"
         }
       ]
     },
     {
       "type": "stat",
-      "title": "Workflows failed (1h)",
-      "description": "Failed workflow completions in the last hour (workflow_failed), summed across namespaces.",
+      "title": "Workflows failed",
+      "description": "Failed workflow completions (workflow_failed) over the selected time range (follows the dashboard time picker). Red when > 0.",
       "datasource": {
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
@@ -288,8 +288,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
+        "w": 4,
+        "x": 16,
         "y": 1
       },
       "id": 14,
@@ -316,10 +316,87 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum(increase(workflow_failed{job=\"temporal\"}[1h]))",
+          "expr": "round(sum(increase(workflow_failed{job=\"temporal\"}[$__range])))",
           "legendFormat": "failed",
-          "instant": false,
-          "range": true,
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Success rate",
+      "description": "success / (success + failed) over the selected time range. Shows No data when there is no completion traffic in the window (0/0), rather than a misleading 0%.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {},
+          "mappings": [],
+          "unit": "percentunit",
+          "decimals": 2,
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.95
+              },
+              {
+                "color": "green",
+                "value": 0.99
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "id": 18,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(workflow_success{job=\"temporal\"}[$__range])) / (sum(increase(workflow_success{job=\"temporal\"}[$__range])) + sum(increase(workflow_failed{job=\"temporal\"}[$__range])))",
+          "legendFormat": "success rate",
+          "instant": true,
+          "range": false,
           "refId": "A"
         }
       ]
@@ -577,6 +654,267 @@
       ]
     },
     {
+      "type": "table",
+      "title": "Workflow outcomes across time frames",
+      "description": "round(increase) counts of each terminal outcome over fixed windows (independent of the time picker). Retention is 2y, so all windows are covered. increase() is counter-reset-safe.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Outcome"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "id": 19,
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "countRows": false,
+          "reducer": [
+            "sum"
+          ],
+          "fields": ""
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "label_replace(round(sum(increase(workflow_success{job=\"temporal\"}[1h]))), \"outcome\", \"success\", \"\", \"\") or label_replace(round(sum(increase(workflow_failed{job=\"temporal\"}[1h]))), \"outcome\", \"failed\", \"\", \"\") or label_replace(round(sum(increase(workflow_cancel{job=\"temporal\"}[1h]))), \"outcome\", \"cancel\", \"\", \"\")",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "label_replace(round(sum(increase(workflow_success{job=\"temporal\"}[24h]))), \"outcome\", \"success\", \"\", \"\") or label_replace(round(sum(increase(workflow_failed{job=\"temporal\"}[24h]))), \"outcome\", \"failed\", \"\", \"\") or label_replace(round(sum(increase(workflow_cancel{job=\"temporal\"}[24h]))), \"outcome\", \"cancel\", \"\", \"\")",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "label_replace(round(sum(increase(workflow_success{job=\"temporal\"}[7d]))), \"outcome\", \"success\", \"\", \"\") or label_replace(round(sum(increase(workflow_failed{job=\"temporal\"}[7d]))), \"outcome\", \"failed\", \"\", \"\") or label_replace(round(sum(increase(workflow_cancel{job=\"temporal\"}[7d]))), \"outcome\", \"cancel\", \"\", \"\")",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "label_replace(round(sum(increase(workflow_success{job=\"temporal\"}[30d]))), \"outcome\", \"success\", \"\", \"\") or label_replace(round(sum(increase(workflow_failed{job=\"temporal\"}[30d]))), \"outcome\", \"failed\", \"\", \"\") or label_replace(round(sum(increase(workflow_cancel{job=\"temporal\"}[30d]))), \"outcome\", \"cancel\", \"\", \"\")",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "D"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "outcome": "Outcome",
+              "Value #A": "1h",
+              "Value #B": "24h",
+              "Value #C": "7d",
+              "Value #D": "30d"
+            },
+            "indexByName": {
+              "outcome": 0,
+              "Value #A": 1,
+              "Value #B": 2,
+              "Value #C": 3,
+              "Value #D": 4
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Workflow duration percentiles",
+      "description": "End-to-end workflow execution time (workflow_duration histogram). Unit assumed seconds (Temporal timer convention, same as the latency panels) — confirm against the live board. Long tails are expected for sleep/timer-heavy workflows.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.50, sum by(le)(rate(workflow_duration_bucket{job=\"temporal\"}[$__rate_interval])))",
+          "legendFormat": "p50",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by(le)(rate(workflow_duration_bucket{job=\"temporal\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "instant": false,
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by(le)(rate(workflow_duration_bucket{job=\"temporal\"}[$__rate_interval])))",
+          "legendFormat": "p99",
+          "instant": false,
+          "range": true,
+          "refId": "C"
+        }
+      ]
+    },
+    {
       "type": "row",
       "title": "gRPC",
       "collapsed": false,
@@ -584,7 +922,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 22
       },
       "id": 3,
       "panels": []
@@ -648,7 +986,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 15
+        "y": 23
       },
       "id": 4,
       "options": {
@@ -738,7 +1076,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 15
+        "y": 23
       },
       "id": 5,
       "options": {
@@ -777,7 +1115,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 31
       },
       "id": 6,
       "panels": []
@@ -841,7 +1179,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 32
       },
       "id": 7,
       "options": {
@@ -931,7 +1269,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 32
       },
       "id": 8,
       "options": {
@@ -970,7 +1308,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 40
       },
       "id": 9,
       "panels": []
@@ -1034,7 +1372,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 33
+        "y": 41
       },
       "id": 10,
       "options": {
@@ -1124,7 +1462,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 33
+        "y": 41
       },
       "id": 11,
       "options": {
