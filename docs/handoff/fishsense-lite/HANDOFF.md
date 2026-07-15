@@ -230,6 +230,39 @@ and written to **`secret/tenants/fishsense/oidc/proxy-outpost-token`** — insid
 `authentik` middleware/outpost in `compose.authentik.yml`) — same `forward_single` mode; you just run
 the outpost container yourself instead of sharing krg-prod's.
 
+### Non-interactive service access to the API (the off-prem NRP data-worker)
+
+The proxy above is fine for a browser, but your **NRP/Nautilus data-worker** has no browser to complete
+the OAuth flow — its SDK talks to the public API with **HTTP Basic**. A proxy provider *does* accept
+Basic non-interactively, but with one non-obvious rule: **the password must be an authentik *app
+password*, not the account's raw AD/Samba password.** authentik runs the Basic credential through its
+internal OAuth2 machine-to-machine flow; a raw password is invalid there, so authentik falls back to
+the interactive flow → **302**. That is exactly the failure in issue #483 — `curl -u
+svc_fishsense:<ad-password>` 302'd identically to anonymous.
+
+**Admin side (DONE — `terraform/authentik` + `spec/krg-ad`):**
+- `svc_fishsense` (the FishSense service account, a real KRG.LOCAL principal so the same identity keeps
+  its other domain-resource access) is declared in `spec/krg-ad/service-accounts.yml` with
+  `member_of: ["FishSense"]`. The `samba_ad` LDAP source syncs it — and its `FishSense` membership — into
+  authentik, so the existing `fishsense_orchestrator` app-access policy already admits it. No new access
+  policy.
+- An `app_password` token is minted on that synced user (`terraform/authentik/fishsense_data_worker.tf`)
+  and written to the tenant KV at **`secret/tenants/fishsense/oidc/data-worker-apppw`** (field
+  `app_password`).
+
+**Your side (manual — the data-worker is off our OpenBao):** NRP can't render from OpenBao, so this is a
+one-time hand-off (same interim pattern as the Temporal client cert, §6). Load the value of
+`secret/tenants/fishsense/oidc/data-worker-apppw` into the k8s Secret `fishsense-data-worker-secrets` as
+the SDK's Basic **password**; the username stays `svc_fishsense`. The AD password is **not** used here —
+it stays the credential for the account's other domain resources; only the API/proxy hop uses the
+app-password. Rotate when the admin re-mints the token (currently non-expiring).
+
+⚠ **Gated on outpost health.** The Basic path runs *through* the same internal M2M exchange as the
+interactive flow, so if the co-located outpost's OAuth integration is unhealthy (an `invalid_grant` /
+"failed to send token request" was observed 2026-07-15 — likely a stale rendered proxy-outpost-token or
+provider client secret), a *correct* app-password will still 302. Confirm the outpost logs are clean
+before concluding the credential is wrong.
+
 ## 8. Operational answers (quota / egress / subdomains / runner)
 
 - **Resource quota:** current 4 vCPU / 8 GiB / 20 GiB disk. krg-nat has **16 vCPU / 98 GiB** (ample
