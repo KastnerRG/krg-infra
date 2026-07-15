@@ -190,8 +190,11 @@ in {
           };
           loginServices = mkOption {
             type = types.listOf types.str;
-            default = ["sshd" "login"];
-            description = "PAM services the per-user/symlink session hook is added to (add `xrdp` if the desktop is enabled).";
+            # Includes xrdp-sesman automatically when the desktop is on, so IDE-server
+            # symlinks + cache-class dirs are provisioned on the RDP login path too.
+            default = ["sshd" "login"] ++ optional config.services.xrdp.enable "xrdp-sesman";
+            defaultText = literalExpression ''["sshd" "login"] ++ optional config.services.xrdp.enable "xrdp-sesman"'';
+            description = "PAM services the per-user/symlink session hook is added to.";
           };
         };
       };

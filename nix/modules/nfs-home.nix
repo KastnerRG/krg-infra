@@ -98,7 +98,12 @@ in {
 
     loginServices = mkOption {
       type = types.listOf types.str;
-      default = ["sshd" "login"];
+      # xrdp-sesman is the desktop login path (Guacamole→RDP). Include it when the
+      # desktop is enabled so the fail-closed "no login while /home is unmounted" gate
+      # covers RDP too — otherwise an RDP login while NFS is down slips past the guard
+      # and lands the user on an ephemeral home the next reboot wipes.
+      default = ["sshd" "login"] ++ optional config.services.xrdp.enable "xrdp-sesman";
+      defaultText = literalExpression ''["sshd" "login"] ++ optional config.services.xrdp.enable "xrdp-sesman"'';
       description = "PAM services the login gate (requireMountForLogin) is added to.";
     };
   };
