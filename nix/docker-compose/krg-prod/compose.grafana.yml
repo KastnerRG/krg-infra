@@ -64,10 +64,17 @@ services:
     # `user: '1000'` here (as grafana/loki do) would make nobody-owned TSDB blocks
     # unwritable → "permission denied" panic → crash loop. Leave it on the default.
     container_name: prometheus
+    # retention.size is the load-bearing cap: the TSDB shares krg-prod's 63 GB root
+    # (no dedicated volume yet), so the 700 GB size cap was meaningless — Prometheus
+    # would fill the rootfs and take every service down. 20 GB is a non-destructive
+    # interim ceiling (TSDB was ~14 GB when set) that leaves headroom on the root
+    # disk; size binds long before the 2y time cap. The real retention target (how
+    # many months we actually keep, and whether the TSDB moves to its own dataset)
+    # is tracked in the GitHub issue — do NOT treat 2y as the effective window.
     command: >
       --config.file=/etc/prometheus/prometheus.yml
       --storage.tsdb.retention.time=2y
-      --storage.tsdb.retention.size=700GB
+      --storage.tsdb.retention.size=20GB
       --storage.tsdb.wal-compression
     restart: unless-stopped
     # Reach krg-prod's OWN host node_exporter (on the host's 0.0.0.0:9100) from

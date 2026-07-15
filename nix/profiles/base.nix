@@ -299,6 +299,15 @@ in {
       options = "--delete-older-than 30d";
     };
 
+    # Cap the systemd journal so it can't creep toward filling the root disk.
+    # Journald's default ceiling is 10% of the filesystem — on krg-prod's 63 GB
+    # root that let the journal reach ~4 GB. Pin an absolute limit instead so it's
+    # predictable regardless of disk size. mkDefault so a host that needs deeper
+    # retention (e.g. a forensics box) can raise it.
+    services.journald.extraConfig = mkDefault ''
+      SystemMaxUse=1G
+    '';
+
     nixpkgs.config.allowUnfree = true;
 
     environment.systemPackages = with pkgs; [
