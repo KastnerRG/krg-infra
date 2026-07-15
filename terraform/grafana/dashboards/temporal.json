@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "Temporal server (auto-setup image) on krg-prod: gRPC request/error rates, frontend + persistence latency, and Go runtime. Scraped over the docker network at temporal:8000 (job=\"temporal\"). NOTE: confirm the exact metric names against the live :8000/metrics endpoint — they vary slightly by Temporal version; this targets the 1.2x series families service_requests_total / service_errors_total / service_latency_bucket / persistence_latency_bucket.",
+  "description": "Temporal server (auto-setup image) on krg-prod: namespace + workflow-outcome counts, gRPC request/error rates, frontend + persistence latency, and Go runtime. Scraped over the docker network at temporal:8000 (job=\"temporal\"). Metric names verified against the live :8000/metrics endpoint (auto-setup 1.29.7): Temporal's tally/Prometheus exporter emits BARE counter names (service_requests / service_errors / workflow_success / workflow_failed / workflow_cancel — NO _total suffix), histograms as *_bucket (service_latency / persistence_latency), and its OWN Go-runtime gauges (num_goroutines / memory_heapinuse), not the standard go_* / process_* names. Only success/failed/cancel workflow-outcome counters are emitted by this version; timeout/terminate/continued-as-new are absent.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -121,6 +121,462 @@
       ]
     },
     {
+      "type": "stat",
+      "title": "Namespaces",
+      "description": "Distinct namespaces observed in server metrics (proxy — Temporal has no direct namespace-count gauge).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {},
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "count(count by(namespace)(service_requests{job=\"temporal\"}))",
+          "legendFormat": "namespaces",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Workflows completed (1h)",
+      "description": "Successful workflow completions in the last hour, summed across namespaces.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {},
+          "mappings": [],
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "id": 13,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(workflow_success{job=\"temporal\"}[1h]))",
+          "legendFormat": "completed",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Workflows failed (1h)",
+      "description": "Failed workflow completions in the last hour (workflow_failed), summed across namespaces.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {},
+          "mappings": [],
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "id": 14,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(workflow_failed{job=\"temporal\"}[1h]))",
+          "legendFormat": "failed",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Workflows",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 15,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Workflow completions per hour by outcome",
+      "description": "Per-hour rate of terminal workflow outcomes (rate over $__rate_interval scaled to /hr).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(workflow_success{job=\"temporal\"}[$__rate_interval])) * 3600",
+          "legendFormat": "success",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(workflow_failed{job=\"temporal\"}[$__rate_interval])) * 3600",
+          "legendFormat": "failed",
+          "instant": false,
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(workflow_cancel{job=\"temporal\"}[$__rate_interval])) * 3600",
+          "legendFormat": "cancel",
+          "instant": false,
+          "range": true,
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Workflow starts per hour by namespace",
+      "description": "StartWorkflowExecution frontend request rate scaled to /hr, split by namespace.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "de0e1fh1fk35sc"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "axisPlacement": "auto",
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.6",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "de0e1fh1fk35sc"
+          },
+          "editorMode": "code",
+          "expr": "sum by(namespace)(rate(service_requests{job=\"temporal\",operation=\"StartWorkflowExecution\"}[$__rate_interval])) * 3600",
+          "legendFormat": "{{namespace}}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "type": "row",
       "title": "gRPC",
       "collapsed": false,
@@ -128,7 +584,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 14
       },
       "id": 3,
       "panels": []
@@ -192,7 +648,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 6
+        "y": 15
       },
       "id": 4,
       "options": {
@@ -215,7 +671,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum by(operation)(rate(service_requests_total{job=\"temporal\"}[$__rate_interval]))",
+          "expr": "sum by(operation)(rate(service_requests{job=\"temporal\"}[$__rate_interval]))",
           "legendFormat": "{{operation}}",
           "instant": false,
           "range": true,
@@ -282,7 +738,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 6
+        "y": 15
       },
       "id": 5,
       "options": {
@@ -305,7 +761,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum by(operation)(rate(service_errors_total{job=\"temporal\"}[$__rate_interval]))",
+          "expr": "sum by(operation)(rate(service_errors{job=\"temporal\"}[$__rate_interval]))",
           "legendFormat": "{{operation}}",
           "instant": false,
           "range": true,
@@ -321,7 +777,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 23
       },
       "id": 6,
       "panels": []
@@ -385,7 +841,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 15
+        "y": 24
       },
       "id": 7,
       "options": {
@@ -475,7 +931,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 15
+        "y": 24
       },
       "id": 8,
       "options": {
@@ -514,7 +970,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 32
       },
       "id": 9,
       "panels": []
@@ -578,7 +1034,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 33
       },
       "id": 10,
       "options": {
@@ -601,7 +1057,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "go_goroutines{job=\"temporal\"}",
+          "expr": "num_goroutines{job=\"temporal\"}",
           "legendFormat": "{{instance}}",
           "instant": false,
           "range": true,
@@ -668,7 +1124,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 33
       },
       "id": 11,
       "options": {
@@ -691,7 +1147,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "go_memstats_heap_inuse_bytes{job=\"temporal\"}",
+          "expr": "memory_heapinuse{job=\"temporal\"}",
           "legendFormat": "{{instance}}",
           "instant": false,
           "range": true,
