@@ -123,7 +123,7 @@
     {
       "type": "stat",
       "title": "Namespaces",
-      "description": "Distinct namespaces observed in server metrics (proxy — Temporal has no direct namespace-count gauge).",
+      "description": "Count of USER namespaces seen in server metrics (proxy — Temporal has no namespace-count gauge). Excludes `temporal_system` (Temporal's own internal namespace) and the `_unknown_` placeholder Temporal emits for unattributed requests, both of which would otherwise inflate the count.",
       "datasource": {
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
@@ -178,7 +178,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "count(count by(namespace)(service_requests{job=\"temporal\"}))",
+          "expr": "count(count by(namespace)(service_requests{job=\"temporal\",namespace!~\"temporal_system|_unknown_\"}))",
           "legendFormat": "namespaces",
           "instant": false,
           "range": true,
@@ -245,7 +245,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "round(sum(increase(workflow_success{job=\"temporal\"}[$__range])))",
+          "expr": "round(sum(increase(workflow_success{job=\"temporal\"}[$__range])) or vector(0))",
           "legendFormat": "completed",
           "instant": true,
           "range": false,
@@ -256,7 +256,7 @@
     {
       "type": "stat",
       "title": "Workflows failed",
-      "description": "Failed workflow completions (workflow_failed) over the selected time range (follows the dashboard time picker). Red when > 0.",
+      "description": "Failed workflow completions (workflow_failed) over the selected time range (follows the dashboard time picker). Red when > 0. `or vector(0)` is load-bearing: workflow_failed has NO series until the first-ever failure, and sum() over a non-existent metric returns an EMPTY vector (not 0) — without it this tile reads 'No data' instead of a healthy 0.",
       "datasource": {
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
@@ -316,7 +316,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "round(sum(increase(workflow_failed{job=\"temporal\"}[$__range])))",
+          "expr": "round(sum(increase(workflow_failed{job=\"temporal\"}[$__range])) or vector(0))",
           "legendFormat": "failed",
           "instant": true,
           "range": false,
@@ -327,7 +327,7 @@
     {
       "type": "stat",
       "title": "Success rate",
-      "description": "success / (success + failed) over the selected time range. Shows No data when there is no completion traffic in the window (0/0), rather than a misleading 0%.",
+      "description": "success / (success + failed) over the selected time range. Each term is `or vector(0)`-defaulted: workflow_failed has NO series until the first-ever failure, and PromQL arithmetic with an empty vector yields an EMPTY result — without the default this reads 'No data' even while workflows are succeeding. With zero completion traffic in the window the ratio is a true 0/0 = NaN, mapped to 'No traffic'.",
       "datasource": {
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
@@ -338,7 +338,19 @@
             "mode": "thresholds"
           },
           "custom": {},
-          "mappings": [],
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "No traffic",
+                  "color": "text",
+                  "index": 0
+                }
+              }
+            }
+          ],
           "unit": "percentunit",
           "decimals": 2,
           "min": 0,
@@ -393,7 +405,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum(increase(workflow_success{job=\"temporal\"}[$__range])) / (sum(increase(workflow_success{job=\"temporal\"}[$__range])) + sum(increase(workflow_failed{job=\"temporal\"}[$__range])))",
+          "expr": "(sum(increase(workflow_success{job=\"temporal\"}[$__range])) or vector(0)) / ((sum(increase(workflow_success{job=\"temporal\"}[$__range])) or vector(0)) + (sum(increase(workflow_failed{job=\"temporal\"}[$__range])) or vector(0)))",
           "legendFormat": "success rate",
           "instant": true,
           "range": false,
@@ -529,7 +541,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum(rate(workflow_success{job=\"temporal\"}[$__rate_interval])) * 3600",
+          "expr": "(sum(rate(workflow_success{job=\"temporal\"}[$__rate_interval])) or vector(0)) * 3600",
           "legendFormat": "success",
           "instant": false,
           "range": true,
@@ -541,7 +553,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum(rate(workflow_failed{job=\"temporal\"}[$__rate_interval])) * 3600",
+          "expr": "(sum(rate(workflow_failed{job=\"temporal\"}[$__rate_interval])) or vector(0)) * 3600",
           "legendFormat": "failed",
           "instant": false,
           "range": true,
@@ -553,7 +565,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum(rate(workflow_cancel{job=\"temporal\"}[$__rate_interval])) * 3600",
+          "expr": "(sum(rate(workflow_cancel{job=\"temporal\"}[$__rate_interval])) or vector(0)) * 3600",
           "legendFormat": "cancel",
           "instant": false,
           "range": true,
@@ -564,7 +576,7 @@
     {
       "type": "timeseries",
       "title": "Workflow starts per hour by namespace",
-      "description": "StartWorkflowExecution frontend request rate scaled to /hr, split by namespace.",
+      "description": "StartWorkflowExecution rate scaled to /hr, split by namespace. Pinned to service_name=\"history\" ON PURPOSE: Temporal emits this operation from SEVERAL services (history + internal_frontend + frontend), so summing across them counts a single logical start two or three times. history is the layer where the execution is actually created, and it is present for every namespace.",
       "datasource": {
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
@@ -645,7 +657,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "sum by(namespace)(rate(service_requests{job=\"temporal\",operation=\"StartWorkflowExecution\"}[$__rate_interval])) * 3600",
+          "expr": "sum by(namespace)(rate(service_requests{job=\"temporal\",operation=\"StartWorkflowExecution\",service_name=\"history\"}[$__rate_interval])) * 3600",
           "legendFormat": "{{namespace}}",
           "instant": false,
           "range": true,
@@ -728,7 +740,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "label_replace(round(sum(increase(workflow_success{job=\"temporal\"}[1h]))), \"outcome\", \"success\", \"\", \"\") or label_replace(round(sum(increase(workflow_failed{job=\"temporal\"}[1h]))), \"outcome\", \"failed\", \"\", \"\") or label_replace(round(sum(increase(workflow_cancel{job=\"temporal\"}[1h]))), \"outcome\", \"cancel\", \"\", \"\")",
+          "expr": "label_replace(round(sum(increase(workflow_success{job=\"temporal\"}[1h])) or vector(0)), \"outcome\", \"success\", \"\", \"\") or label_replace(round(sum(increase(workflow_failed{job=\"temporal\"}[1h])) or vector(0)), \"outcome\", \"failed\", \"\", \"\") or label_replace(round(sum(increase(workflow_cancel{job=\"temporal\"}[1h])) or vector(0)), \"outcome\", \"cancel\", \"\", \"\")",
           "format": "table",
           "instant": true,
           "range": false,
@@ -740,7 +752,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "label_replace(round(sum(increase(workflow_success{job=\"temporal\"}[24h]))), \"outcome\", \"success\", \"\", \"\") or label_replace(round(sum(increase(workflow_failed{job=\"temporal\"}[24h]))), \"outcome\", \"failed\", \"\", \"\") or label_replace(round(sum(increase(workflow_cancel{job=\"temporal\"}[24h]))), \"outcome\", \"cancel\", \"\", \"\")",
+          "expr": "label_replace(round(sum(increase(workflow_success{job=\"temporal\"}[24h])) or vector(0)), \"outcome\", \"success\", \"\", \"\") or label_replace(round(sum(increase(workflow_failed{job=\"temporal\"}[24h])) or vector(0)), \"outcome\", \"failed\", \"\", \"\") or label_replace(round(sum(increase(workflow_cancel{job=\"temporal\"}[24h])) or vector(0)), \"outcome\", \"cancel\", \"\", \"\")",
           "format": "table",
           "instant": true,
           "range": false,
@@ -752,7 +764,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "label_replace(round(sum(increase(workflow_success{job=\"temporal\"}[7d]))), \"outcome\", \"success\", \"\", \"\") or label_replace(round(sum(increase(workflow_failed{job=\"temporal\"}[7d]))), \"outcome\", \"failed\", \"\", \"\") or label_replace(round(sum(increase(workflow_cancel{job=\"temporal\"}[7d]))), \"outcome\", \"cancel\", \"\", \"\")",
+          "expr": "label_replace(round(sum(increase(workflow_success{job=\"temporal\"}[7d])) or vector(0)), \"outcome\", \"success\", \"\", \"\") or label_replace(round(sum(increase(workflow_failed{job=\"temporal\"}[7d])) or vector(0)), \"outcome\", \"failed\", \"\", \"\") or label_replace(round(sum(increase(workflow_cancel{job=\"temporal\"}[7d])) or vector(0)), \"outcome\", \"cancel\", \"\", \"\")",
           "format": "table",
           "instant": true,
           "range": false,
@@ -764,7 +776,7 @@
             "uid": "de0e1fh1fk35sc"
           },
           "editorMode": "code",
-          "expr": "label_replace(round(sum(increase(workflow_success{job=\"temporal\"}[30d]))), \"outcome\", \"success\", \"\", \"\") or label_replace(round(sum(increase(workflow_failed{job=\"temporal\"}[30d]))), \"outcome\", \"failed\", \"\", \"\") or label_replace(round(sum(increase(workflow_cancel{job=\"temporal\"}[30d]))), \"outcome\", \"cancel\", \"\", \"\")",
+          "expr": "label_replace(round(sum(increase(workflow_success{job=\"temporal\"}[30d])) or vector(0)), \"outcome\", \"success\", \"\", \"\") or label_replace(round(sum(increase(workflow_failed{job=\"temporal\"}[30d])) or vector(0)), \"outcome\", \"failed\", \"\", \"\") or label_replace(round(sum(increase(workflow_cancel{job=\"temporal\"}[30d])) or vector(0)), \"outcome\", \"cancel\", \"\", \"\")",
           "format": "table",
           "instant": true,
           "range": false,
@@ -803,7 +815,7 @@
     {
       "type": "timeseries",
       "title": "Workflow duration percentiles",
-      "description": "End-to-end workflow execution time (workflow_duration histogram). Unit assumed seconds (Temporal timer convention, same as the latency panels) — confirm against the live board. Long tails are expected for sleep/timer-heavy workflows.",
+      "description": "End-to-end workflow execution time (workflow_duration histogram). Unit is seconds — confirmed against the live endpoint (bucket boundaries are le=\"0.001\" upward). Aggregated across namespaces and workflowTypes, so long tails are expected when sleep/timer-heavy workflows are mixed with short ones.",
       "datasource": {
         "type": "prometheus",
         "uid": "de0e1fh1fk35sc"
