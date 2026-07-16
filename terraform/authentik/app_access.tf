@@ -24,8 +24,12 @@ locals {
     # groups), so any user who completes the incus OIDC flow gets FULL platform admin
     # (confirmed live). This gate is what limits that to Domain Admins — do NOT remove it
     # without a replacement authorizer. Project-scoped non-admin access is tracked in #417.
-    incus                  = ["Domain Admins"]
-    fishsense_analytics    = ["FishSense"]
+    incus = ["Domain Admins"]
+    # Superset gates in-app roles on the same three groups via its OIDC `groups`
+    # claim (AUTH_ROLES_MAPPING); a FishSense member without a role group gets no
+    # Superset role, so scope the tile/launch to exactly the role-holders. OR-ed
+    # (policy_engine_mode "any"), so membership in any one is enough.
+    fishsense_analytics    = ["fishsense-superset-admin", "fishsense-superset-editor", "fishsense-superset-viewer"]
     fishsense_oauth        = ["FishSense"]
     fishsense_orchestrator = ["FishSense"]
     e4e_nas                = ["E4E-NAS"] # NAS SSO tile visible only to NAS-access group (matches the nix krg.nasMount sudo gate)
