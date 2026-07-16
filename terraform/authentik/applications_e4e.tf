@@ -98,7 +98,13 @@ resource "authentik_provider_oauth2" "fishsense_analytics" {
   # re-synced every login). Reuse the shared `groups` scope (defined above for
   # garage_ui) so userinfo emits the user's Authentik group names (AD-synced) —
   # the fishsense-superset-{admin,editor,viewer} groups gate the Superset roles.
-  property_mappings      = concat(local.std_scopes, [authentik_property_mapping_provider_scope.groups.id])
+  property_mappings = concat(local.std_scopes, [authentik_property_mapping_provider_scope.groups.id])
+  # RS256 signing key — REQUIRED so the id_token is asymmetrically signed and the
+  # provider's jwks_uri publishes the public key. Without it Authentik falls back
+  # to HS256 (symmetric) + an empty JWKS ({}), so Superset (authlib) fails ID-token
+  # validation with "Invalid key set format" and the OIDC login loops. Same fix as
+  # garage_ui / e4e_nas. Uses Authentik's default self-signed cert.
+  signing_key            = data.authentik_certificate_key_pair.default.id
   sub_mode               = "hashed_user_id"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
