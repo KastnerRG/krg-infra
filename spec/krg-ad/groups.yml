@@ -54,6 +54,13 @@ groups:
   - { name: "Label Studio Users", description: "Standard (non-admin) access to the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio's Groups mapping emits every name starting with 'Label Studio', so no tofu change is needed; map this name to a standard org role in Label Studio Organization -> Roles)" }
   - { name: "MLflow Users", description: "Standard (non-admin) access to mlflow.krg.ucsd.edu via Authentik OIDC; emitted in the groups claim and matched by the mlflow-oidc-auth OIDC_GROUP_NAME (nix/docker-compose/krg-prod/compose.mlflow.yml)" }
   - { name: "MLflow Admins", description: "Administrator access in MLflow via Authentik OIDC; matched by the mlflow-oidc-auth OIDC_ADMIN_GROUP_NAME" }
+  # Space-FREE names on purpose: emitted verbatim in the Authentik `groups` claim
+  # (terraform/authentik fishsense_analytics provider) and mapped to Superset roles
+  # by name via Flask-AppBuilder AUTH_ROLES_MAPPING (re-synced every login), so the
+  # AD group name MUST match the Superset-side mapping key exactly.
+  - { name: "fishsense-superset-admin", description: "Admin role in FishSense Superset (analytics.fishsense.e4e.ucsd.edu) via Authentik OIDC; emitted in the groups claim and mapped to the Superset Admin role by AUTH_ROLES_MAPPING" }
+  - { name: "fishsense-superset-editor", description: "Editor role in FishSense Superset (analytics.fishsense.e4e.ucsd.edu) via Authentik OIDC; emitted in the groups claim and mapped to a Superset editor role by AUTH_ROLES_MAPPING" }
+  - { name: "fishsense-superset-viewer", description: "Viewer role in FishSense Superset (analytics.fishsense.e4e.ucsd.edu) via Authentik OIDC; emitted in the groups claim and mapped to a Superset viewer role by AUTH_ROLES_MAPPING" }
 
   # --- Lab / org groups ---
   - { name: "Kastner Research Group", description: "Kastner Research Group members; owns /scratch/krg (gid group)" }

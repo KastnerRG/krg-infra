@@ -88,12 +88,17 @@ resource "authentik_application" "garage_ui" {
 # ── FishSense Analytics (Superset) ────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "fishsense_analytics" {
-  name                   = "Provider for FishSense Analytics"
-  client_id              = "fishsense-analytics"
-  authorization_flow     = data.authentik_flow.default_authorization.id
-  invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://analytics.fishsense.e4e.ucsd.edu/oauth-authorized/authentik" }]
-  property_mappings      = local.std_scopes
+  name                  = "Provider for FishSense Analytics"
+  client_id             = "fishsense-analytics"
+  authorization_flow    = data.authentik_flow.default_authorization.id
+  invalidation_flow     = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://analytics.fishsense.e4e.ucsd.edu/oauth-authorized/authentik" }]
+  # Superset requests scope "openid email profile groups" and maps the Authentik
+  # `groups` claim to Superset roles natively (Flask-AppBuilder AUTH_ROLES_MAPPING,
+  # re-synced every login). Reuse the shared `groups` scope (defined above for
+  # garage_ui) so userinfo emits the user's Authentik group names (AD-synced) —
+  # the fishsense-superset-{admin,editor,viewer} groups gate the Superset roles.
+  property_mappings      = concat(local.std_scopes, [authentik_property_mapping_provider_scope.groups.id])
   sub_mode               = "hashed_user_id"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
