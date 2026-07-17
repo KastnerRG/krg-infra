@@ -37,6 +37,12 @@ AGENT_DIR="/var/lib/krg/openbao-agent"
 # Where the in-instance github-runner reads its registration token — MUST match the
 # tokenFile dir in nixosModules.tenant (nix/modules/tenant.nix, ADR 0022).
 RUNNER_DIR="/var/lib/krg/github-runner"
+# The github-runner module's OWN state dir (nixpkgs services/continuous-integration/
+# github-runner/service.nix: StateDirectory = "github-runner/<name>"). `.credentials` is
+# written once the runner has registered with GitHub and PERSISTS — its presence is our
+# "already registered" marker. NOTE this is NOT RUNNER_DIR above (that's just where we
+# drop the registration token); do not conflate them.
+RUNNER_STATE_DIR="/var/lib/github-runner"
 
 export VAULT_ADDR="${VAULT_ADDR:-https://krg-vault.ucsd.edu:8200}"
 role_id_file="${OPENBAO_ROLE_ID_FILE:-/var/lib/krg-admin/.secrets/openbao-role-id}"
@@ -101,6 +107,24 @@ push_one() { # <name> <project> <rid> <sid>
   return 1
 }
 
+runner_registered() { # <name> <project> — true IFF the runner already holds GitHub creds
+  local name="$1" project="$2"
+  # `.credentials` is written by the runner's own `config.sh` after a successful
+  # registration and persists across restarts. The runner name == the instance name
+  # (nixosModules.tenant does `services.github-runners.${t.name}` with `inherit (t) name`),
+  # so its StateDirectory is <RUNNER_STATE_DIR>/<name>. Under DynamicUser the real path is
+  # /var/lib/private/..., but systemd leaves the /var/lib/<dir> symlink, and `test -e`
+  # follows it — so this holds either way.
+  #
+  # FAIL-SAFE DIRECTION: true ONLY on a positive confirmation. A stopped/booting instance,
+  # a missing VM agent, or any incus error is non-zero → treated as NOT registered → the
+  # caller re-mints and pushes. That is the safe way round: a needless push costs one
+  # re-registration, while a wrongly-SKIPPED push would leave the tenant with no runner
+  # and nothing to trigger the next deploy.
+  incus exec --project "$project" "${REMOTE}:${name}" -- \
+    test -e "${RUNNER_STATE_DIR}/${name}/.credentials" >/dev/null 2>&1
+}
+
 rc=0
 for row in "${rows[@]}"; do
   name="${row%%$'\t'*}"
@@ -129,13 +153,33 @@ for row in "${rows[@]}"; do
   # repo (terraform/incus stamps user.krg_repo), broker a fresh token from the org's
   # GitHub App and push it where nixosModules.tenant's runner reads it. Best-effort like
   # secret-zero: a missing App/seed or a booting VM warns, never fails the fleet.
+  #
+  # ONLY WHEN NOT YET REGISTERED — do NOT re-push on every deploy. The github-runner
+  # module diffs the CONTENT of the token file against its saved copy
+  # (.current-token) on every start; a fresh token is different bytes, so an
+  # unconditional push means "Config has changed, removing old runner state." → the
+  # runner wipes its creds and RE-REGISTERS against the GitHub API on every single
+  # converge. That made a GitHub round-trip a hard dependency of system activation: a
+  # transient API hiccup fails the runner unit, and switch-to-configuration exits 4 on
+  # ANY failed unit — so the whole activation goes red and the runner is left DOWN,
+  # which blocks the next deploy (the runner is what picks the job up). Gating on
+  # `.credentials` keeps the token file byte-stable across deploys, so the module sees
+  # no change, never re-registers, and activation stops depending on GitHub being up.
+  # This restores the "registers ONCE and persists its own creds" contract that
+  # nix/modules/tenant.nix already documents.
+  #
+  # Unlike secret-zero above (mint-fresh-per-deploy — the agent needs a live secret-id),
+  # the registration token is a ONE-TIME bootstrap credential. Once `.credentials`
+  # exists, a stale/expired token file is harmless: the runner never reads it again.
+  # An instance that was down/booting when its ~1h token expired has no `.credentials`,
+  # so the next deploy re-mints for it — the self-healing the old code got by brute force.
   # Query the ${REMOTE}: daemon (NOT krg-deploy's local socket) with --project BEFORE the
   # positional, matching the file-push calls above — this incus rejects the interspersed
   # `<instance> --project` form with a usage error printed to STDOUT, which would otherwise
   # be captured into $repo and passed to the minter as a garbage "repo".
   repo="$(incus config get --project "$project" "${REMOTE}:${name}" user.krg_repo 2>/dev/null || true)"
   # Guard: only a real owner/repo proceeds — never feed a stray usage/error string to the minter.
-  if [[ "$repo" == */* ]]; then
+  if [[ "$repo" == */* ]] && ! runner_registered "$name" "$project"; then
     if regtok="$("${SCRIPT_DIR}/mint-runner-token.sh" "$repo" 2>/dev/null)" && [[ -n "$regtok" ]]; then
       if printf '%s' "$regtok" | incus file push --project "$project" - \
         "${REMOTE}:${name}${RUNNER_DIR}/registration-token" --create-dirs --uid 0 --gid 0 --mode 0600 2>/dev/null; then

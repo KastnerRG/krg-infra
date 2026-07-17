@@ -187,6 +187,14 @@ in {
       # Registration token pushed into the instance by krg-deploy at provision (the App
       # broker → incus file push, ADR 0022 §2/§3). The runner registers ONCE and persists
       # its own creds, so a between-deploys expiry is harmless.
+      #
+      # LOAD-BEARING, and it is the DEPLOY side that keeps this true: the upstream module
+      # diffs the CONTENT of this file against its saved `.current-token` on every start,
+      # so re-pushing a freshly-minted token each deploy makes it wipe state and
+      # re-register every converge — which puts a GitHub API round-trip on the activation
+      # path, and switch-to-configuration exits 4 on ANY failed unit. deploy/
+      # stage-tenant-secret-zero.sh therefore pushes ONLY when the runner has no
+      # `.credentials` yet. Keep that gate if you touch either side.
       tokenFile = "/var/lib/krg/github-runner/registration-token";
       workDir = "/var/lib/${runnerUser}/work";
     in {
