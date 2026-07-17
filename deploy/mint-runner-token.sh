@@ -6,6 +6,19 @@
 # Usage: mint-runner-token.sh <owner>/<repo>
 #   e.g. mint-runner-token.sh UCSD-E4E/fishsense-lite
 #
+#        mint-runner-token.sh --is-registered <owner>/<repo> <runner-name>
+#   Asks GitHub whether <runner-name> is registered on the repo. Mints NOTHING and
+#   prints no token. ONLY exit 0 means "registered" — every non-zero (absent, API
+#   error, auth/OpenBao failure, bad usage) means "not registered OR undetermined",
+#   and callers MUST re-mint on all of them. That is the safe direction: a needless
+#   token push costs one re-registration, while a wrongly skipped one leaves a tenant
+#   with no runner and nothing to trigger the next deploy. Reuses the same App-JWT →
+#   installation-token flow below; listing runners needs Administration:read, which the
+#   Administration:write already required for registration tokens implies — no new App
+#   permission. Exists because file-presence on the box is NOT proof of registration:
+#   a runner deleted server-side leaves `.credentials` behind, and the module then sees
+#   no config change and never re-registers.
+#
 # Reads secret/krg-deploy/github-app/<owner> = { app_id, installation_id, private_key }
 # (seed it per docs/tenant-runner-bringup.md §4). Flow: App JWT (RS256, <=10 min) →
 # installation access token (1h) → runner registration token (~1h). The App private
@@ -17,7 +30,17 @@
 set -euo pipefail
 umask 077
 
-repo="${1:?usage: mint-runner-token.sh <owner>/<repo>}"
+mode="token"
+if [[ "${1:-}" == "--is-registered" ]]; then
+  mode="check"
+  shift
+fi
+repo="${1:?usage: mint-runner-token.sh [--is-registered] <owner>/<repo> [runner-name]}"
+runner_name="${2:-}"
+if [[ "$mode" == "check" && -z "$runner_name" ]]; then
+  echo "usage: mint-runner-token.sh --is-registered <owner>/<repo> <runner-name>" >&2
+  exit 2 # undetermined, never "registered"
+fi
 owner="${repo%%/*}"
 
 export VAULT_ADDR="${VAULT_ADDR:-https://krg-vault.ucsd.edu:8200}"
@@ -56,6 +79,23 @@ itok="$(gh_api -H "Authorization: Bearer ${jwt}" -X POST \
   "https://api.github.com/app/installations/${install_id}/access_tokens" | jq -r '.token')" \
   || { echo "ERROR: could not mint installation token (check app_id/installation_id/key + App install)" >&2; exit 1; }
 [[ -n "$itok" && "$itok" != "null" ]] || { echo "ERROR: empty installation token" >&2; exit 1; }
+
+# --is-registered: ask GitHub, mint nothing, and stop here.
+if [[ "$mode" == "check" ]]; then
+  # A runner is "registered" iff it is LISTED — its creds are then valid. `status`
+  # (online/offline) is deliberately NOT part of the test: a box that is merely powered
+  # off still holds working creds and must not be re-tokened.
+  runners="$(gh_api -H "Authorization: token ${itok}" \
+    "https://api.github.com/repos/${repo}/actions/runners?per_page=100")" \
+    || { echo "ERROR: could not list runners for ${repo} — treating as NOT registered" >&2; exit 2; }
+  if status="$(jq -er --arg n "$runner_name" \
+    '.runners[]? | select(.name == $n) | .status' <<<"$runners")"; then
+    echo "runner '${runner_name}' is registered at ${repo} (status=${status})" >&2
+    exit 0
+  fi
+  echo "runner '${runner_name}' is NOT registered at ${repo}" >&2
+  exit 1
+fi
 
 reg="$(gh_api -H "Authorization: token ${itok}" -X POST \
   "https://api.github.com/repos/${repo}/actions/runners/registration-token")" \

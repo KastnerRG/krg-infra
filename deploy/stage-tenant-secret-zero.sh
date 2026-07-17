@@ -107,8 +107,8 @@ push_one() { # <name> <project> <rid> <sid>
   return 1
 }
 
-runner_registered() { # <name> <project> — true IFF the runner already holds GitHub creds
-  local name="$1" project="$2"
+runner_registered() { # <name> <project> <repo> — true IFF the runner holds VALID GitHub creds
+  local name="$1" project="$2" repo="$3"
   # `.credentials` is written by the runner's own `config.sh` after a successful
   # registration and persists across restarts. The runner name == the instance name
   # (nixosModules.tenant does `services.github-runners.${t.name}` with `inherit (t) name`),
@@ -122,7 +122,15 @@ runner_registered() { # <name> <project> — true IFF the runner already holds G
   # re-registration, while a wrongly-SKIPPED push would leave the tenant with no runner
   # and nothing to trigger the next deploy.
   incus exec --project "$project" "${REMOTE}:${name}" -- \
-    test -e "${RUNNER_STATE_DIR}/${name}/.credentials" >/dev/null 2>&1
+    test -e "${RUNNER_STATE_DIR}/${name}/.credentials" >/dev/null 2>&1 || return 1
+
+  # ...AND the creds must actually still be good. File presence alone is NOT proof: if the
+  # runner is deleted server-side (or its creds invalidated) the file stays behind, so a
+  # presence-only gate would push nothing, the module would see no config change, and the
+  # runner would fail forever on stale creds with nothing to re-mint — a hole the old
+  # mint-every-deploy behaviour covered by brute force. Ask GitHub instead. Any non-zero
+  # (absent, API error, auth failure) → not registered → re-mint, same safe direction.
+  "${SCRIPT_DIR}/mint-runner-token.sh" --is-registered "$repo" "$name" >/dev/null 2>&1
 }
 
 rc=0
@@ -179,7 +187,7 @@ for row in "${rows[@]}"; do
   # be captured into $repo and passed to the minter as a garbage "repo".
   repo="$(incus config get --project "$project" "${REMOTE}:${name}" user.krg_repo 2>/dev/null || true)"
   # Guard: only a real owner/repo proceeds — never feed a stray usage/error string to the minter.
-  if [[ "$repo" == */* ]] && ! runner_registered "$name" "$project"; then
+  if [[ "$repo" == */* ]] && ! runner_registered "$name" "$project" "$repo"; then
     if regtok="$("${SCRIPT_DIR}/mint-runner-token.sh" "$repo" 2>/dev/null)" && [[ -n "$regtok" ]]; then
       if printf '%s' "$regtok" | incus file push --project "$project" - \
         "${REMOTE}:${name}${RUNNER_DIR}/registration-token" --create-dirs --uid 0 --gid 0 --mode 0600 2>/dev/null; then
