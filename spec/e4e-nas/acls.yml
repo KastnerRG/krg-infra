@@ -40,7 +40,67 @@ defaults:
   # apply once with --tags acls-recursive post-AD-join, leave on (idempotent).
   apply_recursive: false           # flip to true post-AD-join, then run with the tag
 
-acls: [] # populated from the capture + dead-SID translation, post-AD-join
+# Populated from the capture + dead-SID translation, post-AD-join. Only the FishSense
+# shares are done so far; every other share is still un-ported (absent here = untouched
+# by the role, since it only reconciles shares listed below).
+#
+# GROUPS-ONLY (decision 2026-07-16): the per-user ACEs in the capture are deliberately
+# NOT carried over. The old rows named ~12 individuals directly (t.yang, dmathews,
+# s.aryal, shperry, z.lawrence, j.he, k.han, tzhang, a.panthi, r.rai, n.hui_ro,
+# a.budhathoki, s.shrestha) plus service/machine principals (fs_services, kastner-ml,
+# junkyard.service, label_studio, minio, e4e_maestro, j.kumagai, nthui_test). Access is
+# via groups now: those humans get access by being put in FishSense-NAS (roster owns
+# human membership — ADR 0010), not by a named ACE here.
+#
+# Dropping those per-user ACEs revokes nothing: as of 2026-07-16 NOBODY has access to
+# these shares yet (this is bring-up, not a migration of live access — the capture is
+# PRE-reset state). So this is a greenfield grant, and apply order is not load-bearing.
+# The individuals above regain access by being added to FishSense-NAS, whenever roster
+# gets to it. Re-read this note before REusing these rows as a pattern on a share that
+# does have live users — there the revocation would be real.
+#
+# Ordering is still worth knowing (benign): if synology_acls somehow runs before
+# ansible/krg-ad creates the groups, the grants name principals DSM can't resolve. Not
+# verified whether DSM errors (-> the script reports FAIL on the non-zero rc) or drops
+# the entry; either way it is re-runnable and costs nothing once the groups exist.
+#
+# SERVICE ACCOUNTS ARE A KNOWN GAP: the capture's NA (deny) ACEs — junkyard.service,
+# label_studio, minio, e4e_maestro — are dropped along with the other per-user grants.
+# Deny-by-omission is equivalent here ONLY because none of those principals is in any
+# group granted below; re-verify that before applying, and if any service account needs
+# real access, add it to spec/krg-ad/service-accounts.yml and grant it explicitly.
+acls:
+  # RW: FishSense-NAS <- @fishsense + @KRG-UCSD-EDU\FishSense NAS (collapsed; agreed on
+  # every share). E4E-NAS-Admins <- @KRG-UCSD-EDU\Engineers for Exploration NAS Admins.
+  # `administrators` is listed explicitly on every row — the grant list is authoritative,
+  # so omitting it would strip DSM admin access.
+  - share: fishsense
+    path: /volume1/fishsense
+    grants:
+      - { group: administrators, access: rw }
+      - { group: FishSense-NAS, access: rw }
+      - { group: E4E-NAS-Admins, access: rw }
+      - { group: E4E-Hardware, access: rw } # <- @hardware
+      - { group: E4E-Research-Support, access: ro } # <- @research_support
+      - { group: e4e-project-lead, access: ro } # <- @leads
+  - share: fishsense_data
+    path: /volume2/fishsense_data
+    grants:
+      - { group: administrators, access: rw }
+      - { group: FishSense-NAS, access: rw }
+      - { group: E4E-NAS-Admins, access: rw }
+  # NOTE the inversion, faithful to the capture: FishSense-NAS is RO here (both old
+  # FishSense principals were RO on this share), and only the prod admins get RW.
+  - share: fishsense_process_work
+    path: /volume2/fishsense_process_work
+    grants:
+      - { group: administrators, access: rw }
+      - { group: E4E-NAS-Admins, access: rw }
+      - { group: FishSense-Prod-Admins, access: rw } # <- @KRG-UCSD-EDU\FishSense Production Admins
+      - { group: FishSense-NAS, access: ro }
+  # junkyard-fishsense is intentionally NOT listed: no FishSense principal held a grant
+  # on it (old row was junkyard.service + admins + E4E NAS Admins). Porting it needs the
+  # junkyard.service account decision, so the share is left untouched for now.
 
 # Per-share schema (when populating):
 #   - share: maya

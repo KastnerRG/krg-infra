@@ -24,16 +24,30 @@ groups:
   - { name: rct,                 description: "Radio Collar Tracking",       governs: [rct] }
   - { name: robosub,             description: "Robosub",                     governs: [robosub] }
   - { name: acoustic-species-id, description: "Acoustic Species ID",         governs: [passive-acoustic-biodiversity] }
+  # PORTED (real AD objects, spec/krg-ad/groups.yml) — renamed off the bare
+  # `research_support`/`hardware`, which are too generic for the flat CN=Users container.
+  - { name: E4E-Research-Support, description: "Research Support Group",     governs: [] }               # cross-cutting; RO on fishsense
+  - { name: E4E-Hardware,        description: "Hardware Team",               governs: [hardware_dev] }
+  - { name: E4E-NAS-Admins,      description: "E4E NAS data admins",         governs: [] }               # cross-cutting; RW on the E4E project shares
+  - { name: FishSense-Prod-Admins, description: "FishSense production admins", governs: [fishsense_process_work] }
   - { name: aye-aye-sleep,       description: "Aye Aye Sleep Monitoring",    governs: [aye-aye-sleep-monitoring] }
   - { name: smartfin-mfg,        description: "Smartfin Manufacturing",      governs: [smartfin-mfg] }
   - { name: baboons,             description: "Baboons on the Move",         governs: [baboons, bom_aws] }
-  - { name: fishsense,           description: "FishSense",                   governs: [fishsense, fishsense_data, fishsense_process_work, junkyard-fishsense] }
+  # PORTED: this one now exists as a real AD group (spec/krg-ad/groups.yml,
+  # "FishSense-NAS"). Name matched to that object exactly — the rest of this list is
+  # still un-ported (the ad-vs-local / OU=E4E decision above is open for them).
+  # `governs` corrected off the inferred seed against the 2026-05-28 capture:
+  # junkyard-fishsense DROPPED (the old FishSense principals held no grant on it — it
+  # was junkyard.service + admins only), and fishsense_process_work is RO not RW.
+  - { name: FishSense-NAS,       description: "FishSense",                   governs: [fishsense, fishsense_data, fishsense_process_work] }
   - { name: burrowing_owl,       description: "Burrowing Owl",               governs: [owl-behavior] }   # renamed from "Burrowing Owl" (no spaces in AD)
-  - { name: leads,               description: "Project Leads",               governs: [] }               # cross-cutting
-  - { name: hardware,            description: "Hardware Team",               governs: [hardware_dev] }
   - { name: floods_of_lubra,     description: "Floods of Lubra",             governs: ["Floods of Lubra"] }
   - { name: e4e,                 description: "E4E (broad)",                 governs: [] }               # broad access — confirm scope
-  - { name: research_support,    description: "Research Support Group",      governs: [] }
+  # PORTED as the pre-existing "e4e-project-lead" AD group (spec/krg-ad/groups.yml) —
+  # same set, so no new object was created. Old `@leads` ACEs translate to that name.
+  - { name: e4e-project-lead,    description: "Project Leads",               governs: [] }               # cross-cutting; RO on fishsense
+  # `hardware` -> E4E-Hardware and `research_support` -> E4E-Research-Support, both
+  # listed above with the other ported entries.
 
 # Separate (collaborator lab, not OU=E4E):
 collaborator_groups:
