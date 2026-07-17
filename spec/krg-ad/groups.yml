@@ -57,7 +57,7 @@ groups:
   - { name: "E4E-NAS-Admins", description: "Administrative RW on the E4E NAS project shares (spec/e4e-nas/acls.yml). Narrower than 'E4E Admin' — NAS data admin only. Mounting also requires E4E-NAS." }
   # <- old `@KRG-UCSD-EDU\FishSense Production Admins` (RW on fishsense_process_work only).
   # Load-bearing distinction: FishSense-NAS is only RO on that share, this group is RW.
-  - { name: "FishSense-Prod-Admins", description: "RW on the fishsense_process_work share on e4e-nas (spec/e4e-nas/acls.yml), where FishSense-NAS is only RO. Mounting also requires E4E-NAS." }
+  - { name: "FishSense-Prod-Admins", description: "RW on the fishsense_process_work share on e4e-nas (spec/e4e-nas/acls.yml), where FishSense-NAS is only RO. Mounting also requires E4E-NAS. Also gates access to the FishSense API app in Authentik (terraform/authentik app_access.tf)." }
   # <- old local DSM groups `@research_support` / `@hardware`. Renamed from the bare
   # `research_support`/`hardware` in spec/e4e-nas/groups.yml: these land flat in
   # CN=Users alongside every other lab group, where those names are too generic to own.

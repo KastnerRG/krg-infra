@@ -142,19 +142,22 @@ resource "authentik_application" "fishsense_oauth" {
   group             = "E4E FishSense"
 }
 
-# ── FishSense Orchestrator (proxy) ────────────────────────────────────────────
+# ── FishSense API (proxy) ─────────────────────────────────────────────────────
 # Uses a proxy provider — Authentik handles auth in front of the service.
+# (Resource/slug stay `fishsense_orchestrator`/`fishsense-orchestrator` so the app
+# and its proxy outpost wiring aren't destroyed/recreated — only the display name
+# changes to "FishSense API".)
 
 resource "authentik_provider_proxy" "fishsense_orchestrator" {
-  name               = "Provider for FishSense Orchestrator"
+  name               = "Provider for FishSense API"
   authorization_flow = data.authentik_flow.default_authorization.id
   invalidation_flow  = data.authentik_flow.default_invalidation.id
-  external_host      = "https://api.fishsense.e4e.ucsd.edu" # the orchestrator API host (forward-auth matches on this)
+  external_host      = "https://api.fishsense.e4e.ucsd.edu" # the API host (forward-auth matches on this)
   mode               = "forward_single"
 }
 
 resource "authentik_application" "fishsense_orchestrator" {
-  name              = "FishSense Orchestrator"
+  name              = "FishSense API"
   slug              = "fishsense-orchestrator"
   protocol_provider = authentik_provider_proxy.fishsense_orchestrator.id
   meta_launch_url   = "https://api.fishsense.e4e.ucsd.edu"
