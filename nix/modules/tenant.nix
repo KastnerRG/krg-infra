@@ -232,6 +232,48 @@ in {
         extraPackages = with pkgs; [git openssh systemd coreutils]; # systemctl to trigger the switch
       };
 
+      # A runner that can't reach GitHub must NOT fail system activation. Registration is
+      # an ExecStartPre (nixpkgs github-runner: `configureRunner`), so a GitHub blip fails
+      # the unit — and switch-to-configuration exits 4 on ANY failed unit, taking the whole
+      # converge red and leaving the runner down, which blocks the next deploy (the runner
+      # is what picks the job up). The token-churn fix in deploy/stage-tenant-secret-zero.sh
+      # removes the usual TRIGGER; this removes the BLAST RADIUS.
+      #
+      # Why this specific shape — switch-to-configuration (switch-to-configuration-ng
+      # src/main.rs) flags a unit two ways, and both must be dodged:
+      #   1. `state == "failed"`                                   -> flagged
+      #   2. `substate == "auto-restart" && ExecMainStatus != 0`   -> flagged
+      # Its get_active_units lists ALL units unfiltered (state != "inactive"), so it flags
+      # units it never started — meaning you CANNOT exempt this unit by dropping it from
+      # `wantedBy`: a runner left `failed` by an earlier attempt would fail every later
+      # switch, fleet-wide.
+      #
+      # So the unit must never REST in `failed`. Restart=on-failure parks it in
+      # `activating (auto-restart)` instead, dodging check 1. And because registration is
+      # an ExecStartPre, the main process never runs, so ExecMainStatus stays 0 — dodging
+      # check 2. The upstream module hardcodes `Restart = "no"` for non-ephemeral runners,
+      # hence mkForce.
+      #
+      # startLimitIntervalSec = 0 disables the start-rate limit: without it systemd's
+      # default (5 starts / 10s) parks the unit in `failed` — precisely the state we are
+      # avoiding — and it would then poison the next switch. Retry forever instead;
+      # RestartSec spaces the attempts so a GitHub outage isn't hammered.
+      #
+      # ⚠️ NEEDS ON-BOX VALIDATION. The ExecMainStatus-stays-0 reasoning is read off the
+      # nixpkgs/systemd sources, not yet observed on a live tenant. Known residual: if the
+      # runner's MAIN process has exited non-zero at some point (a crash, not a
+      # registration failure), ExecMainStatus is non-zero and check 2 flags it during
+      # auto-restart — so a crash-looping runner can still fail a switch. That is arguably
+      # the right call (a crashing runner is a real fault, not a transient API blip), but
+      # it means this decouples the GitHub-outage case, not literally every case.
+      systemd.services."github-runner-${t.name}" = {
+        serviceConfig = {
+          Restart = lib.mkForce "on-failure";
+          RestartSec = 30;
+        };
+        startLimitIntervalSec = 0;
+      };
+
       # Converge from the tenant flake — a root, host-context oneshot the runner triggers via
       # `systemctl start` (polkit-authorized, no sudo, runner sandbox intact — the pattern
       # krg-deploy uses for its own self-update). Rebuilds from the tenant repo's flake
