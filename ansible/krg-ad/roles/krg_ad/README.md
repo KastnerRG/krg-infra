@@ -9,7 +9,7 @@ DC. See [ADR 0010](../../../../docs/adr/0010-active-directory-structure-as-iac.m
 | Concern | Spec file | samba-tool surface | Authoritative? |
 | --- | --- | --- | --- |
 | Domain password policy | `password-policy.yml` | `domain passwordsettings set` | yes (drift-only set) |
-| Group objects | `groups.yml` | `group add` | **no** — creates only, never deletes |
+| Group objects + nested `members:` | `groups.yml` | `group add`, `group addmembers` | **no** — creates/adds only, never deletes |
 | Service accounts + membership | `service-accounts.yml` | `group addmembers` | **no** — adds only, never removes |
 | Delegated ACL grants | `acls.yml` | `dsacl set` | **no** — adds only, never removes |
 

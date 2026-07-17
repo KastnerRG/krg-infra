@@ -11,11 +11,17 @@
 #   * Group OBJECTS (existence, scope, category, description) — IaC, this file.
 #   * Group MEMBERSHIP of HUMAN accounts — roster (svc_roster), NOT here.
 #   * Group MEMBERSHIP of SERVICE accounts — IaC, in service-accounts.yml.
+#   * NESTED GROUP membership (a group as a member of another group) — IaC, this
+#     file, via a group entry's `members:` list. Put GROUP names ONLY there
+#     (builtin groups like "Domain Admins" are fine as members); HUMAN members
+#     still belong to roster. `members` is a structural relationship between
+#     group objects, so it lives with the objects.
 # Consequently the apply is NON-AUTHORITATIVE on membership: it creates groups
-# but NEVER reconciles their member lists, so it can never delete a roster-set
-# human member. It also never deletes a group that is absent from this file
-# (drift is reported, not enforced) — deleting an AD group is destructive and
-# stays a deliberate human action.
+# and ADDS any `members:` entries, but NEVER reconciles their member lists, so it
+# can never delete a roster-set human member (nor a nested group it once added).
+# It also never deletes a group that is absent from this file (drift is reported,
+# not enforced) — deleting an AD group is destructive and stays a deliberate
+# human action.
 #
 # All live custom groups are Global Security groups (groupType -2147483646 =
 # 0x80000002), created flat under CN=Users (no custom OUs exist yet).
@@ -39,7 +45,9 @@ groups:
   # Space-FREE name on purpose (like proxmox-admins): consumed as `%E4E-NAS` in a
   # sudoers rule (nix krg.nasMount) where an unescaped space would break the rule,
   # and looked up by name in Authentik (terraform/authentik app_access.tf).
-  - { name: "E4E-NAS", description: "Mount access to the E4E NAS (e4e-nas.ucsd.edu) CIFS shares via the kastner-ml e4e-nas-mount sudo wrapper (nix krg.nasMount); also gates the E4E NAS app tile in Authentik (app_access.tf)" }
+  # `members: [E4E Admin]` — E4E administrators inherit E4E NAS mount access
+  # (nested), so they don't need a separate direct grant.
+  - { name: "E4E-NAS", description: "Mount access to the E4E NAS (e4e-nas.ucsd.edu) CIFS shares via the kastner-ml e4e-nas-mount sudo wrapper (nix krg.nasMount); also gates the E4E NAS app tile in Authentik (app_access.tf)", members: ["E4E Admin"] }
   # --- e4e-nas per-share grant groups (consumed by spec/e4e-nas/acls.yml -> synology_acls) ---
   # These replace principals from the DEAD KRG-UCSD-EDU domain, translated from the
   # 2026-05-28 pre-reset capture (`synoshare --list_acl`, off-repo per the runbook).
@@ -92,8 +100,12 @@ groups:
   - { name: "Kastner Research Group", description: "Kastner Research Group members; owns /scratch/krg (gid group)" }
   - { name: "Kastner Research Group PhD Students", description: "KRG PhD students" }
   - { name: "Engineers for Exploration", description: "Engineers for Exploration (E4E) members" }
-  - { name: "E4E Admin", description: "E4E administrators" }
-  - { name: "E4E Garage Admins", description: "E4E Garage (S3/object-store) administrators" }
+  # E4E Admin is the E4E administrator tier. `members: [Domain Admins]` folds the
+  # directory admins in (they're E4E admins too); E4E Admin is in turn a nested
+  # member of "E4E Garage Admins" and "E4E-NAS" (declared on those groups), and
+  # gets sudo on kastner-ml (nix krg.adClient.sudoGroups).
+  - { name: "E4E Admin", description: "E4E administrators", members: ["Domain Admins"] }
+  - { name: "E4E Garage Admins", description: "E4E Garage (S3/object-store) administrators", members: ["E4E Admin"] }
   - { name: "e4e-project-lead", description: "E4E project leads" }
 
   # --- E4E project groups ---
