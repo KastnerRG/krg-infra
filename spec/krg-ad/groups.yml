@@ -40,6 +40,32 @@ groups:
   # sudoers rule (nix krg.nasMount) where an unescaped space would break the rule,
   # and looked up by name in Authentik (terraform/authentik app_access.tf).
   - { name: "E4E-NAS", description: "Mount access to the E4E NAS (e4e-nas.ucsd.edu) CIFS shares via the kastner-ml e4e-nas-mount sudo wrapper (nix krg.nasMount); also gates the E4E NAS app tile in Authentik (app_access.tf)" }
+  # --- e4e-nas per-share grant groups (consumed by spec/e4e-nas/acls.yml -> synology_acls) ---
+  # These replace principals from the DEAD KRG-UCSD-EDU domain, translated from the
+  # 2026-05-28 pre-reset capture (`synoshare --list_acl`, off-repo per the runbook).
+  # All space-free for the same reason as E4E-NAS. None of them grant the *mount* —
+  # a member also needs E4E-NAS for the kastner-ml sudo wrapper (nix krg.nasMount).
+  #
+  # Collapses TWO old principals that agreed on every share: the local DSM group
+  # `@fishsense` and the AD group `@KRG-UCSD-EDU\FishSense NAS` (both RW on fishsense +
+  # fishsense_data, both RO on fishsense_process_work). DISTINCT from the "FishSense"
+  # project group below: project membership != NAS share access.
+  - { name: "FishSense-NAS", description: "Access to the FishSense shares on e4e-nas.ucsd.edu: RW on fishsense + fishsense_data, RO on fishsense_process_work (spec/e4e-nas/acls.yml). Mounting also requires E4E-NAS." }
+  # <- old `@KRG-UCSD-EDU\Engineers for Exploration NAS Admins` (RW on all 3 FishSense
+  # shares). Kept as its own object rather than folded into "E4E Admin": NAS admin is a
+  # narrower grant than E4E-admin-generally.
+  - { name: "E4E-NAS-Admins", description: "Administrative RW on the E4E NAS project shares (spec/e4e-nas/acls.yml). Narrower than 'E4E Admin' — NAS data admin only. Mounting also requires E4E-NAS." }
+  # <- old `@KRG-UCSD-EDU\FishSense Production Admins` (RW on fishsense_process_work only).
+  # Load-bearing distinction: FishSense-NAS is only RO on that share, this group is RW.
+  - { name: "FishSense-Prod-Admins", description: "RW on the fishsense_process_work share on e4e-nas (spec/e4e-nas/acls.yml), where FishSense-NAS is only RO. Mounting also requires E4E-NAS." }
+  # <- old local DSM groups `@research_support` / `@hardware`. Renamed from the bare
+  # `research_support`/`hardware` in spec/e4e-nas/groups.yml: these land flat in
+  # CN=Users alongside every other lab group, where those names are too generic to own.
+  - { name: "E4E-Research-Support", description: "Research Support Group; RO on the fishsense share on e4e-nas (spec/e4e-nas/acls.yml). Mounting also requires E4E-NAS." }
+  - { name: "E4E-Hardware", description: "E4E Hardware Team; RW on the fishsense share on e4e-nas + owns hardware_dev (spec/e4e-nas/acls.yml). Mounting also requires E4E-NAS." }
+  # NOTE: old `@leads` maps onto the EXISTING "e4e-project-lead" group below, not a new
+  # object — same set (E4E project leads). No `leads` group is created.
+
   - { name: "Guacamole Admins", description: "Apache Guacamole administrators" }
   # Space-FREE name on purpose: PVE's AD-realm sync rejects group ids with spaces
   # ([A-Za-z0-9._-]+), so a "Proxmox Admins" group would be skipped on sync. The
