@@ -93,13 +93,21 @@
   # group, "engineers for exploration" the broader E4E umbrella for project leads/staff
   # who need the box without being a "kastnerml" member proper. Domain Admins stays for
   # break-glass directory admin access.
+  #
+  # "E4E Admin" is the E4E administrator tier (spec/krg-ad/groups.yml). It's in BOTH
+  # lists on purpose: allowedGroups lets its members log IN (an admin group that can't
+  # reach the box can't administer it), and sudoGroups grants them root escalation
+  # (PASSWORD-required, unlike the key-only break-glass e4e-admin). "Domain Admins" is a
+  # nested member of "E4E Admin" in AD, so directory admins inherit sudo here via the
+  # %E4E\ Admin group without needing a separate sudo entry.
   krg.adClient = {
     # AD domain member — verified joined 2026-06-18 (`getent Administrator` resolves).
     # Explicit marker; base.nix defaults enable on.
     enable = true;
     server = "krg-ldap.krg.local";
     serverIp = "137.110.161.109";
-    allowedGroups = ["Domain Admins" "kastnerml"];
+    allowedGroups = ["Domain Admins" "kastnerml" "E4E Admin"];
+    sudoGroups = ["E4E Admin"];
   };
 
   # Let E4E-NAS members mount e4e-nas CIFS shares into their home without full sudo:

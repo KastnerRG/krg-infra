@@ -6,7 +6,7 @@ state is parsed from YAML on the control node and handed in as a JSON --plan
 file, so this script needs no PyYAML on the target (just samba-tool + python3).
 
 Subcommands (one per spec concern):
-  groups            create missing groups from groups.yml         (never deletes)
+  groups            create missing groups + their nested `members:` (never deletes)
   service-accounts  ensure service accounts + their group membership (never removes)
   acls              ensure delegated ACE grants from acls.yml      (never removes)
   password-policy   converge domain password settings             (drift-only set)
@@ -186,6 +186,35 @@ def cmd_groups(plan, check, rep):
             rep.fail("create group '{}': {}".format(name, (err or out).strip()))
         else:
             rep.changed_("created group '{}'".format(name))
+            live.add(name)  # now live — a later `members:` pass can target it
+
+    # Nested group membership (a group as a member of another group), applied
+    # NON-AUTHORITATIVELY like service-account membership: only ever ADD a listed
+    # member to its parent, never remove. Put GROUP names in `members:` only —
+    # human members are roster's. Runs after the create pass so spec parents
+    # exist; builtin parents (e.g. "Domain Admins") always do.
+    for g in desired:
+        parent = g["name"]
+        for member in g.get("members", []):
+            if parent not in live:
+                # Parent is pending creation (only reachable under --check, since a
+                # real create above adds it to `live`). Can't list yet — report.
+                rep.would("add '{}' to group '{}' (parent pending creation)".format(member, parent))
+                continue
+            rc, out, err = run("group", "listmembers", parent)
+            if rc != 0:
+                rep.fail("listmembers '{}': {}".format(parent, (err or out).strip()))
+                continue
+            if member in parse_name_list(out):
+                continue
+            if check:
+                rep.would("add '{}' to group '{}'".format(member, parent))
+                continue
+            rc, out, err = run("group", "addmembers", parent, member)
+            if rc != 0:
+                rep.fail("addmembers {} -> {}: {}".format(member, parent, (err or out).strip()))
+            else:
+                rep.changed_("added '{}' to group '{}'".format(member, parent))
 
     # Drift visibility only — never delete (non-authoritative).
     extras = sorted(n for n in live - desired_names if not _is_builtin(n))

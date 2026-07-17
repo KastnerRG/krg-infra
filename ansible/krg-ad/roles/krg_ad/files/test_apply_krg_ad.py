@@ -169,6 +169,58 @@ def test_groups_check_mode_mutates_nothing(monkeypatch, tmp_path, capsys):
     assert not any(c[:2] == ("group", "add") for c in fake.calls)
 
 
+def test_groups_nested_membership_additive(monkeypatch, tmp_path, capsys):
+    # "E4E Admin" already exists; add it to "E4E Garage Admins" (not yet a member).
+    fake = FakeSamba(
+        {
+            ("group", "list"): (0, "E4E Admin\nE4E Garage Admins\nDomain Admins\n", ""),
+            ("group", "listmembers", "E4E Garage Admins"): (0, "someone\n", ""),
+        }
+    )
+    monkeypatch.setattr(apply_ad, "run", fake)
+    plan = {
+        "groups": [
+            {"name": "E4E Admin"},
+            {"name": "E4E Garage Admins", "members": ["E4E Admin"]},
+        ]
+    }
+    with pytest.raises(SystemExit) as e:
+        apply_ad.main(["groups", "--plan", _plan_file(tmp_path, plan)])
+    assert e.value.code == 0
+    assert ("group", "addmembers", "E4E Garage Admins", "E4E Admin") in fake.calls
+
+
+def test_groups_nested_membership_noop_when_member(monkeypatch, tmp_path, capsys):
+    fake = FakeSamba(
+        {
+            ("group", "list"): (0, "E4E Admin\nDomain Admins\n", ""),
+            ("group", "listmembers", "E4E Admin"): (0, "Domain Admins\n", ""),
+        }
+    )
+    monkeypatch.setattr(apply_ad, "run", fake)
+    plan = {"groups": [{"name": "E4E Admin", "members": ["Domain Admins"]}]}
+    with pytest.raises(SystemExit):
+        apply_ad.main(["groups", "--plan", _plan_file(tmp_path, plan)])
+    assert not any(c[:2] == ("group", "addmembers") for c in fake.calls)
+    assert "OK no-change" in capsys.readouterr().out
+
+
+def test_groups_nested_membership_check_mode_mutates_nothing(monkeypatch, tmp_path, capsys):
+    fake = FakeSamba(
+        {
+            ("group", "list"): (0, "E4E Admin\nE4E-NAS\n", ""),
+            ("group", "listmembers", "E4E-NAS"): (0, "someone\n", ""),
+        }
+    )
+    monkeypatch.setattr(apply_ad, "run", fake)
+    plan = {"groups": [{"name": "E4E-NAS", "members": ["E4E Admin"]}]}
+    with pytest.raises(SystemExit):
+        apply_ad.main(["groups", "--check", "--plan", _plan_file(tmp_path, plan)])
+    out = capsys.readouterr().out
+    assert "WOULD-CHANGE" in out and "E4E Admin" in out
+    assert not any(c[:2] == ("group", "addmembers") for c in fake.calls)
+
+
 def test_service_account_absent_fails(monkeypatch, tmp_path, capsys):
     fake = FakeSamba({("user", "list"): (0, "Administrator\nsvc_roster\n", "")})
     monkeypatch.setattr(apply_ad, "run", fake)

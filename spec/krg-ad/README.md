@@ -11,6 +11,7 @@ rationale and the ownership boundary.
 | Concern | Owner | File |
 | --- | --- | --- |
 | Group objects (existence, scope, category, description) | **IaC** | `groups.yml` |
+| Nested group membership (a group inside another group, via `members:`) | **IaC** | `groups.yml` |
 | Service / automation accounts + their group membership | **IaC** | `service-accounts.yml` |
 | Delegated ACL grants to service accounts | **IaC** | `acls.yml` |
 | Domain password policy (length, complexity, expiry, history) | **IaC** | `password-policy.yml` |
