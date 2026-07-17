@@ -8,6 +8,19 @@
 # `administrators` explicitly where it should keep access (a fresh share defaults to
 # `@administrators` RW).
 #
+# ⚠️ AD GROUPS MUST BE DOMAIN-QUALIFIED: `KRG\<name>` (the role prepends only `@`, giving
+# `@KRG\<name>`). An UNQUALIFIED name is resolved by DSM as a LOCAL group — if no such
+# local group exists, `synoshare --setuser` still returns 0 and the entry is SILENTLY
+# DROPPED. It looks applied (ansible reports `changed`) and simply isn't there.
+#   * AD group    -> `KRG\FishSense-NAS`      (quote it: the backslash needs YAML quoting)
+#   * local group -> `administrators`          (bare)
+# The 2026-05-28 capture shows both forms side by side: `@KRG-UCSD-EDU\FishSense NAS` (AD)
+# next to `@fishsense` / `@administrators` (local). The ad.yml `admin_groups` bridge does
+# this prefixing itself (synology_acls/tasks/main.yml derives the NetBIOS name from
+# ad.yml `realm`), which is why `@KRG\Domain Admins` lands correctly while a bare AD name
+# here would not. TODO: teach the setuser path the same realm-derivation so `KRG\` isn't
+# hardcoded in this file — until then, keep it in sync with ad.yml `realm`.
+#
 # Schema:
 #   acls:
 #     - share: maya
@@ -60,9 +73,12 @@ defaults:
 # does have live users — there the revocation would be real.
 #
 # Ordering is still worth knowing (benign): if synology_acls somehow runs before
-# ansible/krg-ad creates the groups, the grants name principals DSM can't resolve. Not
-# verified whether DSM errors (-> the script reports FAIL on the non-zero rc) or drops
-# the entry; either way it is re-runnable and costs nothing once the groups exist.
+# ansible/krg-ad creates the groups, the grants name principals DSM can't resolve.
+# ANSWERED THE HARD WAY (2026-07-17): DSM does NOT error — `synoshare --setuser` returns
+# 0 and silently drops the unresolvable entry, so ansible reports `changed` and the grant
+# simply isn't there. deploy/deploy-ansible.sh runs the synology block BEFORE the krg-ad
+# block, so this is guaranteed on any deploy that introduces a new AD group: the ACLs are
+# written ~20s before the groups exist. Re-running once the groups exist converges it.
 #
 # SERVICE ACCOUNTS ARE A KNOWN GAP: the capture's NA (deny) ACEs — junkyard.service,
 # label_studio, minio, e4e_maestro — are dropped along with the other per-user grants.
@@ -73,31 +89,35 @@ acls:
   # RW: FishSense-NAS <- @fishsense + @KRG-UCSD-EDU\FishSense NAS (collapsed; agreed on
   # every share). E4E-NAS-Admins <- @KRG-UCSD-EDU\Engineers for Exploration NAS Admins.
   # `administrators` is listed explicitly on every row — the grant list is authoritative,
-  # so omitting it would strip DSM admin access.
+  # so omitting it would strip DSM admin access. It is the one BARE name here: it's the
+  # DSM-LOCAL admin group. Everything else is an AD group and so is `KRG\`-qualified.
   - share: fishsense
     path: /volume1/fishsense
     grants:
       - { group: administrators, access: rw }
-      - { group: FishSense-NAS, access: rw }
-      - { group: E4E-NAS-Admins, access: rw }
-      - { group: E4E-Hardware, access: rw } # <- @hardware
-      - { group: E4E-Research-Support, access: ro } # <- @research_support
-      - { group: e4e-project-lead, access: ro } # <- @leads
+      - { group: 'KRG\FishSense-NAS', access: rw }
+      - { group: 'KRG\E4E-NAS-Admins', access: rw }
+      - { group: 'KRG\E4E-Hardware', access: rw } # <- @hardware (was a LOCAL group pre-reset)
+      - { group: 'KRG\E4E-Research-Support', access: ro } # <- @research_support (ditto)
+      - { group: 'KRG\e4e-project-lead', access: ro } # <- @leads (ditto)
   - share: fishsense_data
     path: /volume2/fishsense_data
     grants:
       - { group: administrators, access: rw }
-      - { group: FishSense-NAS, access: rw }
-      - { group: E4E-NAS-Admins, access: rw }
+      - { group: 'KRG\FishSense-NAS', access: rw }
+      - { group: 'KRG\E4E-NAS-Admins', access: rw }
   # NOTE the inversion, faithful to the capture: FishSense-NAS is RO here (both old
   # FishSense principals were RO on this share), and only the prod admins get RW.
   - share: fishsense_process_work
     path: /volume2/fishsense_process_work
     grants:
       - { group: administrators, access: rw }
-      - { group: E4E-NAS-Admins, access: rw }
-      - { group: FishSense-Prod-Admins, access: rw } # <- @KRG-UCSD-EDU\FishSense Production Admins
-      - { group: FishSense-NAS, access: ro }
+      - { group: 'KRG\E4E-NAS-Admins', access: rw }
+      # This row is what svc_fishsense needs: it is a member of FishSense-Prod-Admins
+      # (spec/krg-ad/service-accounts.yml), and without this grant its database_backups
+      # writes fail with FileStation err=407 "operation not permitted".
+      - { group: 'KRG\FishSense-Prod-Admins', access: rw } # <- @KRG-UCSD-EDU\FishSense Production Admins
+      - { group: 'KRG\FishSense-NAS', access: ro }
   # junkyard-fishsense is intentionally NOT listed: no FishSense principal held a grant
   # on it (old row was junkyard.service + admins + E4E NAS Admins). Porting it needs the
   # junkyard.service account decision, so the share is left untouched for now.
