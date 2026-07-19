@@ -26,6 +26,14 @@
 
   krg.docker = {
     enable = true;
+    # Reclaim superseded image layers after 3 days, not the 168h fleet default:
+    # the service hosts are small Proxmox VMs (krg-prod's root is 63 GB) and churn
+    # images fast — a week of authentik/fleet/alloy bumps stacked ~11 GB of unused
+    # layers and filled the disk before the 7-day `until` window let them go. A
+    # running/stopped container's image is never pruned regardless, so the live
+    # deploy is safe; 72 h still leaves a rollback window to a prior tag. Compute
+    # boxes (waiter, big disks) keep the longer default.
+    pruneImagesOlderThan = "72h";
   };
 
   # krg.nodeExporter.enable is set by base.nix (true on every host).

@@ -66,15 +66,18 @@ services:
     container_name: prometheus
     # retention.size is the load-bearing cap: the TSDB shares krg-prod's 63 GB root
     # (no dedicated volume yet), so the 700 GB size cap was meaningless — Prometheus
-    # would fill the rootfs and take every service down. 20 GB is a non-destructive
-    # interim ceiling (TSDB was ~14 GB when set) that leaves headroom on the root
-    # disk; size binds long before the 2y time cap. The real retention target (how
-    # many months we actually keep, and whether the TSDB moves to its own dataset)
-    # is tracked in the GitHub issue — do NOT treat 2y as the effective window.
+    # would fill the rootfs and take every service down. 15 GB is a non-destructive
+    # ceiling that co-exists with the Nix store (30-day GC window) + Docker images on
+    # the shared 63 GB root: 20 GB left too little margin (the TSDB was already 16 GB
+    # and climbing when the disk hit 100% on 2026-07-19), so this pulls the cap back
+    # below current usage to force a trim and keep real headroom. Size binds long
+    # before the 2y time cap. The real retention target (how many months we actually
+    # keep, and whether the TSDB moves to its own dataset) is tracked in the GitHub
+    # issue — do NOT treat 2y as the effective window.
     command: >
       --config.file=/etc/prometheus/prometheus.yml
       --storage.tsdb.retention.time=2y
-      --storage.tsdb.retention.size=20GB
+      --storage.tsdb.retention.size=15GB
       --storage.tsdb.wal-compression
     restart: unless-stopped
     # Reach krg-prod's OWN host node_exporter (on the host's 0.0.0.0:9100) from
