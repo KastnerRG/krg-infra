@@ -243,5 +243,32 @@ for host in "${ORDER[@]}"; do
       echo "  WARN: vault-agent re-render failed on ${host} — consumers keep prior secrets; check 'systemctl status openbao-agent'" >&2
     fi
   fi
+
+  # Reclaim disk NOW rather than waiting for the daily/weekly GC timers: this switch
+  # just added a system generation and (on compose hosts) the compose 'up' pulled new
+  # images, leaving the superseded closure + old image layers on disk. On the small
+  # server VMs that churn is exactly what filled krg-prod's 63 GB root and took
+  # authentik down (2026-07-19). We START THE ON-HOST UNITS rather than run gc inline,
+  # so the retention windows stay single-source-of-truth in the flake (nix.gc
+  # `--delete-older-than`, krg.docker.pruneImagesOlderThan) — this just makes them run
+  # on the deploy that created the garbage. BEST-EFFORT: the switch already succeeded,
+  # so a GC hiccup only WARNs (never fails the deploy); `timeout` caps a slow/hung
+  # collection (the unit keeps running on-box, we just stop waiting). Set DEPLOY_SKIP_GC=1
+  # to skip (e.g. a quick single-host manual deploy where the extra minute isn't wanted).
+  if [[ "${DEPLOY_SKIP_GC:-0}" != "1" ]]; then
+    if timeout 600 ssh -o BatchMode=yes "$target" sudo systemctl start nix-gc.service; then
+      echo "  GC: nix-gc done on ${host}"
+    else
+      echo "  WARN: nix-gc failed/timed out on ${host} (non-fatal); check 'systemctl status nix-gc'" >&2
+    fi
+    # docker-image-prune.service only exists on docker hosts (krg.docker.enable).
+    if [[ "$(nix eval "${FLAKE}#nixosConfigurations.${host}.config.krg.docker.enable" 2>/dev/null || echo false)" == "true" ]]; then
+      if timeout 600 ssh -o BatchMode=yes "$target" sudo systemctl start docker-image-prune.service; then
+        echo "  GC: docker-image-prune done on ${host}"
+      else
+        echo "  WARN: docker-image-prune failed/timed out on ${host} (non-fatal); check 'systemctl status docker-image-prune'" >&2
+      fi
+    fi
+  fi
   printf '\n::endgroup::\n'
 done
