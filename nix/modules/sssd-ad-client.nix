@@ -17,7 +17,9 @@
 # Access control uses SSSD's ad_access_filter (memberOf), not sshd AllowGroups,
 # because default AD group names contain spaces ("Domain Admins") which AllowGroups
 # can't express. Local users (krg-admin) are unaffected: PAM uses pam_sss with
-# user_unknown=ignore, and NSS resolves files before sss.
+# user_unknown=ignore (and authinfo_unavail=ignore so a DOWN sssd doesn't lock the
+# break-glass admin out either — see the sshd account rule below), and NSS resolves
+# files before sss.
 #
 # Deploying this BEFORE the runtime prerequisites is safe: sssd is gated on the
 # machine keytab (ConditionPathExists=/etc/krb5.keytab), so on a not-yet-joined host
@@ -289,6 +291,24 @@ in {
     # phase as [default=bad success=ok user_unknown=ignore] — denies non-permitted
     # AD users while leaving local users (krg-admin) to fall through to pam_unix.
     security.pam.services.sshd.sssdStrictAccess = true;
+
+    # BREAK-GLASS RESILIENCE: keep the strict control above (so a REACHABLE SSSD's
+    # access-denial is authoritative), but add `authinfo_unavail=ignore`. When SSSD
+    # is DOWN, pam_sss returns PAM_AUTHINFO_UNAVAIL — which the strict map sends to
+    # `default=bad`, failing the account phase HARD and locking out EVERY ssh login,
+    # including the local break-glass krg-admin. That is the opposite of break-glass
+    # (observed on krg-vault 2026-07-19: sssd died on a nightly-upgrade restart →
+    # "Access denied for user krg-admin by PAM account configuration", the whole box
+    # unreachable while OpenBao kept serving). With authinfo_unavail=ignore an
+    # unreachable SSSD is SKIPPED, so the stack falls through to `pam_unix` (order
+    # 11000, required): the local admin (in /etc/passwd) is authorized, while AD
+    # users — absent from local files — still fail pam_unix (user_unknown) and are
+    # denied (and they can't key-auth anyway, since their keys come from the same
+    # dead AD). mkForce because sssdStrictAccess above already defines this control;
+    # this string is that one + authinfo_unavail=ignore. `login` needs no equivalent
+    # (it is non-strict → pam_sss is `sufficient`, already resilient to sssd-down).
+    security.pam.services.sshd.rules.account.sss.control =
+      mkForce "[default=bad success=ok user_unknown=ignore authinfo_unavail=ignore]";
 
     # SSSD supplies identity, not the home directory — create it on first login.
     security.pam.services.sshd.makeHomeDir = true;
