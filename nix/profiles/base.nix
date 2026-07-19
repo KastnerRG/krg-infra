@@ -290,13 +290,17 @@ in {
     };
 
     # Automatic garbage collection (NixOS wiki: Storage optimization → Automation).
-    # Weekly, keeping a 30-day rollback window. Matters here because the nightly
+    # Weekly, keeping a 14-day rollback window. Matters here because the nightly
     # autoUpgrade creates a new generation every day, so the store would otherwise
-    # grow without bound.
+    # grow without bound. Was 30d, cut to 14d: on the small server VMs (krg-prod's
+    # root is 63 GB) a month of nightly closures is a large slice of the shared
+    # disk (contributed to the 2026-07-19 authentik outage — rootfs at 100%). Two
+    # weeks is still an ample rollback window given deploys surface breakage within
+    # hours; compute boxes with big disks are unaffected either way.
     nix.gc = {
       automatic = true;
       dates = "weekly";
-      options = "--delete-older-than 30d";
+      options = "--delete-older-than 14d";
     };
 
     # Cap the systemd journal so it can't creep toward filling the root disk.
