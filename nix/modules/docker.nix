@@ -187,7 +187,12 @@ in {
     systemd.timers.docker-image-prune = {
       wantedBy = ["timers.target"];
       timerConfig = {
-        OnCalendar = "weekly";
+        # Daily, not weekly: krg-prod's 63 GB root filled between weekly runs when a
+        # batch of image bumps (authentik/fleet/alloy all in one week) left ~11 GB of
+        # superseded layers stacked up — the weekly cadence let a week of churn
+        # accumulate before the first reclaim (2026-07-19 authentik outage: rootfs at
+        # 100% → postgres crash-loop). Daily keeps the reclaimable set from piling up.
+        OnCalendar = "daily";
         Persistent = true; # run on next boot if the machine was off at the scheduled time
       };
     };
