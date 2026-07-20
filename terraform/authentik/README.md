@@ -22,8 +22,10 @@ This target manages what lives *inside* Authentik:
   `authentik_group` resources
 - A proxy **outpost** (`outpost.tf`) and the generated-OIDC-secret writeback
   into OpenBao (`vault_secrets.tf`, `roster_secrets.tf`)
-- Custom **flows**: self-service password recovery (`recovery.tf`) and
-  passwordless **passkey** login (`passkey.tf`) — see below. Both are wired into
+- Custom **flows**: self-service password recovery (`recovery.tf`),
+  passwordless **passkey** login (`passkey.tf`), and the external-collaborator
+  **invitation / enrollment** flow (`collaborator_enrollment.tf`,
+  `fishsense_collaborators.tf`) — see below. Recovery + passkey are wired into
   the live login screen via `brand.tf` (the one fleet-wide stage it manages).
 - **SSO session lifetime** (`session.tf`): 12h base session + a "Remember me"
   checkbox extending opted-in sessions to ~30 days. This is the real "stay logged
@@ -54,6 +56,66 @@ already documents.
 > `user_verification` is left at `"preferred"` (won't lock out authenticators
 > that can't do UV). For stricter passwordless, flip it + `webauthn_user_verification`
 > to `"required"` in `passkey.tf`.
+
+## Collaborator invitations (external partners) — `collaborator_enrollment.tf`
+
+The onboarding path for an **external collaborator** — someone who needs only web
+services and is **not** a lab member (ADR 0013 §4). They get an Authentik-**local**
+account (no AD account → no host/compute/storage reach), authorized explicitly per
+application. `collaborator_enrollment.tf` builds, the `recovery.tf` way, a
+self-contained **enrollment** flow:
+
+    invitation → prompt (email/name/username/password) → user_write (external,
+    inactive) → email (verify + activate) → user_login
+
+- **Invite-only.** The invitation stage sets `continue_flow_without_invitation =
+  false`, so the flow dead-ends without a valid invite token — **no open
+  self-signup** (the §4 requirement). Do not flip that switch.
+- **Email-verified.** The account is created **inactive** and only flipped active
+  when the invitee clicks the confirmation link (`activate_user_on_success`).
+- **UCSD password gate.** The prompt reuses `authentik_policy_password.ucsd` —
+  for a non-AD account this is the *only* strength/breach gate (no AD write-back).
+- Invitees are `user_type = "external"` — the marker that keeps them out of the
+  member/AD trust tier.
+
+### Minting an invite
+
+There is **no `authentik_invitation` provider resource** — invites are
+per-collaborator and ephemeral, and would leak their pre-fill data into tofu
+state. An admin mints each one out of band:
+
+**Directory → Invitations → Create**, selecting flow `krg-collaborator-enrollment`,
+`Single use = on`, an expiry, and (for a tenant collaborator) **Custom attributes**:
+
+```json
+{ "attributes.tenant": "fishsense", "attributes.org": "<org-id>" }
+```
+
+Send the invitee the enrollment URL with the token:
+`https://auth.krg.ucsd.edu/if/flow/krg-collaborator-enrollment/?itoken=<token>`.
+The `attributes.*` keys must match the hidden prompt fields' `field_key`s — that
+prefix is what makes `user_write` persist them onto `user.attributes`. A generic
+(non-tenant) collaborator just omits the custom attributes.
+
+### FishSense multitenancy — `fishsense_collaborators.tf`
+
+FishSense is multitenant: many external partner orgs, isolated **inside
+FishSense's own DB keyed on the stable OIDC `sub`** (its providers use
+`sub_mode = "hashed_user_id"`). Authentik only authenticates the partner and tells
+FishSense which org they are:
+
+- The invite's `attributes.org` / `attributes.tenant` land on the user.
+- The `org` OIDC scope mapping emits them as claims (FishSense must **request the
+  `org` scope** — same request-to-receive contract as the `groups` scope).
+- Access to the FishSense apps is an **expression policy** (`tenant ==
+  "fishsense"`) bound alongside the existing `FishSense` AD-group gate. Because
+  the apps' `policy_engine_mode` is `any` (OR), access = FishSense **members** OR
+  FishSense **collaborators**.
+
+This is deliberately **attribute/claim-driven, not per-org Authentik groups** —
+it scales to arbitrarily many partner orgs with no per-org object in this repo,
+and FishSense is authoritative on the sub→org mapping regardless. Per-org isolation
+is FishSense's job; Authentik is the IdP.
 
 ## Prerequisites before this can plan
 
