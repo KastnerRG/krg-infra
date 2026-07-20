@@ -64,6 +64,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -471,11 +472,44 @@ def _garage(container, *cmd):
     return _run("docker", "exec", container, "/garage", *cmd)
 
 
+# How long to wait for a just-started Garage to accept RPC before giving up.
+GARAGE_READY_TIMEOUT = 90.0
+GARAGE_READY_INTERVAL = 3.0
+
+
+def _garage_status_ready(container, timeout=GARAGE_READY_TIMEOUT, interval=GARAGE_READY_INTERVAL):
+    """Poll `garage status` until the daemon accepts RPC, or `timeout` elapses.
+
+    `docker compose up -d` (the `deploy` subcommand) returns as soon as the
+    container is CREATED — Garage still needs a few seconds to open its RPC
+    socket on :3901. Calling `status` immediately therefore races the daemon and
+    fails with "Connection refused (os error 111)".
+
+    That race took the fleet deploy red on 2026-07-20: an e4e-nas reboot made
+    the container drift, `deploy` recreated it, and `layout` ran ONE SECOND
+    later against a daemon that wasn't listening yet. Nothing was actually
+    wrong — a re-run minutes later passed untouched.
+
+    Returns the last CompletedProcess, so the caller keeps its existing
+    success/failure handling (and its stdout/stderr for the failure payload).
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        r = _garage(container, "status")
+        if r.returncode == 0 or time.monotonic() + interval >= deadline:
+            return r
+        time.sleep(interval)
+
+
 def do_layout(a):
     # 1. Daemon up + RPC responsive? On --check mode the container may not
     #    exist yet (preview on a fresh box); report a planned change rather
     #    than failing the dry run.
-    r = _garage(a.container_name, "status")
+    #
+    # A real apply WAITS for readiness (the container may have just been
+    # recreated by `deploy`); --check does a single probe so dry runs stay fast
+    # and never block for 90s on a box where Garage isn't running at all.
+    r = _garage(a.container_name, "status") if a.check else _garage_status_ready(a.container_name)
     if r.returncode != 0:
         if a.check:
             return _emit(

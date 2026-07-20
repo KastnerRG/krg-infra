@@ -345,6 +345,73 @@ def test_deploy_missing_garage_toml_reports_planned_change_in_check(monkeypatch,
     assert runs == []
 
 
+# --- layout: readiness wait ------------------------------------------------------
+# Regression cover for the 2026-07-20 fleet-deploy failure: `deploy` recreates the
+# container and returns as soon as it EXISTS, so `layout` raced Garage's RPC socket
+# and hard-failed with "Connection refused (os error 111)" one second later.
+def test_layout_waits_for_garage_rpc_then_succeeds(monkeypatch, capsys):
+    """A daemon that is slow to open :3901 is waited for, not failed on."""
+    a = _layout_args()
+    refused = _RunResult(1, stderr="IO error: Connection refused (os error 111)\n")
+    outputs = iter(
+        [
+            refused,  # status: container up but not listening yet
+            refused,  # status: still starting
+            _RunResult(0, stdout="==== HEALTHY NODES ====\nabc1234567890def NO ROLE 10.0.0.1\n"),
+            _RunResult(0, stdout="Current cluster layout version: 1\n"),
+        ]
+    )
+    monkeypatch.setattr(m, "_run", lambda *cmd, **kw: next(outputs))
+    slept = []
+    monkeypatch.setattr(m.time, "sleep", lambda s: slept.append(s))
+
+    rc = m.do_layout(a)
+
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
+    assert slept, "expected the readiness poll to back off between attempts"
+
+
+def test_layout_still_fails_when_garage_never_comes_up(monkeypatch, capsys):
+    """The wait is bounded — a genuinely dead daemon must still FAIL, not hang."""
+    a = _layout_args()
+    monkeypatch.setattr(
+        m,
+        "_run",
+        lambda *cmd, **kw: _RunResult(1, stderr="IO error: Connection refused (os error 111)\n"),
+    )
+    # Virtual clock so the bounded wait elapses without real sleeping.
+    ticks = iter([0.0] + [float(i) * 10.0 for i in range(1, 200)])
+    monkeypatch.setattr(m.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(m.time, "sleep", lambda s: None)
+
+    rc = m.do_layout(a)
+
+    out = capsys.readouterr().out
+    assert rc != 0 and "FAIL" in out and "container not ready" in out
+
+
+def test_layout_check_mode_does_not_wait(monkeypatch, capsys):
+    """--check probes once: a dry run must not block for the full timeout."""
+    a = _layout_args(check=True)
+    calls = []
+
+    def fake_run(*cmd, **kw):
+        calls.append(cmd)
+        return _RunResult(1, stderr="IO error: Connection refused (os error 111)\n")
+
+    monkeypatch.setattr(m, "_run", fake_run)
+
+    def _no_sleep(_s):
+        raise AssertionError("--check must not sleep waiting for Garage")
+
+    monkeypatch.setattr(m.time, "sleep", _no_sleep)
+
+    rc = m.do_layout(a)
+
+    assert rc == 0 and "WOULD-CHANGE" in capsys.readouterr().out
+    assert len(calls) == 1, "check mode should probe exactly once"
+
+
 # --- layout -------------------------------------------------------------------
 def test_layout_no_change_when_version_already_assigned(monkeypatch, capsys):
     a = _layout_args()
@@ -445,6 +512,11 @@ def test_layout_truncates_full_64char_id(monkeypatch, capsys):
 def test_layout_fails_clean_when_garage_not_responsive(monkeypatch, capsys):
     a = _layout_args()
     monkeypatch.setattr(m, "_run", lambda *cmd, **kw: _RunResult(1, stderr="rpc dial err"))
+    # A real apply now POLLS for readiness before giving up, so drive a virtual
+    # clock — otherwise this test really would sit out GARAGE_READY_TIMEOUT.
+    ticks = iter([0.0] + [float(i) * 10.0 for i in range(1, 200)])
+    monkeypatch.setattr(m.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(m.time, "sleep", lambda s: None)
 
     rc = m.do_layout(a)
     out = capsys.readouterr().out
