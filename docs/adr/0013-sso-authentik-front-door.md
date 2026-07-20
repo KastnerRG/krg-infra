@@ -91,9 +91,9 @@ with local accounts because nothing said otherwise" is no longer a valid outcome
   trust by construction: the account can reach exactly the app(s) it was granted
   and nothing else. Onboarding is an **Authentik invitation flow** (an admin sends
   a scoped invite; the collaborator self-enrolls into a local account) — not AD
-  provisioning, and not an open self-signup. That flow is **not yet built** (see
-  follow-ups); until it exists, there is no collaborator-onboarding path, which is
-  the safe default.
+  provisioning, and not an open self-signup. That flow is **built**
+  (`terraform/authentik/collaborator_enrollment.tf`; see follow-ups for the
+  mechanism and FishSense multitenant wiring).
 
 This refines 0010: "every human is an AD account" holds for **members**; web-only
 collaborators are the deliberately-scoped exception that minimal-trust justifies.
@@ -140,13 +140,21 @@ hatch.
 
 ## Out of scope / follow-ups
 
-- **Authentik invitation flow for collaborators.** Decision 4 sets the policy; the
-  mechanism — an Authentik **invitation/enrollment flow** that mints a minimal-trust
-  local account from an admin-issued, app-scoped invite (no AD write, no open
-  self-signup) — still needs building in `terraform/authentik/`, along with where a
-  collaborator's per-app authorization is declared. Owned by the SSO effort
-  ([[terraform-openbao-authentik-hands-off]]). No collaborator can be onboarded
-  until it lands.
+- **Authentik invitation flow for collaborators** — **now landed**
+  (`terraform/authentik/collaborator_enrollment.tf`). An **enrollment** flow
+  (`krg-collaborator-enrollment`) that mints a minimal-trust `external` local
+  account from an admin-issued, single-use invite: invitation-gated
+  (`continue_flow_without_invitation = false` → no open self-signup), email-verified
+  (created inactive, activated on confirmation-link click), UCSD password-policy
+  gated. Invites are minted out of band (Directory → Invitations; there is no
+  provider resource for them) — see the target README. **Per-app authorization**
+  (the open question this follow-up flagged): collaborators get **no AD group**;
+  access is declared directly per application in `terraform/authentik/` — for the
+  first consumer, FishSense, the invite's `fixed_data` carries the tenant/org, which
+  gates the FishSense apps via an attribute expression policy (OR-ed with the AD-group
+  gate) and is emitted as an `org` OIDC claim, keeping per-org isolation app-side on
+  the stable `sub` (`fishsense_collaborators.tf`). Owned by the SSO effort
+  ([[terraform-openbao-authentik-hands-off]]).
 - **Authentik password-strength/breach policy** — **now landed**
   (`terraform/authentik/password_policy.tf`: length ≥12 + HIBP breach + zxcvbn,
   bound to the recovery and change-password flows), closing ADR 0010 §4. It is the

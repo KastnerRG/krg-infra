@@ -98,7 +98,12 @@ resource "authentik_provider_oauth2" "fishsense_analytics" {
   # re-synced every login). Reuse the shared `groups` scope (defined above for
   # garage_ui) so userinfo emits the user's Authentik group names (AD-synced) —
   # the fishsense-superset-{admin,editor,viewer} groups gate the Superset roles.
-  property_mappings = concat(local.std_scopes, [authentik_property_mapping_provider_scope.groups.id])
+  # + the `org` scope (fishsense_collaborators.tf) so a multitenant external
+  # collaborator's tenant/org reaches Superset/FishSense on the token.
+  property_mappings = concat(local.std_scopes, [
+    authentik_property_mapping_provider_scope.groups.id,
+    authentik_property_mapping_provider_scope.fishsense_org.id,
+  ])
   # RS256 signing key — REQUIRED so the id_token is asymmetrically signed and the
   # provider's jwks_uri publishes the public key. Without it Authentik falls back
   # to HS256 (symmetric) + an empty JWKS ({}), so Superset (authlib) fails ID-token
@@ -122,12 +127,14 @@ resource "authentik_application" "fishsense_analytics" {
 # ── FishSense OAuth (main site) ───────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "fishsense_oauth" {
-  name                   = "Provider for FishSense OAuth"
-  client_id              = "fishsense-oauth"
-  authorization_flow     = data.authentik_flow.default_authorization.id
-  invalidation_flow      = data.authentik_flow.default_invalidation.id
-  allowed_redirect_uris  = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://fishsense.e4e.ucsd.edu/api/auth/callback/authentik" }]
-  property_mappings      = local.std_scopes
+  name                  = "Provider for FishSense OAuth"
+  client_id             = "fishsense-oauth"
+  authorization_flow    = data.authentik_flow.default_authorization.id
+  invalidation_flow     = data.authentik_flow.default_invalidation.id
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://fishsense.e4e.ucsd.edu/api/auth/callback/authentik" }]
+  # + the `org` scope (fishsense_collaborators.tf) so a multitenant external
+  # collaborator's tenant/org reaches the FishSense site on the token.
+  property_mappings      = concat(local.std_scopes, [authentik_property_mapping_provider_scope.fishsense_org.id])
   sub_mode               = "hashed_user_id"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
