@@ -19,7 +19,7 @@ module; DSM py3.8) — five subcommands, run in load-bearing order by
 | `render-config`    | Atomic-write `/volume1/docker/garage/garage.toml` (root:root 0400) from spec.config + 3 secret env vars. | sha256 compare of full file content |
 | `deploy`           | Render `docker-compose.yml` next to the toml; `docker compose up -d` when the compose file or container image drifts, or when the container isn't running. | Diff vs current compose file + `docker inspect` |
 | `layout`           | Single-node `garage layout assign -z <zone> -c <cap> <NODE_ID>` + `garage layout apply --version 1`. | No-op if a layout (version ≥ 1) already exists — anti-rebalance guard |
-| `sync-buckets`     | Create-if-missing buckets from `spec.buckets` via the Garage v2 Admin API (`ListBuckets`/`CreateBucket` over loopback, not CLI text). | Diff of desired names vs existing `globalAliases` |
+| `sync-buckets`     | Create-if-missing buckets from `spec.buckets` via the Garage v2 Admin API (`ListBuckets`/`CreateBucket` over loopback, not CLI text), then converge each bucket's CORS rules (`GetBucketInfo`/`UpdateBucket` `corsRules`). | Diff of desired names vs existing `globalAliases`; CORS diffed against the `GetBucketInfo` readback |
 | `sync-keys`        | Import-if-missing access keys from `spec.keys` using the credentials the control node provisioned in OpenBao (Admin API `ListKeys`/`ImportKey`) + converge each key's per-bucket read/write/owner grants (`GetBucketInfo`/`AllowBucketKey`/`DenyBucketKey`). Renders `<keys_dir>/<name>.env` (root:root 0400) from OpenBao truth. | Diff of desired vs current keys + `.env` content + per-bucket permission flags; a lost `keys_dir` is **restored** (no rotation). **FAILs** only if a key on Garage has a different id than OpenBao holds (out-of-band rotation) |
 | `render-ui-config` | Atomic-write `/volume1/docker/garage-ui/config.yaml` (root:root 0400) from spec.ui + GARAGE_ADMIN_TOKEN + GARAGE_UI_OIDC_CLIENT_SECRET env vars. Generates + persists `jwt-key.pem` (Ed25519) once so login sessions survive restarts. Skipped when `ui:` is absent from spec. | sha256 + `jwt-key.pem` existence |
 | `deploy-ui`        | Render `garage-ui/docker-compose.yml`; `docker compose up -d`. Same drift logic as `deploy`. | Diff vs current compose file + `docker inspect` |
@@ -174,6 +174,13 @@ bucket to exist first). Schema:
 buckets:
   - name: fishsense-lite          # becomes a Garage global alias
   - name: labels-fishsense-lite   # per-project Label Studio hand-off bucket
+    cors:                         # optional; browser CORS policy for the bucket
+      - allowed_origins: [https://app.heartex.com]
+        allowed_methods: [GET, HEAD]        # subset of GET/HEAD/PUT/POST/DELETE/PATCH/OPTIONS
+        allowed_headers: ["*"]              # optional
+        expose_headers: [ETag]              # optional
+        max_age_seconds: 3600               # optional
+        # id: my-rule                       # optional
 
 keys:
   - name: fishsense-lite          # access-key name
@@ -197,6 +204,37 @@ images get a separate `labels-<project>` bucket that the off-box Label Studio
 does **not** delete it: retiring a bucket is a manual one-time decommission
 (empty it via an S3 client — the UI can't recurse a prefix — then
 `garage bucket delete`).
+
+### CORS
+
+`cors:` is applied through the **admin API** (`UpdateBucket` `corsRules`), not
+`aws s3api put-bucket-cors`. Both reach the same stored rules, but the S3 route
+needs an `owner` grant on the bucket, which would mean handing a human an
+owner-scoped key just to change a header policy; the role already holds the
+admin token. So a CORS request is a spec PR, not a shell command.
+
+Unlike bucket *creation*, CORS is **declarative in both directions**: a bucket
+with no `cors:` is converged to *no* rules, so a rule set added out of band (via
+garage-ui, or an owner key) is reaped on the next apply. Field names are the S3
+`CORSRule` fields in snake_case; the script translates them to the singular
+PascalCase tags the admin API actually deserializes (`AllowedOrigin`, not
+`AllowedOrigins` — Garage reuses its S3-XML structs for the JSON API).
+
+CORS is a **browser** policy, not an access grant: it governs whether JS on some
+origin may read a response it already had credentials to fetch. Listing an origin
+does not make the bucket public — objects are still only reachable via a signed
+request (for Label Studio, a presigned GET minted by the `labels-<project>` key).
+Adding an origin is therefore not an authz decision, but keep the list to the
+specific UIs that need it rather than `*`.
+
+Verify after an apply — a preflight should come back `200` with a matching
+`Access-Control-Allow-Origin` (no credentials needed, that's the point):
+
+```bash
+curl -i -X OPTIONS https://s3.e4e.ucsd.edu/labels-fishsense-lite/ \
+  -H 'Origin: https://app.heartex.com' \
+  -H 'Access-Control-Request-Method: GET'
+```
 
 ### Key secrets
 
@@ -316,8 +354,10 @@ invalidates all live sessions (a logout-everyone, not a secret rotation).
 
 ## Out of scope
 
-- **Bucket-level quotas / storage policies beyond read/write/owner grants**
-  — `spec.buckets` entries are name-only today; no `quotas:` field yet.
+- **Bucket-level quotas, website hosting, and lifecycle rules** — `UpdateBucket`
+  also carries `quotas` / `websiteAccess` / `lifecycleRules`; `spec.buckets`
+  models only `name` + `cors` today. Each is an unset `Option<>` in the request
+  body, so the CORS-only `UpdateBucket` this role sends leaves them untouched.
 - **DSM AppPortal reverse-proxy IaC + cert assignment** for the UI's public
   port — manual one-shot for now (steps in *First-time UI setup*); DSM exposes
   no provider/API for it.
