@@ -163,9 +163,36 @@ ui:
 # fishsense-lite (github.com/UCSD-E4E/fishsense-lite) runs OFF-INFRA (researcher
 # CLI + Temporal workers), so its key is consumed from that project's own config,
 # same as any external consumer — seed it wherever those workers run, not on a host.
+#
+# `cors:` (optional, per bucket) becomes the bucket's CORS rules, applied via the
+# admin API's UpdateBucket `corsRules` — NOT `aws s3api put-bucket-cors`, which
+# would need an `owner` grant handed to a human. Fields are the S3 CORSRule
+# fields in snake_case: allowed_origins + allowed_methods (both required),
+# allowed_headers, expose_headers, max_age_seconds, id. DECLARATIVE: a bucket
+# with no `cors:` is converged to NO rules, so an out-of-band rule set is reaped.
+#
+# CORS is a BROWSER policy, not an access grant: it only tells a browser whether
+# JS on some origin may READ a response it already had the credentials to fetch.
+# Listing an origin here does NOT make the bucket public — objects are still
+# reached only via a signed request (in the Label Studio case, a presigned GET
+# minted by the `labels-<project>` key). So keep the origin list to the specific
+# UIs that need it rather than `*`, but adding one is not an authz decision.
 buckets:
   - name: fishsense-lite # internal pipeline artifacts (rectified/intermediate outputs)
   - name: labels-fishsense-lite # label-ready images handed off to Label Studio (Heartex SaaS)
+    # Label Studio (Heartex SaaS) presigns s3://labels-fishsense-lite/... URIs and
+    # the LABELER'S BROWSER on app.heartex.com fetches them straight from Garage,
+    # cross-origin. Without these rules Garage 403s the preflight and sends no
+    # Access-Control-Allow-Origin, so the labeling UI renders "issue loading URL
+    # from $image value" even though the presigned GET itself is a clean 200.
+    # Read-only methods only: annotations are written back through the
+    # labels-fishsense-lite KEY (server-side, no browser CORS involved).
+    cors:
+      - allowed_origins: [https://app.heartex.com]
+        allowed_methods: [GET, HEAD]
+        allowed_headers: ["*"]
+        expose_headers: [ETag, Content-Length, Content-Type]
+        max_age_seconds: 3600
 
 # Access keys. Only the NAME + bucket grants are declared here (git is truth);
 # the actual {access_key_id, secret_access_key} is NOT in the spec. The control

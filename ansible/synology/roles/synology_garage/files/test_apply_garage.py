@@ -882,9 +882,31 @@ def test_admin_request_http_error_returns_status_and_body(monkeypatch):
 
 # --- sync-buckets ---------------------------------------------------------------
 def _sync_buckets_args(**overrides):
-    base = {"admin_port": "3903", "buckets_json": '["label-studio"]', "check": False}
+    base = {
+        "admin_port": "3903",
+        "buckets_json": json.dumps([{"name": "label-studio"}]),
+        "check": False,
+    }
     base.update(overrides)
     return type("A", (), base)()
+
+
+# The one CORS rule shape used across the tests below, in both its spec
+# (snake_case) and Garage-admin-API (singular XML tag) forms.
+_SPEC_CORS = {
+    "allowed_origins": ["https://app.heartex.com"],
+    "allowed_methods": ["GET", "HEAD"],
+    "allowed_headers": ["*"],
+    "expose_headers": ["ETag"],
+    "max_age_seconds": 3600,
+}
+_API_CORS = {
+    "AllowedOrigin": ["https://app.heartex.com"],
+    "AllowedMethod": ["GET", "HEAD"],
+    "AllowedHeader": ["*"],
+    "ExposeHeader": ["ETag"],
+    "MaxAgeSeconds": 3600,
+}
 
 
 def _fake_admin(responses):
@@ -925,13 +947,197 @@ def test_sync_buckets_creates_missing(monkeypatch, capsys):
 def test_sync_buckets_no_change_when_present(monkeypatch, capsys):
     monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
     fake, calls = _fake_admin(
-        {("GET", "/v2/ListBuckets"): (200, [{"id": "b1", "globalAliases": ["label-studio"]}])}
+        {
+            ("GET", "/v2/ListBuckets"): (200, [{"id": "b1", "globalAliases": ["label-studio"]}]),
+            ("GET", "/v2/GetBucketInfo"): (200, {"id": "b1", "corsRules": []}),
+        }
     )
     monkeypatch.setattr(m, "_admin_request", fake)
 
     rc = m.do_sync_buckets(_sync_buckets_args())
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
     assert not any(c[1] == "/v2/CreateBucket" for c in calls)
+
+
+def test_sync_buckets_accepts_bare_name_strings(monkeypatch, capsys):
+    """The pre-CORS wire format (a JSON array of names) still means 'no cors'."""
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [{"id": "b1", "globalAliases": ["label-studio"]}]),
+            ("GET", "/v2/GetBucketInfo"): (200, {"id": "b1"}),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(_sync_buckets_args(buckets_json='["label-studio"]'))
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
+    assert not any(c[1] == "/v2/UpdateBucket" for c in calls)
+
+
+# --- sync-buckets: CORS -----------------------------------------------------------
+def _cors_buckets_json(cors):
+    return json.dumps([{"name": "label-studio", "cors": cors}])
+
+
+def test_sync_buckets_sets_cors_on_existing_bucket(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [{"id": "b1", "globalAliases": ["label-studio"]}]),
+            ("GET", "/v2/GetBucketInfo"): (200, {"id": "b1", "corsRules": []}),
+            ("POST", "/v2/UpdateBucket"): (200, {"id": "b1"}),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(_sync_buckets_args(buckets_json=_cors_buckets_json([_SPEC_CORS])))
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED ")
+    payload = json.loads(out.split(" ", 1)[1])
+    assert payload["cors_to_set"] == ["label-studio"]
+    updates = [c for c in calls if c[1] == "/v2/UpdateBucket"]
+    assert len(updates) == 1
+    # Addressed by bucket ID (UpdateBucket takes no alias), body carries the
+    # XML-tag field names Garage's admin API actually deserializes.
+    assert updates[0][2] == {"id": "b1"}
+    assert updates[0][3] == {"corsRules": [_API_CORS]}
+
+
+def test_sync_buckets_cors_idempotent_against_readback(monkeypatch, capsys):
+    """The exact body we PUT must compare equal to what GetBucketInfo returns,
+    or every run would re-emit CHANGED forever."""
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [{"id": "b1", "globalAliases": ["label-studio"]}]),
+            ("GET", "/v2/GetBucketInfo"): (200, {"id": "b1", "corsRules": [_API_CORS]}),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(_sync_buckets_args(buckets_json=_cors_buckets_json([_SPEC_CORS])))
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
+    assert not any(c[1] == "/v2/UpdateBucket" for c in calls)
+
+
+def test_sync_buckets_reaps_out_of_band_cors(monkeypatch, capsys):
+    """A bucket that declares no `cors:` converges to NO rules — git is truth."""
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [{"id": "b1", "globalAliases": ["label-studio"]}]),
+            ("GET", "/v2/GetBucketInfo"): (200, {"id": "b1", "corsRules": [_API_CORS]}),
+            ("POST", "/v2/UpdateBucket"): (200, {"id": "b1"}),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(_sync_buckets_args())
+    assert rc == 0 and capsys.readouterr().out.startswith("CHANGED ")
+    updates = [c for c in calls if c[1] == "/v2/UpdateBucket"]
+    assert updates and updates[0][3] == {"corsRules": []}
+
+
+def test_sync_buckets_sets_cors_on_freshly_created_bucket(monkeypatch, capsys):
+    """A bucket created this run has no id in ListBuckets — take it from the
+    CreateBucket response, since UpdateBucket can only be addressed by id."""
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, []),
+            ("POST", "/v2/CreateBucket"): (200, {"id": "new1", "globalAliases": ["label-studio"]}),
+            ("POST", "/v2/UpdateBucket"): (200, {"id": "new1"}),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(_sync_buckets_args(buckets_json=_cors_buckets_json([_SPEC_CORS])))
+    assert rc == 0 and capsys.readouterr().out.startswith("CHANGED ")
+    # GetBucketInfo is skipped for a not-yet-created bucket (it would 404).
+    assert not any(c[1] == "/v2/GetBucketInfo" for c in calls)
+    updates = [c for c in calls if c[1] == "/v2/UpdateBucket"]
+    assert updates[0][2] == {"id": "new1"} and updates[0][3] == {"corsRules": [_API_CORS]}
+
+
+def test_sync_buckets_cors_check_mode_no_mutation(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [{"id": "b1", "globalAliases": ["label-studio"]}]),
+            ("GET", "/v2/GetBucketInfo"): (200, {"id": "b1", "corsRules": []}),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(
+        _sync_buckets_args(buckets_json=_cors_buckets_json([_SPEC_CORS]), check=True)
+    )
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("WOULD-CHANGE ")
+    assert json.loads(out.split(" ", 1)[1])["cors_to_set"] == ["label-studio"]
+    assert not any(c[1] == "/v2/UpdateBucket" for c in calls)
+
+
+def test_sync_buckets_cors_omits_unset_optionals(monkeypatch, capsys):
+    """ID/MaxAgeSeconds are Option<> on Garage's side and are absent from the
+    readback when unset — so they must not be sent as nulls, or the diff never
+    converges."""
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    minimal = {"allowed_origins": ["https://app.heartex.com"], "allowed_methods": ["GET"]}
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [{"id": "b1", "globalAliases": ["label-studio"]}]),
+            ("GET", "/v2/GetBucketInfo"): (200, {"id": "b1", "corsRules": []}),
+            ("POST", "/v2/UpdateBucket"): (200, {"id": "b1"}),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(_sync_buckets_args(buckets_json=_cors_buckets_json([minimal])))
+    assert rc == 0
+    sent = [c for c in calls if c[1] == "/v2/UpdateBucket"][0][3]["corsRules"][0]
+    assert "ID" not in sent and "MaxAgeSeconds" not in sent
+    assert sent["AllowedHeader"] == [] and sent["ExposeHeader"] == []
+
+
+@pytest.mark.parametrize(
+    "rule,expected",
+    [
+        ({"allowed_methods": ["GET"]}, "allowed_origins"),
+        ({"allowed_origins": ["https://x"]}, "allowed_methods"),
+        ({"allowed_origins": ["https://x"], "allowed_methods": ["FETCH"]}, "invalid"),
+    ],
+)
+def test_sync_buckets_fails_clean_on_bad_cors_rule(monkeypatch, capsys, rule, expected):
+    """A spec typo fails on the control node with a readable message, not as an
+    opaque Garage 400 halfway through an apply."""
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, calls = _fake_admin({})
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(_sync_buckets_args(buckets_json=_cors_buckets_json([rule])))
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    assert expected in json.loads(out.split(" ", 1)[1])["error"]
+    assert not calls  # bails before touching Garage at all
+
+
+def test_sync_buckets_fails_on_non200_updatebucket(monkeypatch, capsys):
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    fake, _calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [{"id": "b1", "globalAliases": ["label-studio"]}]),
+            ("GET", "/v2/GetBucketInfo"): (200, {"id": "b1", "corsRules": []}),
+            ("POST", "/v2/UpdateBucket"): (400, {"code": "InvalidRequest"}),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    rc = m.do_sync_buckets(_sync_buckets_args(buckets_json=_cors_buckets_json([_SPEC_CORS])))
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("FAIL ")
+    assert json.loads(out.split(" ", 1)[1])["bucket"] == "label-studio"
 
 
 def test_sync_buckets_check_mode_no_mutation(monkeypatch, capsys):

@@ -149,17 +149,15 @@
 # sync-buckets before sync-keys: a key's bucket grants need the bucket to
 # already exist (do_sync_keys FAILs loudly otherwise, rather than guessing
 # an ordering fix).
-- name: Sync Garage buckets (create-if-missing)
-  # Bucket names are pulled out into a task `vars:` (rather than inlined with
-  # `map(attribute='name')` on the script line below) so the free-form command
-  # string itself has no literal `=` in it — ansible-lint's no-free-form check
-  # otherwise misreads `attribute='name'` as a stray module k=v argument.
-  vars:
-    garage_bucket_names: "{{ garage_spec.buckets | default([]) | map(attribute='name') | list }}"
+- name: Sync Garage buckets (create-if-missing) + CORS rules
+  # The WHOLE bucket object goes over the wire (not just `name`), because each
+  # entry may carry a `cors:` block that apply_garage.py converges via the admin
+  # API's UpdateBucket. `garage_spec.buckets` is safe as dotted access — `dict`
+  # has no `.buckets` method, unlike the `.keys` collision noted below.
   ansible.builtin.script: >-
     apply_garage.py sync-buckets
     --admin-port {{ garage_spec.config.admin.api_bind_addr.split(':')[-1] }}
-    --buckets-json {{ garage_bucket_names | to_json | quote }}
+    --buckets-json {{ garage_spec.buckets | default([]) | to_json | quote }}
     {{ '--check' if ansible_check_mode else '' }}
   environment:
     GARAGE_ADMIN_TOKEN: "{{ garage_admin_token }}"

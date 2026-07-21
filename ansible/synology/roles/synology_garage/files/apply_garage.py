@@ -23,7 +23,11 @@ Subcommands:
                 v2 Admin API (not the CLI — JSON, already documented, and the
                 admin API is reachable on loopback since the container uses
                 network_mode: host). Idempotent: existing global aliases are
-                left alone.
+                left alone. ALSO converges each bucket's CORS rules
+                (spec.buckets[].cors → UpdateBucket corsRules) declaratively:
+                a bucket that declares no `cors:` is converged to NO rules, so
+                an out-of-band rule set (garage-ui, an owner key running
+                `aws s3api put-bucket-cors`) is reaped like any other drift.
   sync-keys     Import-if-missing access keys from spec.keys, using the
                 credentials the control node provisioned in OpenBao and passed
                 via GARAGE_KEY_CREDENTIALS_JSON (ImportKey, not CreateKey), then
@@ -641,16 +645,105 @@ def _permissions_dict(perm_list):
 
 
 # ---------------------------------------------------------------------------
-# sync-buckets — create-if-missing buckets (Admin API: ListBuckets/CreateBucket)
+# CORS rules — spec `buckets[].cors` → Admin API UpdateBucket `corsRules`
+#
+# Garage exposes bucket CORS on BOTH the S3 API (PutBucketCors, which needs an
+# `owner` grant on the bucket) and the v2 admin API (UpdateBucket corsRules,
+# which needs only the admin token we already hold). We use the admin API: it
+# keeps CORS on the same declarative path as buckets/keys, so no human ever
+# needs an owner key just to change a header policy.
+#
+# The admin API reuses Garage's S3-XML structs verbatim, so the JSON field
+# names are the SINGULAR PascalCase XML tags ("AllowedOrigin": [...]), not the
+# plural S3-JSON ones ("AllowedOrigins"). The spec stays snake_case + plural
+# like the rest of spec/e4e-nas; _cors_api_rule does the translation. Values
+# are plain JSON strings/ints (Garage's xml::Value/IntValue are serde newtypes,
+# so they serialize transparently) — verified against the published v2.3.0
+# OpenAPI schema, which is the same tag we pin in deployment.image_tag.
+# ---------------------------------------------------------------------------
+# Methods Garage will accept in an AllowedMethod (it parses them as hyper
+# Methods and 400s on anything else). Listed explicitly so a spec typo fails
+# on the control node with a readable message instead of as an opaque Garage
+# 400 mid-apply.
+_CORS_METHODS = ("GET", "HEAD", "PUT", "POST", "DELETE", "PATCH", "OPTIONS")
+
+
+def _cors_api_rule(rule, bucket):
+    """spec cors rule (snake_case) → Garage admin API rule (XML tag names).
+    Raises ValueError with a spec-shaped message on anything malformed."""
+    where = "bucket %r cors rule" % bucket
+    origins = rule.get("allowed_origins") or []
+    methods = rule.get("allowed_methods") or []
+    if not origins:
+        raise ValueError("%s: allowed_origins must be a non-empty list" % where)
+    if not methods:
+        raise ValueError("%s: allowed_methods must be a non-empty list" % where)
+    bad = [m for m in methods if m not in _CORS_METHODS]
+    if bad:
+        raise ValueError(
+            "%s: invalid allowed_methods %s (valid: %s)" % (where, bad, list(_CORS_METHODS))
+        )
+    out = {
+        "AllowedOrigin": list(origins),
+        "AllowedMethod": list(methods),
+        "AllowedHeader": list(rule.get("allowed_headers") or []),
+        "ExposeHeader": list(rule.get("expose_headers") or []),
+    }
+    # ID / MaxAgeSeconds are Option<> on Garage's side and are omitted from
+    # GetBucketInfo when unset — so only send them when the spec sets them, or
+    # every run would diff against the readback and loop CHANGED forever.
+    if rule.get("id") is not None:
+        out["ID"] = rule["id"]
+    if rule.get("max_age_seconds") is not None:
+        out["MaxAgeSeconds"] = int(rule["max_age_seconds"])
+    return out
+
+
+def _cors_canonical(api_rules):
+    """Comparable form of a corsRules list, for desired-vs-live diffing.
+    Garage preserves rule + list ORDER, so order is significant (a reordered
+    spec is a real change); only absent-vs-empty optional lists are normalized."""
+    canon = []
+    for r in api_rules or []:
+        c = {
+            "AllowedOrigin": list(r.get("AllowedOrigin") or []),
+            "AllowedMethod": list(r.get("AllowedMethod") or []),
+            "AllowedHeader": list(r.get("AllowedHeader") or []),
+            "ExposeHeader": list(r.get("ExposeHeader") or []),
+        }
+        if r.get("ID") is not None:
+            c["ID"] = r["ID"]
+        if r.get("MaxAgeSeconds") is not None:
+            c["MaxAgeSeconds"] = int(r["MaxAgeSeconds"])
+        canon.append(c)
+    return canon
+
+
+# ---------------------------------------------------------------------------
+# sync-buckets — create-if-missing buckets + converge CORS rules
+# (Admin API: ListBuckets / CreateBucket / GetBucketInfo / UpdateBucket)
 # ---------------------------------------------------------------------------
 def do_sync_buckets(a):
     admin_token = os.environ.get("GARAGE_ADMIN_TOKEN", "")
     if not admin_token:
         return _fail({"reason": "required secret env var unset", "vars": ["GARAGE_ADMIN_TOKEN"]})
     try:
-        desired_names = json.loads(a.buckets_json)
+        desired_buckets = json.loads(a.buckets_json)
     except ValueError as e:
         return _fail({"reason": "invalid --buckets-json", "error": str(e)})
+
+    # Entries are spec bucket objects ({"name": ..., "cors": [...]}). A bare
+    # string is still accepted (the pre-CORS wire format) and means "no cors".
+    try:
+        desired = [{"name": b} if isinstance(b, str) else b for b in desired_buckets]
+        desired_cors = {
+            b["name"]: [_cors_api_rule(r, b["name"]) for r in b.get("cors") or []] for b in desired
+        }
+    except ValueError as e:
+        return _fail({"reason": "invalid bucket spec", "error": str(e)})
+    except (KeyError, TypeError, AttributeError) as e:
+        return _fail({"reason": "malformed --buckets-json entry", "error": str(e)})
+    desired_names = [b["name"] for b in desired]
 
     admin_port = int(a.admin_port)
     try:
@@ -660,13 +753,40 @@ def do_sync_buckets(a):
     if status != 200:
         return _fail({"reason": "ListBuckets returned non-200", "status": status, "body": buckets})
 
-    existing_aliases = set()
+    bucket_id_by_alias = {}
     for b in buckets:
-        existing_aliases.update(b.get("globalAliases") or [])
+        for alias in b.get("globalAliases") or []:
+            bucket_id_by_alias[alias] = b["id"]
 
-    missing = [n for n in desired_names if n not in existing_aliases]
-    payload = {"buckets_to_create": missing}
-    if not missing:
+    missing = [n for n in desired_names if n not in bucket_id_by_alias]
+
+    # Which buckets need a CORS write. A bucket we're about to CREATE starts
+    # with no rules, so it needs one iff the spec declares any; an existing one
+    # is read back and diffed. Declaring nothing converges to [] — that's the
+    # reap half of "git is truth" (ADR 0001), not a no-op.
+    cors_to_set = []  # (name, api_rules)
+    for name in desired_names:
+        want = desired_cors[name]
+        if name in missing:
+            if want:
+                cors_to_set.append((name, want))
+            continue
+        status, info = _admin_request(
+            admin_port,
+            admin_token,
+            "GET",
+            "/v2/GetBucketInfo",
+            query={"id": bucket_id_by_alias[name]},
+        )
+        if status != 200:
+            return _fail(
+                {"reason": "GetBucketInfo failed", "bucket": name, "status": status, "body": info}
+            )
+        if _cors_canonical(info.get("corsRules")) != _cors_canonical(want):
+            cors_to_set.append((name, want))
+
+    payload = {"buckets_to_create": missing, "cors_to_set": [n for n, _r in cors_to_set]}
+    if not missing and not cors_to_set:
         return _emit("no-change", {}, a.check)
     if a.check:
         return _emit("would-change", payload, True)
@@ -678,6 +798,31 @@ def do_sync_buckets(a):
         if status not in (200, 201):
             return _fail(
                 {"reason": "CreateBucket failed", "bucket": name, "status": status, "body": resp}
+            )
+        # Needed to address the new bucket in UpdateBucket below (which takes
+        # the bucket id, not an alias).
+        bucket_id_by_alias[name] = (resp or {}).get("id")
+
+    for name, rules in cors_to_set:
+        bucket_id = bucket_id_by_alias.get(name)
+        if not bucket_id:
+            return _fail({"reason": "no bucket id to set CORS on", "bucket": name})
+        status, resp = _admin_request(
+            admin_port,
+            admin_token,
+            "POST",
+            "/v2/UpdateBucket",
+            query={"id": bucket_id},
+            body={"corsRules": rules},
+        )
+        if status != 200:
+            return _fail(
+                {
+                    "reason": "UpdateBucket (corsRules) failed",
+                    "bucket": name,
+                    "status": status,
+                    "body": resp,
+                }
             )
     return _emit("changed", payload, False)
 
@@ -1222,7 +1367,9 @@ def main(argv):
     sb.add_argument(
         "--buckets-json",
         required=True,
-        help='JSON array of bucket (global alias) names, e.g. ["label-studio"]',
+        help='JSON array of spec bucket objects, e.g. [{"name":"labels-x","cors":'
+        '[{"allowed_origins":["https://app.heartex.com"],"allowed_methods":["GET","HEAD"]}]}]. '
+        "A bare name string is also accepted and means no CORS rules.",
     )
     # Admin token read from GARAGE_ADMIN_TOKEN env — NOT argv. See do_sync_buckets.
     sb.add_argument("--check", action="store_true")
