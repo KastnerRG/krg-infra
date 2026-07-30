@@ -2,7 +2,7 @@
 """Deploy + configure Garage on DSM Container Manager idempotently.
 
 Subcommands:
-  render-config  Write /volume1/docker/garage/garage.toml (root:root 0400) from
+  render-config  Write /volume2/docker/garage/garage.toml (root:root 0400) from
                  structural CLI flags + 3 secrets read from environment
                  (GARAGE_RPC_SECRET, GARAGE_ADMIN_TOKEN, GARAGE_METRICS_TOKEN —
                  NOT cmdline args, to keep them out of /proc/<pid>/cmdline /

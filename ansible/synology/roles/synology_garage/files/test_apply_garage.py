@@ -21,7 +21,7 @@ import apply_garage as m  # noqa: E402
 def _render_args(**overrides):
     """Default arg-namespace for render-config; override per test."""
     base = {
-        "config_path": "/volume1/docker/garage/garage.toml",
+        "config_path": "/volume2/docker/garage/garage.toml",
         "db_engine": "lmdb",
         "replication_factor": 1,
         "compression_level": 2,
@@ -51,7 +51,7 @@ def _set_secret_env(monkeypatch, rpc="a" * 64, admin="b" * 64, metrics="c" * 64)
 
 def _deploy_args(**overrides):
     base = {
-        "compose_path": "/volume1/docker/garage/docker-compose.yml",
+        "compose_path": "/volume2/docker/garage/docker-compose.yml",
         "container_name": "garage",
         "image": "dxflrs/garage",
         "image_tag": "v1.1.0",
@@ -59,7 +59,7 @@ def _deploy_args(**overrides):
         "restart_policy": "unless-stopped",
         "meta_dir": "/volume2/s3-data/meta",
         "data_dir": "/volume2/s3-data/data",
-        "config_path": "/volume1/docker/garage/garage.toml",
+        "config_path": "/volume2/docker/garage/garage.toml",
         "rust_log": "garage=info",
         "check": False,
     }
@@ -80,7 +80,7 @@ def _layout_args(**overrides):
 
 def _render_ui_args(**overrides):
     base = {
-        "config_path": "/volume1/docker/garage-ui/config.yaml",
+        "config_path": "/volume2/docker/garage-ui/config.yaml",
         "bind_host": "127.0.0.1",
         "port": "8080",
         "public_hostname": "s3-admin.e4e.ucsd.edu",
@@ -102,11 +102,11 @@ def _render_ui_args(**overrides):
 
 def _deploy_ui_args(**overrides):
     base = {
-        "compose_path": "/volume1/docker/garage-ui/docker-compose.yml",
+        "compose_path": "/volume2/docker/garage-ui/docker-compose.yml",
         "container_name": "garage-ui",
         "image": "noooste/garage-ui",
         "image_tag": "v0.6.1",
-        "config_path": "/volume1/docker/garage-ui/config.yaml",
+        "config_path": "/volume2/docker/garage-ui/config.yaml",
         "config_changed": False,
         "check": False,
     }
@@ -140,11 +140,11 @@ def test_render_config_writes_when_missing(monkeypatch, capsys):
     assert rc == 0 and out.startswith("CHANGED ")
     payload = json.loads(out.split(" ", 1)[1])
     assert payload["had_existing"] is False
-    assert payload["config_path"] == "/volume1/docker/garage/garage.toml"
+    assert payload["config_path"] == "/volume2/docker/garage/garage.toml"
     assert "rpc_secret" not in out and "admin_token" not in out and "metrics_token" not in out
     assert len(writes) == 1
     path, content, mode = writes[0]
-    assert path == "/volume1/docker/garage/garage.toml" and mode == 0o400
+    assert path == "/volume2/docker/garage/garage.toml" and mode == 0o400
     # The rendered TOML must include the secret values + structural fields:
     assert 'rpc_secret = "' + "a" * 64 + '"' in content
     assert 'admin_token = "' + "b" * 64 + '"' in content
@@ -616,7 +616,7 @@ def test_render_ui_config_writes_when_missing(monkeypatch, capsys):
     assert rc == 0 and out.startswith("CHANGED ")
     payload = json.loads(out.split(" ", 1)[1])
     assert payload["key_generated"] is True
-    assert payload["config_path"] == "/volume1/docker/garage-ui/config.yaml"
+    assert payload["config_path"] == "/volume2/docker/garage-ui/config.yaml"
     # No secret leaks in payload (only hash):
     assert "y" * 32 not in out and "x" * 64 not in out
     _, content, mode, uid, gid = writes[0]
@@ -1182,7 +1182,7 @@ def _sync_keys_args(**overrides):
                 }
             ]
         ),
-        "keys_dir": "/volume1/docker/garage/keys",
+        "keys_dir": "/volume2/docker/garage/keys",
         "check": False,
     }
     base.update(overrides)
@@ -1236,7 +1236,7 @@ def test_sync_keys_imports_key_and_grants(monkeypatch, capsys):
 
     assert len(writes) == 1
     path, content, mode = writes[0]
-    assert path == os.path.join("/volume1/docker/garage/keys", "label-studio.env")
+    assert path == os.path.join("/volume2/docker/garage/keys", "label-studio.env")
     assert mode == 0o400
     assert content == _LS_ENV
 

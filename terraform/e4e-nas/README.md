@@ -72,7 +72,7 @@ FileStation API only sees directories created through itself, so any
 container workload bind-mounting these paths needs them index-registered.
 The role can rely on the dirs existing without `sudo mkdir` workarounds.
 
-> **Bring-up order:** the parent **shared folders** (`docker` on `/volume1`
+> **Bring-up order:** the parent **shared folders** (`docker` on `/volume2`
 > or wherever `spec/e4e-nas/shares.yml` puts it, and `s3-data` on
 > `/volume2`) must exist before `tofu apply` here, or `FileStation.CreateFolder`
 > errors with "path not found". Share creation is owned by the Ansible

@@ -29,21 +29,37 @@ deployment:
   # On-disk paths are explicit (no volume guessing). The terraform-tracked
   # FileStation folder `/docker/garage` maps to whichever volume hosts the
   # `docker` share; record the absolute path here so the role doesn't have
-  # to guess. NOTE: shares.yml currently declares the `docker` share at
-  # /volume2/docker; the live NAS has /volume1/docker/garage/ in active use
-  # (operator-created, pre-spec). Keeping /volume1 here to match the running
-  # container until the docker-share volume is reconciled (separate cleanup).
-  compose_path: /volume1/docker/garage/docker-compose.yml
-  config_path: /volume1/docker/garage/garage.toml
+  # to guess. These MUST track the `docker` share's path in shares.yml
+  # (/volume2/docker) — see the drift warning below.
+  #
+  # WAS /volume1/docker/garage until 2026-07-29. The pre-spec, operator-created
+  # `docker` share lived on /volume1; shares.yml declares it on /volume2 and the
+  # live share was reconciled to /volume2/docker, but these paths were left
+  # pinned at /volume1 ("match the running container, clean up separately").
+  # /volume1/docker then went away with the old share. The running container
+  # kept its already-resolved bind mount, so NOTHING BROKE UNTIL A RESTART:
+  # the NAS rebooted 2026-07-29 ~22:55Z and both containers came back
+  # `Exited (128) Bind mount failed: '<path>' does not exist`, which surfaced
+  # as a 502 from the AppPortal reverse proxy on s3.e4e.ucsd.edu.
+  #
+  # Recovery was config-only: garage.toml / config.yaml / keys_dir are all
+  # RE-RENDERABLE from this spec plus OpenBao (secret/e4e-nas/garage,
+  # .../garage-ui-oidc, .../garage-keys/*), and the object data + cluster
+  # layout + node identity live in data_dir/meta_dir on /volume2/s3-data,
+  # which was never touched.
+  compose_path: /volume2/docker/garage/docker-compose.yml
+  config_path: /volume2/docker/garage/garage.toml
   data_dir: /volume2/s3-data/data
   meta_dir: /volume2/s3-data/meta
   restart_policy: unless-stopped
   rust_log: garage=info,garage_api=info,garage_block=info
-  # Where sync-keys persists each newly-created access key's one-time secret
-  # (<name>.env, root:root 0400) — Garage only returns secretAccessKey once,
-  # at creation, so this file is the only durable copy on the box. See
-  # roles/synology_garage/README.md "Key secrets" for the OpenBao seed step.
-  keys_dir: /volume1/docker/garage/keys
+  # Where sync-keys renders each access key's secret (<name>.env, root:root
+  # 0400) from OpenBao truth. Garage only returns secretAccessKey once, at
+  # creation, so this file is the only copy ON THE BOX — but not the durable
+  # one: OpenBao (secret/e4e-nas/garage-keys/<name>) is, and sync-keys
+  # IMPORTs from it, so a lost keys_dir is restored, not rotated (#75). See
+  # roles/synology_garage/README.md "Key secrets".
+  keys_dir: /volume2/docker/garage/keys
 
 # Structural garage.toml — rendered with secrets injected at apply-time.
 config:
@@ -94,8 +110,14 @@ ui:
   image: noooste/garage-ui
   image_tag: "v0.8.0"                     # tags are v-prefixed on Docker Hub; v2.x admin API required (latest as of 2026-06; bump per ADR 0002 w/ changelog)
   container_name: garage-ui
-  compose_path: /volume1/docker/garage-ui/docker-compose.yml
-  config_path: /volume1/docker/garage-ui/config.yaml
+  # Same /volume1 → /volume2 repoint as deployment.* above (2026-07-29) — the
+  # terraform-tracked FileStation folder is `/docker/garage-ui`, which now
+  # resolves under /volume2/docker. NOTE: render-ui-config generates
+  # jwt-key.pem next to config_path and it was NOT recoverable from the lost
+  # /volume1 dir, so a fresh key is generated here — that only invalidates
+  # existing garage-ui login sessions (users re-auth through Authentik).
+  compose_path: /volume2/docker/garage-ui/docker-compose.yml
+  config_path: /volume2/docker/garage-ui/config.yaml
   bind_host: 127.0.0.1                    # loopback only; DSM AppPortal terminates TLS publicly
   port: 8080                              # internal UI port; the AppPortal entry proxies the public port here
 
