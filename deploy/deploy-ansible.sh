@@ -184,7 +184,23 @@ else
     # Capture the names FIRST and fail-closed: a process-substitution `< <(yq …)`
     # swallows yq's exit code, so a bad expression once silently produced an empty
     # list → sync-keys then FAILed on missing creds (the 2026-07-13 red deploy).
-    key_names="$(nix run nixpkgs#yq-go -- '.keys[].name' "${REPO_ROOT}/spec/e4e-nas/garage.yml")" \
+    # Prefer a yq-go already ON PATH and fall back to `nix run` only if there
+    # isn't one. The nightly ansible-apply systemd unit has a strict PATH with no
+    # `nix` at all (nix/hosts/krg-deploy/default.nix), so `nix run` there died on
+    # "nix: command not found" and took the whole e4e-nas leg with it, silently,
+    # every night from ~2026-07-13. Using PATH first also drops a network fetch
+    # out of the 04:30 path. The guard matters: `yq` is an ambiguous name — the
+    # mikefarah/yq-go expression syntax used below is NOT compatible with
+    # python-yq (a jq wrapper), so only accept the real thing and otherwise take
+    # the nix route rather than silently mis-parsing the spec.
+    _yq_go() {
+      if command -v yq >/dev/null 2>&1 && yq --version 2>&1 | grep -qi 'mikefarah\|yq-go'; then
+        yq "$@"
+      else
+        nix run nixpkgs#yq-go -- "$@"
+      fi
+    }
+    key_names="$(_yq_go '.keys[].name' "${REPO_ROOT}/spec/e4e-nas/garage.yml")" \
       || { echo "FATAL: could not read garage key names from spec (yq-go)" >&2; exit 1; }
     _randhex() { openssl rand -hex "$1"; }
     garage_keys='{}'
