@@ -1,7 +1,7 @@
 ---
 # synology_garage — deploy + configure Garage S3 on Container Manager from
 # spec/e4e-nas/garage.yml. THREE steps in load-bearing order:
-#   1. render-config  — write /volume1/docker/garage/garage.toml (root:root 0400)
+#   1. render-config  — write /volume2/docker/garage/garage.toml (root:root 0400)
 #                       from spec.config + 3 extra_vars secrets (no_log:true).
 #   2. deploy         — render docker-compose.yml + `docker compose up -d`
 #                       when image/mounts/env/restart drift. Container would

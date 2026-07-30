@@ -16,12 +16,12 @@ module; DSM py3.8) — five subcommands, run in load-bearing order by
 
 | subcommand | what it does | idempotency |
 |---|---|---|
-| `render-config`    | Atomic-write `/volume1/docker/garage/garage.toml` (root:root 0400) from spec.config + 3 secret env vars. | sha256 compare of full file content |
+| `render-config`    | Atomic-write `/volume2/docker/garage/garage.toml` (root:root 0400) from spec.config + 3 secret env vars. | sha256 compare of full file content |
 | `deploy`           | Render `docker-compose.yml` next to the toml; `docker compose up -d` when the compose file or container image drifts, or when the container isn't running. | Diff vs current compose file + `docker inspect` |
 | `layout`           | Single-node `garage layout assign -z <zone> -c <cap> <NODE_ID>` + `garage layout apply --version 1`. | No-op if a layout (version ≥ 1) already exists — anti-rebalance guard |
 | `sync-buckets`     | Create-if-missing buckets from `spec.buckets` via the Garage v2 Admin API (`ListBuckets`/`CreateBucket` over loopback, not CLI text), then converge each bucket's CORS rules (`GetBucketInfo`/`UpdateBucket` `corsRules`). | Diff of desired names vs existing `globalAliases`; CORS diffed against the `GetBucketInfo` readback |
 | `sync-keys`        | Import-if-missing access keys from `spec.keys` using the credentials the control node provisioned in OpenBao (Admin API `ListKeys`/`ImportKey`) + converge each key's per-bucket read/write/owner grants (`GetBucketInfo`/`AllowBucketKey`/`DenyBucketKey`). Renders `<keys_dir>/<name>.env` (root:root 0400) from OpenBao truth. | Diff of desired vs current keys + `.env` content + per-bucket permission flags; a lost `keys_dir` is **restored** (no rotation). **FAILs** only if a key on Garage has a different id than OpenBao holds (out-of-band rotation) |
-| `render-ui-config` | Atomic-write `/volume1/docker/garage-ui/config.yaml` (root:root 0400) from spec.ui + GARAGE_ADMIN_TOKEN + GARAGE_UI_OIDC_CLIENT_SECRET env vars. Generates + persists `jwt-key.pem` (Ed25519) once so login sessions survive restarts. Skipped when `ui:` is absent from spec. | sha256 + `jwt-key.pem` existence |
+| `render-ui-config` | Atomic-write `/volume2/docker/garage-ui/config.yaml` (root:root 0400) from spec.ui + GARAGE_ADMIN_TOKEN + GARAGE_UI_OIDC_CLIENT_SECRET env vars. Generates + persists `jwt-key.pem` (Ed25519) once so login sessions survive restarts. Skipped when `ui:` is absent from spec. | sha256 + `jwt-key.pem` existence |
 | `deploy-ui`        | Render `garage-ui/docker-compose.yml`; `docker compose up -d`. Same drift logic as `deploy`. | Diff vs current compose file + `docker inspect` |
 
 `sync-buckets`/`sync-keys` talk to Garage's v2 **Admin API** directly (JSON
@@ -244,7 +244,7 @@ curl -i -X OPTIONS https://s3.e4e.ucsd.edu/labels-fishsense-lite/ \
 and hands it to `sync-keys`, which **imports** the key with those credentials
 (`ImportKey`) rather than letting Garage generate a one-time secret it alone
 holds. `<keys_dir>/<name>.env` (root:root 0400, e.g.
-`/volume1/docker/garage/keys/labels-fishsense-lite.env`) is a render of that
+`/volume2/docker/garage/keys/labels-fishsense-lite.env`) is a render of that
 OpenBao value:
 
 ```
@@ -347,7 +347,7 @@ them reach *other* hosts. Rotate deliberately, in order:
 | `metrics_token` | `garage.toml` **+ krg-prod Prometheus scrape config** | `bao kv put … metrics_token=<new>` → re-run role → **update the garage scrape job's bearer token on krg-prod and reload Prometheus** (cross-host — easy to forget; metrics silently 401 until you do). |
 | `garage_ui_oidc_client_secret` | garage-ui `config.yaml` + the Authentik provider | rotate in Authentik: `tofu apply -replace=authentik_provider_oauth2.garage_ui` (regenerates the secret + rewrites `secret/e4e-nas/garage-ui-oidc`) → re-run the role (re-renders the UI config, restarts the UI). Single consumer. |
 
-The JWT signing key (`/volume1/docker/garage-ui/jwt-key.pem`) is **not** one of
+The JWT signing key (`/volume2/docker/garage-ui/jwt-key.pem`) is **not** one of
 these — it's generated once on-box and persisted so UI sessions survive
 restarts; deleting it (then re-running `render-ui-config`) regenerates it and
 invalidates all live sessions (a logout-everyone, not a secret rotation).
