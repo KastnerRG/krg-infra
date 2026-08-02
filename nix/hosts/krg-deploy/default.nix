@@ -223,7 +223,21 @@
   # coreutils are for deploy-ansible.sh's OpenBao secret materialization.
   systemd.services.ansible-apply = {
     description = "Apply Ansible playbooks to managed infrastructure";
-    path = [pkgs.openssh pkgs.git pkgs.ansible pkgs.python3 pkgs.openbao pkgs.jq pkgs.coreutils];
+    # STRICT PATH — this is the ONLY PATH the nightly gets, so every binary
+    # deploy-ansible.sh (and deploy/lib.sh) shells out to must be listed here. A
+    # tool that works in an operator login shell is NOT automatically available
+    # to this unit, and the failure is a silent nightly no-op rather than a red
+    # CI job: `nix run nixpkgs#yq-go` for the Garage key names died on
+    # "nix: command not found" every night from ~2026-07-13, so the ENTIRE
+    # e4e-nas converge leg never ran for ~16 nights. That is what let the Garage
+    # config-path drift survive to the 2026-07-29 reboot and become an outage
+    # (#508) — the nightly would otherwise have re-rendered garage.toml. Same
+    # class as the missing `curl` that broke the tenant runner-token mint (#480).
+    #   yq-go  — spec/e4e-nas/garage.yml key names (mikefarah yq, NOT python-yq)
+    #   openssl — _randhex() when provisioning a NEW Garage key in OpenBao
+    # Audited against every binary the script invokes: jq, bao (openbao),
+    # ansible-playbook (ansible), mktemp + shred (coreutils) were already covered.
+    path = [pkgs.openssh pkgs.git pkgs.ansible pkgs.python3 pkgs.openbao pkgs.jq pkgs.coreutils pkgs.yq-go pkgs.openssl];
     serviceConfig = {
       Type = "oneshot";
       User = "krg-admin";
