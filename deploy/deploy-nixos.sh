@@ -199,6 +199,84 @@ REMOTE
   printf '\n::endgroup::\n'
 }
 
+# ── exit 4: the generation IS live, a unit just failed to START ──────────────
+# `switch-to-configuration` exits 4 when the new configuration activated
+# successfully but one or more units failed to start. That is NOT a failed
+# deploy, and treating it as one is an AVAILABILITY bug rather than a cosmetic
+# one: phases are strictly ordered (ADR 0011), so aborting an early phase blocks
+# every later phase. On 2026-07-29 (run 30504137214) a crowdsec flake on
+# krg-ldap failed phase 0 and thereby blocked phase 1 — which was carrying the
+# e4e-nas Garage config-path fix while S3 was down. A unit that self-healed in
+# 50s extended an object-storage outage by an hour.
+#
+# The recurring offender is crowdsec, and it is structural: its upstream
+# ExecStartPre (`crowdsec-setup`) runs `cscli hub update` — a NETWORK call to
+# cdn-hub.crowdsec.net — under `set -euo pipefail` on EVERY start, while the same
+# activation batch restarts the resolver stack (resolvconf/nscd/sssd). So a DNS
+# blip during activation kills crowdsec, `Restart=on-failure` revives it ~50s
+# later, and the hub refresh it was doing is a pure optimization (the on-disk hub
+# cache is what actually gets loaded, and autoUpdateService refreshes it daily
+# anyway). Observed 3x in 8 weeks on krg-ldap alone. Two earlier variants of the
+# same class already cost fleet deploys — see nix/modules/security/crowdsec.nix
+# (runs 27663630406, 27731137477).
+#
+# Note nixos-rebuild MISREPORTS this as
+#   "error: while running command with remote sudo, did you forget to use --ask-sudo-password?"
+# which sends you chasing credentials. It is not a sudo problem; the inner
+# failure is reported separately as "returned non-zero exit status 4".
+#
+# So for an exit-4 failure ONLY, ask the box instead of trusting the exit code:
+#   1. is it running the exact generation we just built, and
+#   2. are there no failed units left once auto-restarts have settled?
+# Both true → WARN and continue. Either false → fall through to the normal abort.
+# Every other non-zero exit (eval/build error, unreachable host, activation
+# aborted, bootloader failure) stays fatal immediately and is never examined —
+# which is why this keys on the exit-4 signature rather than on "any failure".
+switch_exit4_recovered() {
+  local host="$1" target="$2" want got failed settled=0 i
+  # The toplevel we just built. If this cannot be evaluated we have no way to
+  # prove the generation is current, so refuse to excuse the failure.
+  if ! want="$(nix eval --raw "${FLAKE}#nixosConfigurations.${host}.config.system.build.toplevel" 2>/dev/null)"; then
+    echo "  exit 4: cannot evaluate expected toplevel for ${host} — treating as a real failure"
+    return 1
+  fi
+  if ! got="$(ssh "${sshopts[@]}" "$target" readlink -f /run/current-system 2>/dev/null)"; then
+    echo "  exit 4: cannot read /run/current-system on ${target} — treating as a real failure"
+    return 1
+  fi
+  if [[ "$got" != "$want" ]]; then
+    echo "  exit 4 but ${host} is NOT on the generation we built — real failure:"
+    echo "      built:   ${want}"
+    echo "      running: ${got}"
+    return 1
+  fi
+  # Give Restart=on-failure time to settle before judging. crowdsec recovers in
+  # ~50s; poll up to 120s so a slower dependent chain still gets its chance.
+  for ((i = 0; i < 24; i++)); do
+    if ! failed="$(ssh "${sshopts[@]}" "$target" \
+        'systemctl list-units --state=failed --no-legend --plain | awk "{print \$1}"' 2>/dev/null)"; then
+      echo "  exit 4: lost contact with ${target} while waiting for units to settle — treating as a real failure"
+      return 1
+    fi
+    if [[ -z "${failed//[[:space:]]/}" ]]; then
+      settled=1
+      break
+    fi
+    sleep 5
+  done
+  if ((settled)); then
+    echo "  exit 4: ${host} is on the generation we built and has NO failed units — a unit"
+    echo "          failed to start during activation and then recovered. Continuing."
+    return 0
+  fi
+  echo "  exit 4 and ${host} STILL has failed units after 120s — real failure:"
+  local u
+  while IFS= read -r u; do
+    [[ -n "$u" ]] && echo "      ${u}"
+  done <<< "$failed"
+  return 1
+}
+
 # Fail-fast: stop on the first failed host. Order is dependency-first (vault/AD
 # before the services that use them), so a failure early means the dependents
 # would be deploying against a broken base — don't.
@@ -220,16 +298,33 @@ for host in "${ORDER[@]}"; do
     printf '\n::endgroup::\n'
     exit 1
   fi
-  if ! nixos-rebuild switch \
+  # Capture the output as well as the status: nixos-rebuild does not propagate
+  # switch-to-configuration's exit 4 as its OWN exit code (it wraps the remote
+  # command and reports "returned non-zero exit status 4" in its message), so the
+  # exit-4 signature has to be detected in the text. tee keeps the CI log intact.
+  _switch_log="$(mktemp)"
+  set +e
+  nixos-rebuild switch \
         --flake "${FLAKE}#${host}" \
         --target-host "${target}" \
         --build-host  "${target}" \
-        --sudo; then
-    echo "FAILED: ${host} — stopping; remaining hosts not deployed"
-    printf '\n::endgroup::\n'
-    dump_failure_diagnostics "$target"
-    exit 1
+        --sudo 2>&1 | tee "$_switch_log"
+  _switch_rc=${PIPESTATUS[0]}
+  set -e
+  if ((_switch_rc != 0)); then
+    if { ((_switch_rc == 4)) || grep -q 'returned non-zero exit status 4' "$_switch_log"; } \
+       && switch_exit4_recovered "$host" "$target"; then
+      echo "  WARN: ${host} — a unit failed to start during activation but self-recovered;" >&2
+      echo "        the built generation is live, so continuing (see exit-4 note above)." >&2
+    else
+      rm -f "$_switch_log"
+      echo "FAILED: ${host} — stopping; remaining hosts not deployed"
+      printf '\n::endgroup::\n'
+      dump_failure_diagnostics "$target"
+      exit 1
+    fi
   fi
+  rm -f "$_switch_log"
   echo "OK: ${host}"
   # Re-run the vault-agent so a ROTATED secret (the KV value changed, but the agent's
   # unit didn't, so `switch` left the oneshot alone) is re-rendered, and each render's
