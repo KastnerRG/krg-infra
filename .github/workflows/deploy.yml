@@ -209,7 +209,8 @@ jobs:
   # going down. Only runs when a self-update was actually scheduled. It watches the
   # runner registration state (offline → online) via the GitHub API — it can't reach
   # krg-deploy directly (firewall). This is the barrier that holds deploy-post until
-  # the control node is back. Needs a token with Administration:read (see README).
+  # the control node is back. Authenticates as the "krg-infra deploy watcher" GitHub
+  # App (Administration:read on this repo only — see README).
   await-selfupdate:
     name: Await control-node self-update
     needs: deploy-pre
@@ -222,12 +223,28 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+      # Mint a short-lived (1h) installation token from the "krg-infra deploy
+      # watcher" GitHub App instead of carrying a PAT. The default GITHUB_TOKEN
+      # cannot read the self-hosted-runners API, and a PAT rots: this credential is
+      # only exercised when krg-deploy's OWN config changes, so an expiry is
+      # invisible until the deploy that needs it (that is exactly how run
+      # 30758029212 failed — the PAT had expired two days earlier and every poll
+      # read back an API error body instead of a status).
+      #
+      # The App is scoped to Administration:READ on this repo only. Do NOT point
+      # this at the ADR 0022 runner-broker App: that one holds Administration:WRITE
+      # so it can mint runner registration tokens, and its key deliberately never
+      # leaves OpenBao — in Actions secrets it would let any workflow on this repo
+      # register a rogue runner and capture deploy jobs.
+      - name: Mint the watcher token (GitHub App)
+        id: watcher-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.DEPLOY_WATCHER_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_WATCHER_APP_PRIVATE_KEY }}
       - name: Wait for krg-deploy to return
         env:
-          # Administration:read PAT — the default GITHUB_TOKEN cannot read the
-          # self-hosted-runners API. Wire this Actions secret before relying on the
-          # self-update path (deploy/README.md).
-          GH_TOKEN: ${{ secrets.DEPLOY_RUNNER_PAT }}
+          GH_TOKEN: ${{ steps.watcher-token.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: ./deploy/await-self-update.sh
 
