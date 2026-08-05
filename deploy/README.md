@@ -84,7 +84,7 @@ uses).
 | `deploy-tofu.sh` | the targets named in `TOFU_TARGETS` | **Active; creds from OpenBao, no secrets on disk.** krg-deploy logs into OpenBao with its AppRole (the same `openbao-role-id`/`openbao-secret-id` the Ansible leg uses) and reads each target's creds from KV at apply time (paths below). **Opt-in:** only targets listed in `TOFU_TARGETS` apply (empty by default — like `SYNOLOGY_TAGS` scopes the synology converge); a listed target whose KV secret isn't seeded **skips** with a notice. A ready target with no `TOFU_STATE_PASSPHRASE` **hard-fails** rather than writing plaintext state (ADR 0005). State persists under `TOFU_STATE_ROOT` (CI checkout is ephemeral), always encrypted. **`openbao` is special** — it provisions OpenBao's own auth, so it can't use that AppRole; apply it manually with a privileged `TOFU_OPENBAO_TOKEN` (see below). |
 | `deploy-verify.sh` | nothing — **read-only checks** the whole fleet | **Phase 4: the single verification phase.** Asserts the OEC daemons (Qualys + Trellix) are active on every host + the control node, and that every host **configured** as an AD member passes `adcli testjoin` — NixOS hosts (gated on `krg.adClient.enable`, read from the flake) and the Proxmox hosts (ad-hoc against the `proxmox` group). Health gates live **only** here, after every layer has converged, so a gate can't deadlock the stage that satisfies it (ADR 0011). Fatal — any down daemon or broken join fails the deploy. `DEPLOY_VERIFY_AD=false` skips the AD checks for a first total bring-up. |
 | `deploy-self-update.sh` | **triggers** krg-deploy's own switch (phase 1.9, Job 1) | **Control-node self-update — build + trigger, never switch inline.** Builds krg-deploy from the CI-green checkout and compares the toplevel to `/run/current-system`. If unchanged → emits `selfupdate=skipped` and the pipeline skips the watcher. If changed → `systemctl start --no-block krg-deploy-selfupdate.service` (the declarative root unit; polkit authorizes the start, no sudo), emitting `selfupdate=scheduled` + `target=<store path>`. Fails with a clear message if that unit isn't present yet (pre-bootstrap). The switch itself — runner stop → `nixos-rebuild switch` → runner start, **switch-only, never reboots**, writing `/var/lib/krg/selfupdate.status` — lives in the nix unit, not here. |
-| `await-self-update.sh` | nothing — **the watcher** (Job 2, ubuntu-latest) | The GitHub-hosted "cloud machine" wait-loop. Polls the runner-registration API for the krg-deploy runner going `offline` → `online`, with timeouts (`OFFLINE_TIMEOUT`/`ONLINE_TIMEOUT`). Can't ping the box directly (firewall). **Needs `GH_TOKEN` with `Administration:read`** — wired from the `DEPLOY_RUNNER_PAT` Actions secret (see *Secrets*); the default `GITHUB_TOKEN` can't read that API. |
+| `await-self-update.sh` | nothing — **the watcher** (Job 2, ubuntu-latest) | The GitHub-hosted "cloud machine" wait-loop. Polls the runner-registration API for the krg-deploy runner going `offline` → `online`, with timeouts (`OFFLINE_TIMEOUT`/`ONLINE_TIMEOUT`). Can't ping the box directly (firewall). **Needs `GH_TOKEN` with `Administration:read`** — minted in-job from the "krg-infra deploy watcher" GitHub App (see *Secrets*); the default `GITHUB_TOKEN` can't read that API. **Preflights** the credential + registration before the wait loops, so a dead token fails in seconds instead of timing out and blaming the switch. |
 | `deploy-self-verify.sh` | nothing — **read-only** (head of Job 3) | Safety net: asserts `/run/current-system` == the `target` Job 1 built (`DEPLOY_SELF_TARGET`), dumps `selfupdate.status`, and **fails the deploy** if the scheduled switch didn't take — so the fleet is never deployed from a stale control node. |
 
 `deploy/lib.sh` (sourced, not run) holds the shared host map + SSH setup for the two
@@ -159,14 +159,38 @@ tracked in [#181](https://github.com/KastnerRG/krg-infra/issues/181).
 - `TOFU_STATE_PASSPHRASE` — repo Actions secret; encrypts OpenTofu state.
   **Required before any target applies** — a ready target with no passphrase
   hard-fails (ADR 0005: state holds live secrets, must not be written in the clear).
-- `DEPLOY_RUNNER_PAT` — repo Actions secret; a token with **`Administration:read`**
-  on this repo, used by the `await-selfupdate` job (`await-self-update.sh`) to read
-  the self-hosted-runners API and watch krg-deploy go offline→online during a
-  self-update. The default `GITHUB_TOKEN` can't be granted that scope. **Only needed
-  when the control node actually self-updates** — a deploy that doesn't change
-  krg-deploy skips the watcher entirely, so absence won't break routine deploys, but
-  set it (`gh secret set DEPLOY_RUNNER_PAT`) before relying on the self-update path.
-  Set it once with `gh secret set TOFU_STATE_PASSPHRASE`.
+- `DEPLOY_WATCHER_APP_ID` + `DEPLOY_WATCHER_APP_PRIVATE_KEY` — repo Actions secrets;
+  the **"krg-infra deploy watcher"** GitHub App, used by the `await-selfupdate` job
+  (`await-self-update.sh`) to read the self-hosted-runners API and watch krg-deploy
+  go offline→online during a self-update. The default `GITHUB_TOKEN` can't be granted
+  `Administration:read`, so the job mints a 1h installation token from the App
+  (`actions/create-github-app-token`). **Only needed when the control node actually
+  self-updates** — a deploy that doesn't change krg-deploy skips the watcher
+  entirely, so absence won't break routine deploys.
+
+  > **An App, not a PAT, on purpose.** This credential is exercised *rarely* (only
+  > when krg-deploy's own config changes), so a PAT expiry is invisible until the
+  > deploy that needs it. That is exactly how run `30758029212` failed: the
+  > `DEPLOY_RUNNER_PAT` had expired two days earlier, every poll read back a `401`
+  > body instead of a status, the watcher timed out at 300s, and Job 3 never ran — so
+  > the fleet went undeployed while krg-deploy itself had switched perfectly.
+  >
+  > **Do NOT reuse the [ADR 0022](../docs/adr/0022-tenant-runners-github-app-broker.md)
+  > runner-broker App** for this. That App holds `Administration:`**`write`** so it can
+  > mint runner *registration* tokens, and its private key deliberately never leaves
+  > OpenBao. Copying that key into Actions secrets — readable by any workflow on this
+  > repo — would turn a read-only watcher into a path to registering a rogue runner
+  > and capturing deploy jobs. The watcher App is a separate identity scoped to
+  > `Administration:read` on this repo only.
+
+  Rotating / re-creating it: generate a private key on the App's settings page, then
+  `gh secret set DEPLOY_WATCHER_APP_ID` and
+  `gh secret set DEPLOY_WATCHER_APP_PRIVATE_KEY < <the .pem>`. Actions secrets are
+  write-only, so keep the `.pem` escrowed (Vaultwarden/OpenBao) and delete the local
+  copy. Verify without waiting for a self-update:
+  `GITHUB_REPOSITORY=KastnerRG/krg-infra GH_TOKEN=<token> OFFLINE_TIMEOUT=10 ./deploy/await-self-update.sh`
+  — the `preflight:` line proves the credential reads the API; the timeout after it is
+  expected when no switch is in flight.
 - `/var/lib/krg-admin/.secrets/oec-qualystrellixinstallers-linux.tgz` — the
   campus-mandated **OEC** (Qualys + Trellix) vendor archive, holding live enrollment
   creds (gitignored). Both deploy scripts **fail if it's absent** (`OEC_INSTALLER`
