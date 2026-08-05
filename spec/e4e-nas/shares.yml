@@ -65,6 +65,7 @@ shares:
   - { name: fishsense_process_work, path: /volume2/fishsense_process_work, description: "Fishsense Processing Working Directory" }
   - { name: fsspec_test, path: /volume2/fsspec_test, description: "" }
   - { name: git-lfs-store, path: /volume2/git-lfs-store, description: "Store for Git LFS Files" }
+  - { name: junkyard, path: /volume2/junkyard, description: "Junkyard" }   # NEW — RW to KRG\Junkyard-NAS (acls.yml)
   - { name: junkyard_backup, path: /volume2/junkyard_backup, description: "" }
   - { name: label_studio, path: /volume2/label_studio, description: "" }
   - { name: mangrove_meeting_archive, path: /volume2/mangrove_meeting_archive, description: "Mangrove Monitoring Meeting Recordings Archive" }
