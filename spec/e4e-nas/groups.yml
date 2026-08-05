@@ -40,6 +40,11 @@ groups:
   # junkyard-fishsense DROPPED (the old FishSense principals held no grant on it — it
   # was junkyard.service + admins only), and fishsense_process_work is RO not RW.
   - { name: FishSense-NAS,       description: "FishSense",                   governs: [fishsense, fishsense_data, fishsense_process_work] }
+  # PORTED: real AD group (spec/krg-ad/groups.yml, "Junkyard-NAS"). `governs` is exact
+  # here, not inferred — it's a greenfield grant written straight into acls.yml, and it
+  # covers ONLY the new `junkyard` share (junkyard-fishsense / junkyard_backup are a
+  # separate, still-open porting question).
+  - { name: Junkyard-NAS,        description: "Junkyard",                    governs: [junkyard] }
   - { name: burrowing_owl,       description: "Burrowing Owl",               governs: [owl-behavior] }   # renamed from "Burrowing Owl" (no spaces in AD)
   - { name: floods_of_lubra,     description: "Floods of Lubra",             governs: ["Floods of Lubra"] }
   - { name: e4e,                 description: "E4E (broad)",                 governs: [] }               # broad access — confirm scope

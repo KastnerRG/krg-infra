@@ -73,6 +73,12 @@ groups:
   - { name: "E4E-Hardware", description: "E4E Hardware Team; RW on the fishsense share on e4e-nas + owns hardware_dev (spec/e4e-nas/acls.yml). Mounting also requires E4E-NAS." }
   # NOTE: old `@leads` maps onto the EXISTING "e4e-project-lead" group below, not a new
   # object — same set (E4E project leads). No `leads` group is created.
+  # NEW (not from the capture): governs the new `junkyard` share (/volume2/junkyard,
+  # spec/e4e-nas/shares.yml). Space-free like every other NAS grant group. DISTINCT from
+  # the pre-existing `junkyard-fishsense` / `junkyard_backup` shares — this group holds no
+  # grant on those (they stay absent from acls.yml, so the role leaves them untouched; the
+  # `junkyard.service` account decision on junkyard-fishsense is still open).
+  - { name: "Junkyard-NAS", description: "RW on the junkyard share on e4e-nas.ucsd.edu (spec/e4e-nas/acls.yml). Mounting also requires E4E-NAS." }
 
   - { name: "Guacamole Admins", description: "Apache Guacamole administrators" }
   # Space-FREE name on purpose: PVE's AD-realm sync rejects group ids with spaces

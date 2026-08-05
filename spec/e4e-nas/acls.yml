@@ -122,6 +122,16 @@ acls:
   # on it (old row was junkyard.service + admins + E4E NAS Admins). Porting it needs the
   # junkyard.service account decision, so the share is left untouched for now.
 
+  # NEW share (not in the pre-reset capture): /volume2/junkyard, shares.yml. Greenfield —
+  # nothing to revoke. `administrators` is listed explicitly because the grant list is
+  # authoritative. Deliberately does NOT cover junkyard-fishsense or junkyard_backup:
+  # listing those here would make this role authoritative over their (un-ported) grants.
+  - share: junkyard
+    path: /volume2/junkyard
+    grants:
+      - { group: administrators, access: rw }
+      - { group: 'KRG\Junkyard-NAS', access: rw }
+
 # Per-share schema (when populating):
 #   - share: maya
 #     path: /volume1/maya            # optional; defaults to /volume1/<share>
