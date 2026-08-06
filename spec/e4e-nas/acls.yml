@@ -72,13 +72,17 @@ defaults:
 # gets to it. Re-read this note before REusing these rows as a pattern on a share that
 # does have live users — there the revocation would be real.
 #
-# Ordering is still worth knowing (benign): if synology_acls somehow runs before
+# Ordering matters, and the failure mode is SILENT: if synology_acls runs before
 # ansible/krg-ad creates the groups, the grants name principals DSM can't resolve.
 # ANSWERED THE HARD WAY (2026-07-17): DSM does NOT error — `synoshare --setuser` returns
 # 0 and silently drops the unresolvable entry, so ansible reports `changed` and the grant
-# simply isn't there. deploy/deploy-ansible.sh runs the synology block BEFORE the krg-ad
-# block, so this is guaranteed on any deploy that introduces a new AD group: the ACLs are
-# written ~20s before the groups exist. Re-running once the groups exist converges it.
+# simply isn't there.
+# FIXED (2026-08-06): deploy/deploy-ansible.sh now runs the krg-ad block BEFORE the
+# synology block, so a new AD group exists by the time its ACLs are written and the
+# grant lands on the FIRST apply. Previously the order was reversed, which meant every
+# deploy introducing a new AD group wrote its ACLs ~20s too early and silently lost the
+# grant until someone re-ran (hit by #512's `KRG\Junkyard-NAS`). If you ever run the
+# synology playbook standalone against a brand-new group, apply ansible/krg-ad first.
 #
 # SERVICE ACCOUNTS ARE A KNOWN GAP: the capture's NA (deny) ACEs — junkyard.service,
 # label_studio, minio, e4e_maestro — are dropped along with the other per-user grants.
