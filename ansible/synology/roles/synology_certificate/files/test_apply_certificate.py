@@ -19,6 +19,7 @@ def _le_args(**overrides):
         "sans_json": "[]",
         "renewal_buffer_days": 30,
         "check": False,
+        "on_duplicate": "newest",
     }
     base.update(overrides)
     return type("A", (), base)()
@@ -28,6 +29,7 @@ def _sd_args(**overrides):
     base = {
         "domain": "e4e-nas.ucsd.edu",
         "check": False,
+        "on_duplicate": "newest",
     }
     base.update(overrides)
     return type("A", (), base)()
@@ -96,13 +98,60 @@ def test_find_by_domain_returns_none_when_missing():
     assert m._find_by_domain(certs, "missing.example") is None
 
 
-def test_find_by_domain_refuses_ambiguity():
-    """Multiple certs sharing a common_name must NOT be silently picked.
-    Manual rotation residue is the typical cause; surface it loudly."""
+def test_find_by_domain_refuses_ambiguity_when_policy_is_fail():
+    """on_duplicate='fail' keeps the original refuse-on-ambiguity behaviour."""
     certs = [_cert("dup.example", cid="aaaaaa"), _cert("dup.example", cid="bbbbbb")]
     with pytest.raises(RuntimeError) as exc:
-        m._find_by_domain(certs, "dup.example")
+        m._find_by_domain(certs, "dup.example", on_duplicate="fail")
     assert "multiple" in str(exc.value).lower()
+
+
+def test_find_by_domain_picks_newest_by_default():
+    """DSM's cron LE renewal leaves an old + new cert with the same CN. The
+    NEWEST is the renewal, so it's the one to converge onto — deterministically,
+    never by list order."""
+    old = _cert("dup.example", cid="old", valid_till_dt=datetime(2026, 9, 2, tzinfo=timezone.utc))
+    new = _cert("dup.example", cid="new", valid_till_dt=datetime(2026, 11, 2, tzinfo=timezone.utc))
+    # Both orderings must give the same answer.
+    assert m._find_by_domain([old, new], "dup.example")["id"] == "new"
+    assert m._find_by_domain([new, old], "dup.example")["id"] == "new"
+
+
+def test_find_by_domain_all_reports_superseded():
+    old = _cert("dup.example", cid="old", valid_till_dt=datetime(2026, 9, 2, tzinfo=timezone.utc))
+    new = _cert("dup.example", cid="new", valid_till_dt=datetime(2026, 11, 2, tzinfo=timezone.utc))
+    keeper, extras = m._find_by_domain_all([new, old], "dup.example")
+    assert keeper["id"] == "new"
+    assert [c["id"] for c in extras] == ["old"]
+
+
+def test_find_by_domain_unparseable_date_never_wins():
+    """A garbled valid_till sorts oldest, so it can't silently become the
+    keeper and strand us on an unknown cert."""
+    good = _cert("dup.example", cid="good", valid_till_dt=datetime(2026, 9, 2, tzinfo=timezone.utc))
+    junk = _cert("dup.example", cid="junk", valid_till_raw="not-a-date")
+    assert m._find_by_domain([junk, good], "dup.example")["id"] == "good"
+    assert m._find_by_domain([good, junk], "dup.example")["id"] == "good"
+
+
+def test_resolve_domain_warns_on_stderr_not_stdout(capsys):
+    """The duplicate must stay VISIBLE (that was the point of the old hard
+    failure) — but on stderr, because tasks/main.yml drives changed_when off
+    substring matches against stdout."""
+    old = _cert("dup.example", cid="old", valid_till_dt=datetime(2026, 9, 2, tzinfo=timezone.utc))
+    new = _cert("dup.example", cid="new", valid_till_dt=datetime(2026, 11, 2, tzinfo=timezone.utc))
+    keeper = m._resolve_domain([old, new], "dup.example", "newest")
+    cap = capsys.readouterr()
+    assert keeper["id"] == "new"
+    assert cap.out == ""
+    assert "WARN" in cap.err and "old" in cap.err and "dup.example" in cap.err
+
+
+def test_resolve_domain_silent_when_no_duplicates(capsys):
+    keeper = m._resolve_domain([_cert("solo.example", cid="only")], "solo.example", "newest")
+    cap = capsys.readouterr()
+    assert keeper["id"] == "only"
+    assert cap.out == "" and cap.err == ""
 
 
 # --- letsencrypt-create -------------------------------------------------------
@@ -240,8 +289,8 @@ def test_letsencrypt_create_fails_clean_on_list_failure(monkeypatch, capsys):
     assert rc == 1 and out.startswith("FAIL ")
 
 
-def test_letsencrypt_create_rejects_ambiguous_duplicates(monkeypatch, capsys):
-    """Two certs sharing common_name → FAIL with the ids surfaced."""
+def test_letsencrypt_create_rejects_ambiguous_duplicates_when_policy_is_fail(monkeypatch, capsys):
+    """on_duplicate='fail' → FAIL with the ids surfaced (original behaviour)."""
     monkeypatch.setattr(
         m,
         "_list_certs",
@@ -252,9 +301,43 @@ def test_letsencrypt_create_rejects_ambiguous_duplicates(monkeypatch, capsys):
             ]
         ),
     )
-    rc = m.do_letsencrypt_create(_le_args())
+    rc = m.do_letsencrypt_create(_le_args(on_duplicate="fail"))
     out = capsys.readouterr().out
     assert rc == 1 and "multiple" in out
+
+
+def test_letsencrypt_create_survives_duplicates_by_default(monkeypatch, capsys):
+    """THE REGRESSION GUARD. This is the live e4e-nas state that took the whole
+    fleet deploy red: DSM's own renewal left an old cert (exp Sep 2) beside the
+    new one (exp Nov 2), both CN=e4e-nas.ucsd.edu. The role must converge on the
+    newest instead of aborting the play — the newest is well outside the renewal
+    buffer, so this is a clean no-change."""
+    monkeypatch.setattr(m, "_now_utc", lambda: datetime(2026, 8, 6, tzinfo=timezone.utc))
+    monkeypatch.setattr(
+        m,
+        "_list_certs",
+        _stub_list(
+            [
+                _cert(
+                    "e4e-nas.ucsd.edu",
+                    cid="0FndQu",
+                    valid_till_dt=datetime(2026, 9, 2, tzinfo=timezone.utc),
+                ),
+                _cert(
+                    "e4e-nas.ucsd.edu",
+                    cid="5oVauL",
+                    valid_till_dt=datetime(2026, 11, 2, tzinfo=timezone.utc),
+                ),
+            ]
+        ),
+    )
+    rc = m.do_letsencrypt_create(_le_args())
+    cap = capsys.readouterr()
+    assert rc == 0
+    assert "OK no-change" in cap.out
+    assert "FAIL" not in cap.out
+    # The duplicate is still reported — just not fatally.
+    assert "WARN" in cap.err and "0FndQu" in cap.err
 
 
 def test_letsencrypt_create_rejects_bad_sans_json(monkeypatch, capsys):
@@ -336,6 +419,7 @@ def _bs_args(**overrides):
         "domain": "e4e-nas.ucsd.edu",
         "bindings_json": '[{"service":"default","subscriber":"system"}]',
         "check": False,
+        "on_duplicate": "newest",
     }
     base.update(overrides)
     return type("A", (), base)()

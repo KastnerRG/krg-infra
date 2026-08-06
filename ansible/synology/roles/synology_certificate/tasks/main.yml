@@ -52,6 +52,7 @@
     --email {{ item.email | quote }}
     --sans-json {{ (item.sans | default([])) | to_json | quote }}
     --renewal-buffer-days {{ item.renewal_buffer_days | default(30) }}
+    --on-duplicate {{ item.on_duplicate | default('newest') | quote }}
     {{ '--check' if ansible_check_mode else '' }}
   loop: "{{ cert_spec.letsencrypt | default([]) }}"
   loop_control:
@@ -87,6 +88,7 @@
   ansible.builtin.script: >-
     apply_certificate.py set-default
     --domain {{ item.domain | quote }}
+    --on-duplicate {{ item.on_duplicate | default('newest') | quote }}
     {{ '--check' if ansible_check_mode else '' }}
   loop: "{{ cert_spec.letsencrypt | default([]) | selectattr('default', 'defined') | selectattr('default') | list }}"
   loop_control:
@@ -108,6 +110,7 @@
     apply_certificate.py bind-services
     --domain {{ item.domain | quote }}
     --bindings-json {{ item.bindings | to_json | quote }}
+    --on-duplicate {{ item.on_duplicate | default('newest') | quote }}
     {{ '--check' if ansible_check_mode else '' }}
   loop: "{{ cert_spec.letsencrypt | default([]) | selectattr('bindings', 'defined') | rejectattr('bindings', 'equalto', []) | list }}"
   loop_control:

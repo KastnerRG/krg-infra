@@ -44,6 +44,23 @@ letsencrypt:
     # renewal-suggested window.
     renewal_buffer_days: 30
 
+    # What to do when DSM holds MORE THAN ONE cert with this common name.
+    # This is not exotic: DSM's own cron LE renewal mints a NEW cert object
+    # rather than updating in place, leaving the old one behind (and still
+    # bound to the services) until someone deletes it in the UI. Seen here
+    # 2026-08-06: 0FndQu (default, 4 services, exp Sep 2) beside 5oVauL
+    # (unbound, exp Nov 2).
+    #   newest (default) - converge on the latest valid_till, which IS the
+    #                      renewal, and report the superseded cert(s) on
+    #                      stderr. set-default + bind-services then migrate the
+    #                      bindings onto it, leaving the old one unused and
+    #                      safe to delete.
+    #   fail             - refuse to choose and abort. NB this aborts the WHOLE
+    #                      synology play (every later role stops), which is how
+    #                      a benign duplicate previously took the fleet deploy
+    #                      red - so prefer 'newest' unless you truly want a stop.
+    on_duplicate: newest
+
     # Service bindings — which DSM services use THIS cert.
     #
     # CRITICAL: `default: true` above (CRT.set as_default=true) only marks
