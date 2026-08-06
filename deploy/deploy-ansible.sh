@@ -113,6 +113,41 @@ if ! (
 fi
 printf '\n::endgroup::\n'
 
+# ── KRG.LOCAL Active Directory structure (ansible/krg-ad/, ADR 0010) ─────────
+# Converges groups / service accounts / ACL delegations / password policy on
+# krg-ldap by wrapping samba-tool. Gated OFF by default (DEPLOY_KRG_AD=true) like
+# the synology apply — keep it off until spec/krg-ad/ reflects the intended live
+# state. NO secrets: the apply is structural only (it never creates a service
+# account or sets a password — those stay in OpenBao), so there's no AppRole
+# materialization here. Reaches krg-ldap over SSH as krg-admin (become root); the
+# apply is NON-AUTHORITATIVE (adds, never deletes) so it can't clobber roster-set
+# human group membership.
+#
+# MUST RUN BEFORE THE SYNOLOGY BLOCK. spec/e4e-nas/acls.yml grants shares to AD
+# groups (`@KRG\<name>`), and DSM resolves those names at apply time. If the group
+# does not exist yet, `synoshare --setuser` DOES NOT FAIL: it returns 0 and
+# SILENTLY DROPS the unresolvable entry, so ansible reports `changed` and the
+# grant simply isn't there. With synology first, every deploy that introduced a
+# new AD group wrote its ACLs ~20s before the group existed, and the grant was
+# lost until someone happened to re-run — a silent, green-looking failure. (Hit
+# by #512's `KRG\Junkyard-NAS`.) Creating the directory objects first makes the
+# grants resolvable on the FIRST apply. The dependency is one-directional: the
+# krg-ad apply reads nothing from the NAS.
+if [[ "${DEPLOY_KRG_AD:-false}" != "true" ]]; then
+  echo "skip krg-ad: DEPLOY_KRG_AD!=true"
+else
+  echo "::group::ansible krg-ad (KRG.LOCAL Active Directory)"
+  if ! (
+    cd "${REPO_ROOT}/ansible/krg-ad"
+    ansible-playbook playbook.yml
+  ); then
+    echo "FAILED: ansible krg-ad"
+    printf '\n::endgroup::\n'
+    exit 1
+  fi
+  printf '\n::endgroup::\n'
+fi
+
 if [[ "${DEPLOY_SYNOLOGY:-false}" != "true" ]]; then
   echo "skip synology: DEPLOY_SYNOLOGY!=true"
 elif [[ ! -r "$role_id_file" || ! -r "$secret_id_file" ]]; then
@@ -257,30 +292,6 @@ else
     ansible-playbook playbook.yml ${SYNOLOGY_TAGS:+--tags "$SYNOLOGY_TAGS"} -e @"$vars_file"
   ); then
     echo "FAILED: ansible synology"
-    printf '\n::endgroup::\n'
-    exit 1
-  fi
-  printf '\n::endgroup::\n'
-fi
-
-# ── KRG.LOCAL Active Directory structure (ansible/krg-ad/, ADR 0010) ─────────
-# Converges groups / service accounts / ACL delegations / password policy on
-# krg-ldap by wrapping samba-tool. Gated OFF by default (DEPLOY_KRG_AD=true) like
-# the synology apply — keep it off until spec/krg-ad/ reflects the intended live
-# state. NO secrets: the apply is structural only (it never creates a service
-# account or sets a password — those stay in OpenBao), so there's no AppRole
-# materialization here. Reaches krg-ldap over SSH as krg-admin (become root); the
-# apply is NON-AUTHORITATIVE (adds, never deletes) so it can't clobber roster-set
-# human group membership.
-if [[ "${DEPLOY_KRG_AD:-false}" != "true" ]]; then
-  echo "skip krg-ad: DEPLOY_KRG_AD!=true"
-else
-  echo "::group::ansible krg-ad (KRG.LOCAL Active Directory)"
-  if ! (
-    cd "${REPO_ROOT}/ansible/krg-ad"
-    ansible-playbook playbook.yml
-  ); then
-    echo "FAILED: ansible krg-ad"
     printf '\n::endgroup::\n'
     exit 1
   fi
