@@ -91,18 +91,62 @@ def _domain_matches(cert, domain):
     return subj.get("common_name") == domain
 
 
-def _find_by_domain(certs, domain):
-    """Return the cert dict for `domain`, or None. Refuses on ambiguity:
-    DSM CAN hold multiple certs with the same CN (e.g. an old + new during
-    a manual rotation), and silently picking one would mask the duplicate."""
+def _find_by_domain(certs, domain, on_duplicate="newest"):
+    """Return the cert dict for `domain`, or None.
+
+    DSM CAN hold multiple certs with the same CN, and it is not an exotic
+    state: DSM's own cron LE renewal mints a NEW cert object rather than
+    updating in place, leaving the old one behind (and still bound to the
+    services) until someone deletes it in the UI. Observed on e4e-nas
+    2026-08-06: 0FndQu (default, 4 services, exp Sep 2) alongside 5oVauL
+    (unbound, exp Nov 2).
+
+    This used to raise, on the reasoning that silently picking one would mask
+    the duplicate. The masking worry is right; the hard failure was not — it
+    took the ENTIRE fleet deploy red (synology_certificate aborts the play, so
+    every later role stops) over a benign, self-inflicted, and self-healing
+    condition, and the only remedy on offer was a UI click, i.e. exactly the
+    drift ADR 0001 forbids.
+
+    So: resolve DETERMINISTICALLY instead of silently. `on_duplicate`:
+      * "newest" (default) — keep the cert with the latest valid_till. That is
+        the renewal, so converging onto it is also what we WANT: set_default
+        and bind_services then move the bindings off the expiring cert. The
+        extras are reported by the caller, never dropped on the floor.
+      * "fail"            — the old behaviour, for a caller that would rather
+                            stop than choose.
+
+    Certs with an unparseable valid_till sort oldest, so a garbled date can
+    never win the tie-break and silently become the keeper.
+
+    Returns the keeper only; use `_find_by_domain_all` when the caller needs
+    to report or act on the extras.
+    """
+    keeper, _extras = _find_by_domain_all(certs, domain, on_duplicate)
+    return keeper
+
+
+def _find_by_domain_all(certs, domain, on_duplicate="newest"):
+    """(keeper, extras) for `domain`. See _find_by_domain for the policy."""
     matches = [c for c in certs if _domain_matches(c, domain)]
-    if len(matches) > 1:
-        ids = [c.get("id") for c in matches]
+    if not matches:
+        return None, []
+    if len(matches) == 1:
+        return matches[0], []
+
+    ids = [c.get("id") for c in matches]
+    if on_duplicate == "fail":
         raise RuntimeError(
             "multiple certs share common_name=%r (ids=%r) — clean up via DSM "
             "UI before re-applying" % (domain, ids)
         )
-    return matches[0] if matches else None
+
+    # datetime.min is TZ-naive and cannot be compared against the TZ-aware
+    # values _parse_valid_till returns, so use an explicitly UTC sentinel.
+    oldest = datetime.min.replace(tzinfo=timezone.utc)
+    ordered = sorted(matches, key=lambda c: _parse_valid_till(c.get("valid_till")) or oldest)
+    keeper = ordered[-1]
+    return keeper, ordered[:-1]
 
 
 def _parse_valid_till(s):
@@ -139,6 +183,45 @@ def _fail(payload):
     return 1
 
 
+def _warn(payload):
+    """Report a non-fatal condition on STDERR.
+
+    Deliberately NOT stdout: tasks/main.yml drives changed_when off substring
+    matches against stdout ("CHANGED" / "WOULD-CHANGE"), so anything printed
+    there is load-bearing parser input. stderr is surfaced by ansible on the
+    task result either way, so the operator still sees it.
+    """
+    sys.stderr.write("WARN " + json.dumps(payload, sort_keys=True) + "\n")
+
+
+def _resolve_domain(certs, domain, on_duplicate):
+    """_find_by_domain, but the extras are REPORTED rather than discarded.
+
+    Keeping the duplicate visible is the whole point — the previous hard
+    failure existed to stop a duplicate being masked, and dropping to a silent
+    pick would have traded a too-loud failure for a too-quiet one.
+    """
+    keeper, extras = _find_by_domain_all(certs, domain, on_duplicate)
+    if extras:
+        _warn(
+            {
+                "duplicate_common_name": domain,
+                "kept": keeper.get("id"),
+                "kept_valid_till": keeper.get("valid_till"),
+                "superseded": [
+                    {"id": c.get("id"), "valid_till": c.get("valid_till")} for c in extras
+                ],
+                "note": (
+                    "DSM holds >1 cert with this CN (its cron LE renewal mints a "
+                    "new object instead of updating in place). Converging onto the "
+                    "newest; the superseded cert(s) are now unused once "
+                    "bind-services runs and can be deleted in the DSM UI."
+                ),
+            }
+        )
+    return keeper
+
+
 def _now_utc():
     """Wrapper for testability (monkeypatch in tests)."""
     return datetime.now(timezone.utc)
@@ -153,7 +236,7 @@ def do_letsencrypt_create(a):
         return _fail({"reason": "%s.list failed (auth/api error)" % CRT_API})
 
     try:
-        existing = _find_by_domain(certs, a.domain)
+        existing = _resolve_domain(certs, a.domain, a.on_duplicate)
     except RuntimeError as e:
         return _fail({"reason": str(e), "domain": a.domain})
 
@@ -233,7 +316,7 @@ def do_set_default(a):
         return _fail({"reason": "%s.list failed (auth/api error)" % CRT_API})
 
     try:
-        existing = _find_by_domain(certs, a.domain)
+        existing = _resolve_domain(certs, a.domain, a.on_duplicate)
     except RuntimeError as e:
         return _fail({"reason": str(e), "domain": a.domain})
 
@@ -330,7 +413,7 @@ def do_bind_services(a):
         return _fail({"reason": "%s.list failed (auth/api error)" % CRT_API})
 
     try:
-        target = _find_by_domain(certs, a.domain)
+        target = _resolve_domain(certs, a.domain, a.on_duplicate)
     except RuntimeError as e:
         return _fail({"reason": str(e), "domain": a.domain})
     if target is None:
@@ -467,11 +550,13 @@ def main(argv):
         required=True,
         help="Re-issue if cert expires within this many days, regardless of existence",
     )
+    le.add_argument("--on-duplicate", choices=["newest", "fail"], default="newest")
     le.add_argument("--check", action="store_true")
     le.set_defaults(fn=do_letsencrypt_create)
 
     sd = sub.add_parser("set-default")
     sd.add_argument("--domain", required=True)
+    sd.add_argument("--on-duplicate", choices=["newest", "fail"], default="newest")
     sd.add_argument("--check", action="store_true")
     sd.set_defaults(fn=do_set_default)
 
@@ -480,6 +565,7 @@ def main(argv):
     bs.add_argument(
         "--bindings-json", required=True, help="JSON array of {service, subscriber} dicts"
     )
+    bs.add_argument("--on-duplicate", choices=["newest", "fail"], default="newest")
     bs.add_argument("--check", action="store_true")
     bs.set_defaults(fn=do_bind_services)
 
