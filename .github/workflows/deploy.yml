@@ -161,10 +161,22 @@ jobs:
       # opens the DC ports to fabricant); krg-vault brings up OpenBao. Rebuilt BEFORE
       # Ansible — the hoist that removes the NixOS→Ansible back-edge. OEC is staged
       # here too; whether the daemons came up is asserted in phase 4, not now.
-      - name: Phase 0 — foundation (NixOS krg-vault + krg-ldap)
+      # ORDER IS LOAD-BEARING: krg-ldap FIRST. It is the fleet's first resolver
+      # (modules/sssd-ad-client.nix puts the DC ahead of campus DNS on every
+      # member, including this control node), so a DC DNS misconfiguration makes
+      # every LATER host in the deploy unresolvable. With krg-vault first that
+      # deadlocks — the deploy dies on `Could not resolve hostname
+      # krg-vault.ucsd.edu` before ever reaching the host whose rebuild fixes DNS,
+      # so the repair can never ship through CD. Deploying the DC first makes that
+      # class of failure self-healing. krg-deploy pins krg-ldap's deploy FQDN in
+      # /etc/hosts (nix/hosts/krg-deploy/default.nix `networking.extraHosts`) so
+      # reaching the DC never depends on the DC — without that pin this ordering
+      # would only be probabilistic, since the DC's own .ucsd.edu record is
+      # resolved through the very forwarder that may be broken.
+      - name: Phase 0 — foundation (NixOS krg-ldap + krg-vault)
         if: success() && steps.gate.outputs.ok == 'true'
         env:
-          DEPLOY_NIXOS_HOSTS: "krg-vault krg-ldap"
+          DEPLOY_NIXOS_HOSTS: "krg-ldap krg-vault"
         run: ./deploy/deploy-nixos.sh
 
       # ── phase 1: substrate (Ansible) ──────────────────────────────────────────

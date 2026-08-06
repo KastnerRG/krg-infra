@@ -39,6 +39,60 @@ with lib; let
   sambaAdDc = pkgs.samba4Full.overrideAttrs (old: {
     pythonPath = (old.pythonPath or []) ++ [pkgs.python3Packages.cryptography];
   });
+
+  # Converge the ONE smb.conf line that is fleet-load-bearing: `dns forwarder`.
+  #
+  # Nix deliberately does not own /etc/samba/smb.conf (see the header) — the
+  # provisioner writes it and it lives on as runtime state. That is fine for the
+  # file as a whole, but the forwarder is different in kind: EVERY member host
+  # puts this DC first in resolv.conf (modules/sssd-ad-client.nix `mkBefore`), so
+  # this single line decides whether the entire fleet can resolve non-AD names.
+  # Leaving it to a hand-edit (the old runbook step) is exactly the drift ADR 0001
+  # forbids, and it bit us: the live file had `dns forwarder = 1.1.1.1` TWICE
+  # (repeated hand-edits) pointing at a public resolver that cannot see the
+  # internal-only *.ucsd.edu records, so `krg-vault`/`krg-prod` failed to resolve
+  # fleet-wide and Phase 0 of the deploy died on `Could not resolve hostname`.
+  #
+  # Surgical on purpose: it rewrites ONLY `dns forwarder` lines and leaves every
+  # other provisioner-written setting untouched. Runs as ExecStartPre of the DC
+  # daemon, which is gated on the domain already being provisioned, so smb.conf
+  # exists by then; the guard below keeps it a no-op on an unprovisioned box.
+  ensureDnsForwarder = pkgs.writeShellScript "samba-ad-ensure-dns-forwarder" ''
+    set -euo pipefail
+    conf=/etc/samba/smb.conf
+    want=${cfg.dnsForwarder}
+
+    # Pre-provision (or a re-provision in flight): nothing to converge yet.
+    [ -f "$conf" ] || exit 0
+
+    count=$(${pkgs.gnugrep}/bin/grep -cE '^[[:space:]]*dns forwarder[[:space:]]*=' "$conf" || true)
+    if [ "$count" = "1" ] &&
+      ${pkgs.gnugrep}/bin/grep -qE "^[[:space:]]*dns forwarder[[:space:]]*=[[:space:]]*$want[[:space:]]*$" "$conf"; then
+      exit 0 # already exactly one correct line — leave the file alone
+    fi
+
+    tmp=$(${pkgs.coreutils}/bin/mktemp "$conf.XXXXXX")
+    ${pkgs.coreutils}/bin/chmod 0644 "$tmp"
+
+    # Drop every existing forwarder line (deduping repeats), then re-insert a
+    # single one immediately after the [global] header.
+    ${pkgs.gnused}/bin/sed -E '/^[[:space:]]*dns forwarder[[:space:]]*=/d' "$conf" |
+      ${pkgs.gawk}/bin/awk -v want="$want" '
+        { print }
+        !inserted && tolower($0) ~ /^[[:space:]]*\[global\][[:space:]]*$/ {
+          print "\tdns forwarder = " want; inserted = 1
+        }
+        END { exit(inserted ? 0 : 1) }
+      ' > "$tmp" || {
+      # No [global] section — refuse to install a file the DC would ignore.
+      ${pkgs.coreutils}/bin/rm -f "$tmp"
+      echo "samba-ad: no [global] section in $conf; refusing to set dns forwarder" >&2
+      exit 1
+    }
+
+    ${pkgs.coreutils}/bin/mv -f "$tmp" "$conf"
+    echo "samba-ad: converged 'dns forwarder = $want' in $conf (was $count line(s))"
+  '';
 in {
   options.krg.sambaAD = {
     enable = mkEnableOption "Samba Active Directory domain controller";
@@ -70,22 +124,33 @@ in {
 
     dnsForwarder = mkOption {
       type = types.str;
-      default = "1.1.1.1";
+      default = "132.239.0.252";
       description = ''
-        Upstream resolver the DC forwards non-AD DNS queries to. Set this as
-        `dns forwarder = …` in smb.conf after provisioning (provision does not
-        take a forwarder flag).
+        Upstream resolver the DC forwards non-AD DNS queries to, converged into
+        `dns forwarder = …` under [global] in smb.conf (provision does not take a
+        forwarder flag, so the daemon's ExecStartPre enforces it — see below).
+
+        MUST be the CAMPUS resolver, not a public one. `*.ucsd.edu` is
+        SPLIT-HORIZON: the newer fleet records (krg-ldap, krg-deploy, krg-vault,
+        krg-prod) exist ONLY in campus DNS, while the older ones (waiter,
+        fabricant, e4e-nas, kastner-ml) are also published publicly. A public
+        forwarder therefore resolves *part* of the fleet and returns NODATA for
+        the rest — which is far worse than an outright outage, because it looks
+        like flaky DNS rather than a misconfiguration.
       '';
     };
 
     dnsFallback = mkOption {
       type = types.listOf types.str;
-      default = ["1.1.1.1"];
+      default = ["132.239.0.252"];
       description = ''
         Secondary resolvers placed in /etc/resolv.conf after 127.0.0.1. This
         keeps the box online before the domain is provisioned (when 127.0.0.1:53
         refuses connections, glibc falls through to these). Once the DC's DNS is
         stable and authoritative you can drop this to [].
+
+        Campus DNS for the same split-horizon reason as `dnsForwarder`: a public
+        fallback cannot see the internal-only fleet records.
       '';
     };
 
@@ -155,6 +220,11 @@ in {
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "all";
+        # Converge `dns forwarder` before the daemon reads smb.conf. Because the
+        # store path embeds the value, changing krg.sambaAD.dnsForwarder changes
+        # the unit — so a rebuild restarts the DC and re-applies it, rather than
+        # leaving the new value stranded until the next manual restart.
+        ExecStartPre = "${ensureDnsForwarder}";
         ExecStart = "${cfg.package}/sbin/samba --foreground --no-process-group";
         ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
         Restart = "on-failure";
@@ -253,8 +323,11 @@ in {
   #    This creates /var/lib/samba/* and /etc/samba/smb.conf. (It refuses to run
   #    if /etc/samba/smb.conf already exists — move it aside if re-provisioning.)
   #
-  # 2. Set the upstream forwarder under [global] in /etc/samba/smb.conf:
-  #      dns forwarder = 1.1.1.1
+  # 2. (NO LONGER MANUAL.) The upstream forwarder is converged by the daemon's
+  #    ExecStartPre from `krg.sambaAD.dnsForwarder` — do NOT hand-edit
+  #    `dns forwarder` in smb.conf; change the option and rebuild. Hand-editing
+  #    is what left the live file with two conflicting forwarder lines pointing
+  #    at a public resolver that cannot see the internal-only *.ucsd.edu records.
   #
   # 3. Start the daemon (the unit's ConditionPathExists now passes):
   #      sudo systemctl start samba-ad-dc

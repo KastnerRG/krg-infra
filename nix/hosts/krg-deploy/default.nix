@@ -47,6 +47,19 @@
     ];
     defaultGateway = "137.110.161.1";
     nameservers = ["132.239.0.252" "8.8.8.8" "1.1.1.1"];
+
+    # Break the DNS bootstrap cycle for the control node. Every member — this one
+    # included — puts the DC ahead of these nameservers (modules/sssd-ad-client.nix
+    # `mkBefore`), so if the DC's forwarder is wrong the control node cannot resolve
+    # the fleet, INCLUDING the DC's own deploy FQDN — and then the rebuild that
+    # would repair the DC can't be pushed. Pinning krg-ldap by IP keeps Phase 0
+    # reachable no matter what the DC's DNS is doing.
+    #
+    # `extraHosts` (a raw appended line), NOT `networking.hosts`: sssd-ad-client.nix
+    # already owns the "137.110.161.109" KEY there with an `mkDefault [krg-ldap.krg.local]`,
+    # so setting that same key here would WIN and silently drop the krg.local name
+    # SSSD resolves the DC by. Appending sidesteps the collision entirely.
+    extraHosts = "137.110.161.109 krg-ldap.ucsd.edu";
   };
 
   # Ansible control node + OpenTofu for infrastructure provisioning.
