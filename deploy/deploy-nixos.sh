@@ -11,7 +11,9 @@
 #
 # PHASED DEPLOY (ADR 0011): this script REBUILDS only — it does NOT verify. The
 # phased pipeline (.github/workflows/deploy.yml) calls it TWICE:
-#   • phase 0 (foundation) — DEPLOY_NIXOS_HOSTS="krg-vault krg-ldap", BEFORE Ansible.
+#   • phase 0 (foundation) — DEPLOY_NIXOS_HOSTS="krg-ldap krg-vault", BEFORE Ansible.
+#     (Rebuilt DC-first — but note that comes from ORDER in lib.sh, not from the
+#     order written here; this env var only SELECTS hosts. See ORDER's comment.)
 #     krg-ldap carries the in-guest AD firewall the Ansible substrate phase depends
 #     on (it must open the DC ports to fabricant before fabricant can validate AD),
 #     and krg-vault brings up OpenBao. Hoisting them removes the NixOS→Ansible
