@@ -16,14 +16,25 @@
 FLAKE="${REPO_ROOT}/nix"
 ADMIN="${DEPLOY_ADMIN:-krg-admin}"
 
-# Deploy/verify order: dependencies first (vault/AD before the services that use
+# Deploy/verify order: dependencies first (AD/vault before the services that use
 # them); compute boxes (waiter, kastner-ml) last. The phased deploy splits this
 # list across phases (foundation vs members) via DEPLOY_NIXOS_HOSTS, but the
-# canonical dependency order lives HERE so a rebuild always walks it. e4e-prod is a
+# canonical dependency order lives HERE so a rebuild always walks it — the env var
+# only SELECTS hosts, it does not reorder them (see deploy-nixos.sh). e4e-prod is a
 # service host (the student-tenant platform) like krg-prod — placed alongside it,
 # before the compute boxes.
+#
+# krg-ldap IS FIRST, AND THAT IS LOAD-BEARING. The DC is the fleet's first
+# resolver: modules/sssd-ad-client.nix prepends it to every member's nameservers,
+# and krg-vault is itself a domain member (krg.adClient.enable). So when the DC's
+# DNS is misconfigured, EVERY later host in this list becomes unresolvable — and
+# with krg-vault ahead of it the deploy died on `Could not resolve hostname
+# krg-vault.ucsd.edu` before ever reaching the host whose rebuild repairs DNS,
+# so the fix could not ship through CD (that deadlock cost a red fleet; #513).
+# The dependency is one-directional — krg-ldap consumes nothing from krg-vault —
+# so DC-first is both the correct dependency order and the self-healing one.
 # shellcheck disable=SC2034  # consumed by sourcing scripts, not here
-ORDER=(krg-vault krg-ldap krg-prod e4e-prod krg-nat waiter kastner-ml)
+ORDER=(krg-ldap krg-vault krg-prod e4e-prod krg-nat waiter kastner-ml)
 
 # host -> ssh address. Fully-qualified DNS names only — never IPs (DNS is the
 # stable handle; IPs may change). Names are final per the rename plan (#128).

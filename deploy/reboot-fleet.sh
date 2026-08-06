@@ -59,7 +59,11 @@ declare -A REBOOT_CMD_OVERRIDE=(
 # Reboot order. Sequential, one host fully back before the next, so the fleet is
 # never all-down at once and the log shows exactly where a failure happened. The
 # NAS goes last (slowest to reboot, least coupled to the others' reachability).
-ORDER=(krg-vault krg-ldap krg-prod e4e-prod krg-nat waiter kastner-ml e4e-nas)
+#
+# krg-ldap first, mirroring ORDER in lib.sh (kept in sync deliberately — these are
+# two lists of the same fleet). Same reason: the DC is every member's first
+# resolver, so it should be back up before we start reaching later hosts by name.
+ORDER=(krg-ldap krg-vault krg-prod e4e-prod krg-nat waiter kastner-ml e4e-nas)
 
 # Optional args restrict the run to a subset, given as a comma- and/or
 # space-separated list of HOSTNAMES (e.g. `reboot-fleet.sh waiter,krg-prod` or

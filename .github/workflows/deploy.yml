@@ -161,6 +161,11 @@ jobs:
       # opens the DC ports to fabricant); krg-vault brings up OpenBao. Rebuilt BEFORE
       # Ansible — the hoist that removes the NixOS→Ansible back-edge. OEC is staged
       # here too; whether the daemons came up is asserted in phase 4, not now.
+      # NOTE: this env var only SELECTS hosts — the rebuild order comes from ORDER
+      # in deploy/lib.sh, which walks dependency-first regardless of what is written
+      # here. Listing krg-ldap first mirrors ORDER for readability; changing the
+      # actual order means changing ORDER.
+      #
       # ORDER IS LOAD-BEARING: krg-ldap FIRST. It is the fleet's first resolver
       # (modules/sssd-ad-client.nix puts the DC ahead of campus DNS on every
       # member, including this control node), so a DC DNS misconfiguration makes
