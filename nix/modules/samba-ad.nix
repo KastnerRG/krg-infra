@@ -278,6 +278,11 @@ in {
         138 # NetBIOS datagram
         389 # LDAP / CLDAP
         464 # kpasswd
+        # NTP (udp/123) is deliberately NOT here — it belongs to the time
+        # authority role, not the Samba daemon, so modules/time.nix opens it
+        # (same trusted.json sources) when krg.time.server.enable is set. It was
+        # missing from BOTH for a long time, which is why e4e-nas — correctly
+        # pointed at this DC by its AD join — failed every sync and free-ran.
       ];
     });
 

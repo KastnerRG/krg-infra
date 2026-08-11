@@ -20,6 +20,11 @@ in {
     ../modules/security/crowdsec.nix
     ../modules/security/crowdsec-bouncer.nix
     ../modules/sssd-ad-client.nix
+    # Managed time (chrony) on every host, with the AD DC as the domain clock.
+    # Sits next to sssd-ad-client for a reason: AD auth is what makes clock skew
+    # load-bearing (Kerberos rejects past 5 min), and an unmanaged clock is how
+    # e4e-nas silently free-ran to +40s.
+    ../modules/time.nix
     # Break-glass admin + krg.users on EVERY KRG machine (servers, compute, AND
     # workstations/laptops — a portable box needs a local recovery account too).
     # node-exporter is NOT here: it's the monitored-infra delta, moved to
@@ -202,6 +207,20 @@ in {
       # break-glass admin (users/admin.nix) keeps its own NOPASSWD rule.
       sudoGroups = mkDefault ["Domain Admins"];
       sshKeysFromAD = mkDefault true;
+    };
+
+    # Managed time on EVERY host (modules/time.nix). Before this the fleet rode
+    # the systemd-timesyncd default — synced, but undeclared and with no coherent
+    # domain clock, which is how e4e-nas free-ran to +40s unnoticed: DSM's AD join
+    # pointed it at the DC for time (correct AD behavior) and the DC served none.
+    # Members PREFER the DC so the domain shares one clock (what Kerberos and SMB
+    # timestamps actually care about), with the public pool as fallback — the SPOF
+    # note above applies here too, and time must not hard-depend on a single DC.
+    # The DC inverts this in profiles/directory.nix (it serves, and chases nobody).
+    # Reuses adClient.serverIp so "where the DC is" has ONE definition per host.
+    krg.time = {
+      enable = mkDefault true;
+      domainTimeSource = mkDefault config.krg.adClient.serverIp;
     };
 
     # Trust the lab-internal OpenBao CA fleet-wide (terraform/openbao/pki.tf).

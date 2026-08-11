@@ -21,6 +21,16 @@ IN ACCEPT -p tcp -dport 88  -source +dc/ucsd -log nolog
 IN ACCEPT -p udp -dport 464 -source +dc/ucsd -log nolog
 IN ACCEPT -p tcp -dport 464 -source +dc/ucsd -log nolog
 
+# NTP — the DC is the domain time authority (nix krg.time.server.enable).
+# Sits with Kerberos on purpose: Kerberos rejects tickets past 5 min of skew, so
+# time IS an auth dependency. This rule was MISSING along with the in-guest one,
+# so e4e-nas (pointed here for time by its AD join, correctly) failed every sync
+# and free-ran to +40s. +dc/ucsd matches the client-facing protocols above and
+# covers every member; nix/modules/time.nix applies the stricter in-guest list
+# (sealab + machines + ops). Both layers must pass — an in-guest allow alone is
+# dropped out here before it ever reaches the guest.
+IN ACCEPT -p udp -dport 123 -source +dc/ucsd -log nolog
+
 # LDAP / LDAPS / Global Catalog
 IN ACCEPT -p udp -dport 389 -source +dc/ucsd -log nolog
 IN ACCEPT -p tcp -dport 389 -source +dc/ucsd -log nolog

@@ -31,6 +31,20 @@
     workgroup = "KRG";
   };
 
+  # Time authority for the domain. In AD the DC is the clock every member follows;
+  # this host was serving NOTHING on udp/123, so e4e-nas — which DSM's AD join
+  # correctly pointed here for time — failed every sync and free-ran to +40s.
+  # `domainTimeSource = null` overrides base.nix's fleet default (mkDefault): the
+  # authority takes its time from the public pool upstream, never from itself.
+  # modules/time.nix opens udp/123 in-guest via sourcedUDPPorts; the Proxmox
+  # perimeter needs the matching rule in
+  # ansible/roles/proxmox_firewall/files/krg-ldap.fw — an in-guest allow on its own
+  # is dropped at the outer layer before it ever reaches the guest.
+  krg.time = {
+    server.enable = true;
+    domainTimeSource = null;
+  };
+
   # base.nix already makes every host an AD client (Domain Admins, keys-from-AD).
   # This host IS the DC, so flag it: SSSD must not rotate the DC's own machine
   # account or push DNS, and the samba-ad module owns /etc/krb5.conf here. The DC
