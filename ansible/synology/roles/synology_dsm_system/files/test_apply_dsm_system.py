@@ -377,22 +377,25 @@ def _ntp_exec_factory(get_data, calls):
     return fake
 
 
-def test_ntp_no_change_still_forces_sync(monkeypatch, capsys):
-    """The common case after the DC starts serving time: the configured server
-    was ALREADY correct (the AD join set it), so there is no config drift — but
-    the clock is still wrong because nothing was answering. DSM only runs
-    ntpdate daily, so the task must force a sync anyway or the drift persists
-    for up to another 24h."""
+def test_ntp_no_change_is_a_pure_read(monkeypatch, capsys):
+    """The common case: the configured server was ALREADY correct (the AD join
+    set it), so a converged run must touch nothing at all.
+
+    This previously also called `method=sync` to close the drift immediately.
+    That method needs a DSM web session and is not callable from
+    `synowebapi --exec` (err 5701), and its failure warning took the fleet
+    deploy red. Convergence is now config-only; DSM's daily ntpdate does the
+    stepping, which it demonstrably does once the DC actually serves time."""
     calls = []
     monkeypatch.setattr(m, "_exec", _ntp_exec_factory(_NTP_GET, calls))
     rc = m.main(["ntp", "--server", "krg-ldap.krg.local"])
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
     methods = [p for _, params in calls for p in params if p.startswith("method=")]
-    assert methods == ["method=get", "method=sync"]
+    assert methods == ["method=get"], "a converged run must issue no write call"
 
 
 def test_ntp_check_mode_makes_no_write_calls(monkeypatch, capsys):
-    """--check must neither set nor sync — sync steps the real clock."""
+    """--check must report drift without writing anything."""
     calls = []
     monkeypatch.setattr(m, "_exec", _ntp_exec_factory(_NTP_GET, calls))
     rc = m.main(["ntp", "--server", "pool.ntp.org", "--check"])
@@ -437,23 +440,37 @@ def test_ntp_set_payload_excludes_clock_fields(monkeypatch, capsys):
     assert 'timezone="Pacific"' in params
 
 
-def test_ntp_sync_failure_warns_but_does_not_fail(monkeypatch, capsys):
-    """A failed sync means the time source isn't answering right now — worth
-    SAYING, but not a config-convergence failure. Hard-failing would take the
-    whole NAS play red on a transient blip, and DSM retries daily."""
+def test_no_warning_trips_the_ansible_sentinel(monkeypatch, capsys):
+    """REGRESSION GUARD. The calling tasks classify a run by substring-matching
+    this script's output (`'FAIL' in stdout` → failed, `'CHANGED' in stdout` →
+    changed), a convention shared by ~52 synology_* tasks. Warning text is NOT
+    exempt: these run via `ansible.builtin.script` over a pty, which merges
+    stderr into stdout, so a stderr-only warning still lands in the string
+    failed_when tests.
 
-    def fake(api, *params):
-        if "method=get" in params:
-            return {"data": dict(_NTP_GET), "success": True}
-        if "method=sync" in params:
-            return {"success": False, "error": {"code": 4800}}
-        return {"success": True}
+    A warning reading "the forced sync FAILED against ..." therefore took the
+    whole fleet deploy red while the task itself had succeeded with
+    "OK no-change" and rc 0 (run 31460376825). Every advisory line this script
+    can emit must avoid the reserved words.
 
-    monkeypatch.setattr(m, "_exec", fake)
-    rc = m.main(["ntp", "--server", "krg-ldap.krg.local"])
+    Exercises the paths that emit warnings, then asserts the merged stream a
+    task would see is classified correctly."""
+    # package-state warns about not-installed packages on stderr.
+    monkeypatch.setattr(m, "_pkg_is_installed", lambda name: False)
+    rc = m.main(["package-state", "--packages", '["NotInstalledPkg"]'])
     captured = capsys.readouterr()
-    assert rc == 0 and "OK no-change" in captured.out
-    assert "WARN" in captured.err and "4800" in captured.err
+    assert rc == 0
+
+    merged = captured.out + captured.err  # what a pty-backed `script:` reports
+    assert "WARN" in merged, "sanity: this path should have warned"
+    assert "FAIL" not in merged, (
+        "a warning contains the reserved word FAIL — the task's failed_when "
+        "substring match would flag this successful run as a failure"
+    )
+    assert "CHANGED" not in merged, (
+        "a warning contains the reserved word CHANGED — the task's changed_when "
+        "substring match would misreport this no-op run as a change"
+    )
 
 
 def test_ntp_get_failure_is_structured_fail(monkeypatch, capsys):

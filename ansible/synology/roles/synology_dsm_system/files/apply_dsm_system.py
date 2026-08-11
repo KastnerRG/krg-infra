@@ -25,8 +25,8 @@ Subcommands:
                     (no clean provider resource models "started"). Remove this
                     subcommand once the provider fixes Run; until then it's the
                     only path to a started package after `tofu apply`.
-  ntp               SYNO.Core.Region.NTP v1 set — the NTP client (enable + server),
-                    then a forced `sync`. Resolves the old "SET path uncertain"
+  ntp               SYNO.Core.Region.NTP v1 set — the NTP client (enable + server).
+                    Resolves the old "SET path uncertain"
                     TODO: the API was identified from DSM's own failure logs
                     (`synowebapi_SYNO.Core.Region.NTP_1_status`) and confirmed
                     read-only on e4e-nas 2026-08-10 —
@@ -86,6 +86,23 @@ def _args_from(data):
     return args
 
 
+# OUTPUT CONTRACT — read before adding any message to this script.
+#
+# The calling tasks classify a run by SUBSTRING-matching this script's output:
+#   changed_when: "'CHANGED' in stdout or 'WOULD-CHANGE' in stdout"
+#   failed_when:  "rc != 0 or 'FAIL' in stdout"
+# (the same convention as ~52 tasks across the synology_* roles).
+#
+# So `FAIL` is a RESERVED WORD in anything this script prints, and "FAILED"
+# contains it. Do NOT assume writing to stderr is a way around that: these tasks
+# run via `ansible.builtin.script` over a pty, which MERGES stderr into stdout —
+# visible as \r\n line endings in the captured output. A stderr-only warning
+# still lands in the string that failed_when tests.
+#
+# This is not hypothetical: a warning reading "the forced sync FAILED against
+# ..." took the whole fleet deploy red while the task itself had succeeded with
+# "OK no-change" and rc 0 (run 31460376825). Word warnings so they cannot
+# contain FAIL/CHANGED — test_no_warning_trips_the_ansible_sentinel enforces it.
 def _result(drift, check, apply_fn):
     if not drift:
         print("OK no-change")
@@ -299,30 +316,29 @@ def do_ntp(a):
         payload.update(desired)
         return _exec("SYNO.Core.Region.NTP", "version=1", "method=set", *_args_from(payload))
 
-    rc = _result(drift, a.check, apply)
-
-    # Force a sync even when the config was already correct. DSM only runs
-    # ntpdate DAILY (`ntpdate_period="daily"`), so a converged config on its own
-    # would leave a drifted clock drifted for up to another 24h — and the common
-    # case here is exactly that: the server value was already right, it was the
-    # SERVER that wasn't answering. This is the appliance equivalent of
-    # `chronyc makestep`, and it is what actually closes the +40s.
+    # NO FORCED SYNC. An earlier version of this called `method=sync` here to
+    # close the drift immediately instead of waiting for DSM's daily ntpdate.
+    # It does not work through this transport, and it took the fleet deploy red
+    # (run 31460376825). DSM answered:
+    #   {"error": {"code": 5701, "errors": {"desc": "parameter bad",
+    #    "error": "The operation failed. Please sign in to DSM again and retry."}}}
+    # That second message is the tell: unlike get/set, `sync` wants a real DSM
+    # WEB SESSION and is not callable from `synowebapi --exec` running as root
+    # on the box. No parameter spelling fixes that — the .lib descriptor lists
+    # no params for the method at all — so retrying with guessed arguments would
+    # just be churn against a proprietary appliance.
     #
-    # Best-effort by design: a failed sync means the time source is unreachable
-    # right now, which is worth SAYING but is not a config-convergence failure.
-    # Hard-failing here would take the whole NAS play red on a transient blip,
-    # and DSM retries daily regardless. The warning carries the DSM error text so
-    # a genuinely dead time source is still visible in the task output.
-    if rc == 0 and not a.check:
-        sync = _exec("SYNO.Core.Region.NTP", "version=1", "method=sync")
-        if not sync.get("success"):
-            sys.stderr.write(
-                "WARN: NTP config is converged but the forced sync FAILED against "
-                "%r — the time source is not answering (check that the DC serves "
-                "udp/123 and that both firewall layers allow it). DSM response: "
-                "%s\n" % (a.server, json.dumps(sync))
-            )
-    return rc
+    # It also turned out to be unnecessary. Once krg-ldap actually served time,
+    # DSM's own daily ntpdate closed the whole +40s on its own, and the NAS now
+    # tracks the DC to ~25 microseconds (`ntpdate -q krg-ldap.krg.local`
+    # 2026-08-11: "offset -0.000025"). At ~0.57 s/day of drift against a
+    # 5-minute Kerberos tolerance, waiting up to 24h for convergence after a
+    # server change costs nothing worth this failure mode.
+    #
+    # If a future change ever does need an immediate step, the supported path is
+    # the CLI DSM itself uses — `/usr/sbin/ntpdate -u <server>` — NOT the webapi
+    # method. `method=status` remains available read-only for diagnosis.
+    return _result(drift, a.check, apply)
 
 
 def do_network(a):

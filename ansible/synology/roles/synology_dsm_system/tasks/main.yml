@@ -71,10 +71,16 @@
 # Kerberos rejects tickets past 5 minutes of skew, so on an AD member this is an
 # AUTH dependency, not tidiness — and it had silently drifted to +40s because the
 # DC served no NTP. The server half of the fix is nix/modules/time.nix
-# (krg.time.server.enable on krg-ldap) plus udp/123 through BOTH firewall layers;
-# without that half this task converges the config and then warns that the forced
-# sync failed. See spec/e4e-nas/dsm-system.yml `ntp:`.
-- name: Apply NTP client (SYNO.Core.Region.NTP set v1 + forced sync)
+# (krg.time.server.enable on krg-ldap) plus udp/123 through BOTH firewall layers.
+# See spec/e4e-nas/dsm-system.yml `ntp:`.
+#
+# CONFIG ONLY — this converges the server setting and does not step the clock.
+# DSM's own daily ntpdate does the stepping (verified 2026-08-11: it closed the
+# entire +40s within hours of krg-ldap starting to serve, and the NAS now tracks
+# the DC to ~25µs). An earlier version called the webapi `sync` method here; it
+# needs a DSM web session, isn't callable from `synowebapi --exec` (err 5701),
+# and its failure warning took the fleet deploy red. See do_ntp for the detail.
+- name: Apply NTP client (SYNO.Core.Region.NTP set v1)
   ansible.builtin.script: >-
     apply_dsm_system.py ntp
     --server {{ sys_spec.system.ntp.server | quote }}
