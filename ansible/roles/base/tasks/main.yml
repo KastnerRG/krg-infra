@@ -34,6 +34,31 @@
     name: "{{ base_packages_absent }}"
     state: absent
 
+# --- Time (chrony) — the Debian counterpart of nix/modules/time.nix ---------
+# Written as a sourcedir DROP-IN rather than a rewrite of /etc/chrony/chrony.conf:
+# the distro file also carries keyfile/driftfile/rtcsync/makestep, and replacing
+# it wholesale to add two source lines is a far bigger blast radius than the
+# change deserves. `sourcedir /etc/chrony/sources.d` is already in Debian's stock
+# chrony.conf (verified on fabricant), so the drop-in is picked up as-is.
+#
+# The distro's own `pool 2.debian.pool.ntp.org iburst` line stays, acting as a
+# further fallback behind the sources declared here. That's deliberate — for
+# time, more independent fallbacks is the safe direction.
+- name: Declare NTP sources (AD DC preferred, public pool as fallback)
+  ansible.builtin.template:
+    src: krg-time.sources.j2
+    dest: /etc/chrony/sources.d/krg-time.sources
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload chrony sources
+
+- name: Enable and start chrony
+  ansible.builtin.systemd_service:
+    name: chrony
+    enabled: true
+    state: started
+
 - name: Enable unattended security upgrades (up to date by default)
   ansible.builtin.copy:
     src: "{{ item }}"

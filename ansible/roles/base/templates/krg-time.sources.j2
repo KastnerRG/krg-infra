@@ -1,0 +1,13 @@
+# Managed by krg-infra ansible base role — DO NOT EDIT.
+# Mirrors nix/modules/time.nix (krg.time). Change the fleet time source and you
+# must touch all three: this template, nix/modules/time.nix, and
+# spec/e4e-nas/dsm-system.yml (`ntp.server`).
+{% if base_ntp_domain_time_source %}
+# AD domain time authority — preferred so the whole domain shares one clock
+# (Kerberos/SMB care about agreeing with the DC, not about absolute accuracy).
+server {{ base_ntp_domain_time_source }} iburst prefer
+{% endif %}
+# Fallback: a DC outage must not leave this host with no time source at all.
+{% for s in base_ntp_servers %}
+server {{ s }} iburst
+{% endfor %}

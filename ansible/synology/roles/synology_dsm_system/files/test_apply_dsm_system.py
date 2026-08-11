@@ -347,3 +347,129 @@ def test_package_state_rejects_malformed_json():
     with _pt.raises(SystemExit) as exc:
         m.main(["package-state", "--packages", "this-is-not-json{"])
     assert "valid JSON" in str(exc.value)
+
+
+# --- ntp (SYNO.Core.Region.NTP v1) -------------------------------------------
+# Live GET shape, captured read-only from e4e-nas 2026-08-10. The clock-valued
+# keys are the interesting part: they must never reach a SET payload.
+_NTP_GET = {
+    "date": "2026/8/10",
+    "enable_ntp": "ntp",
+    "hour": 20,
+    "minute": 8,
+    "now": "Mon Aug 10 20:08:37 2026\n",
+    "second": 37,
+    "server": "krg-ldap.krg.local",
+    "timestamp": 1786417717,
+    "timezone": "Pacific",
+}
+
+
+def _ntp_exec_factory(get_data, calls):
+    """Fake _exec that records every call and answers get/set/sync."""
+
+    def fake(api, *params):
+        calls.append((api, params))
+        if "method=get" in params:
+            return {"data": dict(get_data), "success": True}
+        return {"success": True}
+
+    return fake
+
+
+def test_ntp_no_change_still_forces_sync(monkeypatch, capsys):
+    """The common case after the DC starts serving time: the configured server
+    was ALREADY correct (the AD join set it), so there is no config drift — but
+    the clock is still wrong because nothing was answering. DSM only runs
+    ntpdate daily, so the task must force a sync anyway or the drift persists
+    for up to another 24h."""
+    calls = []
+    monkeypatch.setattr(m, "_exec", _ntp_exec_factory(_NTP_GET, calls))
+    rc = m.main(["ntp", "--server", "krg-ldap.krg.local"])
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
+    methods = [p for _, params in calls for p in params if p.startswith("method=")]
+    assert methods == ["method=get", "method=sync"]
+
+
+def test_ntp_check_mode_makes_no_write_calls(monkeypatch, capsys):
+    """--check must neither set nor sync — sync steps the real clock."""
+    calls = []
+    monkeypatch.setattr(m, "_exec", _ntp_exec_factory(_NTP_GET, calls))
+    rc = m.main(["ntp", "--server", "pool.ntp.org", "--check"])
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("WOULD-CHANGE") and "pool.ntp.org" in out
+    methods = [p for _, params in calls for p in params if p.startswith("method=")]
+    assert methods == ["method=get"]
+
+
+def test_ntp_set_payload_excludes_clock_fields(monkeypatch, capsys):
+    """THE load-bearing assertion. Echoing the GET's date/hour/minute/second/
+    now/timestamp back into a SET would ask DSM to set the time to an
+    already-stale reading (the manual-time path, SYNONtpSetWithModifiedTime).
+    A config write must never be able to step the clock. Config keys DO round
+    trip — timezone included, which is how it survives untouched despite not
+    being managed."""
+    calls = []
+    monkeypatch.setattr(m, "_exec", _ntp_exec_factory(_NTP_GET, calls))
+    rc = m.main(["ntp", "--server", "krg-ldap.krg.local", "--enabled", "true"])
+    assert rc == 0
+
+    set_calls = [(api, params) for api, params in calls if "method=set" in params]
+    assert len(set_calls) == 0, "no drift means no set"
+
+    # Now with real drift, so a set actually happens.
+    capsys.readouterr()  # drain the no-change run's output
+    calls.clear()
+    drifted = dict(_NTP_GET, server="pool.ntp.org")
+    monkeypatch.setattr(m, "_exec", _ntp_exec_factory(drifted, calls))
+    rc = m.main(["ntp", "--server", "krg-ldap.krg.local"])
+    assert rc == 0 and capsys.readouterr().out.startswith("CHANGED")
+
+    (api, params) = [c for c in calls if "method=set" in c[1]][0]
+    assert api == "SYNO.Core.Region.NTP"
+    keys = {p.split("=", 1)[0] for p in params if "=" in p and not p.startswith("method")}
+    for clock_key in m._NTP_CLOCK_KEYS:
+        assert clock_key not in keys, "clock field %r must not reach a SET" % clock_key
+    # Config fields round-trip; the desired server wins; strings stay JSON-quoted
+    # (bare values get misparsed by synowebapi — see the network tests above).
+    assert 'server="krg-ldap.krg.local"' in params
+    assert 'enable_ntp="ntp"' in params
+    assert 'timezone="Pacific"' in params
+
+
+def test_ntp_sync_failure_warns_but_does_not_fail(monkeypatch, capsys):
+    """A failed sync means the time source isn't answering right now — worth
+    SAYING, but not a config-convergence failure. Hard-failing would take the
+    whole NAS play red on a transient blip, and DSM retries daily."""
+
+    def fake(api, *params):
+        if "method=get" in params:
+            return {"data": dict(_NTP_GET), "success": True}
+        if "method=sync" in params:
+            return {"success": False, "error": {"code": 4800}}
+        return {"success": True}
+
+    monkeypatch.setattr(m, "_exec", fake)
+    rc = m.main(["ntp", "--server", "krg-ldap.krg.local"])
+    captured = capsys.readouterr()
+    assert rc == 0 and "OK no-change" in captured.out
+    assert "WARN" in captured.err and "4800" in captured.err
+
+
+def test_ntp_get_failure_is_structured_fail(monkeypatch, capsys):
+    """A failed GET must produce a FAIL line + rc 1, not a KeyError traceback
+    that Ansible would re-wrap unhelpfully (same contract as package-defaults)."""
+    monkeypatch.setattr(m, "_exec", lambda api, *p: {"success": False, "error": {"code": 105}})
+    rc = m.main(["ntp", "--server", "krg-ldap.krg.local"])
+    assert rc == 1 and capsys.readouterr().out.startswith("FAIL")
+
+
+def test_ntp_refuses_to_disable(monkeypatch):
+    """Disabling is unsupported: DSM's `enable_ntp` value for 'off' is
+    unverified and manual-time mode is worse than drift. Must be a clear
+    SystemExit, not a guessed write."""
+    import pytest as _pt
+
+    with _pt.raises(SystemExit) as exc:
+        m.main(["ntp", "--server", "krg-ldap.krg.local", "--enabled", "false"])
+    assert "not supported" in str(exc.value)

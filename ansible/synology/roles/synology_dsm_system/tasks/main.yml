@@ -1,9 +1,9 @@
 ---
-# synology_dsm_system — DSM hostname + network (general) from spec/e4e-nas/dsm-system.yml
-# via synowebapi (full-object set; logic in files/apply_dsm_system.py).
+# synology_dsm_system — DSM hostname + network (general) + NTP from
+# spec/e4e-nas/dsm-system.yml via synowebapi (full-object set; logic in
+# files/apply_dsm_system.py).
 # Per-interface IP set lives on SYNO.Core.Network.Ethernet — not yet driven here (the
 # live static IP already matches the spec, so it's a no-op until we want to change it).
-# NTP set API is unconfirmed on this DSM; subcommand reserved, TODO probe.
 #
 # CROSS-REFERENCE: parallels nix `networking.hostName` / `networking.defaultGateway`
 # / `networking.nameservers` and the Debian counterparts (`/etc/hostname` +
@@ -64,7 +64,34 @@
     - sys_spec.packages is defined
     - (sys_spec.packages.ensure_running | default([])) | length > 0
 
-# NTP and per-interface static IP — TODO once API surfaces confirmed.
+# Time. Runs AFTER the network task on purpose: the NTP server is an AD name
+# (krg-ldap.krg.local) that only resolves once network.dns.primary points at the
+# DC, so converging DNS first is what lets this task succeed at all.
+#
+# Kerberos rejects tickets past 5 minutes of skew, so on an AD member this is an
+# AUTH dependency, not tidiness — and it had silently drifted to +40s because the
+# DC served no NTP. The server half of the fix is nix/modules/time.nix
+# (krg.time.server.enable on krg-ldap) plus udp/123 through BOTH firewall layers;
+# without that half this task converges the config and then warns that the forced
+# sync failed. See spec/e4e-nas/dsm-system.yml `ntp:`.
+- name: Apply NTP client (SYNO.Core.Region.NTP set v1 + forced sync)
+  ansible.builtin.script: >-
+    apply_dsm_system.py ntp
+    --server {{ sys_spec.system.ntp.server | quote }}
+    --enabled {{ sys_spec.system.ntp.enabled | default(true) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: ntp_apply
+  changed_when: "'CHANGED' in ntp_apply.stdout or 'WOULD-CHANGE' in ntp_apply.stdout"
+  failed_when: "ntp_apply.rc != 0 or 'FAIL' in ntp_apply.stdout"
+  check_mode: false
+  # Same hierarchical guard as the packages tasks above — Jinja resolves the
+  # nested lookup before `is defined` evaluates, so a spec with no `ntp:` block
+  # would raise AnsibleUndefinedVariable instead of skipping.
+  when:
+    - sys_spec.system.ntp is defined
+    - sys_spec.system.ntp.server is defined
+
+# Per-interface static IP — TODO once the Ethernet set surface is confirmed.
 
 - name: Export live state for drift detection
   ansible.builtin.import_tasks: export.yml

@@ -3,3 +3,10 @@
   ansible.builtin.systemd_service:
     name: earlyoom
     state: restarted
+
+# `reload sources` re-reads the sourcedir drop-ins WITHOUT restarting chronyd.
+# A restart would throw away the clock-discipline state (drift estimate, current
+# slew) and re-converge from scratch every time the source list is touched.
+- name: Reload chrony sources
+  ansible.builtin.command: chronyc reload sources
+  changed_when: true

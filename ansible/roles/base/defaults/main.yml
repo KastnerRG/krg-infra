@@ -12,6 +12,32 @@ base_packages:
   - python3.13-venv        # PEP 668 / externally-managed: need venvs for pip tooling
   - unattended-upgrades
   - earlyoom               # early-OOM daemon (mirrors nix services.earlyoom)
+  - chrony                 # managed time (mirrors nix krg.time) — see base_ntp_* below
+
+# --- Time (chrony) — mirrors nix/modules/time.nix ---------------------------
+# Debian/PVE ships chrony already synced against its own pool, but UNDECLARED.
+# That gap is how e4e-nas free-ran to +40s unnoticed: DSM's AD join pointed it at
+# the domain controller for time (correct AD behavior) and the DC served none.
+# Policy: PREFER the AD DC so the domain shares one clock (Kerberos rejects past
+# 5 min of skew), with a public pool behind it so a DC outage degrades accuracy
+# instead of removing the host's only time source.
+#
+# Address, not hostname: the DC also serves the domain's DNS, so resolving
+# `krg-ldap.krg.local` to find the time server would make time depend on the very
+# host being timed. Same value as `ad_dc_ip` in roles/ad_client/defaults/main.yml
+# (duplicated rather than referenced — base's own tasks run BEFORE ad_client is
+# imported, so that role's defaults aren't reliably in scope here yet).
+base_ntp_domain_time_source: "137.110.161.109"   # krg-ldap (the AD DC)
+
+# Fallback pool. The generic zone rather than nix's `*.nixos.pool.ntp.org` —
+# vendor zones are a courtesy convention over the same underlying pool, and there
+# is no Debian equivalent worth pinning here. `time.ucsd.edu` does not resolve, so
+# there is no campus-local stratum to prefer.
+base_ntp_servers:
+  - 0.pool.ntp.org
+  - 1.pool.ntp.org
+  - 2.pool.ntp.org
+  - 3.pool.ntp.org
 
 # earlyoom thresholds — mirror nix profiles/base.nix services.earlyoom. LOW on
 # purpose: -m/-s are percent-free floors; 10% defaults fire absurdly early on a

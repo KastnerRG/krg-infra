@@ -25,8 +25,20 @@ Subcommands:
                     (no clean provider resource models "started"). Remove this
                     subcommand once the provider fixes Run; until then it's the
                     only path to a started package after `tofu apply`.
-  ntp               Reserved — SET path uncertain on this DSM (SYNO.Core.System.Conf
-                    or a Region.NTP API not in the captured .libs).
+  ntp               SYNO.Core.Region.NTP v1 set — the NTP client (enable + server),
+                    then a forced `sync`. Resolves the old "SET path uncertain"
+                    TODO: the API was identified from DSM's own failure logs
+                    (`synowebapi_SYNO.Core.Region.NTP_1_status`) and confirmed
+                    read-only on e4e-nas 2026-08-10 —
+                      SYNO.API.Info query  -> SYNO.Core.Region.NTP, v1..3, entry.cgi
+                      methods              -> get / set / sync / status / listzone /
+                                              setzone / ensure_ntp_sync_and_enable
+                      GET data             -> {enable_ntp: "ntp", server: "...",
+                                               timezone: "Pacific", date/hour/
+                                               minute/second/now/timestamp}
+                    Param names mirror the GET: the symbol table in
+                    lib/SYNO.Core.Region.so contains `server` and `enable_ntp`
+                    but NO `ntp_server`.
 """
 
 import argparse
@@ -215,6 +227,104 @@ def do_package_defaults(a):
     return _result(drift, a.check, apply)
 
 
+# Clock-VALUED keys in the NTP GET response. They describe the clock at the
+# moment of the GET, not configuration, and must NEVER be echoed back into a SET:
+# doing so would ask DSM to set the time to an already-stale reading — the manual
+# time-setting path. DSM keeps those separate itself (the library exports
+# SYNONtpSet AND a distinct SYNONtpSetWithModifiedTime), which is the evidence
+# that a plain config set neither needs nor wants these fields.
+_NTP_CLOCK_KEYS = ("date", "hour", "minute", "second", "now", "timestamp")
+
+# GET reports `enable_ntp` as a MODE STRING ("ntp"), not a boolean — it selects
+# how the clock is set, and the counterpart value (manual time) is unverified.
+_NTP_MODE_ENABLED = "ntp"
+
+
+def do_ntp(a):
+    """Converge the DSM NTP client: enable it and point it at --server.
+
+    WHY THIS EXISTS: nothing managed DSM's time source, and the drift was
+    invisible until measured. e4e-nas's AD join had pointed it at the domain
+    controller (correct AD behavior — in AD the DC is the domain clock), but
+    krg-ldap served no NTP at all, so DSM logged
+        "There is no sys.peer NTP server." / "Failed to sync time with
+         krg-ldap.krg.local [1]" / "Failed to force sync time"
+    on every attempt and the appliance free-ran to +40s (~0.57 s/day, ordinary
+    crystal drift). The fix has two halves: krg-ldap now SERVES time
+    (nix/modules/time.nix `krg.time.server.enable` + udp/123 through both
+    firewall layers), and this subcommand makes the client side declarative.
+
+    SET PAYLOAD: the GET response minus `_NTP_CLOCK_KEYS`, with the desired keys
+    merged over it. Full-object rather than partial because sibling DSM APIs in
+    this role (SMB/NFS) reject partial sets with err 2001, and there is no cost
+    to sending the config fields back unchanged — but the clock fields are
+    filtered out first, so a config write can never step the clock.
+
+    TIMEZONE IS DELIBERATELY NOT MANAGED HERE. DSM names zones in its own
+    namespace ("Pacific"), not IANA ("America/Los_Angeles" as the spec records),
+    so converging it needs the listzone/setzone mapping — a separate surface. The
+    live value is already correct, and it round-trips untouched through the
+    payload above. Getting a timezone wrong shifts the clock by HOURS, which is
+    far worse than the drift being fixed here; that trade is not worth taking on
+    as a side effect of an NTP change.
+    """
+    if not _bool(a.enabled):
+        # The disabled value of `enable_ntp` is unverified (GET only ever
+        # returned "ntp"), and guessing wrong risks putting DSM into
+        # manual-time mode — strictly worse than the drift we're fixing. An AD
+        # member should never have NTP off anyway (Kerberos rejects >5 min skew).
+        raise SystemExit(
+            "ntp: disabling NTP is not supported — the DSM `enable_ntp` value for "
+            "'off' is unverified and manual-time mode would be worse than drift. "
+            "Set `ntp.enabled: true` in spec/e4e-nas/dsm-system.yml, or drop the "
+            "task if this box genuinely must not sync."
+        )
+
+    desired = {"enable_ntp": _NTP_MODE_ENABLED, "server": a.server}
+    get_res = _exec("SYNO.Core.Region.NTP", "version=1", "method=get")
+    if not get_res.get("success"):
+        print(
+            "FAIL " + json.dumps({"reason": "SYNO.Core.Region.NTP GET failed", "response": get_res})
+        )
+        return 1
+    current = get_res["data"]
+    drift = {
+        k: {"current": current.get(k), "desired": v}
+        for k, v in desired.items()
+        if current.get(k) != v
+    }
+
+    def apply():
+        payload = {k: v for k, v in current.items() if k not in _NTP_CLOCK_KEYS}
+        payload.update(desired)
+        return _exec("SYNO.Core.Region.NTP", "version=1", "method=set", *_args_from(payload))
+
+    rc = _result(drift, a.check, apply)
+
+    # Force a sync even when the config was already correct. DSM only runs
+    # ntpdate DAILY (`ntpdate_period="daily"`), so a converged config on its own
+    # would leave a drifted clock drifted for up to another 24h — and the common
+    # case here is exactly that: the server value was already right, it was the
+    # SERVER that wasn't answering. This is the appliance equivalent of
+    # `chronyc makestep`, and it is what actually closes the +40s.
+    #
+    # Best-effort by design: a failed sync means the time source is unreachable
+    # right now, which is worth SAYING but is not a config-convergence failure.
+    # Hard-failing here would take the whole NAS play red on a transient blip,
+    # and DSM retries daily regardless. The warning carries the DSM error text so
+    # a genuinely dead time source is still visible in the task output.
+    if rc == 0 and not a.check:
+        sync = _exec("SYNO.Core.Region.NTP", "version=1", "method=sync")
+        if not sync.get("success"):
+            sys.stderr.write(
+                "WARN: NTP config is converged but the forced sync FAILED against "
+                "%r — the time source is not answering (check that the DC serves "
+                "udp/123 and that both firewall layers allow it). DSM response: "
+                "%s\n" % (a.server, json.dumps(sync))
+            )
+    return rc
+
+
 def do_network(a):
     desired = {}
     if a.hostname is not None:
@@ -272,6 +382,23 @@ def main(argv=None):
     )
     s.add_argument("--check", action="store_true")
     s.set_defaults(func=do_package_state)
+
+    t = sub.add_parser(
+        "ntp",
+        help="Point the DSM NTP client at a server and force a sync (SYNO.Core.Region.NTP v1)",
+    )
+    t.add_argument(
+        "--server",
+        required=True,
+        help="NTP server, e.g. krg-ldap.krg.local (the AD DC is the domain time authority)",
+    )
+    t.add_argument(
+        "--enabled",
+        default="true",
+        help="Must be true; see do_ntp for why disabling is not supported",
+    )
+    t.add_argument("--check", action="store_true")
+    t.set_defaults(func=do_ntp)
 
     a = ap.parse_args(argv)
     return a.func(a)

@@ -13,12 +13,39 @@ system:
 
   ntp:
     enabled: true
-    # `time.ucsd.edu` doesn't exist; using the public pool (Synology's own
-    # default) — globally distributed, no campus dependency, fine for a
-    # storage appliance that doesn't need sub-millisecond accuracy.
-    server: pool.ntp.org
+    # The AD domain controller — in AD the DC is the clock every member follows,
+    # because Kerberos rejects tickets more than 5 minutes out of skew. This is
+    # also what the DSM AD join itself configured, so spec and live now agree.
+    #
+    # CORRECTION (2026-08-10): this used to say `pool.ntp.org`, with a note
+    # calling the live value a "dead old-domain DC". That was true of the OLD
+    # (breached) domain; krg-ldap is the NEW forest's DC and pointing here is
+    # correct. The SPEC was the drifted side. What was actually broken is that
+    # krg-ldap SERVED no NTP — nothing on udp/123, and 123 was missing from both
+    # the in-guest and Proxmox firewall layers — so every sync failed:
+    #   "There is no sys.peer NTP server." / "Failed to sync time with
+    #    krg-ldap.krg.local [1]" / "Failed to force sync time"
+    # and the NAS free-ran to +40s (~0.57 s/day). Fixed by nix/modules/time.nix
+    # (`krg.time.server.enable` on krg-ldap) + the udp/123 rules; this line is
+    # the client half.
+    #
+    # Hostname, not IP, unlike the nix members: DSM re-resolves each run and its
+    # primary DNS IS krg-ldap (see network.dns.primary below), so the hostname
+    # adds no failure mode the DC being down doesn't already cause.
+    #
+    # NO FALLBACK: DSM's second slot (`ntpdate_server_backup`) is not exposed by
+    # SYNO.Core.Region.NTP, so unlike the nix/ansible hosts this one cannot have
+    # a pool fallback behind the DC. A krg-ldap outage stops NAS time sync until
+    # it returns — acceptable at ~0.57 s/day (weeks of margin before Kerberos's
+    # 5-minute limit), and another reason the second-DC work matters.
+    server: krg-ldap.krg.local
 
-  timezone: America/Los_Angeles   # confirmed (2026-05-28)
+  # NOT MANAGED by the role — recorded only. DSM names zones in its own namespace
+  # ("Pacific"), not IANA, so converging this needs the listzone/setzone mapping.
+  # The live value is already correct and round-trips untouched through the NTP
+  # set payload. A wrong timezone shifts the clock by HOURS, so it is not worth
+  # taking on as a side effect of an NTP change. See do_ntp's docstring.
+  timezone: America/Los_Angeles   # confirmed (2026-05-28); DSM-side value: "Pacific"
 
 # Package Center settings — read by the `synology` Terraform provider's
 # `synology_core_package` resource (synology-community/go-synology
@@ -76,4 +103,7 @@ network:
 
 # --- Hardening notes (drift the role will fix on apply) ---
 # - hostname underscore → hyphen (DNS-correct)
-# - NTP server points at a dead old-domain DC → swap to pool.ntp.org
+# - (RESOLVED 2026-08-10) The old note here read "NTP server points at a dead
+#   old-domain DC → swap to pool.ntp.org". Wrong on both counts: krg-ldap is the
+#   NEW forest's DC and is the correct target; the DC simply wasn't serving NTP.
+#   See the `ntp:` block above.
