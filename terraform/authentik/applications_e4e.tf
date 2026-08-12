@@ -132,9 +132,21 @@ resource "authentik_provider_oauth2" "fishsense_oauth" {
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://fishsense.e4e.ucsd.edu/api/auth/callback/authentik" }]
+  # + the shared `groups` scope (defined above for garage_ui, the same one Superset
+  # uses) so the site sees the user's Authentik group names (AD-synced). The
+  # authenticated portal at /portal gates on it: setting a dive's
+  # calibration_dive_id feeds fish-length measurement, so it is limited to
+  # "fishsense-portal-admin" (spec/krg-ad/groups.yml) rather than everyone with a
+  # realm account. Request-to-receive, same contract as Superset — the app must ask
+  # for scope `groups` or the claim is not emitted.
   # + the `org` scope (fishsense_collaborators.tf) so a multitenant external
-  # collaborator's tenant/org reaches the FishSense site on the token.
-  property_mappings      = concat(local.std_scopes, [authentik_property_mapping_provider_scope.fishsense_org.id])
+  # collaborator's tenant/org reaches the FishSense site on the token. Note an
+  # external collaborator holds NO AD groups, so `groups` is [] for them and the
+  # portal gate denies them — deliberate (the portal is a lab-team surface).
+  property_mappings = concat(local.std_scopes, [
+    authentik_property_mapping_provider_scope.groups.id,
+    authentik_property_mapping_provider_scope.fishsense_org.id,
+  ])
   sub_mode               = "hashed_user_id"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
