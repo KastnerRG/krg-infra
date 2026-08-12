@@ -37,8 +37,10 @@ field names match what DSM itself sends through Chrome DevTools network traces):
   Multi-domain (SAN) certs put ALL names in `domain_name` as a ';'-joined list,
   CN first: `domain_name="cn;san1;san2"` (wizard-captured 2026-06-04). DSM
   defaults to the LE prod server; no `server=` param is sent. We mirror the
-  list into `desc` so it doubles as a managed-SAN-set marker for drift
-  detection (CRT.list doesn't surface a cert's SANs, but it returns `desc`).
+  list into `desc` as a human-readable record of what was requested — but NOT
+  as the drift signal: DSM's own renewal resets `desc`, so comparing it caused
+  an unbounded re-issue loop (see do_letsencrypt_create). SAN drift is measured
+  against the cert's real SANs, read from the PEM under CERT_ARCHIVE.
 - `SYNO.Core.Certificate.CRT method=set version=1` takes `as_default=true +
   desc + id`. There is NO `method=set_default` on DSM 7.3 — the older string
   is from DSM-6 captures and returns "API not found" (102).
@@ -50,6 +52,8 @@ field names match what DSM itself sends through Chrome DevTools network traces):
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -186,10 +190,17 @@ def _fail(payload):
 def _warn(payload):
     """Report a non-fatal condition on STDERR.
 
-    Deliberately NOT stdout: tasks/main.yml drives changed_when off substring
-    matches against stdout ("CHANGED" / "WOULD-CHANGE"), so anything printed
-    there is load-bearing parser input. stderr is surfaced by ansible on the
-    task result either way, so the operator still sees it.
+    tasks/main.yml drives changed_when/failed_when off substring matches against
+    stdout ("CHANGED" / "WOULD-CHANGE" / "FAIL"), so anything printed there is
+    load-bearing parser input.
+
+    WRITING TO STDERR IS *NOT* AN ESCAPE HATCH FROM THAT. `ansible.builtin.script`
+    runs over a pty, which MERGES stderr into stdout — this very function's output
+    was captured in `stdout` (with \\r\\n line endings) in deploy run 31514953921.
+    A stderr-only warning still reaches the string failed_when tests. So warning
+    payloads must never contain the substrings FAIL or CHANGED; keep the reserved
+    words out of keys, values and notes alike. (The same misconception shipped in
+    apply_dsm_system.py and took a fleet deploy red — see its OUTPUT CONTRACT note.)
     """
     sys.stderr.write("WARN " + json.dumps(payload, sort_keys=True) + "\n")
 
@@ -227,6 +238,42 @@ def _now_utc():
     return datetime.now(timezone.utc)
 
 
+# DSM keeps each cert's PEM under /usr/syno/etc/certificate/_archive/<id>/.
+# This is the only place a cert's real SAN list is observable: CRT.list returns
+# id/desc/subject/valid_till but NOT the SANs.
+CERT_ARCHIVE = "/usr/syno/etc/certificate/_archive"
+
+
+def _cert_sans(cert_id):
+    """Return the cert's DNS SANs as a lowercased set, or None if undeterminable.
+
+    Reads the PEM DSM already stores on disk rather than trusting `desc` (see
+    do_letsencrypt_create for why the `desc` marker is not a usable drift
+    signal). Verified against e4e-nas 2026-08-11.
+
+    None means "could not tell" — a missing PEM, no openssl, or a DSM layout
+    change — and is deliberately distinct from an empty set so the caller can
+    refuse to guess. A real LE cert always carries at least its CN as a SAN, so
+    an empty parse is treated as a failed read, not as "no SANs".
+    """
+    if not cert_id:
+        return None
+    path = os.path.join(CERT_ARCHIVE, str(cert_id), "cert.pem")
+    try:
+        out = subprocess.run(
+            ["openssl", "x509", "-in", path, "-noout", "-ext", "subjectAltName"],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if out.returncode != 0:
+        return None
+    # openssl prints: "X509v3 Subject Alternative Name:\n    DNS:a, DNS:b"
+    names = {n.strip().lower() for n in re.findall(r"DNS:([^,\s]+)", out.stdout)}
+    return names or None
+
+
 # ---------------------------------------------------------------------------
 # letsencrypt-create — idempotent issuance
 # ---------------------------------------------------------------------------
@@ -246,26 +293,60 @@ def do_letsencrypt_create(a):
 
     # DSM encodes a multi-domain (SAN) LE cert as ONE semicolon-joined
     # `domain_name` with the CN first — there is no `SAN_list` param (captured
-    # from the DSM 7.3 wizard POST: domain_name="cn;san1;san2"). We write that
-    # same string into `desc` too, so `desc` doubles as a managed-SAN-set
-    # marker: CRT.list does NOT surface a cert's SANs, but it DOES return
-    # `desc`, so comparing the existing cert's `desc` to the desired domain
-    # list lets us detect SAN drift (e.g. a SAN added to the spec after the
-    # cert was first issued) and re-issue. Without this, adding a SAN to an
-    # unexpired cert was a silent no-op (the bug that left s3-admin uncovered).
+    # from the DSM 7.3 wizard POST: domain_name="cn;san1;san2"). We still write
+    # that string into `desc`, as a human-readable record of what the role asked
+    # for.
+    #
+    # `desc` USED TO BE the drift signal as well, because CRT.list doesn't
+    # surface a cert's SANs. That was wrong, and expensively so. DSM's own LE
+    # renewal mints a NEW cert object with `desc` reset to the plain domain, so
+    # every renewed cert looked like SAN drift and the role re-issued on EVERY
+    # run. That put 5 issuances for the same identifier set inside 168h — Let's
+    # Encrypt's per-identifier-set rate limit (syno-letsencrypt error 104,
+    # surfaced as webapi 5524) — and left the fleet deploy red and unable to
+    # converge (run 31514953921). #516's converge-onto-newest compounded it: the
+    # newest cert is always DSM's marker-less one, so drift could never clear.
+    #
+    # Drift is now measured against the cert's REAL SANs, read from the PEM on
+    # disk. Verified on e4e-nas 2026-08-11 — the DSM-renewed default cert
+    # carries DNS:e4e-nas.ucsd.edu, DNS:s3-admin.e4e.ucsd.edu, DNS:s3.e4e.ucsd.edu.
+    # The SANs were never actually lost; only the marker was, and the marker was
+    # the thing being compared.
     domain_list = ";".join([a.domain] + sans)
+    desired_names = {n.strip().lower() for n in [a.domain] + sans}
 
     payload_base = {"domain": a.domain, "email": a.email, "sans": sans}
 
     if existing is not None:
         valid_till = _parse_valid_till(existing.get("valid_till", ""))
         buffer = timedelta(days=int(a.renewal_buffer_days))
-        if existing.get("desc") != domain_list:
-            # SAN set differs from spec (or cert wasn't role-managed) → re-issue.
+        actual_names = _cert_sans(existing.get("id"))
+
+        if actual_names is None:
+            # Couldn't read the cert's SANs (PEM missing, no openssl, DSM layout
+            # change). Do NOT guess — and specifically, do not guess "drifted".
+            # The two wrong answers are not symmetric: a needless re-issue burns
+            # a Let's Encrypt slot that takes 168h to come back and is exactly
+            # what broke the deploy, while skipping the SAN check is inert,
+            # announced in this warning, and still leaves the expiry-based
+            # renewal below doing its job. Err toward the reversible failure.
+            _warn(
+                {
+                    "san_check_skipped": "could not read SANs for cert %r" % existing.get("id"),
+                    "note": (
+                        "SAN drift not evaluated this run; expiry-based renewal is "
+                        "unaffected. Check that %s/<id>/cert.pem exists and openssl "
+                        "is on PATH." % CERT_ARCHIVE
+                    ),
+                }
+            )
+
+        if actual_names is not None and actual_names != desired_names:
+            # SAN set genuinely differs from spec → re-issue.
             payload = dict(
                 payload_base,
                 reason="cert SAN set differs from spec",
-                current_desc=existing.get("desc"),
+                current_sans=sorted(actual_names),
                 desired=domain_list,
             )
         elif valid_till is None:

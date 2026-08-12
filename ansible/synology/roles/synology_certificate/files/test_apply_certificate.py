@@ -162,6 +162,9 @@ def test_letsencrypt_create_no_change_when_cert_exists_with_buffer(monkeypatch, 
     monkeypatch.setattr(
         m, "_list_certs", _stub_list([_cert("e4e-nas.ucsd.edu", valid_till_dt=far_future)])
     )
+    # Stub the SAN read so the case under test is the buffer, not the ambient
+    # presence of openssl / a PEM on the machine running pytest.
+    monkeypatch.setattr(m, "_cert_sans", lambda cid: {"e4e-nas.ucsd.edu"})
     rc = m.do_letsencrypt_create(_le_args())
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
 
@@ -173,6 +176,8 @@ def test_letsencrypt_create_reissues_when_within_buffer(monkeypatch, capsys):
     monkeypatch.setattr(
         m, "_list_certs", _stub_list([_cert("e4e-nas.ucsd.edu", valid_till_dt=near)])
     )
+    # SANs match, so expiry is unambiguously the reason for the re-issue.
+    monkeypatch.setattr(m, "_cert_sans", lambda cid: {"e4e-nas.ucsd.edu"})
     calls = []
     monkeypatch.setattr(m, "_exec", lambda *args: calls.append(args) or {"success": True})
     rc = m.do_letsencrypt_create(_le_args(renewal_buffer_days=30))
@@ -200,15 +205,19 @@ def test_letsencrypt_create_reissues_when_within_buffer(monkeypatch, capsys):
 
 
 def test_letsencrypt_create_reissues_on_san_drift(monkeypatch, capsys):
-    """Cert exists, NOT expiring, but the spec adds SANs not on it (desc marker
-    mismatch) → CHANGED, re-issued as a semicolon-joined multi-domain cert.
+    """Cert exists, NOT expiring, but the spec adds SANs the CERT does not
+    actually carry → CHANGED, re-issued as a semicolon-joined multi-domain cert.
     Regression guard for the bug where adding `sans:` to an unexpired cert was
-    a silent no-op (left s3-admin/s3 uncovered)."""
+    a silent no-op (left s3-admin/s3 uncovered).
+
+    Drift is judged on the cert's real SANs now, not its `desc` marker — see
+    test_letsencrypt_create_no_change_when_desc_marker_lost."""
     far_future = m._now_utc() + timedelta(days=300)
-    # Existing cert is single-domain (desc == CN), plenty of life left.
+    # Existing cert really is single-domain, plenty of life left.
     monkeypatch.setattr(
         m, "_list_certs", _stub_list([_cert("e4e-nas.ucsd.edu", valid_till_dt=far_future)])
     )
+    monkeypatch.setattr(m, "_cert_sans", lambda cid: {"e4e-nas.ucsd.edu"})
     calls = []
     monkeypatch.setattr(m, "_exec", lambda *args: calls.append(args) or {"success": True})
     rc = m.do_letsencrypt_create(_le_args(sans_json='["s3-admin.e4e.ucsd.edu","s3.e4e.ucsd.edu"]'))
@@ -225,8 +234,8 @@ def test_letsencrypt_create_reissues_on_san_drift(monkeypatch, capsys):
 
 
 def test_letsencrypt_create_no_change_when_sans_already_present(monkeypatch, capsys):
-    """Existing cert's desc already == the desired CN+SAN list and not expiring
-    → no-change (idempotent across runs once the SANs are on the cert)."""
+    """Cert already carries the desired CN+SAN set and isn't expiring →
+    no-change (idempotent across runs once the SANs are on the cert)."""
     far_future = m._now_utc() + timedelta(days=300)
     want = "e4e-nas.ucsd.edu;s3-admin.e4e.ucsd.edu;s3.e4e.ucsd.edu"
     monkeypatch.setattr(
@@ -234,8 +243,102 @@ def test_letsencrypt_create_no_change_when_sans_already_present(monkeypatch, cap
         "_list_certs",
         _stub_list([_cert("e4e-nas.ucsd.edu", valid_till_dt=far_future, desc=want)]),
     )
+    monkeypatch.setattr(
+        m,
+        "_cert_sans",
+        lambda cid: {"e4e-nas.ucsd.edu", "s3-admin.e4e.ucsd.edu", "s3.e4e.ucsd.edu"},
+    )
     rc = m.do_letsencrypt_create(_le_args(sans_json='["s3-admin.e4e.ucsd.edu","s3.e4e.ucsd.edu"]'))
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
+
+
+def test_letsencrypt_create_no_change_when_desc_marker_lost(monkeypatch, capsys):
+    """THE regression test for deploy run 31514953921.
+
+    Reproduces the live e4e-nas state exactly: DSM's own LE renewal minted a new
+    cert object whose `desc` is the bare domain, while the certificate itself
+    still carries all three SANs. The old code compared `desc` to the desired
+    ';'-joined list, saw a mismatch, and re-issued — every single run — until
+    Let's Encrypt refused with "too many certificates (5) already issued for
+    this exact set of identifiers in the last 168h" (error 104 / webapi 5524)
+    and the fleet deploy went red with no way to converge.
+
+    Must be a pure no-op: no drift, and crucially NO issuance call."""
+    far_future = m._now_utc() + timedelta(days=300)
+    monkeypatch.setattr(
+        m,
+        "_list_certs",
+        _stub_list(
+            [
+                _cert(
+                    "e4e-nas.ucsd.edu",
+                    cid="abVrB7",
+                    valid_till_dt=far_future,
+                    desc="e4e-nas.ucsd.edu",  # DSM reset the marker on renewal
+                )
+            ]
+        ),
+    )
+    # ...but the cert on disk really does carry every desired name.
+    monkeypatch.setattr(
+        m,
+        "_cert_sans",
+        lambda cid: {"e4e-nas.ucsd.edu", "s3-admin.e4e.ucsd.edu", "s3.e4e.ucsd.edu"},
+    )
+    calls = []
+    monkeypatch.setattr(m, "_exec", lambda *args: calls.append(args) or {"success": True})
+
+    rc = m.do_letsencrypt_create(_le_args(sans_json='["s3-admin.e4e.ucsd.edu","s3.e4e.ucsd.edu"]'))
+
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
+    assert calls == [], (
+        "must not call LetsEncrypt.create — a needless issuance burns a rate-limit "
+        "slot that takes 168h to recover"
+    )
+
+
+def test_letsencrypt_create_skips_san_check_when_sans_unreadable(monkeypatch, capsys):
+    """If the cert's SANs can't be read (PEM missing, no openssl, DSM layout
+    change), do NOT guess "drifted" and re-issue. Over-issuing burns a
+    rate-limit slot for 168h; skipping the check is inert and announced. Expiry
+    based renewal must still be reachable, so this only suppresses the SAN
+    comparison."""
+    far_future = m._now_utc() + timedelta(days=300)
+    monkeypatch.setattr(
+        m, "_list_certs", _stub_list([_cert("e4e-nas.ucsd.edu", valid_till_dt=far_future)])
+    )
+    monkeypatch.setattr(m, "_cert_sans", lambda cid: None)
+    calls = []
+    monkeypatch.setattr(m, "_exec", lambda *args: calls.append(args) or {"success": True})
+
+    rc = m.do_letsencrypt_create(_le_args(sans_json='["s3-admin.e4e.ucsd.edu"]'))
+
+    captured = capsys.readouterr()
+    assert rc == 0 and "OK no-change" in captured.out
+    assert calls == [], "unknown SAN state must not trigger an issuance"
+    assert "san_check_skipped" in captured.err
+
+    # The warning must not trip the task's substring classifiers. stderr is NOT
+    # exempt: `script:` runs over a pty that merges it into stdout (proven by
+    # run 31514953921, where this function's output landed in stdout).
+    merged = captured.out + captured.err
+    assert "FAIL" not in merged, "warning text would flag a successful run as failed"
+    assert "CHANGED" not in merged, "warning text would misreport a no-op as changed"
+
+
+def test_letsencrypt_create_still_renews_when_expiring_despite_unreadable_sans(monkeypatch, capsys):
+    """Suppressing the SAN check must not disable expiry-based renewal — that
+    is the safety net this subcommand exists for."""
+    soon = m._now_utc() + timedelta(days=5)
+    monkeypatch.setattr(
+        m, "_list_certs", _stub_list([_cert("e4e-nas.ucsd.edu", valid_till_dt=soon)])
+    )
+    monkeypatch.setattr(m, "_cert_sans", lambda cid: None)
+    monkeypatch.setattr(m, "_exec", lambda *args: {"success": True})
+    rc = m.do_letsencrypt_create(_le_args())
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("CHANGED ")
+    assert "expiring" in json.loads(out.split(" ", 1)[1])["reason"]
 
 
 def test_letsencrypt_create_issues_when_missing(monkeypatch, capsys):
@@ -648,3 +751,80 @@ def test_main_dispatches_set_default(monkeypatch, capsys):
     monkeypatch.setattr(m, "do_set_default", lambda a: print("OK no-change") or 0)
     rc = m.main(["set-default", "--domain", "e4e-nas.ucsd.edu"])
     assert rc == 0 and "OK no-change" in capsys.readouterr().out
+
+
+# --- _cert_sans (real SANs read from the PEM DSM stores on disk) --------------
+# CRT.list does not surface SANs, so this is the only observable source of
+# truth. Sample output is the real `openssl x509 -ext subjectAltName` shape
+# captured from e4e-nas 2026-08-11.
+_OPENSSL_SAN_OUT = (
+    "X509v3 Subject Alternative Name: \n"
+    "    DNS:e4e-nas.ucsd.edu, DNS:s3-admin.e4e.ucsd.edu, DNS:s3.e4e.ucsd.edu\n"
+)
+
+
+def _openssl_stub(stdout="", returncode=0, capture=None):
+    def fake(cmd, *_a, **_k):
+        if capture is not None:
+            capture.append(cmd)
+
+        class R:
+            pass
+
+        R.returncode = returncode
+        R.stdout = stdout
+        R.stderr = ""
+        return R
+
+    return fake
+
+
+def test_cert_sans_parses_openssl_output(monkeypatch):
+    cmds = []
+    monkeypatch.setattr(m.subprocess, "run", _openssl_stub(_OPENSSL_SAN_OUT, capture=cmds))
+    assert m._cert_sans("abVrB7") == {
+        "e4e-nas.ucsd.edu",
+        "s3-admin.e4e.ucsd.edu",
+        "s3.e4e.ucsd.edu",
+    }
+    # Reads the PEM from DSM's archive path for that cert id.
+    assert cmds[0][:2] == ["openssl", "x509"]
+    assert "%s/abVrB7/cert.pem" % m.CERT_ARCHIVE in cmds[0]
+
+
+def test_cert_sans_is_case_insensitive(monkeypatch):
+    """DNS names are case-insensitive; a case difference must not read as drift
+    and trigger a needless re-issue."""
+    monkeypatch.setattr(
+        m.subprocess, "run", _openssl_stub("DNS:E4E-NAS.UCSD.EDU, DNS:S3.e4e.UCSD.edu\n")
+    )
+    assert m._cert_sans("x") == {"e4e-nas.ucsd.edu", "s3.e4e.ucsd.edu"}
+
+
+def test_cert_sans_returns_none_on_failure(monkeypatch):
+    """None means "couldn't tell" — distinct from an empty set — so the caller
+    can refuse to guess rather than re-issuing."""
+    monkeypatch.setattr(m.subprocess, "run", _openssl_stub("", returncode=1))
+    assert m._cert_sans("abVrB7") is None
+
+
+def test_cert_sans_returns_none_when_openssl_missing(monkeypatch):
+    def boom(*_a, **_k):
+        raise OSError("No such file or directory: 'openssl'")
+
+    monkeypatch.setattr(m.subprocess, "run", boom)
+    assert m._cert_sans("abVrB7") is None
+
+
+def test_cert_sans_returns_none_on_empty_parse(monkeypatch):
+    """A real LE cert always carries at least its CN as a SAN, so parsing zero
+    names means the read failed — not that the cert has no SANs. Returning an
+    empty set here would read as drift against any spec and re-issue."""
+    monkeypatch.setattr(m.subprocess, "run", _openssl_stub("no extension found\n"))
+    assert m._cert_sans("abVrB7") is None
+
+
+def test_cert_sans_returns_none_for_missing_id(monkeypatch):
+    monkeypatch.setattr(m.subprocess, "run", _openssl_stub(_OPENSSL_SAN_OUT))
+    assert m._cert_sans(None) is None
+    assert m._cert_sans("") is None
