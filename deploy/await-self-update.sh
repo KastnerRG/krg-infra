@@ -11,6 +11,14 @@
 # the barrier that keeps the post-substrate job from resuming on a control node that
 # is mid-switch.
 #
+# The offline transition is BEST-EFFORT EVIDENCE, not a gate: the API's runner state
+# lags and a quick stop/start can slip between two polls, so never observing it is
+# not proof the switch failed (it cost a whole deploy that way — see the WARN path
+# below). Whether the switch actually took is decided by deploy-post's first step,
+# deploy/deploy-self-verify.sh, which compares the real current-system to the
+# intended store path. This script's job is to AVOID RESUMING MID-SWITCH, not to
+# adjudicate success.
+#
 # Requires GH_TOKEN with Administration:read on the repo (the self-hosted-runners
 # API needs it; the default GITHUB_TOKEN cannot be granted that scope). deploy.yml
 # mints it as a 1h installation token from the "krg-infra deploy watcher" GitHub App
@@ -36,6 +44,11 @@ TARGET_RUNNER="${TARGET_RUNNER:-krg-deploy}"
 OFFLINE_TIMEOUT="${OFFLINE_TIMEOUT:-300}" # 5 min to observe it go down
 ONLINE_TIMEOUT="${ONLINE_TIMEOUT:-900}"   # 15 min to observe it come back
 POLL="${POLL_INTERVAL:-10}"
+# Grace period when the offline transition was never observed (see the warning path
+# below). Covers the one genuinely risky reading of a missed transition — a switch
+# scheduled but not yet started — so deploy-post doesn't begin mid-switch. Generous
+# relative to the "short delay" deploy-self-update.sh schedules.
+SETTLE_SECONDS="${SETTLE_SECONDS:-90}"
 # How many CONSECUTIVE unreadable polls to tolerate before giving up. A blip against
 # api.github.com shouldn't abort a deploy, but a dead credential should surface in
 # ~30s instead of consuming the whole timeout.
@@ -122,14 +135,42 @@ wait_for() { # <desired-status> <timeout> <label>
 # 0) Prove the credential and the runner registration are both usable up front.
 preflight
 
-# 1) The switch takes the runner offline (krg-deploy-selfswitch.sh stops it for the
-#    whole switch, so this transition is always observable).
+# 1) The switch normally takes the runner offline, so waiting for that transition is
+#    the cheap way to know the switch started.
+#
+#    IT IS NOT PROOF, IN EITHER DIRECTION. The old code treated "never saw offline"
+#    as FATAL, on the assumption (written right here) that the transition "is always
+#    observable". It isn't: the registration status is polled every ${POLL}s against
+#    an API whose runner state lags, so a quick stop/start can complete entirely
+#    between two polls and never surface as offline.
+#
+#    That cost us a full deploy on 2026-08-06 (run 31075308631). The switch fired and
+#    SUCCEEDED — deploy-self-update.sh scheduled
+#      /nix/store/2x0s5rpd…-nixos-system-krg-deploy-26.05.20260804.04607e1
+#    and the box's system-65-link points at that exact store path, activated 05:56Z
+#    with the runner restarting 05:56:17Z, i.e. one minute INTO the watcher's window —
+#    yet all 30 polls read "online", so the watcher exited 1 and deploy-post was
+#    skipped. Phases 0/1/1.5/1.9 had all gone green; phases 2/3/4 never ran.
+#
+#    So a missed transition is now a WARNING, not a failure. This is safe because the
+#    authority on whether the switch took is deploy-post's FIRST step,
+#    deploy/deploy-self-verify.sh, which compares the control node's actual
+#    current-system against the intended store path. That is strictly better evidence
+#    than a registration blip: it catches "never fired" loudly and correctly, and it
+#    cannot be fooled by API lag. Failing here instead just converts a successful
+#    deploy into a red one, which is the worse error — a skipped deploy-post silently
+#    leaves the member hosts un-deployed while the run looks merely "failed".
 if ! wait_for offline "$OFFLINE_TIMEOUT" "switch started"; then
-  echo "FATAL: runner never went offline — the scheduled self-update may not have fired."
-  echo "       Check deploy/deploy-self-update.sh output and, on the box,"
-  echo "       'systemctl status krg-deploy-selfupdate.service' (a SERVICE, triggered by"
-  echo "       the deploy — there is no selfupdate timer)."
-  exit 1
+  echo "WARN: never observed status=offline within ${OFFLINE_TIMEOUT}s."
+  echo "      Most likely the stop/start completed between two ${POLL}s polls (the API's"
+  echo "      runner state lags); less likely, the switch never fired."
+  echo "      NOT failing here — deploy-post's deploy-self-verify.sh compares the actual"
+  echo "      current-system to the intended store path and is the real gate."
+  echo "      Settling ${SETTLE_SECONDS}s first so an in-flight switch can land before"
+  echo "      deploy-post starts touching the fleet."
+  sleep "$SETTLE_SECONDS"
+  echo "OK: proceeding to the verified check in deploy-post."
+  exit 0
 fi
 # 2) It re-registers once the switch completes and the runner restarts on new code.
 if ! wait_for online "$ONLINE_TIMEOUT" "switch completed"; then
