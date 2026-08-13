@@ -101,6 +101,15 @@ groups:
   - { name: "fishsense-superset-admin", description: "Admin role in FishSense Superset (analytics.fishsense.e4e.ucsd.edu) via Authentik OIDC; emitted in the groups claim and mapped to the Superset Admin role by AUTH_ROLES_MAPPING" }
   - { name: "fishsense-superset-editor", description: "Editor role in FishSense Superset (analytics.fishsense.e4e.ucsd.edu) via Authentik OIDC; emitted in the groups claim and mapped to a Superset editor role by AUTH_ROLES_MAPPING" }
   - { name: "fishsense-superset-viewer", description: "Viewer role in FishSense Superset (analytics.fishsense.e4e.ucsd.edu) via Authentik OIDC; emitted in the groups claim and mapped to a Superset viewer role by AUTH_ROLES_MAPPING" }
+  # Same space-free reason: emitted verbatim in the Authentik `groups` claim (the
+  # fishsense_oauth provider now carries the `groups` scope too, applications_e4e.tf)
+  # and matched by name in the FishSense web app. Gates the AUTHENTICATED PORTAL at
+  # fishsense.e4e.ucsd.edu/portal, where a dive's calibration_dive_id can be set —
+  # that feeds fish-length measurement, so it is the FishSense team, not everyone
+  # with a realm account. The gate FAILS CLOSED: no group -> no portal. NOT an app
+  # gate — reaching the site at all still needs the "FishSense" group (or a
+  # fishsense-tenant collaborator attribute), see terraform/authentik/app_access.tf.
+  - { name: "fishsense-portal-admin", description: "Write access to the FishSense web portal (fishsense.e4e.ucsd.edu/portal) — may set a dive's calibration_dive_id, which feeds fish-length measurement. Emitted in the Authentik groups claim (fishsense_oauth provider) and matched by name in-app; the check fails closed. Site access itself is gated separately on the FishSense group." }
 
   # --- Lab / org groups ---
   - { name: "Kastner Research Group", description: "Kastner Research Group members; owns /scratch/krg (gid group)" }
