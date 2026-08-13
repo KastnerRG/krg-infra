@@ -148,6 +148,36 @@ firewall:
               source_ip_group: all
               source_ip: all
 
+            # OpenVPN remote access (spec/e4e-nas/vpn.yml) — the
+            # off-campus SMB path. The tunnel terminates ON the NAS, so a
+            # client gets reach to this box and no route anywhere else
+            # (vpn.yml `allow_lan: false` is the load-bearing switch; the
+            # `vpn` adapter block below is the enforcement).
+            #
+            # ⚠️ SHIPS DISABLED. `enable: false` until the `synology_vpn`
+            # role exists and the service is actually configured — no port
+            # is opened ahead of a listener. Flip this together with
+            # `vpn-smb-only` (vpn.yml "Bring-up sequence" step 4).
+            #
+            # geoip-US scoped to match `geoip-US-web` below rather than a
+            # worldwide allow: DSM's OpenVPN supports neither 2FA nor
+            # tls-crypt, so this is a password-authenticated endpoint and
+            # the country scope is one of the few cheap brakes available
+            # (the others being auto-block 3/24h/permanent and the 12-char
+            # AD complexity policy). If a collaborator abroad ever needs
+            # in, widen to `source_ip_group: all` — one line, and note the
+            # trade in that PR.
+            - name: openvpn-1194
+              enable: false
+              log: false
+              policy: allow
+              port_direction: destination
+              port_group: custom
+              ports: "1194"
+              protocol: udp
+              source_ip_group: geoip
+              source_ip: US
+
             # Let's Encrypt HTTP-01 challenge — port 80, worldwide.
             #
             # Why this rule exists: LE's "Multi-Perspective Issuance
@@ -230,7 +260,50 @@ firewall:
           policy: drop
           rules: []
 
-        # eth1..eth3, vpn, pppoe, wlan0 are NOT listed here → they keep
+        # The `vpn` adapter — traffic arriving THROUGH the OpenVPN tunnel.
+        # (The tunnel's own 1194/udp ingress is the `openvpn-1194` rule in
+        # `global`, which lands on eth0; this block governs what a client
+        # can reach once the tunnel is up.) Confirmed present in
+        # `Firewall.Adapter list` on 2026-08-13 even with VPNCenter
+        # uninstalled — so the isolation control needs no new API, just
+        # this block.
+        #
+        # THIS IS THE ENFORCEMENT for "very targeted SMB". vpn.yml's
+        # `allow_lan: false` keeps the NAS from routing clients anywhere
+        # else; this block keeps a client from reaching the rest of the
+        # NAS itself — no DSM UI on 6020/6021, no SSH, no Garage, no NFS.
+        # Default-drop, exactly one allow.
+        #
+        # NOTE: `vpn` had NO block in the live `default` profile as of
+        # 2026-08-13 (only eth0 + global did), so this is a CREATE, not a
+        # merge over existing UI state.
+        #
+        # Expect during bring-up: ICMP is dropped too, so pinging
+        # 10.90.24.1 fails BY DESIGN — test with an SMB mount, not a ping.
+        vpn:
+          policy: drop
+          rules:
+            # SMB only, and only 445/tcp: smb-globals.yml sets
+            # min_protocol SMB3, so the legacy NetBIOS ports (137-139) are
+            # dead weight here. Deliberately NOT mirroring the port list
+            # from `smb-deny-fall-through` above — that rule lists 139
+            # only because it is a catch-all deny.
+            #
+            # ⚠️ SHIPS DISABLED alongside `openvpn-1194`. Fail-closed if
+            # the bring-up order ever slips: rule off + adapter policy
+            # `drop` means a tunnel that comes up early reaches nothing.
+            - name: vpn-smb-only
+              enable: false
+              log: false
+              policy: allow
+              port_direction: destination
+              port_group: custom
+              ports: "445"
+              protocol: tcp
+              source_ip_group: ip
+              source_ip: 10.90.24.0/24
+
+        # eth1..eth3, pppoe, wlan0 are NOT listed here → they keep
         # whatever DSM has live (the role's per-adapter merge preserves
         # unmanaged adapters). eth1 is the lab interface (192.168.1.x)
         # today during bring-up — leaving it default-allow until the

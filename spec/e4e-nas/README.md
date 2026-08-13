@@ -48,8 +48,22 @@ Baseline + storage (composed by `synology_base` or the storage play):
 | `snapshots.yml`       | `synology_snapshot_replication` | per-share Btrfs snapshot retention |
 | `hyper-backup.yml`    | `synology_hyper_backup`         | off-box DR jobs |
 
+Declared ahead of its mechanism (**no role yet** — the spec lands first on purpose):
+
+| File | Role that will consume it | Owns |
+|---|---|---|
+| `vpn.yml` | `synology_vpn` — ⚠️ **not built** | OpenVPN remote access for off-campus SMB, scoped to the NAS only |
+
+`vpn.yml` is the one file here with no consumer. VPN Server (`VPNCenter`) ships its
+own webapi libs, so `SYNO.VPNServer.*` can't be enumerated until the package is
+installed — the terraform resource in the same PR is what unblocks that discovery,
+and the role is written against it afterwards. The file's "Bring-up sequence"
+section is the running order; the two firewall rules it depends on (`openvpn-1194`
+in `global`, `vpn-smb-only` on the `vpn` adapter, both in `security.yml`) ship
+`enable: false` so nothing opens ahead of a listener.
+
 Terraform `terraform/e4e-nas/` stays for things the synology-community provider has
-first-class resources for: packages (Container Manager), scheduler
+first-class resources for: packages (Container Manager, VPN Server), scheduler
 (`synology_core_event`), file provisioning, VMs.
 
 Seeded files came from the build sheet in
