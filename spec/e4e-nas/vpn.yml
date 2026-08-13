@@ -1,0 +1,208 @@
+# OpenVPN remote access on e4e-nas — declarative source of truth.
+#
+# Consumed by the `synology_vpn` Ansible role. ⚠️ THAT ROLE DOES NOT EXIST YET —
+# this file is the declared target; nothing applies it until the role lands (see
+# "Bring-up sequence" at the bottom). The DSM package install is already IaC
+# (terraform/e4e-nas/packages.tf → `synology_core_package "VPNCenter"`).
+#
+# PURPOSE — a deliberately tiny remote-access path for SMB, and nothing else.
+# Researchers off campus need to mount e4e-nas shares. The requirement is NOT
+# "a campus VPN": clients must reach *this NAS on port 445* and have no route to
+# anything else. Terminating the tunnel on the NAS itself is what makes that
+# true by construction — the NAS is an endpoint, not a gateway, so there is no
+# forwarding path to the 132.239.17.0/24 campus network behind it.
+#
+# THREAT MODEL / non-goals, stated so nobody "helpfully" widens this later:
+#   * NOT a general campus VPN. No `redirect-gateway`, no LAN route push, no DNS
+#     push. A client's non-SMB traffic never enters the tunnel.
+#   * NOT a pivot. `allow_lan: false` below is LOAD-BEARING — flipping it makes
+#     the NAS a router onto the flat-public campus subnet
+#     ([[sealab-flat-public-no-nat]]: there is no private LAN here, so "server's
+#     LAN" means *campus*).
+#   * NOT an access-control layer. VPN privilege grants tunnel reach to :445
+#     only; what a user can actually read is still the per-share ACL matrix in
+#     acls.yml, exactly as it is for an on-campus mount.
+#
+# DSM API surface — ⚠️ PARTIALLY UNCONFIRMED. Discovery run 2026-08-13 against
+# the live box (DSM 7.3.2-86009 Update 4) established:
+#   CONFIRMED
+#     * Package id is `VPNCenter` ("VPN Server" 1.4.10-2984), present in this
+#       model's feed (synology_broadwell_3617xs), not deprecated, NOT installed.
+#     * `SYNO.Core.Security.Firewall.Adapter list` already returns a `vpn`
+#       adapter (eth0..eth3, global, pppoe, vpn, wlan0) *before* the package is
+#       installed — so the isolation control needs no new API, just a `vpn`
+#       block in security.yml (added in the same commit as this file).
+#     * `SYNO.Core.AppPriv.Rule` (get/set/delete/list v1) is the per-application
+#       privilege surface and it RESOLVES AD GROUPS. Live example on this box:
+#         {"app_id":"SYNO.SDS.Drive.Application","entity_type":"group",
+#          "entity_name":"KRG\\Domain Admins","allow_ip":["0.0.0.0"],"deny_ip":[]}
+#       Rule shape: {app_id, entity_type, entity_name, allow_ip[], deny_ip[]}.
+#       `list` REQUIRES app_id (bare list → err 3400). App ids + their
+#       `grant_by_default` come from `SYNO.Core.AppPriv.App list` v3.
+#       NOTE: this does NOT contradict ad.yml's "DSM 7.3 has no AD-group
+#       mechanism" — that finding is about the NAS-ADMIN TIER. Per-app
+#       privilege is a different, working surface. See [[dsm-apppriv-rule-accepts-ad-groups]].
+#     * `KRG\Domain Users` resolves on the NAS (`SYNO.Core.Group list
+#       type=domain` returns 55 domain groups incl. Domain Users) — which is
+#       what makes the privilege block below a single static rule.
+#   PENDING (blocked on the package install — VPNCenter ships its own webapi
+#   libs, so `SYNO.VPNServer.*` cannot be enumerated until it's installed):
+#     * the OpenVPN settings API name + field names for every key under
+#       `openvpn:` below. Treat those keys as INTENT, not as confirmed wire
+#       names; the role's apply script maps them (same OUT_KEYS-flip pattern as
+#       apply_ad.py / apply_external_access.py).
+#     * the VPN Server `app_id` for the privilege rule.
+#     * whether the server config is better driven via webapi or via
+#       /var/packages/VPNCenter/etc/openvpn/openvpn.conf.
+
+# --- Protocols -----------------------------------------------------------------
+# DSM's VPN Server offers three. Only OpenVPN is acceptable:
+#   pptp  — MS-CHAPv2/MPPE, cryptographically broken (recoverable in hours).
+#   l2tp  — needs a *shared* PSK across all clients; a leaked PSK is a silent
+#           downgrade of the whole service, and it has no per-user story.
+# Both stay explicitly off so the spec kills them if a UI click ever enables one.
+pptp:
+  enable: false
+l2tp:
+  enable: false
+
+openvpn:
+  enable: true
+
+  # Transport. UDP is the right default for a file-copy workload (TCP-over-TCP
+  # meltdown on lossy links); 1194 is the IANA-registered port. The matching
+  # inbound allow lives in security.yml (`openvpn-1194` rule in the `global`
+  # block) — BOTH must be flipped together, and the firewall side ships
+  # disabled in this PR. See "Bring-up sequence".
+  port: 1194
+  protocol: udp
+
+  # Tunnel subnet. Deliberately NOT OpenVPN's 10.8.0.0/24 default: clients are
+  # on home/hotel networks and a collision with the client's own LAN silently
+  # breaks routing on that client only (miserable to diagnose remotely).
+  # 10.90.24.0/24 is unlikely to collide with consumer CPE defaults
+  # (192.168.0/1.x, 10.0.0/1.x, 172.20.10.x tethering).
+  # The NAS takes .1 — that is the address clients mount:  \\10.90.24.1\<share>
+  subnet: 10.90.24.0
+  netmask: 255.255.255.0
+
+  # Concurrency. E4E is small; this is a backstop against a runaway client, not
+  # a capacity plan. Raise if it ever actually binds.
+  max_connections: 20
+
+  # --- The isolation switches (the whole point of this file) -----------------
+  # ⚠️ LOAD-BEARING. `true` makes DSM enable ip_forward + MASQUERADE and push a
+  # route for the server's LAN — i.e. it turns e4e-nas into a router onto the
+  # public campus subnet for every VPN client. This must stay false. If someone
+  # opens a ticket asking for "access to other lab machines over the VPN", the
+  # answer is a separate VPN on a host built for it, NOT this flag.
+  allow_lan: false
+
+  # No DNS push: clients keep their own resolver. Pushing the KRG.LOCAL DC as a
+  # resolver would (a) leak internal names + query patterns to arbitrary client
+  # networks and (b) be useless anyway, since the DC is not reachable through
+  # this tunnel. Consequence, documented for the client runbook: users mount by
+  # IP (10.90.24.1), not by FQDN.
+  push_dns: false
+
+  # IPv6 off — the tunnel carries one protocol to one host; a v6 path would be a
+  # second, unaudited route into the same box.
+  ipv6: false
+
+  # --- Crypto ---------------------------------------------------------------
+  # AEAD cipher + TLS 1.2 floor. Compression is OFF and must stay off: TLS-level
+  # compression with attacker-influenced plaintext is the VORACLE class of
+  # attack (CVE-2018-9336 family), and it buys nothing on already-compressed
+  # research data.
+  cipher: AES-256-GCM
+  auth_digest: SHA512
+  tls_min_version: "1.2"
+  compression: false
+
+  # --- Client authentication -------------------------------------------------
+  # DSM's OpenVPN authenticates username/password through PAM, which resolves
+  # domain accounts because the box is AD-joined (ad.yml). So "AD auth" needs no
+  # extra wiring — the work is scoping WHO, below.
+  #
+  # ⚠️ RESIDUAL RISK, accepted knowingly (2026-08-13): this publishes a
+  # password-authenticated endpoint to the internet, and DSM's OpenVPN supports
+  # neither 2FA nor tls-crypt. Brakes that DO apply:
+  #   * DSM auto-block: 3 attempts / 24h / never expires (security.yml).
+  #   * KRG.LOCAL password policy: 12 chars + AD complexity (spec/krg-ad/
+  #     password-policy.yml).
+  #   * the `openvpn-1194` firewall rule is geoip-scoped to US, matching the
+  #     existing `geoip-US-web` posture.
+  # AD account lockout is deliberately OFF fleet-wide (password-policy.yml:54),
+  # so a spray CANNOT lock users out — but that also means there is no
+  # account-level rate limit, only the IP-level auto-block. If this service ever
+  # carries more than "mount a share", revisit with a real MFA front door.
+
+  # --- Privilege -------------------------------------------------------------
+  # DECISION (2026-08-13): grant to ALL AD users rather than a bespoke VPN
+  # group. Every human on this NAS is an AD user already, and VPN privilege only
+  # confers reach to :445 — share visibility is still ACL-governed — so a
+  # narrower group would add a membership-maintenance chore for no real
+  # reduction in blast radius.
+  #
+  # `KRG\Domain Users` is the AD primary group: every domain user, and — the
+  # reason this form was chosen over an `everyone` rule — NO LOCAL ACCOUNTS.
+  # That matters: users.yml's `e4e-admin` (break-glass) and `e4e-automation` are
+  # both in `administrators`, and SSH is key-only precisely so those accounts
+  # have no guessable remote auth path. An `everyone` grant would hand both of
+  # them a password-authenticated internet front door and undo that.
+  #
+  # If this ever needs narrowing, `KRG\E4E-NAS` already exists in AD and is the
+  # drop-in replacement — one line, no other change.
+  privilege:
+    # app_id: PENDING — read from `SYNO.Core.AppPriv.App list version=3` after
+    # the package installs (expect a `SYNO.SDS.VPNCenter.*` id). The role must
+    # fail loudly rather than guess: a wrong app_id writes a rule that silently
+    # governs nothing.
+    app_id: ""                                   # ⚠️ fill from discovery
+    grant:
+      - entity_type: group
+        entity_name: 'KRG\Domain Users'
+        allow_ip: ["0.0.0.0"]                    # 0.0.0.0 = any source
+        deny_ip: []
+
+# --- Client distribution --------------------------------------------------------
+# DSM exports one .ovpn containing the CA cert and server parameters — it is the
+# SAME file for every user (auth is username/password, there are no per-client
+# certs), so it is not a secret in the credential sense and can go in the E4E
+# onboarding doc. Two edits are required after export, both of which DSM gets
+# wrong for our use case:
+#   1. the exported config has a literal `YOUR_SERVER_IP` placeholder → replace
+#      with e4e-nas.ucsd.edu.
+#   2. `redirect-gateway` must remain commented out (split tunnel).
+# Client-side runbook (how to mount \\10.90.24.1\<share> on macOS/Windows/Linux)
+# is owed to docs/ in the bring-up PR, not here.
+#
+# SMB AUTH THROUGH THE TUNNEL — validate on bring-up. Clients cannot reach the
+# DC (that is the design), so Kerberos SPN acquisition will fail and clients
+# fall back to NTLMv2, which the NAS pass-through-authenticates to krg-ldap over
+# its OWN network path. That works, but smb-globals.yml sets min_protocol SMB3 +
+# server_signing + ntlmv1_auth false, so the fallback path must be tested on a
+# real Windows and a real macOS client before this is announced. Windows tries
+# Kerberos first whenever it can resolve an SPN.
+
+# --- Bring-up sequence ----------------------------------------------------------
+# This file lands BEFORE the mechanism, on purpose: the terraform package
+# install in the same PR is what unblocks the remaining discovery.
+#   1. (this PR) `tofu apply` in terraform/e4e-nas → installs VPNCenter. The
+#      package is inert until configured; no port opens, nothing listens.
+#   2. Re-run discovery: `SYNO.VPNServer.*` webapi libs + AppPriv app_id +
+#      /var/packages/VPNCenter/etc/openvpn/openvpn.conf. Correct the PENDING
+#      field names above.
+#   3. Build `ansible/synology/roles/synology_vpn` (apply_vpn.py + tests,
+#      GET→merge→SET, script:+raw per [[synology-script-raw-pattern]], FAIL/
+#      CHANGED sentinel discipline per [[synology-script-fail-sentinel-pty-merge]]).
+#      Compose it into synology_base AFTER synology_ad — the privilege rule
+#      references domain principals, so the join must be in place.
+#   4. Flip `enable: true` on BOTH firewall rules in security.yml (`openvpn-1194`
+#      in `global`, `vpn-smb-only` in the `vpn` adapter). They ship disabled so
+#      that no port is open ahead of the service, and so that the adapter is
+#      fail-closed if the order ever slips.
+#   5. Validate: connect, confirm `\\10.90.24.1\<share>` mounts, confirm the
+#      client has NO route to any other campus host (traceroute to
+#      krg-prod.ucsd.edu must not traverse the tunnel), confirm DSM UI on :6021
+#      is NOT reachable over the tunnel.
