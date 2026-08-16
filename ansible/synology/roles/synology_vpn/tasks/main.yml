@@ -37,6 +37,7 @@
   changed_when: "'CHANGED' in vpn_pkg.stdout or 'WOULD-CHANGE' in vpn_pkg.stdout"
   failed_when: "vpn_pkg.rc != 0 or 'FAIL' in vpn_pkg.stdout"
   check_mode: false
+  when: synology_vpn_enabled | default(false)
 
 - name: Configure the OpenVPN server
   ansible.builtin.script: >-
@@ -60,6 +61,7 @@
   changed_when: "'CHANGED' in vpn_conf.stdout or 'WOULD-CHANGE' in vpn_conf.stdout"
   failed_when: "vpn_conf.rc != 0 or 'FAIL' in vpn_conf.stdout"
   check_mode: false
+  when: synology_vpn_enabled | default(false)
 
 # ⚠️ GATED OFF by default. The Management.Account object shape is unconfirmed —
 # the API only became readable once this role first started the package. The
@@ -78,7 +80,9 @@
       --groups {{ vpn_spec.openvpn.privilege.grant | map(attribute='entity_name') | list | to_json | quote }}
       {{ '--check' if ansible_check_mode else '' }}
   register: vpn_priv
-  when: synology_vpn_privilege_enabled | default(false)
+  when:
+    - synology_vpn_enabled | default(false)
+    - synology_vpn_privilege_enabled | default(false)
   changed_when: "'CHANGED' in vpn_priv.stdout or 'WOULD-CHANGE' in vpn_priv.stdout"
   failed_when: "vpn_priv.rc != 0 or 'FAIL' in vpn_priv.stdout"
   check_mode: false
@@ -104,7 +108,9 @@
     --dest {{ vpn_spec.client.publish_to }}
     {{ '--check' if ansible_check_mode else '' }}
   register: vpn_pub
-  when: vpn_spec.client.publish | default(true)
+  when:
+    - synology_vpn_enabled | default(false)
+    - vpn_spec.client.publish | default(true)
   changed_when: "'CHANGED' in vpn_pub.stdout or 'WOULD-CHANGE' in vpn_pub.stdout"
   failed_when: "vpn_pub.rc != 0 or 'FAIL' in vpn_pub.stdout"
   check_mode: false

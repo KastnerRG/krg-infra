@@ -278,14 +278,17 @@ client:
 #      [[synology-script-raw-pattern]], FAIL/CHANGED sentinels per
 #      [[synology-script-fail-sentinel-pty-merge]]. Composed into synology_base
 #      AFTER synology_ad — the privilege grant references domain principals.
-#   4. ⬜ FIRST APPLY (still fail-safe: `openvpn.enable` is true but BOTH
-#      firewall rules are still `enable: false`, so nothing is reachable from
-#      outside even once the daemon runs). Run:
-#          ansible-playbook playbook.yml --check --diff   # expect WOULD-CHANGE
-#          ansible-playbook playbook.yml
-#          ansible-playbook playbook.yml --tags export    # capture the schema
+#   4. ⬜ FIRST APPLY — OPT-IN ONLY. The role ships gated OFF
+#      (`synology_vpn_enabled: false`) because CD applies this play
+#      UNATTENDED on merge, and an unreconciled OUT_KEYS fails the play and
+#      blocks the deploy phases behind it. See "merging IS applying" in
+#      CLAUDE.md. Drive it by hand:
+#          ansible-playbook playbook.yml -e synology_vpn_enabled=true --check --diff
+#          ansible-playbook playbook.yml -e synology_vpn_enabled=true
+#          ansible-playbook playbook.yml -e synology_vpn_enabled=true --tags export
 #      Then reconcile OUT_KEYS in apply_vpn.py against the exported payload and
-#      re-run until the openvpn step reports `OK no-change`.
+#      re-run until the openvpn step reports `OK no-change`, THEN flip
+#      synology_vpn_enabled to true in the role defaults.
 #   5. ⬜ Fill in the privilege mapping. The `privilege` subcommand is gated off
 #      (`synology_vpn_privilege_enabled`) and dumps LIVE-ACCOUNT-OBJECT rather
 #      than guessing at an access-control payload. Wire it, then enable.
