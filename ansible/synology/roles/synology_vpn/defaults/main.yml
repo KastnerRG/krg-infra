@@ -1,3 +1,32 @@
 ---
 synology_vpn_spec: "{{ nas_spec_dir }}/vpn.yml"
 synology_export_dir: "/var/lib/krg-deploy/synology-export"
+
+# ⚠️ OFF BY DEFAULT — and it must stay that way until apply_vpn.py's OUT_KEYS
+# have been reconciled against a real `Settings.Config load`.
+#
+# WHY THIS FLAG EXISTS. The synology play runs UNATTENDED in CD (deploy.yml
+# phase 1, `ansible synology (e4e-nas) — tags=<full>`), so on this repo a merge
+# IS the apply. The role's own bring-up sequence (spec/e4e-nas/vpn.yml) assumes
+# an operator drives the first apply interactively — check-mode, then export,
+# then reconcile the field names. Those two facts contradict each other: with
+# unconfirmed OUT_KEYS the openvpn subcommand fails by DESIGN (loudly, printing
+# the live keys, rather than silently configuring nothing), which fails the play,
+# which fails deploy-pre, which skips the NixOS + tofu phases behind it.
+#
+# That is a discovery step wearing the costume of an outage. So it is opt-in:
+#   ansible-playbook playbook.yml -e synology_vpn_enabled=true --check --diff
+#   ansible-playbook playbook.yml -e synology_vpn_enabled=true --tags export
+# Reconcile OUT_KEYS from the export, re-run until the openvpn step reports
+# `OK no-change`, wire up privilege, and only THEN flip this default to true.
+#
+# Generalise the lesson before adding the next role: a task that is expected to
+# fail until a human iterates on it does not belong in an unattended pipeline
+# ungated, no matter how good its error message is.
+synology_vpn_enabled: false
+
+# Separate, narrower gate: the Management.Account object shape is still
+# unconfirmed, so the privilege subcommand dumps the live object and refuses to
+# push rather than guessing at an ACCESS-CONTROL payload. Stays off even after
+# synology_vpn_enabled flips, until the mapping is filled in.
+synology_vpn_privilege_enabled: false

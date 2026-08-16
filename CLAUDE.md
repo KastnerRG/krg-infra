@@ -72,6 +72,69 @@ This applies broadly to nix/, ansible/, terraform/ work — not just the
 NAS. The Synology surface had the most run-ins with it because DSM has
 the richest "click here to fix it" affordance, but the rule is global.
 
+## Operating principle: merging IS applying
+
+**There is no gap between "landed" and "deployed" in this repo.** A merge
+to `main` is a push, which turns CI green, which fires `Deploy fleet`
+(`.github/workflows/deploy.yml`), which applies — unattended, within the
+hour — the Ansible layer (including the whole `ansible/synology` play),
+`nixos-rebuild switch` across the fleet, and the OpenTofu targets
+(`authentik grafana e4e-nas temporal incus`). Nobody presses a button in
+between.
+
+So the bar for a PR is **not** "is this code correct?" It is:
+
+> If this merges and CD applies it to production in the next 40 minutes
+> with nobody watching, what happens?
+
+Ask it about the PR you are about to open, every time. A PR that cannot
+answer "nothing bad" is not ready, however good its code is.
+
+**"Safe to apply" is not the same as "feature complete."** Landing a spec
+ahead of its mechanism is fine and encouraged — `spec/e4e-nas/vpn.yml`
+landed with no role, and applied cleanly because nothing consumed it.
+Landing a *mechanism* that errors on first contact is not fine, no matter
+how carefully the failure is documented in the file itself.
+
+**Anything not yet reconciled against reality ships OFF, behind a
+default-false flag.** The canonical shape is
+`synology_vpn_enabled: false` in the role's `defaults/main.yml`, with the
+opt-in command in a comment. Gate on this whenever any of these is true:
+
+- API field names / payload shapes are guesses awaiting a first-apply
+  capture (the `OUT_KEYS`-flip pattern — the *capture* is the gated run)
+- the change needs a credential, keytab, or secret that is not in
+  OpenBao yet
+- the documented next step is "apply it and iterate" — that sentence is
+  the tell that it does not belong in an unattended pipeline
+- a new role is composed into a baseline (`synology_base`,
+  `profiles/base.nix`, the ansible `base` role) that runs on every host
+
+**Why this is an availability problem, not a tidiness one.** The deploy
+is staged: `deploy-pre` (Ansible substrate) → self-update barrier →
+`deploy-post` (NixOS systems, tofu config, verify). A failure in an early
+phase means the later phases **never run** — so one appliance role that
+exits non-zero silently blocks NixOS rollout and every tofu target for
+the entire fleet until someone notices. A "harmless" red is not harmless;
+it is a stop-the-world on the whole delivery path. (See also
+[[nixos-rebuild-exit4-false-deploy-failure]]: the converse trap, where a
+red phase hides a *successful* switch.)
+
+**Corollary for error design.** A loud, well-worded failure is the right
+behaviour *once something is running* — never silently misconfigure. But
+a good error message does not make a failing task safe to merge. Fail
+loudly **and** ship gated off; those are two separate obligations, and
+satisfying the first has repeatedly felt like satisfying both.
+
+**Precedent:** PR #524 (`synology_vpn`) shipped with unconfirmed DSM
+field names, was composed into `synology_base`, and took the fleet deploy
+red on merge — the "first apply" its own spec described as an interactive
+operator step was in fact executed unattended by CD. The role's
+`privilege` subcommand *was* gated (because guessing at an access-control
+payload is obviously unsafe); the `openvpn` subcommand was not (because
+the danger there was operational rather than semantic). Both questions
+have to be asked.
+
 ## Common Commands
 
 The flake lives in `nix/`. Run from the repo root with the `./nix` ref shown
