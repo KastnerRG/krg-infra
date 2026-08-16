@@ -143,13 +143,29 @@ def cmd_package(a):
     stopped package makes every later call fail with a misleading err 102.
     """
     st = _run([SYNOPKG, "status", PKG])
-    if st.returncode != 0:
+    # synopkg's EXIT CODE is not an install check. Measured on DSM 7.3.2:
+    #   installed but stopped -> rc 17
+    #   not installed         -> rc 255, and aspect.error.status == "non_installed"
+    # Both print JSON. Keying off `rc != 0` reported a merely-stopped package as
+    # uninstalled — which is the exact state this subcommand exists to fix, so
+    # the role could never start anything. Caught on the rig 2026-08-16.
+    try:
+        data = json.loads(st.stdout[st.stdout.find("{") :])
+    except (ValueError, IndexError):
+        print(
+            "FAIL could not parse synopkg status (rc=%s): %s"
+            % (st.returncode, (st.stdout or st.stderr).strip()[:200])
+        )
+        return 1
+
+    err = (data.get("aspect") or {}).get("error") or data.get("error") or {}
+    if err.get("status") == "non_installed":
         print("FAIL %s is not installed — terraform/e4e-nas owns the install" % PKG)
         return 1
-    try:
-        status = json.loads(st.stdout[st.stdout.find("{") :]).get("status")
-    except (ValueError, KeyError):
-        print("FAIL could not parse synopkg status: %s" % st.stdout.strip()[:200])
+
+    status = data.get("status")
+    if status is None:
+        print("FAIL synopkg status returned no `status`: %s" % json.dumps(data)[:200])
         return 1
 
     if status == "start":

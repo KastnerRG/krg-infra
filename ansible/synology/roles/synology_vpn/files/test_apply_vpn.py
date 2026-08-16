@@ -293,3 +293,71 @@ def test_exec_strips_line_preamble(monkeypatch):
 
     monkeypatch.setattr(m, "_run", lambda cmd: R())
     assert m._exec("X", "method=load") == {"success": True, "data": {"b": 2}}
+
+
+class _Res:
+    def __init__(self, rc, out=""):
+        self.returncode, self.stdout, self.stderr = rc, out, ""
+
+
+# Real payloads captured from DSM 7.3.2 (e4e-nas, 2026-08-16). The exit codes
+# are the point: synopkg signals package STATE through rc, so rc != 0 does not
+# mean "absent".
+STOPPED_RC, STOPPED_OUT = (
+    17,
+    (
+        '{"aspect":{"active":{"status":"stop","status_code":273}},'
+        '"description":"Status: [273], package is stopped",'
+        '"package":"VPNCenter","status":"stop"}'
+    ),
+)
+ABSENT_RC, ABSENT_OUT = (
+    255,
+    (
+        '{"aspect":{"active":{"status":"stop","status_code":273},'
+        '"error":{"status":"non_installed","status_code":255,'
+        '"status_description":"failed to locate package"}},'
+        '"package":"NoSuchPkg","status":"stop"}'
+    ),
+)
+
+
+def test_package_stopped_is_not_mistaken_for_absent(monkeypatch, capsys):
+    """rc=17 means installed-but-stopped. Treating non-zero rc as 'not
+    installed' made the role refuse to start the very package it exists to
+    start."""
+    calls = []
+
+    def fake_run(cmd):
+        calls.append(cmd)
+        return _Res(STOPPED_RC, STOPPED_OUT) if "status" in cmd else _Res(0)
+
+    monkeypatch.setattr(m, "_run", fake_run)
+    assert m.main(["package"]) == 0
+    assert capsys.readouterr().out.startswith("CHANGED")
+    assert any("start" in c for c in calls)
+
+
+def test_package_absent_is_detected_by_error_key(monkeypatch, capsys):
+    monkeypatch.setattr(m, "_run", lambda cmd: _Res(ABSENT_RC, ABSENT_OUT))
+    assert m.main(["package"]) == 1
+    out = capsys.readouterr().out
+    assert out.startswith("FAIL") and "not installed" in out
+
+
+def test_package_absent_never_attempts_start(monkeypatch):
+    calls = []
+
+    def fake_run(cmd):
+        calls.append(cmd)
+        return _Res(ABSENT_RC, ABSENT_OUT)
+
+    monkeypatch.setattr(m, "_run", fake_run)
+    assert m.main(["package"]) == 1
+    assert not any("start" in c for c in calls)
+
+
+def test_package_unparseable_status_fails_cleanly(monkeypatch, capsys):
+    monkeypatch.setattr(m, "_run", lambda cmd: _Res(1, "synopkg: command not found"))
+    assert m.main(["package"]) == 1
+    assert "could not parse" in capsys.readouterr().out
