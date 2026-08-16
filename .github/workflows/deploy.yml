@@ -24,10 +24,28 @@ name: Deploy fleet
 #   deploy-post      (self-hosted) verify the self-update took, then systems +
 #                    config + reconcile + the fleet verify phase.
 # See deploy/README.md and deploy/deploy-self-update.sh for the mechanics.
+#
+# MANUAL ESCAPE HATCH (workflow_dispatch). The workflow_run path can only ever
+# deploy a commit that was pushed by a human/PR merge, because a commit pushed
+# with the default GITHUB_TOKEN triggers no workflows at all (GitHub's recursion
+# guard). The nightly flake update pushes exactly such a commit
+# (flake-update.yml), so whenever it lands while a merge's CI is still in flight,
+# that merge's deploy hits the no-downgrade guard ("not current main head") and
+# NOTHING retries — main's head is a commit CD structurally cannot see. Observed
+# 2026-08-13: three merges stranded, fleet 27h stale, and dispatching the CI
+# workflows did NOT help (both the job filter below and the gate's `pick` require
+# event=push, by design).
+#
+# So: a manual dispatch deploys the CURRENT main head, still requiring all three
+# required workflows GREEN FOR THAT EXACT SHA — it relaxes *how* CI was triggered,
+# never *whether* it passed. Recovery is: dispatch Build/Tests/Lint on main, wait
+# for green, then dispatch this. The no-downgrade guard still applies (a dispatch
+# always targets the current head, so it cannot roll the fleet backwards).
 on:
   workflow_run:
     workflows: ["Build NixOS configurations", "Python unit tests", "Lint"]
     types: [completed]
+  workflow_dispatch:
 
 # One deploy at a time — a single control node means no concurrent applies
 # (ADR 0005). Don't cancel an in-flight deploy; let it finish.
@@ -51,10 +69,13 @@ jobs:
     # deploying a STALE commit, while still allowing a re-run of the CURRENT commit
     # (e.g. recovering from flaky CI) to deploy — which run_attempt==1 would wrongly
     # forbid. So the no-downgrade guarantee lives in the gate, not here.
+    # A manual dispatch bypasses this pre-filter (there is no workflow_run payload
+    # to inspect); the gate step below still enforces green CI + no-downgrade.
     if: >-
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.conclusion == 'success'
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.conclusion == 'success')
     outputs:
       ok: ${{ steps.gate.outputs.ok }}
       selfupdate: ${{ steps.selfupdate.outputs.selfupdate }}
@@ -63,7 +84,10 @@ jobs:
       - name: Check out the commit that passed CI
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          # `|| github.sha` covers the manual-dispatch path, where there is no
+          # workflow_run payload. On a dispatch github.sha IS the current main head,
+          # which is the same commit the gate verified.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       # Confirm ALL required CI workflows succeeded for THIS commit. If not (e.g.
       # another is still running, or failed), skip the apply silently — when the
@@ -74,13 +98,17 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const sha = context.payload.workflow_run.head_sha;
+            const dispatched = context.eventName === 'workflow_dispatch';
 
             // No-downgrade guard: a re-run of an OLD build/tests run fires
             // workflow_run with that old head_sha. Only deploy if it's still the
             // current main head, so a re-run can never roll the fleet backwards.
             const branch = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
             const head = branch.data.commit.sha;
+            // A manual dispatch deploys the CURRENT head by definition (that is the
+            // escape hatch); a workflow_run carries the sha its CI ran on, which may
+            // have been superseded since — e.g. by the nightly lock bump.
+            const sha = dispatched ? head : context.payload.workflow_run.head_sha;
             if (sha !== head) {
               core.notice(`${sha} is not current main head (${head}) — skipping (no downgrade).`);
               core.setOutput('ok', 'false');
@@ -101,8 +129,17 @@ jobs:
             // pull_request / workflow_dispatch run of the same commit, which could
             // otherwise satisfy/block the "green CI on push-to-main" guarantee.
             // (Matches the job-level event==push guard.)
+            //
+            // EXCEPT on a manual dispatch, which also accepts a workflow_dispatch
+            // run of the same workflow on the same sha. That is the whole point of
+            // the escape hatch: a GITHUB_TOKEN-pushed head (nightly lock bump) can
+            // NEVER have a push run of anything, so requiring one would make the
+            // hatch useless in exactly the situation it exists for. `pull_request`
+            // runs stay excluded either way — those ran on a PR merge-ref, not on
+            // this commit's tree as it sits on main.
+            const okEvent = r => r.event === 'push' || (dispatched && r.event === 'workflow_dispatch');
             const pick = name => runs
-              .filter(r => r.name === name && r.event === 'push' && r.head_branch === 'main')
+              .filter(r => r.name === name && okEvent(r) && r.head_branch === 'main')
               .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
             const picked = required.map(pick);
 
@@ -124,7 +161,12 @@ jobs:
             // earlier events' deploys see a newer sibling and skip. (Until the last
             // CI finishes, the others aren't all green yet, so the ok-check above
             // already skips — no deploy is lost.)
-            const last = picked.slice().sort(
+            // Skipped for a manual dispatch: there is no triggering workflow_run to
+            // compare against, so `context.payload.workflow_run.id` is undefined and
+            // the id mismatch would be unconditionally true — the hatch would skip
+            // itself every time. A dispatch is a deliberate single invocation, and
+            // the `deploy-fleet` concurrency group already serialises applies.
+            const last = dispatched ? null : picked.slice().sort(
               (a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
             if (last && last.id !== context.payload.workflow_run.id) {
               core.notice(`Sibling CI run ${last.id} completed later — it owns this deploy; skipping duplicate.`);
@@ -239,7 +281,10 @@ jobs:
       - name: Check out the commit that passed CI
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          # `|| github.sha` covers the manual-dispatch path, where there is no
+          # workflow_run payload. On a dispatch github.sha IS the current main head,
+          # which is the same commit the gate verified.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       # Mint a short-lived (1h) installation token from the "krg-infra deploy
       # watcher" GitHub App instead of carrying a PAT. The default GITHUB_TOKEN
       # cannot read the self-hosted-runners API, and a PAT rots: this credential is
@@ -282,7 +327,10 @@ jobs:
       - name: Check out the commit that passed CI
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          # `|| github.sha` covers the manual-dispatch path, where there is no
+          # workflow_run payload. On a dispatch github.sha IS the current main head,
+          # which is the same commit the gate verified.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       # Safety net: confirm the scheduled self-update actually took (a detached
       # switch can't fail the job that scheduled it, and the watcher only proves the
