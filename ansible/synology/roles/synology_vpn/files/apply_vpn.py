@@ -40,10 +40,15 @@ before any config) — these are the drift items this subcommand exists to fix:
 """
 
 import argparse
+import http.cookiejar
 import json
 import os
+import ssl
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 
 WEBAPI = "/usr/syno/bin/synowebapi"
 SYNOPKG = "/usr/syno/bin/synopkg"
@@ -85,52 +90,153 @@ def _run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
-def _exec(api, *params):
-    out = _run([WEBAPI, "--exec", "api=" + api, *params])
-    # synowebapi prefixes diagnostics like `[Line 295] Exec WebAPI: ... param={...}`
-    # which CONTAINS a brace — so scanning for the first `{` finds the wrong one.
-    # Drop the bracketed preamble lines first, then parse.
-    lines = [ln for ln in out.stdout.splitlines() if not ln.startswith("[Line")]
-    txt = "\n".join(lines)
-    brace = txt.find("{")
-    if brace < 0:
-        raise RuntimeError("no JSON in synowebapi output: " + (out.stdout or out.stderr))
-    return json.loads(txt[brace:])
+# ---- HTTP webapi client (inlined; mirrors apply_security.py) ------------------
+# WHY HTTP AND NOT `synowebapi --exec`. With the package RUNNING, the CLI runner
+# returns err 600 on SYNO.VPNServer.Settings.Config load — with and without a
+# `type` param (measured on e4e-nas, DSM 7.3.2, 2026-08-16). That is the same
+# wall synology_security hit on Firewall.Profile: these are UI-driven APIs that
+# want an authenticated web session, not the SYSTEM_ADMIN CLI runner. So we do
+# what the DSM web UI does.
+#
+# INLINED ON PURPOSE. Ansible's `script:` module ships only the named file to
+# the target, so `from dsm_http import ...` fails with ModuleNotFoundError at
+# run time. apply_security.py carries the same duplicated client for the same
+# reason (it was a shared dsm_http.py until 2026-05-31). Keep them in sync by
+# hand; do not "DRY" this into an import.
 
 
-def _load(api):
-    """`load` the current object. Returns (data, None) or (None, err_code)."""
-    resp = _exec(api, "version=1", "method=load")
-    if not resp.get("success", False):
-        return None, (resp.get("error") or {}).get("code")
-    if "data" not in resp:
-        raise RuntimeError("{} load: success but no data: {}".format(api, json.dumps(resp)))
-    return resp["data"], None
+class DSMError(Exception):
+    """A DSM webapi call returned success=false or non-200 HTTP."""
+
+    def __init__(self, msg, code=None, payload=None):
+        super().__init__(msg)
+        self.code = code
+        self.payload = payload
+
+
+class DSMSession(object):
+    """HTTP webapi session — context-manage to ensure logout on exit."""
+
+    def __init__(self, host="localhost", port=6021, account="e4e-admin", password=None, timeout=30):
+        if not password:
+            raise ValueError("password is required")
+        self.base = "https://%s:%d/webapi/entry.cgi" % (host, port)
+        self.account = account
+        self._password = password
+        self.timeout = timeout
+        self.token = None  # X-SYNO-TOKEN, populated by login()
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        cj = http.cookiejar.CookieJar()
+        self._opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ctx),
+            urllib.request.HTTPCookieProcessor(cj),
+        )
+
+    def __enter__(self):
+        self.login()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            self.logout()
+        except Exception:
+            pass  # never mask the original exception
+
+    def _post(self, params):
+        headers = {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"}
+        if self.token:
+            headers["X-SYNO-TOKEN"] = self.token
+        data = urllib.parse.urlencode(params).encode("utf-8")
+        req = urllib.request.Request(self.base, data=data, headers=headers)
+        try:
+            with self._opener.open(req, timeout=self.timeout) as resp:
+                body = resp.read()
+        except urllib.error.HTTPError as e:
+            raise DSMError(
+                "HTTP %d on %s" % (e.code, params.get("api", "?")),
+                code=e.code,
+                payload=e.read()[:300],
+            )
+        try:
+            return json.loads(body)
+        except ValueError:
+            raise DSMError("non-JSON response on %s" % params.get("api", "?"), payload=body[:300])
+
+    def login(self):
+        resp = self._post(
+            {
+                "api": "SYNO.API.Auth",
+                "version": "7",
+                "method": "login",
+                "account": self.account,
+                "passwd": self._password,
+                "session": "FileStation",
+                "format": "cookie",
+                "enable_syno_token": "yes",
+            }
+        )
+        if not resp.get("success"):
+            err = resp.get("error", {}) or {}
+            raise DSMError("login failed (code=%s)" % err.get("code"), code=err.get("code"))
+        self.token = (resp.get("data") or {}).get("synotoken")
+        if not self.token:
+            raise DSMError("login succeeded but no SynoToken returned")
+        return resp
+
+    def logout(self):
+        if not self.token:
+            return
+        try:
+            self._post({"api": "SYNO.API.Auth", "version": "7", "method": "logout"})
+        finally:
+            self.token = None
+
+    def call(self, api, method, version=1, **params):
+        """Generic webapi call. String params get JSON-quoted (UI convention)."""
+        form = {"api": api, "method": method, "version": str(version)}
+        for k, v in params.items():
+            if isinstance(v, bool):
+                form[k] = "true" if v else "false"
+            elif isinstance(v, (int, float)):
+                form[k] = str(v)
+            elif isinstance(v, str):
+                form[k] = json.dumps(v)
+            else:
+                form[k] = json.dumps(v, separators=(",", ":"))
+        return self._post(form)
 
 
 def _bool(s):
     return str(s).strip().lower() in ("1", "true", "yes", "on")
 
 
-def _args_from(data):
-    """synowebapi --exec parses key=value as JSON, so bare strings must be
-    JSON-quoted or DSM drops them (3103) / truncates them (4302)."""
-    args = []
-    for key, val in data.items():
-        if val is None:
-            continue
-        if isinstance(val, bool):
-            val = "true" if val else "false"
-        else:
-            val = json.dumps(val)
-        args.append("{}={}".format(key, val))
-    return args
+def _session(a):
+    pw = a.password or os.environ.get("DSM_PASSWORD") or ""
+    if not pw:
+        raise DSMError(
+            "no DSM password supplied — pass --password or set DSM_PASSWORD. "
+            "The VPNServer APIs need a web session; the CLI runner returns "
+            "err 600 on Settings.Config.load."
+        )
+    return DSMSession(account=a.account, password=pw)
 
 
-def _apply(api, obj):
-    resp = _exec(api, "version=1", "method=apply", *_args_from(obj))
+def _load(sess, api):
+    """`load` the current object. Returns (data, None) or (None, err_code)."""
+    resp = sess.call(api, "load")
     if not resp.get("success", False):
-        raise RuntimeError("{} apply failed: {}".format(api, json.dumps(resp.get("error"))))
+        return None, (resp.get("error") or {}).get("code")
+    if "data" not in resp:
+        raise DSMError("%s load: success but no data: %s" % (api, json.dumps(resp)))
+    return resp["data"], None
+
+
+def _apply(sess, api, obj):
+    resp = sess.call(api, "apply", **obj)
+    if not resp.get("success", False):
+        raise DSMError("%s apply failed: %s" % (api, json.dumps(resp.get("error"))))
     return resp
 
 
@@ -214,7 +320,12 @@ def cmd_openvpn(a):
         )
         return 1
 
-    current, err = _load(CONFIG_API)
+    with _session(a) as sess:
+        return _openvpn_within(a, sess, desired_spec)
+
+
+def _openvpn_within(a, sess, desired_spec):
+    current, err = _load(sess, CONFIG_API)
     if err == ERR_API_NOT_EXIST:
         print(
             "FAIL %s returned err 102 — the VPNCenter package is almost "
@@ -248,7 +359,7 @@ def cmd_openvpn(a):
 
     target = dict(current)
     target.update(desired)
-    _apply(CONFIG_API, target)
+    _apply(sess, CONFIG_API, target)
     print("CHANGED " + json.dumps(sorted(drift.keys())))
     return 0
 
@@ -267,7 +378,12 @@ def cmd_privilege(a):
         print("FAIL --groups must be a non-empty JSON list")
         return 1
 
-    current, err = _load(ACCOUNT_API)
+    with _session(a) as sess:
+        return _privilege_within(a, sess, groups)
+
+
+def _privilege_within(a, sess, groups):
+    current, err = _load(sess, ACCOUNT_API)
     if err == ERR_API_NOT_EXIST:
         print("FAIL %s err 102 — run the `package` subcommand first" % ACCOUNT_API)
         return 1
@@ -389,6 +505,14 @@ def main(argv=None):
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd")
 
+    def _creds(sp):
+        # The VPNServer APIs need a real web session (see the DSMSession note).
+        # --password may also arrive as DSM_PASSWORD in the env, which is how an
+        # operator keeps it off argv; the role passes it on argv with no_log.
+        sp.add_argument("--account", default="e4e-admin")
+        sp.add_argument("--password", default="")
+        return sp
+
     def _sub(name):
         # --check goes on EACH subparser, not the top level: the role invokes
         # `apply_vpn.py <cmd> --args ... --check`, so a top-level flag would
@@ -399,7 +523,7 @@ def main(argv=None):
 
     _sub("package")
 
-    o = _sub("openvpn")
+    o = _creds(_sub("openvpn"))
     o.add_argument("--enable", required=True)
     o.add_argument("--port", required=True)
     o.add_argument("--protocol", required=True)
@@ -415,7 +539,7 @@ def main(argv=None):
     o.add_argument("--tls-auth", required=True)
     o.add_argument("--duplicate-cn", required=True)
 
-    v = _sub("privilege")
+    v = _creds(_sub("privilege"))
     v.add_argument("--groups", required=True)
 
     b = _sub("publish")
@@ -440,7 +564,7 @@ def main(argv=None):
         return 2
     try:
         return handlers[a.cmd](a)
-    except (RuntimeError, OSError) as e:
+    except (DSMError, RuntimeError, OSError) as e:
         print("FAIL %s" % str(e)[:300])
         return 1
 

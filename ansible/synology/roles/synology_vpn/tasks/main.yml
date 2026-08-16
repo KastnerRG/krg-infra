@@ -56,12 +56,17 @@
     --compression {{ vpn_spec.openvpn.compression | default(false) }}
     --tls-auth {{ vpn_spec.openvpn.tls_auth | default(true) }}
     --duplicate-cn {{ vpn_spec.openvpn.duplicate_cn | default(true) }}
-    {{ '--check' if ansible_check_mode else '' }}
+    --account {{ synology_admin_user | default("e4e-admin") | quote }}
+    --password {{ nas_admin_password | quote }}
+    {{ "--check" if ansible_check_mode else "" }}
   register: vpn_conf
+  no_log: true        # password on argv
   changed_when: "'CHANGED' in vpn_conf.stdout or 'WOULD-CHANGE' in vpn_conf.stdout"
   failed_when: "vpn_conf.rc != 0 or 'FAIL' in vpn_conf.stdout"
   check_mode: false
-  when: synology_vpn_enabled | default(false) | bool
+  when:
+    - synology_vpn_enabled | default(false) | bool
+    - nas_admin_password | default("") | length > 0
 
 # ⚠️ GATED OFF by default. The Management.Account object shape is unconfirmed —
 # the API only became readable once this role first started the package. The
@@ -77,12 +82,16 @@
   ansible.builtin.script:
     cmd: >-
       apply_vpn.py privilege
-      --groups {{ vpn_spec.openvpn.privilege.grant | map(attribute='entity_name') | list | to_json | quote }}
-      {{ '--check' if ansible_check_mode else '' }}
+      --groups {{ vpn_spec.openvpn.privilege.grant | map(attribute="entity_name") | list | to_json | quote }}
+      --account {{ synology_admin_user | default("e4e-admin") | quote }}
+      --password {{ nas_admin_password | quote }}
+      {{ "--check" if ansible_check_mode else "" }}
   register: vpn_priv
+  no_log: true        # password on argv
   when:
     - synology_vpn_enabled | default(false) | bool
     - synology_vpn_privilege_enabled | default(false) | bool
+    - nas_admin_password | default("") | length > 0
   changed_when: "'CHANGED' in vpn_priv.stdout or 'WOULD-CHANGE' in vpn_priv.stdout"
   failed_when: "vpn_priv.rc != 0 or 'FAIL' in vpn_priv.stdout"
   check_mode: false
@@ -114,6 +123,19 @@
   changed_when: "'CHANGED' in vpn_pub.stdout or 'WOULD-CHANGE' in vpn_pub.stdout"
   failed_when: "vpn_pub.rc != 0 or 'FAIL' in vpn_pub.stdout"
   check_mode: false
+
+- name: Warn when no NAS admin password supplied (VPN config skipped)
+  ansible.builtin.debug:
+    msg: >-
+      nas_admin_password not supplied — VPN server config SKIPPED. The
+      SYNO.VPNServer.* APIs need a DSM web session (the synowebapi CLI runner
+      returns err 600 on Settings.Config.load), so there is no credential-free
+      path. Re-run with `-e nas_admin_password=<e4e-admin password>` (or via
+      -e @~/.config/krg/secrets-syno.yml, which carries
+      synology_user_passwords.e4e-admin).
+  when:
+    - synology_vpn_enabled | default(false) | bool
+    - nas_admin_password | default("") | length == 0
 
 # --- Drift export (read-only) — only with `--tags export` ---------------------
 - name: Export live state for drift detection
