@@ -30,3 +30,13 @@ synology_vpn_enabled: false
 # push rather than guessing at an ACCESS-CONTROL payload. Stays off even after
 # synology_vpn_enabled flips, until the mapping is filled in.
 synology_vpn_privilege_enabled: false
+
+# Read-only schema capture. ON by default and safe to leave on: `dump` only
+# calls `load`, redacts secret-looking values, and always exits 0 — it cannot
+# fail a deploy. It exists because OUT_KEYS can only be confirmed from a live
+# payload, the payload needs a DSM web session, and CD is the one place that
+# credential legitimately exists (deploy-ansible.sh brokers it from OpenBao).
+#
+# TEMPORARY — set false once OUT_KEYS is reconciled. There is no reason to keep
+# logging into DSM on every deploy after that.
+synology_vpn_discover: true

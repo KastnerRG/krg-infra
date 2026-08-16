@@ -386,3 +386,40 @@ def test_password_can_come_from_env(monkeypatch):
     monkeypatch.setattr(m, "DSMSession", lambda **kw: captured.update(kw) or object())
     m._session(A())
     assert captured["password"] == "from-env"
+
+
+def test_dump_never_returns_nonzero_even_on_error(monkeypatch, capsys):
+    """`dump` runs unattended in CD. It must not be able to fail a deploy."""
+
+    def boom(a):
+        raise m.DSMError("login failed (code=400)")
+
+    monkeypatch.setattr(m, "_session", boom)
+    assert m.main(["dump", "--password", "s3cret"]) == 0
+    out = capsys.readouterr().out
+    assert "dump-error" in out
+    # must not trip the role's sentinel greps
+    assert "FAIL" not in out and "CHANGED" not in out
+
+
+def test_dump_prints_key_names(monkeypatch, capsys):
+    fake, _ = _factory(LIVE)
+    monkeypatch.setattr(m, "_session", lambda a: fake)
+    assert m.main(["dump", "--password", "s3cret"]) == 0
+    out = capsys.readouterr().out
+    assert "SCHEMA" in out
+    assert m.OUT_KEYS["subnet"] in out
+    assert "FAIL" not in out and "CHANGED" not in out
+
+
+def test_dump_redacts_secret_looking_values(monkeypatch, capsys):
+    secretish = dict(LIVE)
+    secretish.update({"ovpn_ca_cert": "-----BEGIN CERT", "admin_password": "hunter2"})
+    fake, _ = _factory(secretish)
+    monkeypatch.setattr(m, "_session", lambda a: fake)
+    assert m.main(["dump", "--password", "s3cret"]) == 0
+    out = capsys.readouterr().out
+    assert "hunter2" not in out and "BEGIN CERT" not in out
+    assert "<redacted>" in out
+    # key NAMES still survive — that is the whole point of the dump
+    assert "admin_password" in out and "ovpn_ca_cert" in out
