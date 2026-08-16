@@ -137,6 +137,36 @@
     - synology_vpn_enabled | default(false) | bool
     - nas_admin_password | default("") | length == 0
 
+# --- Schema capture (read-only, cannot fail the deploy) ------------------------
+# Runs in CD on purpose. deploy-ansible.sh already brokers nas_admin_password out
+# of OpenBao, so this is the one place a DSM web session exists without a human
+# handling a password — and `dump` only READS and always exits 0, so it cannot
+# break a deploy the way enabling the config tasks would.
+#
+# The password goes via `environment:` rather than argv so the task does NOT need
+# no_log — which matters, because the whole point is to get the payload into the
+# deploy log where it can be read. Secret-looking values are redacted in the
+# script before printing.
+#
+# TEMPORARY: flip synology_vpn_discover to false once OUT_KEYS is reconciled.
+- name: Dump the live VPNServer schema (read-only)
+  ansible.builtin.script:
+    cmd: apply_vpn.py dump
+  environment:
+    DSM_PASSWORD: "{{ nas_admin_password | default('') }}"
+  register: vpn_dump
+  changed_when: false
+  failed_when: false      # belt: the script already always exits 0
+  check_mode: false
+  when:
+    - synology_vpn_discover | default(true) | bool
+    - nas_admin_password | default("") | length > 0
+
+- name: Show the captured VPNServer schema
+  ansible.builtin.debug:
+    var: vpn_dump.stdout_lines
+  when: vpn_dump.stdout_lines | default([]) | length > 0
+
 # --- Drift export (read-only) — only with `--tags export` ---------------------
 - name: Export live state for drift detection
   ansible.builtin.import_tasks: export.yml
