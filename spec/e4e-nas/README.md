@@ -47,20 +47,20 @@ Baseline + storage (composed by `synology_base` or the storage play):
 | `quotas.yml`          | `synology_quotas`               | per-share + per-user quotas |
 | `snapshots.yml`       | `synology_snapshot_replication` | per-share Btrfs snapshot retention |
 | `hyper-backup.yml`    | `synology_hyper_backup`         | off-box DR jobs |
+| `vpn.yml`             | `synology_vpn`                  | OpenVPN remote access for off-campus SMB, scoped to the NAS only |
 
-Declared ahead of its mechanism (**no role yet** — the spec lands first on purpose):
+`vpn.yml` is the one file here whose wire-level field names are still unconfirmed,
+and unavoidably so: DSM leaves VPN Server **stopped** after install, and a stopped
+package does not register its webapi (every `SYNO.VPNServer.*` call returns err
+102) — so the thing that must run before the schema is readable is the role itself.
+`synology_vpn`'s `package` subcommand starts it; `--tags export` then dumps the
+live `load` payload, which *is* the schema. Reconcile `OUT_KEYS` in `apply_vpn.py`
+against that and re-run until the openvpn step reports `OK no-change`. The script
+fails loudly on a stale mapping rather than silently configuring nothing.
 
-| File | Role that will consume it | Owns |
-|---|---|---|
-| `vpn.yml` | `synology_vpn` — ⚠️ **not built** | OpenVPN remote access for off-campus SMB, scoped to the NAS only |
-
-`vpn.yml` is the one file here with no consumer. VPN Server (`VPNCenter`) ships its
-own webapi libs, so `SYNO.VPNServer.*` can't be enumerated until the package is
-installed — the terraform resource in the same PR is what unblocks that discovery,
-and the role is written against it afterwards. The file's "Bring-up sequence"
-section is the running order; the two firewall rules it depends on (`openvpn-1194`
-in `global`, `vpn-smb-only` on the `vpn` adapter, both in `security.yml`) ship
-`enable: false` so nothing opens ahead of a listener.
+Until the "Bring-up sequence" in `vpn.yml` reaches its last step, the service is
+not reachable: both firewall rules it depends on (`openvpn-1194` in `global`,
+`vpn-smb-only` on the `vpn` adapter, in `security.yml`) ship `enable: false`.
 
 Terraform `terraform/e4e-nas/` stays for things the synology-community provider has
 first-class resources for: packages (Container Manager, VPN Server), scheduler

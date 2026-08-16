@@ -79,3 +79,15 @@
 - name: Active Directory enrollment (KRG.LOCAL — winbind + idmap)
   ansible.builtin.import_role:
     name: synology_ad
+
+# VPN comes after AD on purpose: the privilege grant is scoped to an AD group
+# (KRG\Domain Users — deliberately NOT `everyone`, which would include the local
+# break-glass accounts), so the join has to be in place first. It is also the
+# right place for the anti-lockout ordering: this role STARTS the VPNCenter
+# package, and a package that starts before the perimeter roles have run would
+# briefly listen behind an unconfigured firewall. Both firewall rules
+# (`openvpn-1194`, `vpn-smb-only`) ship disabled, so today this is belt and
+# braces — keep the ordering anyway.
+- name: VPN Server (OpenVPN remote access, NAS-only scope)
+  ansible.builtin.import_role:
+    name: synology_vpn
