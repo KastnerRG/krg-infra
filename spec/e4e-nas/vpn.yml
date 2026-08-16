@@ -45,15 +45,31 @@
 #     * `KRG\Domain Users` resolves on the NAS (`SYNO.Core.Group list
 #       type=domain` returns 55 domain groups incl. Domain Users) — which is
 #       what makes the privilege block below a single static rule.
-#   PENDING (blocked on the package install — VPNCenter ships its own webapi
-#   libs, so `SYNO.VPNServer.*` cannot be enumerated until it's installed):
-#     * the OpenVPN settings API name + field names for every key under
-#       `openvpn:` below. Treat those keys as INTENT, not as confirmed wire
-#       names; the role's apply script maps them (same OUT_KEYS-flip pattern as
-#       apply_ad.py / apply_external_access.py).
-#     * the VPN Server `app_id` for the privilege rule.
-#     * whether the server config is better driven via webapi or via
-#       /var/packages/VPNCenter/etc/openvpn/openvpn.conf.
+#   CONFIRMED 2026-08-16, after the package installed (deploy run 31918131532):
+#     * API surface, read from /var/packages/VPNCenter/target/webapi/
+#       SYNO.VPNServer.lib. ⚠️ The verbs are **load/apply**, NOT the get/set
+#       every other synology_* role wraps:
+#         SYNO.VPNServer.Settings.Config        status_load | load | apply
+#         SYNO.VPNServer.Settings.Certificate   export
+#         SYNO.VPNServer.Management.Account     load | apply   ← privilege
+#         SYNO.VPNServer.Management.Interface   load | apply
+#         SYNO.VPNServer.Management.Connection  enum | kick
+#         SYNO.VPNServer.Management.Log         load | clear | export
+#     * INFO gives dsmappname="SYNO.SDS.VPN.Instance" — the likely AppPriv id,
+#       though privilege looks like it belongs on Management.Account instead.
+#     * The package stays STOPPED after install (`synopkg is_onoff` → "isn't
+#       turned on, status: [262]") until a protocol is enabled. This confirms
+#       "inert until configured" more strongly than first written: nothing
+#       listens because nothing RUNS.
+#   PENDING (chicken-and-egg — a STOPPED package does not register its webapi,
+#   so every SYNO.VPNServer.* call returns err 102 until something starts it,
+#   and the thing that starts it is this role):
+#     * the field names for every key under `openvpn:` below. Treat them as
+#       INTENT, not confirmed wire names. `synology_vpn`'s `package` subcommand
+#       starts the package; `--tags export` then dumps the live `load` payload,
+#       which IS the schema. Flip OUT_KEYS in apply_vpn.py to match — the same
+#       pattern apply_ad.py / apply_external_access.py already use. The script
+#       fails loudly on a stale mapping rather than configuring nothing.
 
 # --- Protocols -----------------------------------------------------------------
 # DSM's VPN Server offers three. Only OpenVPN is acceptable:
@@ -88,7 +104,16 @@ openvpn:
 
   # Concurrency. E4E is small; this is a backstop against a runaway client, not
   # a capacity plan. Raise if it ever actually binds.
+  # (DSM ships `max-clients 5` — confirmed on-box 2026-08-16. Real drift.)
   max_connections: 20
+
+  # Multiple concurrent tunnels per AD account — laptop AND phone. DSM ships
+  # this ON (`duplicate-cn` + `username-as-common-name` in the stock
+  # openvpn.conf), and for a share-mounting service the convenience is worth
+  # more than the per-user session accountability you give up. Flip to false if
+  # "one session per account" ever matters; note the audit trail then comes
+  # from the connection log (Management.Connection enum), not from the tunnel.
+  duplicate_cn: true
 
   # --- The isolation switches (the whole point of this file) -----------------
   # ⚠️ LOAD-BEARING. `true` makes DSM enable ip_forward + MASQUERADE and push a
@@ -114,19 +139,55 @@ openvpn:
   # compression with attacker-influenced plaintext is the VORACLE class of
   # attack (CVE-2018-9336 family), and it buys nothing on already-compressed
   # research data.
+  #
+  # ⚠️ DSM SHIPS `comp-lzo` ON — confirmed by reading the stock openvpn.conf
+  # on-box 2026-08-16. So `compression: false` is a REAL drift fix, not a
+  # belt-and-braces restatement of a safe default. Don't "simplify" it away.
   cipher: AES-256-GCM
   auth_digest: SHA512
   tls_min_version: "1.2"
   compression: false
 
-  # --- Client authentication -------------------------------------------------
-  # DSM's OpenVPN authenticates username/password through PAM, which resolves
-  # domain accounts because the box is AD-joined (ad.yml). So "AD auth" needs no
-  # extra wiring — the work is scoping WHO, below.
+  # Control-channel HMAC (`tls-auth ta.key 0`). Packets without a valid HMAC are
+  # dropped BEFORE OpenVPN does any TLS work, so internet background scanning
+  # and pre-auth TLS-stack CVEs never reach the crypto — the single biggest
+  # hardening available for a password-only public endpoint.
   #
-  # ⚠️ RESIDUAL RISK, accepted knowingly (2026-08-13): this publishes a
-  # password-authenticated endpoint to the internet, and DSM's OpenVPN supports
-  # neither 2FA nor tls-crypt. Brakes that DO apply:
+  # CORRECTION (2026-08-16): the original version of this file said DSM's
+  # OpenVPN "supports neither 2FA nor tls-crypt", implying no pre-TLS gate
+  # exists. Half wrong — tls-crypt is indeed absent, but `tls-auth` IS
+  # supported: the package's postinst generates keys/ta.key (that's the
+  # "--genkey --secret is DEPRECATED" warning in the install log) and
+  # target/etc/openvpn/server.conf, target/scripts/openvpn.sh and the client
+  # sample all reference `tls-auth ta.key 0`.
+  #
+  # Cost: ta.key must be embedded in every client config, so the .ovpn becomes
+  # a SHARED SECRET rather than a freely publishable file. That is why it is
+  # distributed through an authenticated share — see `client:` below.
+  tls_auth: true
+
+  # --- Client authentication -------------------------------------------------
+  # ⚠️ CORRECTED 2026-08-16. This file previously said auth goes through PAM.
+  # It does not. The stock openvpn.conf loads `plugin .../radiusplugin.so` with
+  # `verify-client-cert none` + `username-as-common-name`, and the package's
+  # bundled FreeRADIUS AD site (etc/syno_conf/rad_site_def_ad) sets
+  # `Auth-Type = "ntlm_auth"`. So the real path is:
+  #
+  #     OpenVPN -> radiusplugin -> local radiusd -> ntlm_auth -> winbind -> DC
+  #
+  # Practical consequences, all fine but worth knowing:
+  #   * It is NTLM to the DC, not Kerberos. Works with the existing AD join
+  #     (ad.yml); no keytab or SPN work needed.
+  #   * The auth path is INTERNAL to the NAS — the client never talks to the DC,
+  #     which is exactly what lets the tunnel stay NAS-only.
+  #   * A DC outage takes VPN auth down with it (no offline cache here, unlike
+  #     SSSD on the Linux fleet). Same blast radius as the krg-ldap SPOF already
+  #     tracked in CLAUDE.md.
+  #
+  # ⚠️ RESIDUAL RISK, accepted knowingly (2026-08-13, revised 2026-08-16): this
+  # publishes a password-authenticated endpoint to the internet, and DSM's
+  # OpenVPN supports no 2FA. Brakes that DO apply:
+  #   * `tls_auth` above — unauthenticated packets never reach TLS.
   #   * DSM auto-block: 3 attempts / 24h / never expires (security.yml).
   #   * KRG.LOCAL password policy: 12 chars + AD complexity (spec/krg-ad/
   #     password-policy.yml).
@@ -166,16 +227,37 @@ openvpn:
         deny_ip: []
 
 # --- Client distribution --------------------------------------------------------
-# DSM exports one .ovpn containing the CA cert and server parameters — it is the
-# SAME file for every user (auth is username/password, there are no per-client
-# certs), so it is not a secret in the credential sense and can go in the E4E
-# onboarding doc. Two edits are required after export, both of which DSM gets
-# wrong for our use case:
-#   1. the exported config has a literal `YOUR_SERVER_IP` placeholder → replace
-#      with e4e-nas.ucsd.edu.
-#   2. `redirect-gateway` must remain commented out (split tunnel).
-# Client-side runbook (how to mount \\10.90.24.1\<share> on macOS/Windows/Linux)
-# is owed to docs/ in the bring-up PR, not here.
+# The .ovpn is the SAME file for every user (auth is username/password; there
+# are no per-client certs — `verify-client-cert none`). The role RENDERS it
+# rather than using DSM's export: DSM's exported config carries a literal
+# `YOUR_SERVER_IP` placeholder and its own idea of the parameters, so rendering
+# from this spec keeps the shipped file and the server config from drifting
+# apart, and guarantees `redirect-gateway` stays commented (split tunnel).
+#
+# WHERE IT GOES, and why not just a public URL: with `tls_auth: true` the file
+# embeds ta.key, which makes it a shared secret — not a per-user credential, but
+# the thing that keeps internet scanners off the daemon. So it must reach
+# exactly the population allowed to use the VPN and no wider. The `installers`
+# share is that boundary: RO to `@users`, RW only to admins, no anonymous
+# access (confirmed on-box 2026-08-16 via `synoshare --list_acl installers`).
+# Same audience as the `KRG\Domain Users` privilege grant above.
+#
+# NO CHICKEN-AND-EGG: a user off campus with no tunnel can still fetch it, over
+# DSM's web UI / File Station, which security.yml deliberately keeps reachable
+# US-wide (`geoip-US-web`, ports 443/6020/6021) and whose app privilege is
+# grant_by_default. ⚠️ If that rule is ever narrowed, move this file to a
+# genuinely public location FIRST or new users are locked out of onboarding.
+client:
+  publish: true
+  # The address clients dial. Must resolve publicly — this is the tunnel
+  # endpoint, not the in-tunnel address.
+  public_host: e4e-nas.ucsd.edu
+  # The in-tunnel address of the NAS: what users actually mount
+  # (\\10.90.24.1\<share>). It is `subnet` +1 by OpenVPN convention; if you
+  # change `openvpn.subnet` above, change this AND the `vpn-smb-only` firewall
+  # rule's source_ip in security.yml.
+  vpn_ip: 10.90.24.1
+  publish_to: /volume1/installers/e4e-nas-vpn.ovpn
 #
 # SMB AUTH THROUGH THE TUNNEL — validate on bring-up. Clients cannot reach the
 # DC (that is the design), so Kerberos SPN acquisition will fail and clients
@@ -186,23 +268,33 @@ openvpn:
 # Kerberos first whenever it can resolve an SPN.
 
 # --- Bring-up sequence ----------------------------------------------------------
-# This file lands BEFORE the mechanism, on purpose: the terraform package
-# install in the same PR is what unblocks the remaining discovery.
-#   1. (this PR) `tofu apply` in terraform/e4e-nas → installs VPNCenter. The
-#      package is inert until configured; no port opens, nothing listens.
-#   2. Re-run discovery: `SYNO.VPNServer.*` webapi libs + AppPriv app_id +
-#      /var/packages/VPNCenter/etc/openvpn/openvpn.conf. Correct the PENDING
-#      field names above.
-#   3. Build `ansible/synology/roles/synology_vpn` (apply_vpn.py + tests,
-#      GET→merge→SET, script:+raw per [[synology-script-raw-pattern]], FAIL/
-#      CHANGED sentinel discipline per [[synology-script-fail-sentinel-pty-merge]]).
-#      Compose it into synology_base AFTER synology_ad — the privilege rule
-#      references domain principals, so the join must be in place.
-#   4. Flip `enable: true` on BOTH firewall rules in security.yml (`openvpn-1194`
-#      in `global`, `vpn-smb-only` in the `vpn` adapter). They ship disabled so
-#      that no port is open ahead of the service, and so that the adapter is
-#      fail-closed if the order ever slips.
-#   5. Validate: connect, confirm `\\10.90.24.1\<share>` mounts, confirm the
+#   1. ✅ DONE (#522, deployed 2026-08-16 run 31918131532) — `tofu apply`
+#      installed VPNCenter. Confirmed inert: package present but NOT running.
+#   2. ✅ DONE (2026-08-16) — API surface + shipped openvpn.conf read off the
+#      box; findings folded in above. Field names remain PENDING by necessity
+#      (see the chicken-and-egg note).
+#   3. ✅ DONE (this PR) — `ansible/synology/roles/synology_vpn` built:
+#      apply_vpn.py + tests, load→overlay→apply, script:+raw per
+#      [[synology-script-raw-pattern]], FAIL/CHANGED sentinels per
+#      [[synology-script-fail-sentinel-pty-merge]]. Composed into synology_base
+#      AFTER synology_ad — the privilege grant references domain principals.
+#   4. ⬜ FIRST APPLY (still fail-safe: `openvpn.enable` is true but BOTH
+#      firewall rules are still `enable: false`, so nothing is reachable from
+#      outside even once the daemon runs). Run:
+#          ansible-playbook playbook.yml --check --diff   # expect WOULD-CHANGE
+#          ansible-playbook playbook.yml
+#          ansible-playbook playbook.yml --tags export    # capture the schema
+#      Then reconcile OUT_KEYS in apply_vpn.py against the exported payload and
+#      re-run until the openvpn step reports `OK no-change`.
+#   5. ⬜ Fill in the privilege mapping. The `privilege` subcommand is gated off
+#      (`synology_vpn_privilege_enabled`) and dumps LIVE-ACCOUNT-OBJECT rather
+#      than guessing at an access-control payload. Wire it, then enable.
+#   6. ⬜ Flip `enable: true` on BOTH firewall rules in security.yml
+#      (`openvpn-1194` in `global`, `vpn-smb-only` in the `vpn` adapter). This
+#      is the step that actually exposes the service — do it last, and only
+#      after step 5, or the VPN is reachable before privilege is scoped.
+#   7. ⬜ Validate: connect; confirm `\\10.90.24.1\<share>` mounts; confirm the
 #      client has NO route to any other campus host (traceroute to
-#      krg-prod.ucsd.edu must not traverse the tunnel), confirm DSM UI on :6021
-#      is NOT reachable over the tunnel.
+#      krg-prod.ucsd.edu must not traverse the tunnel); confirm the DSM UI on
+#      :6021 is NOT reachable over the tunnel; confirm ping to 10.90.24.1 fails
+#      (ICMP is dropped by the `vpn` adapter — expected, not a fault).

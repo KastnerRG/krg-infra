@@ -1,0 +1,51 @@
+---
+# Read-only capture of the VPN Server surface. This is ALSO the discovery tool
+# that unblocks the PENDING field names in apply_vpn.py's OUT_KEYS: run it once
+# after the package is first started and the `load` payloads below are the
+# authoritative schema.
+- name: Ensure the export dir exists on the control node
+  ansible.builtin.file:
+    path: "{{ synology_export_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get package status
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synopkg status VPNCenter"
+  register: vpn_pkg_status
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Get OpenVPN server config
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.VPNServer.Settings.Config method=load version=1"
+  register: vpn_cfg_load
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Get VPN account privileges
+  ansible.builtin.raw: "PATH={{ syno_path }}:$PATH synowebapi --exec api=SYNO.VPNServer.Management.Account method=load version=1"
+  register: vpn_acct_load
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Get the effective openvpn.conf (what the daemon actually runs)
+  ansible.builtin.raw: "cat /usr/syno/etc/packages/VPNCenter/openvpn/openvpn.conf"
+  register: vpn_ovpn_conf
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Write the live-state snapshot
+  ansible.builtin.copy:
+    dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-vpn.yml"
+    mode: "0600"
+    content: |
+      package_status_raw: {{ vpn_pkg_status.stdout_lines | default([]) | to_json }}
+      settings_config_raw: {{ vpn_cfg_load.stdout_lines | default([]) | to_json }}
+      management_account_raw: {{ vpn_acct_load.stdout_lines | default([]) | to_json }}
+      openvpn_conf_raw: {{ vpn_ovpn_conf.stdout_lines | default([]) | to_json }}
+  delegate_to: localhost

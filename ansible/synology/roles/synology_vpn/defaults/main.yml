@@ -1,0 +1,3 @@
+---
+synology_vpn_spec: "{{ nas_spec_dir }}/vpn.yml"
+synology_export_dir: "/var/lib/krg-deploy/synology-export"

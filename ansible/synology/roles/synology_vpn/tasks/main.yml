@@ -1,0 +1,115 @@
+---
+# synology_vpn — OpenVPN remote access for off-campus SMB, from
+# spec/e4e-nas/vpn.yml. The tunnel terminates ON the NAS so clients reach this
+# box and nothing else; see the spec for the threat model.
+#
+# Logic in files/apply_vpn.py via the `script` module (DSM py3.8 is below
+# ansible's module floor — [[synology-script-raw-pattern]]).
+#
+# ORDER CONSTRAINT: synology_base runs this LAST, after synology_ad — the
+# privilege grant references domain principals (KRG\Domain Users), so the box
+# must already be joined.
+#
+# TWO-LAYER ISOLATION, and neither layer lives entirely here:
+#   1. `allow_lan: false` (this role)  — DSM never enables ip_forward/MASQUERADE
+#      or pushes a LAN route. apply_vpn.py hard-refuses a true value.
+#   2. the `vpn` firewall adapter (synology_security, spec/e4e-nas/security.yml)
+#      — default-drop + one 445/tcp allow. THAT is what stops a VPN client from
+#      reaching the DSM UI / SSH / Garage on this same box.
+# Changing the tunnel subnet here means changing `vpn-smb-only`'s source_ip
+# there too. They are deliberately not derived from one another (the firewall
+# spec is consumed by a different role); keep them in sync by hand.
+
+- name: Load the VPN spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_vpn_spec }}"
+    name: vpn_spec
+
+# The package is installed by terraform (terraform/e4e-nas/packages.tf), but DSM
+# leaves VPN Server STOPPED until a protocol is enabled — and while stopped its
+# webapi libs are not registered, so every SYNO.VPNServer.* call returns err 102.
+# Start it before anything else or the rest of this role fails misleadingly.
+- name: Ensure the VPNCenter package is running
+  ansible.builtin.script: >-
+    apply_vpn.py package
+    {{ '--check' if ansible_check_mode else '' }}
+  register: vpn_pkg
+  changed_when: "'CHANGED' in vpn_pkg.stdout or 'WOULD-CHANGE' in vpn_pkg.stdout"
+  failed_when: "vpn_pkg.rc != 0 or 'FAIL' in vpn_pkg.stdout"
+  check_mode: false
+
+- name: Configure the OpenVPN server
+  ansible.builtin.script: >-
+    apply_vpn.py openvpn
+    --enable {{ vpn_spec.openvpn.enable | default(false) }}
+    --port {{ vpn_spec.openvpn.port | default(1194) }}
+    --protocol {{ vpn_spec.openvpn.protocol | default('udp') }}
+    --subnet {{ vpn_spec.openvpn.subnet }}
+    --netmask {{ vpn_spec.openvpn.netmask }}
+    --max-connections {{ vpn_spec.openvpn.max_connections | default(20) }}
+    --allow-lan {{ vpn_spec.openvpn.allow_lan | default(false) }}
+    --push-dns {{ vpn_spec.openvpn.push_dns | default(false) }}
+    --ipv6 {{ vpn_spec.openvpn.ipv6 | default(false) }}
+    --cipher {{ vpn_spec.openvpn.cipher }}
+    --auth-digest {{ vpn_spec.openvpn.auth_digest }}
+    --compression {{ vpn_spec.openvpn.compression | default(false) }}
+    --tls-auth {{ vpn_spec.openvpn.tls_auth | default(true) }}
+    --duplicate-cn {{ vpn_spec.openvpn.duplicate_cn | default(true) }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: vpn_conf
+  changed_when: "'CHANGED' in vpn_conf.stdout or 'WOULD-CHANGE' in vpn_conf.stdout"
+  failed_when: "vpn_conf.rc != 0 or 'FAIL' in vpn_conf.stdout"
+  check_mode: false
+
+# ⚠️ GATED OFF by default. The Management.Account object shape is unconfirmed —
+# the API only became readable once this role first started the package. The
+# subcommand dumps the live object (LIVE-ACCOUNT-OBJECT) and then refuses to
+# push, on purpose: guessing at an ACCESS-CONTROL payload is how you end up
+# granting everyone. Run once with `-e synology_vpn_privilege_enabled=true` in
+# --check to capture the shape, fill in the mapping, then flip this default.
+#
+# Uses the explicit `cmd:` form rather than free-form: the `map(attribute=...)`
+# filter contains an `=`, which ansible-lint's no-free-form rule reads as a
+# key=value module arg.
+- name: Grant VPN access to the AD groups in the spec
+  ansible.builtin.script:
+    cmd: >-
+      apply_vpn.py privilege
+      --groups {{ vpn_spec.openvpn.privilege.grant | map(attribute='entity_name') | list | to_json | quote }}
+      {{ '--check' if ansible_check_mode else '' }}
+  register: vpn_priv
+  when: synology_vpn_privilege_enabled | default(false)
+  changed_when: "'CHANGED' in vpn_priv.stdout or 'WOULD-CHANGE' in vpn_priv.stdout"
+  failed_when: "vpn_priv.rc != 0 or 'FAIL' in vpn_priv.stdout"
+  check_mode: false
+
+# Publish the client config into a share so users can self-serve it. With
+# tls_auth on, the .ovpn embeds ta.key and IS a shared secret — the `installers`
+# share is RO to @users and RW only to admins, so it reaches exactly the
+# population allowed to use the VPN (every AD user) and no wider.
+#
+# No chicken-and-egg: a user with no tunnel can still fetch it from off campus
+# through DSM's web UI / File Station, which security.yml keeps reachable
+# US-wide (`geoip-US-web`). If that rule is ever narrowed, move this file first.
+- name: Publish the client .ovpn to the distribution share
+  ansible.builtin.script: >-
+    apply_vpn.py publish
+    --host {{ vpn_spec.client.public_host }}
+    --vpn-ip {{ vpn_spec.client.vpn_ip }}
+    --port {{ vpn_spec.openvpn.port | default(1194) }}
+    --protocol {{ vpn_spec.openvpn.protocol | default('udp') }}
+    --cipher {{ vpn_spec.openvpn.cipher }}
+    --auth-digest {{ vpn_spec.openvpn.auth_digest }}
+    --tls-auth {{ vpn_spec.openvpn.tls_auth | default(true) }}
+    --dest {{ vpn_spec.client.publish_to }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: vpn_pub
+  when: vpn_spec.client.publish | default(true)
+  changed_when: "'CHANGED' in vpn_pub.stdout or 'WOULD-CHANGE' in vpn_pub.stdout"
+  failed_when: "vpn_pub.rc != 0 or 'FAIL' in vpn_pub.stdout"
+  check_mode: false
+
+# --- Drift export (read-only) — only with `--tags export` ---------------------
+- name: Export live state for drift detection
+  ansible.builtin.import_tasks: export.yml
+  tags: [export, never]

@@ -1,0 +1,433 @@
+#!/usr/bin/env python3
+"""Apply DSM VPN Server (OpenVPN) config idempotently from spec/e4e-nas/vpn.yml.
+
+Invoked by the synology_vpn ansible role via `script` (DSM ships py3.8, below
+ansible's module floor — see [[synology-script-raw-pattern]]).
+
+Subcommands:
+
+  package     ensure the VPNCenter package is RUNNING (synopkg). Must run first:
+              DSM leaves VPN Server stopped after install, and while it is
+              stopped its webapi libs are NOT registered, so every
+              SYNO.VPNServer.* call returns err 102. Confirmed on e4e-nas
+              2026-08-16.
+  openvpn     SYNO.VPNServer.Settings.Config   load -> overlay -> apply
+  privilege   SYNO.VPNServer.Management.Account load -> overlay -> apply
+  publish     render the client .ovpn and drop it in a share (default:
+              /volume1/installers) so users can self-serve it
+
+NOTE THE VERBS. This package uses load/apply, NOT the get/set every other
+synology_* role wraps. `load` returns the current object; `apply` takes the
+full object back (partial = rejected, same full-object rule as the Core APIs).
+
+⚠️ FIELD NAMES ARE UNCONFIRMED. Settings.Config's schema could not be read
+before this role existed (chicken-and-egg: the package must run for the API to
+register, and nothing started it). OUT_KEYS below is the best-known mapping;
+the role's export.yml dumps the live `load` payload on first run — flip
+OUT_KEYS to match and the guesswork is over. Same OUT_KEYS-flip pattern as
+apply_ad.py / apply_external_access.py.
+
+What the SHIPPED openvpn.conf actually contains (read off e4e-nas 2026-08-16,
+before any config) — these are the drift items this subcommand exists to fix:
+    server 10.8.0.0 255.255.255.0     -> spec subnet (10.90.24.0/24)
+    max-clients 5                     -> spec max_connections
+    comp-lzo                          -> MUST go (VORACLE, CVE-2018-9336 class)
+    duplicate-cn                      -> kept (see spec: laptop + phone)
+    proto udp6                        -> dual-stack listener
+    plugin radiusplugin.so            -> the auth path (NOT pam)
+    verify-client-cert none           -> username/password only, no client certs
+    username-as-common-name
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+WEBAPI = "/usr/syno/bin/synowebapi"
+SYNOPKG = "/usr/syno/bin/synopkg"
+PKG = "VPNCenter"
+
+CONFIG_API = "SYNO.VPNServer.Settings.Config"
+ACCOUNT_API = "SYNO.VPNServer.Management.Account"
+
+# DSM error codes
+ERR_API_NOT_EXIST = 102
+
+# Where DSM keeps the material the client config needs. Both files are created
+# by the package's postinst (ta.key via `openvpn --genkey`), so they exist as
+# soon as the package is installed — no need to wait for it to be configured.
+KEYS_DIR = "/usr/syno/etc/packages/VPNCenter/openvpn/keys"
+CA_CRT = os.path.join(KEYS_DIR, "ca.crt")
+TA_KEY = os.path.join(KEYS_DIR, "ta.key")
+
+# ⚠️ BEST-KNOWN Settings.Config field names — flip on first `--tags export`.
+OUT_KEYS = {
+    "enabled": "enable_openvpn",
+    "port": "ovpn_port",
+    "protocol": "ovpn_protocol",
+    "subnet": "ovpn_dynamic_ip",
+    "netmask": "ovpn_netmask",
+    "max_connections": "ovpn_max_conn",
+    "allow_lan": "ovpn_client_access_server_lan",
+    "push_dns": "ovpn_push_dns",
+    "ipv6": "ovpn_enable_ipv6",
+    "cipher": "ovpn_cipher",
+    "auth_digest": "ovpn_auth",
+    "compression": "ovpn_compress",
+    "tls_auth": "ovpn_tls_auth",
+    "duplicate_cn": "ovpn_duplicate_cn",
+}
+
+
+def _run(cmd):
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def _exec(api, *params):
+    out = _run([WEBAPI, "--exec", "api=" + api, *params])
+    # synowebapi prefixes diagnostics like `[Line 295] Exec WebAPI: ... param={...}`
+    # which CONTAINS a brace — so scanning for the first `{` finds the wrong one.
+    # Drop the bracketed preamble lines first, then parse.
+    lines = [ln for ln in out.stdout.splitlines() if not ln.startswith("[Line")]
+    txt = "\n".join(lines)
+    brace = txt.find("{")
+    if brace < 0:
+        raise RuntimeError("no JSON in synowebapi output: " + (out.stdout or out.stderr))
+    return json.loads(txt[brace:])
+
+
+def _load(api):
+    """`load` the current object. Returns (data, None) or (None, err_code)."""
+    resp = _exec(api, "version=1", "method=load")
+    if not resp.get("success", False):
+        return None, (resp.get("error") or {}).get("code")
+    if "data" not in resp:
+        raise RuntimeError("{} load: success but no data: {}".format(api, json.dumps(resp)))
+    return resp["data"], None
+
+
+def _bool(s):
+    return str(s).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _args_from(data):
+    """synowebapi --exec parses key=value as JSON, so bare strings must be
+    JSON-quoted or DSM drops them (3103) / truncates them (4302)."""
+    args = []
+    for key, val in data.items():
+        if val is None:
+            continue
+        if isinstance(val, bool):
+            val = "true" if val else "false"
+        else:
+            val = json.dumps(val)
+        args.append("{}={}".format(key, val))
+    return args
+
+
+def _apply(api, obj):
+    resp = _exec(api, "version=1", "method=apply", *_args_from(obj))
+    if not resp.get("success", False):
+        raise RuntimeError("{} apply failed: {}".format(api, json.dumps(resp.get("error"))))
+    return resp
+
+
+# --- package ------------------------------------------------------------------
+def cmd_package(a):
+    """Ensure VPNCenter is installed AND running.
+
+    Installation itself is terraform's job (terraform/e4e-nas/packages.tf); this
+    only starts it. Reported separately from the config subcommands because a
+    stopped package makes every later call fail with a misleading err 102.
+    """
+    st = _run([SYNOPKG, "status", PKG])
+    if st.returncode != 0:
+        print("FAIL %s is not installed — terraform/e4e-nas owns the install" % PKG)
+        return 1
+    try:
+        status = json.loads(st.stdout[st.stdout.find("{") :]).get("status")
+    except (ValueError, KeyError):
+        print("FAIL could not parse synopkg status: %s" % st.stdout.strip()[:200])
+        return 1
+
+    if status == "start":
+        print("OK no-change package running")
+        return 0
+    if a.check:
+        print("WOULD-CHANGE package status=%s -> start" % status)
+        return 0
+
+    out = _run([SYNOPKG, "start", PKG])
+    if out.returncode != 0:
+        print("FAIL could not start %s: %s" % (PKG, (out.stderr or out.stdout).strip()[:200]))
+        return 1
+    print("CHANGED package started (was %s)" % status)
+    return 0
+
+
+# --- openvpn ------------------------------------------------------------------
+def cmd_openvpn(a):
+    desired_spec = {
+        "enabled": _bool(a.enable),
+        "port": int(a.port),
+        "protocol": a.protocol,
+        "subnet": a.subnet,
+        "netmask": a.netmask,
+        "max_connections": int(a.max_connections),
+        "allow_lan": _bool(a.allow_lan),
+        "push_dns": _bool(a.push_dns),
+        "ipv6": _bool(a.ipv6),
+        "cipher": a.cipher,
+        "auth_digest": a.auth_digest,
+        "compression": _bool(a.compression),
+        "tls_auth": _bool(a.tls_auth),
+        "duplicate_cn": _bool(a.duplicate_cn),
+    }
+
+    # Refuse to push a config that would turn the NAS into a router onto the
+    # campus network. This is the ONE setting whose failure mode is a security
+    # incident rather than a broken service, so it is enforced here as well as
+    # documented in the spec — a typo in vpn.yml should not be able to do it.
+    if desired_spec["allow_lan"]:
+        print(
+            "FAIL refusing allow_lan=true: it makes DSM enable ip_forward + "
+            "MASQUERADE and push a LAN route, turning e4e-nas into a gateway "
+            "onto the flat-public campus subnet. See spec/e4e-nas/vpn.yml."
+        )
+        return 1
+
+    current, err = _load(CONFIG_API)
+    if err == ERR_API_NOT_EXIST:
+        print(
+            "FAIL %s returned err 102 — the VPNCenter package is almost "
+            "certainly stopped (its webapi only registers while running). Run "
+            "the `package` subcommand first." % CONFIG_API
+        )
+        return 1
+    if err is not None:
+        print("FAIL %s load failed with err %s" % (CONFIG_API, err))
+        return 1
+
+    desired = {OUT_KEYS[k]: v for k, v in desired_spec.items()}
+    unknown = [k for k in desired if k not in current]
+    if unknown:
+        # Loud, not silent: a stale OUT_KEYS mapping would otherwise "succeed"
+        # while configuring nothing, and the operator would find a wide-open or
+        # unconfigured VPN. Dump the real keys so the fix is mechanical.
+        print(
+            "FAIL OUT_KEYS mismatch — %s not present in the live object. "
+            "Live keys: %s" % (sorted(unknown), sorted(current.keys()))
+        )
+        return 1
+
+    drift = {k: (current.get(k), v) for k, v in desired.items() if current.get(k) != v}
+    if not drift:
+        print("OK no-change")
+        return 0
+    if a.check:
+        print("WOULD-CHANGE " + json.dumps(sorted(drift.keys())))
+        return 0
+
+    target = dict(current)
+    target.update(desired)
+    _apply(CONFIG_API, target)
+    print("CHANGED " + json.dumps(sorted(drift.keys())))
+    return 0
+
+
+# --- privilege ----------------------------------------------------------------
+def cmd_privilege(a):
+    """Grant VPN access to the AD groups named in the spec.
+
+    Deliberately group-scoped, never `everyone`: an everyone-grant would include
+    the LOCAL accounts (e4e-admin break-glass, e4e-automation), handing two
+    administrators-group accounts a password-authenticated internet front door
+    and undoing the point of key-only SSH.
+    """
+    groups = json.loads(a.groups) if a.groups else []
+    if not isinstance(groups, list) or not groups:
+        print("FAIL --groups must be a non-empty JSON list")
+        return 1
+
+    current, err = _load(ACCOUNT_API)
+    if err == ERR_API_NOT_EXIST:
+        print("FAIL %s err 102 — run the `package` subcommand first" % ACCOUNT_API)
+        return 1
+    if err is not None:
+        print("FAIL %s load failed with err %s" % (ACCOUNT_API, err))
+        return 1
+
+    print("LIVE-ACCOUNT-OBJECT " + json.dumps(current)[:1500])
+    if a.check:
+        print("WOULD-CHANGE privilege -> %s" % json.dumps(groups))
+        return 0
+    print(
+        "FAIL privilege push not implemented: the Management.Account object "
+        "shape is unconfirmed (dumped above). Fill in the mapping, then remove "
+        "this guard — refusing to guess at an ACCESS-CONTROL payload."
+    )
+    return 1
+
+
+# --- publish ------------------------------------------------------------------
+CLIENT_TEMPLATE = """\
+# OpenVPN client config for {host} — generated by synology_vpn, do not hand-edit.
+#
+# Import into your OpenVPN client, then mount SMB from {vpn_ip}:
+#   macOS/Linux:  smb://{vpn_ip}/<share>
+#   Windows:      \\\\{vpn_ip}\\<share>
+# Log in with your KRG.LOCAL (AD) username and password.
+#
+# This tunnel reaches THIS NAS ONLY — no route to the rest of the campus
+# network. That is deliberate; see spec/e4e-nas/vpn.yml.
+client
+dev tun
+proto {proto}
+remote {host} {port}
+resolv-retry infinite
+nobind
+persist-key
+persist-tun
+auth-user-pass
+# Split tunnel: do NOT route all traffic through the NAS.
+# (Leave redirect-gateway commented — the service only serves SMB on this box.)
+cipher {cipher}
+auth {auth_digest}
+verb 3
+{compression_line}
+<ca>
+{ca}</ca>
+{tls_auth_block}"""
+
+TLS_AUTH_BLOCK = """key-direction 1
+<tls-auth>
+{ta}</tls-auth>
+"""
+
+
+def _read(path):
+    with open(path, "r") as fh:
+        return fh.read()
+
+
+def cmd_publish(a):
+    """Render the client .ovpn into a share so users can self-serve it.
+
+    Distributed via the `installers` share (RO @users, RW admins) rather than a
+    public URL: with tls_auth on, the file embeds ta.key and is therefore a
+    shared secret — it must reach exactly the population that may use the VPN
+    (every AD user) and no wider. Users off-campus can still fetch it before
+    they have a tunnel, via DSM's web UI / File Station, which is reachable
+    US-wide (security.yml `geoip-US-web`). Don't close that without moving this.
+    """
+    for path in (CA_CRT,) + ((TA_KEY,) if _bool(a.tls_auth) else ()):
+        if not os.path.exists(path):
+            print("FAIL missing %s — is VPNCenter installed?" % path)
+            return 1
+
+    tls_block = ""
+    if _bool(a.tls_auth):
+        tls_block = TLS_AUTH_BLOCK.format(ta=_read(TA_KEY))
+
+    body = CLIENT_TEMPLATE.format(
+        host=a.host,
+        port=a.port,
+        proto=a.protocol,
+        vpn_ip=a.vpn_ip,
+        cipher=a.cipher,
+        auth_digest=a.auth_digest,
+        # comp-lzo is OFF by policy (VORACLE); say so rather than staying silent,
+        # since the server default ships it ON and a stale client would mismatch.
+        compression_line="# compression disabled by policy (VORACLE)",
+        ca=_read(CA_CRT),
+        tls_auth_block=tls_block,
+    )
+
+    if a.check:
+        print("WOULD-CHANGE publish %s (%d bytes)" % (a.dest, len(body)))
+        return 0
+
+    dest_dir = os.path.dirname(a.dest)
+    if not os.path.isdir(dest_dir):
+        print("FAIL destination share %s does not exist" % dest_dir)
+        return 1
+
+    if os.path.exists(a.dest) and _read(a.dest) == body:
+        print("OK no-change")
+        return 0
+
+    tmp = a.dest + ".tmp"
+    with open(tmp, "w") as fh:
+        fh.write(body)
+    # 0644: readable by @users (who have RO on the share) — the file is a shared
+    # secret only in the tls-auth sense, and its audience IS every AD user.
+    os.chmod(tmp, 0o644)
+    os.rename(tmp, a.dest)
+    print("CHANGED published %s" % a.dest)
+    return 0
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser()
+    sub = p.add_subparsers(dest="cmd")
+
+    def _sub(name):
+        # --check goes on EACH subparser, not the top level: the role invokes
+        # `apply_vpn.py <cmd> --args ... --check`, so a top-level flag would
+        # never parse. Matches apply_external_access.py.
+        sp = sub.add_parser(name)
+        sp.add_argument("--check", action="store_true")
+        return sp
+
+    _sub("package")
+
+    o = _sub("openvpn")
+    o.add_argument("--enable", required=True)
+    o.add_argument("--port", required=True)
+    o.add_argument("--protocol", required=True)
+    o.add_argument("--subnet", required=True)
+    o.add_argument("--netmask", required=True)
+    o.add_argument("--max-connections", required=True)
+    o.add_argument("--allow-lan", required=True)
+    o.add_argument("--push-dns", required=True)
+    o.add_argument("--ipv6", required=True)
+    o.add_argument("--cipher", required=True)
+    o.add_argument("--auth-digest", required=True)
+    o.add_argument("--compression", required=True)
+    o.add_argument("--tls-auth", required=True)
+    o.add_argument("--duplicate-cn", required=True)
+
+    v = _sub("privilege")
+    v.add_argument("--groups", required=True)
+
+    b = _sub("publish")
+    b.add_argument("--host", required=True)
+    b.add_argument("--vpn-ip", required=True)
+    b.add_argument("--port", required=True)
+    b.add_argument("--protocol", required=True)
+    b.add_argument("--cipher", required=True)
+    b.add_argument("--auth-digest", required=True)
+    b.add_argument("--tls-auth", required=True)
+    b.add_argument("--dest", required=True)
+
+    a = p.parse_args(argv)
+    handlers = {
+        "package": cmd_package,
+        "openvpn": cmd_openvpn,
+        "privilege": cmd_privilege,
+        "publish": cmd_publish,
+    }
+    if a.cmd not in handlers:
+        p.print_help()
+        return 2
+    try:
+        return handlers[a.cmd](a)
+    except (RuntimeError, OSError) as e:
+        print("FAIL %s" % str(e)[:300])
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
