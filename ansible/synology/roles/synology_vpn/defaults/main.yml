@@ -15,8 +15,8 @@ synology_export_dir: "/var/lib/krg-deploy/synology-export"
 # which fails deploy-pre, which skips the NixOS + tofu phases behind it.
 #
 # That is a discovery step wearing the costume of an outage. So it is opt-in:
-#   ansible-playbook playbook.yml -e synology_vpn_enabled=true --check --diff
-#   ansible-playbook playbook.yml -e synology_vpn_enabled=true --tags export
+#   ansible-playbook playbook.yml -e '{"synology_vpn_enabled": true}' --check --diff
+#   ansible-playbook playbook.yml -e '{"synology_vpn_enabled": true}' --tags export
 # Reconcile OUT_KEYS from the export, re-run until the openvpn step reports
 # `OK no-change`, wire up privilege, and only THEN flip this default to true.
 #

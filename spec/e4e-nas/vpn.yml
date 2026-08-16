@@ -283,9 +283,9 @@ client:
 #      UNATTENDED on merge, and an unreconciled OUT_KEYS fails the play and
 #      blocks the deploy phases behind it. See "merging IS applying" in
 #      CLAUDE.md. Drive it by hand:
-#          ansible-playbook playbook.yml -e synology_vpn_enabled=true --check --diff
-#          ansible-playbook playbook.yml -e synology_vpn_enabled=true
-#          ansible-playbook playbook.yml -e synology_vpn_enabled=true --tags export
+#          ansible-playbook playbook.yml -e '{"synology_vpn_enabled": true}' --check --diff
+#          ansible-playbook playbook.yml -e '{"synology_vpn_enabled": true}'
+#          ansible-playbook playbook.yml -e '{"synology_vpn_enabled": true}' --tags export
 #      Then reconcile OUT_KEYS in apply_vpn.py against the exported payload and
 #      re-run until the openvpn step reports `OK no-change`, THEN flip
 #      synology_vpn_enabled to true in the role defaults.
