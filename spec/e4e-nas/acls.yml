@@ -136,6 +136,34 @@ acls:
       - { group: administrators, access: rw }
       - { group: 'KRG\Junkyard-NAS', access: rw }
 
+  # `installers` — the VPN client-config distribution point
+  # (spec/e4e-nas/vpn.yml `client.publish_to`). DECISION 2026-08-17: everyone
+  # with NAS access gets READ-ONLY; only admins publish.
+  #
+  # Load-bearing for the VPN, not housekeeping. With `tls_auth: true` the
+  # published .ovpn embeds ta.key, making it a SHARED SECRET — the thing that
+  # drops internet scanners before they reach TLS. Its audience must be exactly
+  # the population allowed to use the VPN (the `KRG\Domain Users` grant in
+  # vpn.yml) and no wider, and it must never be anonymous.
+  #
+  # Until now that property existed ONLY as live state, declared nowhere: one
+  # UI edit from becoming world-readable with nothing in git to notice — the
+  # drift ADR 0001 exists to prevent.
+  #
+  # These four MIRROR the live ACL captured 2026-08-17 (`synoshare --list_acl
+  # installers`), so applying this changes nothing. All four are listed because
+  # the matrix is AUTHORITATIVE — omitting `administrators` would strip admin
+  # publish rights. `users` and `administrators` are bare because they are
+  # DSM-LOCAL groups (`users` contains domain users too); AD groups are
+  # `KRG\`-qualified, per the convention above.
+  - share: installers
+    path: /volume1/installers
+    grants:
+      - { group: users, access: ro }
+      - { group: administrators, access: rw }
+      - { group: 'KRG\Domain Admins', access: rw }
+      - { group: 'KRG\E4E Admin', access: rw }
+
 # Per-share schema (when populating):
 #   - share: maya
 #     path: /volume1/maya            # optional; defaults to /volume1/<share>
