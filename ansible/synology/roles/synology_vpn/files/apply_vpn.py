@@ -66,26 +66,71 @@ KEYS_DIR = "/usr/syno/etc/packages/VPNCenter/openvpn/keys"
 CA_CRT = os.path.join(KEYS_DIR, "ca.crt")
 TA_KEY = os.path.join(KEYS_DIR, "ta.key")
 
-# spec key -> (DSM field, kind). kind drives coercion; see the docstring.
-#   bool   real JSON boolean
-#   int01  0/1 integer used as a flag
-#   int    plain integer
-#   str    string
+# --- The write contract -------------------------------------------------------
+# Captured from the DSM UI's own Apply POST (DevTools HAR, 2026-08-17). This is
+# the ONLY authoritative source for it: `load` and `apply` do NOT use the same
+# schema, and nothing in the package or its libraries says so.
+#
+# TWO ASYMMETRIES, both of which produced a bare err 600 with no diagnostic:
+#
+#  1. WRITE-FORBIDDEN FIELDS. `load` returns 19 fields; `apply` accepts 15.
+#     serv_run, no_inter_cert and user_conf are read-only state — sending them
+#     back (the obvious "full-object push" the other DSM APIs demand) is
+#     rejected. So is the integer `serv_type` from the payload; serv_type is
+#     only ever the STRING discriminator on the call itself.
+#
+#  2. FLAGS ARE READ AS INTS AND WRITTEN AS BOOLS. comp_enable comes back as 1
+#     and must be sent as true; push_route_enable / tls_auth_key /
+#     verify_server_cn / enable_ipv6_server likewise. serv_enable, confusingly,
+#     is a real bool in BOTH directions. Coercing everything one way breaks the
+#     other; kinds below encode which is which.
+#
+# kinds:
+#   flag  read as 0/1 int, written as bool   (normalise to bool to compare)
+#   bool  bool in both directions
+#   int   integer
+#   str   JSON string
+WRITE_FIELDS = (
+    ("serv_enable", "bool"),
+    ("serv_ip", "str"),
+    ("serv_range", "int"),
+    ("comp_enable", "flag"),
+    ("push_route_enable", "flag"),
+    ("tls_auth_key", "flag"),
+    ("verify_server_cn", "flag"),
+    ("auth_conn", "int"),
+    ("port", "int"),
+    ("protocol", "str"),
+    ("encryption", "str"),
+    ("authentication", "str"),
+    ("enable_ipv6_server", "flag"),
+    ("ipv6_prefix", "str"),
+    ("mssfix_value", "int"),
+)
+WRITE_KIND = dict(WRITE_FIELDS)
+
+# Returned by `load` but REJECTED by `apply`. Named rather than merely omitted
+# so the next person sees this is deliberate.
+READ_ONLY_FIELDS = ("serv_run", "no_inter_cert", "user_conf", "serv_type")
+
+# spec key -> DSM field. Every one of these is in WRITE_FIELDS; the remaining
+# write fields (verify_server_cn, auth_conn, ipv6_prefix, mssfix_value) are not
+# spec-managed and pass through from the loaded object unchanged.
 FIELDS = {
-    "enabled": ("serv_enable", "bool"),
-    "port": ("port", "int"),
-    "protocol": ("protocol", "str"),
-    "subnet": ("serv_ip", "str"),
-    "max_connections": ("serv_range", "int"),
-    "allow_lan": ("push_route_enable", "int01"),
-    "ipv6": ("enable_ipv6_server", "int01"),
-    "cipher": ("encryption", "str"),
-    "auth_digest": ("authentication", "str"),
-    "compression": ("comp_enable", "int01"),
-    "tls_auth": ("tls_auth_key", "int01"),
+    "enabled": "serv_enable",
+    "port": "port",
+    "protocol": "protocol",
+    "subnet": "serv_ip",
+    "max_connections": "serv_range",
+    "allow_lan": "push_route_enable",
+    "ipv6": "enable_ipv6_server",
+    "cipher": "encryption",
+    "auth_digest": "authentication",
+    "compression": "comp_enable",
+    "tls_auth": "tls_auth_key",
 }
 
-# Spec keys with NO equivalent in this API — asserted here so a future edit to
+# Spec keys with NO equivalent in this API — asserted so a future edit to
 # vpn.yml doesn't silently expect them to be applied:
 #   netmask         the mask is implied; `serv_range` is max-clients, not a range
 #   push_dns        not exposed
@@ -126,11 +171,23 @@ def _bool(s):
     return str(s).strip().lower() in ("1", "true", "yes", "on")
 
 
-def _coerce(kind, value):
-    if kind == "bool":
-        return _bool(value) if not isinstance(value, bool) else value
-    if kind == "int01":
-        return 1 if (_bool(value) if not isinstance(value, bool) else value) else 0
+def _norm(field, value):
+    """Canonical form for COMPARISON. Flags are ints on read and bools on write,
+    so both sides are normalised to bool before diffing — otherwise 1 != True
+    and the role reports CHANGED forever."""
+    kind = WRITE_KIND.get(field, "str")
+    if kind in ("flag", "bool"):
+        return value if isinstance(value, bool) else _bool(value)
+    if kind == "int":
+        return int(value)
+    return str(value)
+
+
+def _wire(field, value):
+    """Value as DSM's `apply` wants it on the wire (see WRITE_FIELDS)."""
+    kind = WRITE_KIND.get(field, "str")
+    if kind in ("flag", "bool"):
+        return value if isinstance(value, bool) else _bool(value)
     if kind == "int":
         return int(value)
     return str(value)
@@ -144,12 +201,27 @@ def _fmt(value):
     return json.dumps(value)
 
 
-def _apply(api, items):
+def _apply(api, merged):
+    """Send EXACTLY the fields DSM's apply accepts, in the UI's own order.
+
+    Anything outside WRITE_FIELDS is dropped — including the read-only trio the
+    load payload carries. Sending them is what produced err 600.
+    """
     params = ['serv_type="%s"' % SERV_TYPE]
-    params += ["%s=%s" % (k, _fmt(v)) for k, v in sorted(items.items())]
+    for field, _kind in WRITE_FIELDS:
+        if field not in merged:
+            raise RuntimeError(
+                "apply is missing required field %r — the live object did not "
+                "provide it and it is not spec-managed" % field
+            )
+        params.append("%s=%s" % (field, _fmt(_wire(field, merged[field]))))
     resp = _exec(api, "version=1", "method=apply", *params)
     if not resp.get("success", False):
-        raise RuntimeError("%s apply failed: %s" % (api, json.dumps(resp.get("error"))))
+        err = json.dumps(resp.get("error"))
+        raise RuntimeError(
+            "%s apply failed: %s (600 here means a rejected field or type — "
+            "compare against WRITE_FIELDS)" % (api, err)
+        )
     return resp
 
 
@@ -244,10 +316,7 @@ def cmd_openvpn(a):
         print("FAIL %s load failed with err %s" % (CONFIG_API, err))
         return 1
 
-    desired = {}
-    for skey, raw in spec.items():
-        field, kind = FIELDS[skey]
-        desired[field] = _coerce(kind, raw)
+    desired = {FIELDS[skey]: raw for skey, raw in spec.items()}
 
     unknown = [k for k in desired if k not in current]
     if unknown:
@@ -259,7 +328,13 @@ def cmd_openvpn(a):
         )
         return 1
 
-    drift = {k: v for k, v in desired.items() if current.get(k) != v}
+    # Diff in NORMALISED space: flags come back as 0/1 ints but are written as
+    # bools, so a raw comparison would see 1 != True and never converge.
+    drift = {
+        field: _norm(field, raw)
+        for field, raw in desired.items()
+        if _norm(field, current[field]) != _norm(field, raw)
+    }
     if not drift:
         print("OK no-change")
         return 0
@@ -267,11 +342,12 @@ def cmd_openvpn(a):
         print("WOULD-CHANGE " + json.dumps(sorted(drift.keys())))
         return 0
 
-    # Full-object push: DSM's *.apply surfaces reject partial objects (err 2001),
-    # so send the loaded object with our fields overlaid.
-    target = dict(current)
-    target.update(desired)
-    _apply(CONFIG_API, target)
+    # Overlay our fields onto the loaded object; _apply then sends only the
+    # subset DSM's write contract accepts (WRITE_FIELDS), so the unmanaged
+    # fields ride through unchanged and the read-only ones are dropped.
+    merged = dict(current)
+    merged.update(desired)
+    _apply(CONFIG_API, merged)
     print("CHANGED " + json.dumps(sorted(drift.keys())))
     return 0
 
@@ -305,6 +381,46 @@ def cmd_privilege(a):
         "this guard — refusing to guess at an ACCESS-CONTROL payload."
     )
     return 1
+
+
+# --- service ------------------------------------------------------------------
+def cmd_service(a):
+    """Reconcile the DAEMON against the CONFIG.
+
+    Settings.Config.apply writes `serv_enable` but does NOT start openvpn:
+    after a successful apply the box sits at serv_enable=True, serv_run=False,
+    nothing bound to 1194 (observed 2026-08-17). The package has to be bounced
+    to pick the config up.
+
+    Declarative, not a one-shot: it restarts ONLY when the config says the
+    service should be up and the daemon isn't. A converged box reports
+    no-change, so this is safe to run every time.
+    """
+    current, err = _load(CONFIG_API)
+    if err is not None:
+        print("FAIL %s load failed with err %s" % (CONFIG_API, err))
+        return 1
+
+    want_up = _norm("serv_enable", current.get("serv_enable", False))
+    running = bool(current.get("serv_run", False))
+
+    if not want_up:
+        # Spec disables the server; the daemon being down is the desired state.
+        print("OK no-change openvpn disabled")
+        return 0
+    if running:
+        print("OK no-change openvpn running")
+        return 0
+    if a.check:
+        print("WOULD-CHANGE restart %s to start openvpn" % PKG)
+        return 0
+
+    out = _run([SYNOPKG, "restart", PKG])
+    if out.returncode != 0:
+        print("FAIL could not restart %s: %s" % (PKG, (out.stderr or out.stdout).strip()[:200]))
+        return 1
+    print("CHANGED restarted %s to start openvpn" % PKG)
+    return 0
 
 
 # --- dump (read-only schema capture) ------------------------------------------
@@ -454,6 +570,7 @@ def main(argv=None):
 
     _sub("package")
     _sub("dump")
+    _sub("service")
 
     o = _sub("openvpn")
     for flag in (
@@ -493,6 +610,7 @@ def main(argv=None):
         "openvpn": cmd_openvpn,
         "privilege": cmd_privilege,
         "dump": cmd_dump,
+        "service": cmd_service,
         "publish": cmd_publish,
     }
     if a.cmd not in handlers:
