@@ -46,27 +46,20 @@
     --port {{ vpn_spec.openvpn.port | default(1194) }}
     --protocol {{ vpn_spec.openvpn.protocol | default('udp') }}
     --subnet {{ vpn_spec.openvpn.subnet }}
-    --netmask {{ vpn_spec.openvpn.netmask }}
     --max-connections {{ vpn_spec.openvpn.max_connections | default(20) }}
     --allow-lan {{ vpn_spec.openvpn.allow_lan | default(false) }}
-    --push-dns {{ vpn_spec.openvpn.push_dns | default(false) }}
     --ipv6 {{ vpn_spec.openvpn.ipv6 | default(false) }}
     --cipher {{ vpn_spec.openvpn.cipher }}
     --auth-digest {{ vpn_spec.openvpn.auth_digest }}
     --compression {{ vpn_spec.openvpn.compression | default(false) }}
     --tls-auth {{ vpn_spec.openvpn.tls_auth | default(true) }}
-    --duplicate-cn {{ vpn_spec.openvpn.duplicate_cn | default(true) }}
-    --account {{ synology_admin_user | default("e4e-admin") | quote }}
-    --password {{ nas_admin_password | quote }}
     {{ "--check" if ansible_check_mode else "" }}
   register: vpn_conf
-  no_log: true        # password on argv
   changed_when: "'CHANGED' in vpn_conf.stdout or 'WOULD-CHANGE' in vpn_conf.stdout"
   failed_when: "vpn_conf.rc != 0 or 'FAIL' in vpn_conf.stdout"
   check_mode: false
   when:
     - synology_vpn_enabled | default(false) | bool
-    - nas_admin_password | default("") | length > 0
 
 # ⚠️ GATED OFF by default. The Management.Account object shape is unconfirmed —
 # the API only became readable once this role first started the package. The
@@ -83,15 +76,11 @@
     cmd: >-
       apply_vpn.py privilege
       --groups {{ vpn_spec.openvpn.privilege.grant | map(attribute="entity_name") | list | to_json | quote }}
-      --account {{ synology_admin_user | default("e4e-admin") | quote }}
-      --password {{ nas_admin_password | quote }}
       {{ "--check" if ansible_check_mode else "" }}
   register: vpn_priv
-  no_log: true        # password on argv
   when:
     - synology_vpn_enabled | default(false) | bool
     - synology_vpn_privilege_enabled | default(false) | bool
-    - nas_admin_password | default("") | length > 0
   changed_when: "'CHANGED' in vpn_priv.stdout or 'WOULD-CHANGE' in vpn_priv.stdout"
   failed_when: "vpn_priv.rc != 0 or 'FAIL' in vpn_priv.stdout"
   check_mode: false
@@ -124,24 +113,12 @@
   failed_when: "vpn_pub.rc != 0 or 'FAIL' in vpn_pub.stdout"
   check_mode: false
 
-- name: Warn when no NAS admin password supplied (VPN config skipped)
-  ansible.builtin.debug:
-    msg: >-
-      nas_admin_password not supplied — VPN server config SKIPPED. The
-      SYNO.VPNServer.* APIs need a DSM web session (the synowebapi CLI runner
-      returns err 600 on Settings.Config.load), so there is no credential-free
-      path. Re-run with `-e nas_admin_password=<e4e-admin password>` (or via
-      -e @~/.config/krg/secrets-syno.yml, which carries
-      synology_user_passwords.e4e-admin).
-  when:
-    - synology_vpn_enabled | default(false) | bool
-    - nas_admin_password | default("") | length == 0
-
 # --- Schema capture (read-only, cannot fail the deploy) ------------------------
-# Runs in CD on purpose. deploy-ansible.sh already brokers nas_admin_password out
-# of OpenBao, so this is the one place a DSM web session exists without a human
-# handling a password — and `dump` only READS and always exits 0, so it cannot
-# break a deploy the way enabling the config tasks would.
+# OFF by default now that the schema is known and mapped. Kept because it is
+# what broke the err-600 deadlock: it proved the failure was not transport-
+# related, which is what sent us hunting for a missing parameter. Flip
+# synology_vpn_discover on for one deploy the next time DSM returns something
+# inexplicable — it only READS and always exits 0, so it cannot break anything.
 #
 # The password goes via `environment:` rather than argv so the task does NOT need
 # no_log — which matters, because the whole point is to get the payload into the
@@ -152,15 +129,12 @@
 - name: Dump the live VPNServer schema (read-only)
   ansible.builtin.script:
     cmd: apply_vpn.py dump
-  environment:
-    DSM_PASSWORD: "{{ nas_admin_password | default('') }}"
   register: vpn_dump
   changed_when: false
   failed_when: false      # belt: the script already always exits 0
   check_mode: false
   when:
     - synology_vpn_discover | default(true) | bool
-    - nas_admin_password | default("") | length > 0
 
 - name: Show the captured VPNServer schema
   ansible.builtin.debug:
