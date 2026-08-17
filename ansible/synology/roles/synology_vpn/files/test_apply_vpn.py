@@ -116,24 +116,11 @@ def test_openvpn_kills_comp_lzo_and_moves_subnet(monkeypatch, capsys):
     monkeypatch.setattr(m, "_exec", fake)
     assert m.main(SPEC_ARGS) == 0
     joined = " ".join(captured[0][1])
-    assert "comp_enable=0" in joined
+    assert "comp_enable=false" in joined  # bool on the wire, int on read
     assert 'serv_ip="10.90.24.0"' in joined
     assert "serv_range=20" in joined
     drifted = json.loads(capsys.readouterr().out.split(" ", 1)[1])
     assert "comp_enable" in drifted and "serv_ip" in drifted
-
-
-def test_int01_flags_are_pushed_as_ints_not_bools(monkeypatch):
-    """comp_enable/tls_auth_key/push_route_enable are 0/1 ints in DSM. Pushing
-    JSON booleans is accepted but never compares equal again, so the role would
-    report CHANGED on every single run and never converge."""
-    fake, captured = _factory(LIVE)
-    monkeypatch.setattr(m, "_exec", fake)
-    assert m.main(SPEC_ARGS) == 0
-    joined = " ".join(captured[0][1])
-    for flag in ("comp_enable", "tls_auth_key", "push_route_enable", "enable_ipv6_server"):
-        assert "%s=true" % flag not in joined and "%s=false" % flag not in joined
-    assert "tls_auth_key=1" in joined
 
 
 def test_serv_enable_stays_a_real_bool(monkeypatch):
@@ -419,3 +406,121 @@ def test_package_no_change_when_running(monkeypatch, capsys):
     assert m.main(["package"]) == 0
     assert "OK no-change" in capsys.readouterr().out
     assert not any("start" in c for c in calls)
+
+
+# --- write contract (captured from the DSM UI's own Apply POST, 2026-08-17) ---
+# `load` returns 19 fields; `apply` accepts 15, and flags flip int->bool across
+# the two. Both asymmetries produced a bare err 600 with no diagnostic.
+
+
+def test_apply_sends_flags_as_bools_not_ints(monkeypatch):
+    """comp_enable reads back as 1 but MUST be written as true."""
+    fake, captured = _factory(LIVE)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(SPEC_ARGS) == 0
+    joined = " ".join(captured[0][1])
+    assert "comp_enable=false" in joined  # spec turns it off
+    assert "tls_auth_key=true" in joined  # spec turns it on
+    for flag in ("comp_enable", "tls_auth_key", "push_route_enable", "enable_ipv6_server"):
+        assert "%s=0" % flag not in joined and "%s=1" % flag not in joined
+
+
+def test_apply_omits_read_only_fields(monkeypatch):
+    """serv_run / no_inter_cert / user_conf / the integer serv_type come back
+    from load but are REJECTED by apply — sending them is what caused 600."""
+    fake, captured = _factory(LIVE)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(SPEC_ARGS) == 0
+    joined = " ".join(captured[0][1])
+    for field in ("serv_run", "no_inter_cert", "user_conf"):
+        assert field + "=" not in joined
+    # serv_type appears exactly once, as the string discriminator
+    assert joined.count("serv_type=") == 1 and 'serv_type="openvpn"' in joined
+
+
+def test_apply_sends_exactly_the_captured_field_set(monkeypatch):
+    fake, captured = _factory(LIVE)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(SPEC_ARGS) == 0
+    sent = {p.split("=")[0] for p in captured[0][1] if "=" in p}
+    sent -= {"version", "method", "serv_type"}
+    assert sent == {f for f, _k in m.WRITE_FIELDS}
+
+
+def test_unmanaged_write_fields_pass_through_unchanged(monkeypatch):
+    """verify_server_cn / auth_conn / ipv6_prefix / mssfix_value are required by
+    apply but not spec-managed: they must ride through from the loaded object."""
+    fake, captured = _factory(LIVE)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(SPEC_ARGS) == 0
+    joined = " ".join(captured[0][1])
+    assert "mssfix_value=1450" in joined and "auth_conn=3" in joined
+    assert "verify_server_cn=false" in joined  # int 0 in, bool out
+
+
+def test_serv_enable_is_bool_in_both_directions(monkeypatch):
+    """serv_enable is the exception: a real bool on read AND write."""
+    fake, captured = _factory(LIVE)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(SPEC_ARGS) == 0
+    assert "serv_enable=true" in " ".join(captured[0][1])
+
+
+def test_converges_when_live_matches_spec_despite_int_flags(monkeypatch, capsys):
+    """The live payload stores flags as ints while the spec thinks in bools.
+    A converged box must report no-change, not CHANGED forever."""
+    converged = dict(LIVE)
+    converged.update(
+        {
+            "serv_enable": True,
+            "serv_ip": "10.90.24.0",
+            "serv_range": 20,
+            "encryption": "AES-256-CBC",
+            "comp_enable": 0,  # int, as DSM stores it
+            "tls_auth_key": 1,  # int, as DSM stores it
+        }
+    )
+    fake, captured = _factory(converged)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(SPEC_ARGS) == 0
+    assert "OK no-change" in capsys.readouterr().out
+    assert captured == []
+
+
+def test_service_restarts_only_when_enabled_but_down(monkeypatch, capsys):
+    """Settings.Config.apply writes serv_enable but does NOT start openvpn."""
+    down = dict(LIVE)
+    down.update({"serv_enable": True, "serv_run": False})
+    fake, _ = _factory(down)
+    calls = []
+    monkeypatch.setattr(m, "_exec", fake)
+    monkeypatch.setattr(m, "_run", lambda cmd: calls.append(cmd) or _Res(0))
+    assert m.main(["service"]) == 0
+    assert capsys.readouterr().out.startswith("CHANGED")
+    assert any("restart" in c for c in calls)
+
+
+def test_service_is_noop_when_running(monkeypatch, capsys):
+    up = dict(LIVE)
+    up.update({"serv_enable": True, "serv_run": True})
+    fake, _ = _factory(up)
+    calls = []
+    monkeypatch.setattr(m, "_exec", fake)
+    monkeypatch.setattr(m, "_run", lambda cmd: calls.append(cmd) or _Res(0))
+    assert m.main(["service"]) == 0
+    assert "OK no-change" in capsys.readouterr().out
+    assert calls == []
+
+
+def test_service_leaves_daemon_down_when_spec_disables(monkeypatch, capsys):
+    """A disabled server must NOT be started — the daemon being down is the
+    desired state, not drift to correct."""
+    off = dict(LIVE)
+    off.update({"serv_enable": False, "serv_run": False})
+    fake, _ = _factory(off)
+    calls = []
+    monkeypatch.setattr(m, "_exec", fake)
+    monkeypatch.setattr(m, "_run", lambda cmd: calls.append(cmd) or _Res(0))
+    assert m.main(["service"]) == 0
+    assert "OK no-change" in capsys.readouterr().out
+    assert calls == []

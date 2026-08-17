@@ -61,6 +61,20 @@
   when:
     - synology_vpn_enabled | default(false) | bool
 
+# Settings.Config.apply writes serv_enable but does NOT start the daemon — a
+# freshly-applied box sits at serv_enable=True / serv_run=False with nothing
+# bound. This bounces the package only when the config says up and the daemon
+# is down, so a converged box is a no-op.
+- name: Start the OpenVPN daemon if the config enables it
+  ansible.builtin.script: >-
+    apply_vpn.py service
+    {{ '--check' if ansible_check_mode else '' }}
+  register: vpn_svc
+  changed_when: "'CHANGED' in vpn_svc.stdout or 'WOULD-CHANGE' in vpn_svc.stdout"
+  failed_when: "vpn_svc.rc != 0 or 'FAIL' in vpn_svc.stdout"
+  check_mode: false
+  when: synology_vpn_enabled | default(false) | bool
+
 # ⚠️ GATED OFF by default. The Management.Account object shape is unconfirmed —
 # the API only became readable once this role first started the package. The
 # subcommand dumps the live object (LIVE-ACCOUNT-OBJECT) and then refuses to
