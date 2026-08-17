@@ -179,7 +179,11 @@ def cmd_package(a):
     if status is None:
         print("FAIL synopkg status returned no `status`: %s" % json.dumps(data)[:200])
         return 1
-    if status == "start":
+    # DSM's running sentinel is "running" — NOT "start", which was guessed and
+    # never verified. Measured: stopped -> "stop" (rc 17), running -> "running"
+    # (rc 0). Matching only "start" made this report CHANGED on every run and
+    # re-issue `synopkg start` against an already-running package.
+    if status in ("running", "start", "started"):
         print("OK no-change package running")
         return 0
     if a.check:
