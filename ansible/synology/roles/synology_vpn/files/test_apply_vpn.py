@@ -7,30 +7,34 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 import apply_vpn as m  # noqa: E402
 
-# A live Settings.Config object keyed by the CURRENT best-known OUT_KEYS, with
-# the values DSM actually ships (see the module docstring): 10.8.0.0/24, 5
-# clients, comp-lzo ON, LAN access off.
+# The REAL Settings.Config payload, captured from e4e-nas (DSM 7.3.2,
+# VPNCenter 1.4.10-2984, 2026-08-16). Note the mixed types — serv_enable is a
+# JSON bool while comp_enable/push_route_enable/tls_auth_key are 0/1 ints. That
+# asymmetry is the idempotence trap these tests exist to pin down.
 LIVE = {
-    m.OUT_KEYS["enabled"]: False,
-    m.OUT_KEYS["port"]: 1194,
-    m.OUT_KEYS["protocol"]: "udp",
-    m.OUT_KEYS["subnet"]: "10.8.0.0",
-    m.OUT_KEYS["netmask"]: "255.255.255.0",
-    m.OUT_KEYS["max_connections"]: 5,
-    m.OUT_KEYS["allow_lan"]: False,
-    m.OUT_KEYS["push_dns"]: False,
-    m.OUT_KEYS["ipv6"]: False,
-    m.OUT_KEYS["cipher"]: "AES-256-CBC",
-    m.OUT_KEYS["auth_digest"]: "SHA512",
-    m.OUT_KEYS["compression"]: True,
-    m.OUT_KEYS["tls_auth"]: False,
-    m.OUT_KEYS["duplicate_cn"]: True,
+    "auth_conn": 3,
+    "authentication": "SHA512",
+    "comp_enable": 1,
+    "enable_ipv6_server": 0,
+    "encryption": "AUTO",
+    "ipv6_prefix": "",
+    "mssfix_value": 1450,
+    "no_inter_cert": False,
+    "port": 1194,
+    "protocol": "udp",
+    "push_route_enable": 0,
+    "serv_enable": False,
+    "serv_ip": "10.8.0.0",
+    "serv_range": 5,
+    "serv_run": False,
+    "serv_type": 3,
+    "tls_auth_key": 0,
+    "user_conf": False,
+    "verify_server_cn": 0,
 }
 
 SPEC_ARGS = [
     "openvpn",
-    "--password",
-    "s3cret",
     "--enable",
     "true",
     "--port",
@@ -39,96 +43,124 @@ SPEC_ARGS = [
     "udp",
     "--subnet",
     "10.90.24.0",
-    "--netmask",
-    "255.255.255.0",
     "--max-connections",
     "20",
     "--allow-lan",
     "false",
-    "--push-dns",
-    "false",
     "--ipv6",
     "false",
     "--cipher",
-    "AES-256-GCM",
+    "AES-256-CBC",
     "--auth-digest",
     "SHA512",
     "--compression",
     "false",
     "--tls-auth",
     "true",
-    "--duplicate-cn",
-    "true",
 ]
 
 
 def _factory(live, err=None):
-    """Fake DSMSession. The VPNServer APIs need a web session, so the unit under
-    test is `sess.call(...)`, not a synowebapi argv."""
+    captured = []
 
-    class _FakeSession(object):
-        def __init__(self):
-            self.calls = []
+    def fake(api, *params):
+        if "method=load" in params:
+            if err is not None:
+                return {"success": False, "error": {"code": err}}
+            return {"success": True, "data": {"items": dict(live)}}
+        captured.append((api, params))
+        return {"success": True}
 
-        def __enter__(self):
-            return self
+    return fake, captured
 
-        def __exit__(self, *exc):
-            return False
 
-        def call(self, api, method, version=1, **params):
-            if method == "load":
-                if err is not None:
-                    return {"success": False, "error": {"code": err}}
-                return {"success": True, "data": dict(live)}
-            self.calls.append((api, method, params))
-            return {"success": True}
+def test_load_unwraps_data_items(monkeypatch):
+    """`load` returns {"data": {"items": {...}}} — reading data directly yields
+    a dict of one useless key."""
+    fake, _ = _factory(LIVE)
+    monkeypatch.setattr(m, "_exec", fake)
+    items, err = m._load(m.CONFIG_API)
+    assert err is None
+    assert items["serv_ip"] == "10.8.0.0"
 
-    fake = _FakeSession()
-    return fake, fake.calls
+
+def test_load_sends_mandatory_serv_type(monkeypatch):
+    """Omitting serv_type is what produced err 600 for a day."""
+    seen = {}
+
+    def fake(api, *params):
+        seen["params"] = params
+        return {"success": True, "data": {"items": dict(LIVE)}}
+
+    monkeypatch.setattr(m, "_exec", fake)
+    m._load(m.CONFIG_API)
+    assert 'serv_type="openvpn"' in seen["params"]
 
 
 def test_openvpn_pushes_full_object_on_drift(monkeypatch, capsys):
     fake, captured = _factory(LIVE)
-    monkeypatch.setattr(m, "_session", lambda a: fake)
-    rc = m.main(SPEC_ARGS)
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert out.startswith("CHANGED")
-    api, method, params = captured[0]
-    assert api == m.CONFIG_API and method == "apply"
-    # full-object push: unchanged keys ride along, not just the drifted ones
-    assert len(params) >= len(LIVE)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(SPEC_ARGS) == 0
+    assert capsys.readouterr().out.startswith("CHANGED")
+    _, params = captured[0]
+    joined = " ".join(params)
+    assert "method=apply" in joined and 'serv_type="openvpn"' in joined
+    # full-object push: untouched fields ride along (err 2001 on partial)
+    assert "mssfix_value=1450" in joined and "auth_conn=3" in joined
 
 
 def test_openvpn_kills_comp_lzo_and_moves_subnet(monkeypatch, capsys):
-    """The two drift items that matter: DSM ships comp-lzo ON (VORACLE) and
-    10.8.0.0/24 (collides with client home LANs)."""
+    """The two drift items that matter: DSM ships comp_enable=1 (VORACLE) and
+    10.8.0.0/24, which collides with client home LANs."""
     fake, captured = _factory(LIVE)
-    monkeypatch.setattr(m, "_session", lambda a: fake)
+    monkeypatch.setattr(m, "_exec", fake)
     assert m.main(SPEC_ARGS) == 0
-    params = captured[0][2]
-    assert params[m.OUT_KEYS["compression"]] is False
-    assert params[m.OUT_KEYS["subnet"]] == "10.90.24.0"
+    joined = " ".join(captured[0][1])
+    assert "comp_enable=0" in joined
+    assert 'serv_ip="10.90.24.0"' in joined
+    assert "serv_range=20" in joined
     drifted = json.loads(capsys.readouterr().out.split(" ", 1)[1])
-    assert m.OUT_KEYS["compression"] in drifted
-    assert m.OUT_KEYS["subnet"] in drifted
+    assert "comp_enable" in drifted and "serv_ip" in drifted
 
 
-def test_openvpn_no_change_when_converged(monkeypatch, capsys):
+def test_int01_flags_are_pushed_as_ints_not_bools(monkeypatch):
+    """comp_enable/tls_auth_key/push_route_enable are 0/1 ints in DSM. Pushing
+    JSON booleans is accepted but never compares equal again, so the role would
+    report CHANGED on every single run and never converge."""
+    fake, captured = _factory(LIVE)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(SPEC_ARGS) == 0
+    joined = " ".join(captured[0][1])
+    for flag in ("comp_enable", "tls_auth_key", "push_route_enable", "enable_ipv6_server"):
+        assert "%s=true" % flag not in joined and "%s=false" % flag not in joined
+    assert "tls_auth_key=1" in joined
+
+
+def test_serv_enable_stays_a_real_bool(monkeypatch):
+    """...while serv_enable genuinely IS a bool. Coercing everything one way
+    would just move the bug."""
+    fake, captured = _factory(LIVE)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(SPEC_ARGS) == 0
+    assert "serv_enable=true" in " ".join(captured[0][1])
+
+
+def test_openvpn_converges_to_no_change(monkeypatch, capsys):
+    """Second run against the state the first run produced must be a no-op —
+    the property that proves the type coercion is right."""
     converged = dict(LIVE)
     converged.update(
         {
-            m.OUT_KEYS["enabled"]: True,
-            m.OUT_KEYS["subnet"]: "10.90.24.0",
-            m.OUT_KEYS["max_connections"]: 20,
-            m.OUT_KEYS["cipher"]: "AES-256-GCM",
-            m.OUT_KEYS["compression"]: False,
-            m.OUT_KEYS["tls_auth"]: True,
+            "serv_enable": True,
+            "serv_ip": "10.90.24.0",
+            "serv_range": 20,
+            "encryption": "AES-256-CBC",
+            "comp_enable": 0,
+            "tls_auth_key": 1,
         }
     )
     fake, captured = _factory(converged)
-    monkeypatch.setattr(m, "_session", lambda a: fake)
+    monkeypatch.setattr(m, "_exec", fake)
     assert m.main(SPEC_ARGS) == 0
     assert "OK no-change" in capsys.readouterr().out
     assert captured == []
@@ -136,7 +168,7 @@ def test_openvpn_no_change_when_converged(monkeypatch, capsys):
 
 def test_openvpn_check_mode_does_not_apply(monkeypatch, capsys):
     fake, captured = _factory(LIVE)
-    monkeypatch.setattr(m, "_session", lambda a: fake)
+    monkeypatch.setattr(m, "_exec", fake)
     assert m.main(SPEC_ARGS + ["--check"]) == 0
     assert capsys.readouterr().out.startswith("WOULD-CHANGE")
     assert captured == []
@@ -146,7 +178,7 @@ def test_openvpn_refuses_allow_lan(monkeypatch, capsys):
     """allow_lan=true would make the NAS a router onto the campus subnet. The
     guard must fire BEFORE any API call."""
     fake, captured = _factory(LIVE)
-    monkeypatch.setattr(m, "_session", lambda a: fake)
+    monkeypatch.setattr(m, "_exec", fake)
     args = list(SPEC_ARGS)
     args[args.index("--allow-lan") + 1] = "true"
     assert m.main(args) == 1
@@ -155,28 +187,43 @@ def test_openvpn_refuses_allow_lan(monkeypatch, capsys):
     assert captured == []
 
 
-def test_openvpn_stopped_package_gives_actionable_error(monkeypatch, capsys):
+def test_err_600_blames_parameters_not_transport(monkeypatch, capsys):
+    """600 cost a day by being read as 'needs a web session'. The message must
+    point at the real cause."""
+    fake, _ = _factory(LIVE, err=m.ERR_BAD_PARAMS)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(SPEC_ARGS) == 1
+    out = capsys.readouterr().out
+    assert "serv_type" in out and "NOT a" in out
+
+
+def test_err_102_points_at_the_stopped_package(monkeypatch, capsys):
     fake, _ = _factory(LIVE, err=m.ERR_API_NOT_EXIST)
-    monkeypatch.setattr(m, "_session", lambda a: fake)
+    monkeypatch.setattr(m, "_exec", fake)
     assert m.main(SPEC_ARGS) == 1
-    out = capsys.readouterr().out
-    assert out.startswith("FAIL") and "package" in out
+    assert "package" in capsys.readouterr().out
 
 
-def test_openvpn_stale_out_keys_fails_loudly(monkeypatch, capsys):
-    """A renamed DSM field must NOT silently configure nothing."""
-    stale = {k: v for k, v in LIVE.items() if k != m.OUT_KEYS["compression"]}
+def test_stale_field_map_fails_loudly(monkeypatch, capsys):
+    stale = {k: v for k, v in LIVE.items() if k != "comp_enable"}
     fake, captured = _factory(stale)
-    monkeypatch.setattr(m, "_session", lambda a: fake)
+    monkeypatch.setattr(m, "_exec", fake)
     assert m.main(SPEC_ARGS) == 1
     out = capsys.readouterr().out
-    assert out.startswith("FAIL") and "OUT_KEYS mismatch" in out
+    assert out.startswith("FAIL") and "field mismatch" in out
     assert captured == []
+
+
+def test_unsupported_spec_keys_are_declared():
+    """netmask/push_dns/duplicate_cn/tls_min_version have no DSM equivalent.
+    Recorded so nobody adds them to FIELDS expecting them to apply."""
+    for key in m.UNSUPPORTED:
+        assert key not in m.FIELDS
 
 
 def test_privilege_refuses_to_guess(monkeypatch, capsys):
     fake, captured = _factory({"accounts": []})
-    monkeypatch.setattr(m, "_session", lambda a: fake)
+    monkeypatch.setattr(m, "_exec", fake)
     rc = m.main(["privilege", "--groups", json.dumps(["KRG\\Domain Users"])])
     assert rc == 1
     out = capsys.readouterr().out
@@ -184,9 +231,46 @@ def test_privilege_refuses_to_guess(monkeypatch, capsys):
     assert captured == []
 
 
-def test_privilege_rejects_empty_groups(monkeypatch, capsys):
+def test_privilege_rejects_empty_groups(capsys):
     assert m.main(["privilege", "--groups", "[]"]) == 1
     assert capsys.readouterr().out.startswith("FAIL")
+
+
+def test_dump_never_returns_nonzero(monkeypatch, capsys):
+    def boom(api, *params):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(m, "_exec", boom)
+    assert m.main(["dump"]) == 0
+    out = capsys.readouterr().out
+    assert "dump-error" in out
+    assert "FAIL" not in out and "CHANGED" not in out
+
+
+def test_dump_prints_key_names_and_redacts(monkeypatch, capsys):
+    secretish = dict(LIVE)
+    secretish.update({"ovpn_ca_cert": "-----BEGIN CERT", "admin_password": "hunter2"})
+    fake, _ = _factory(secretish)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(["dump"]) == 0
+    out = capsys.readouterr().out
+    assert "SCHEMA" in out and "serv_ip" in out
+    assert "hunter2" not in out and "BEGIN CERT" not in out
+    assert "<redacted>" in out
+    assert "admin_password" in out  # key NAMES survive — the point of a dump
+
+
+def test_exec_strips_line_preamble(monkeypatch):
+    """synowebapi's `[Line NNN] Exec WebAPI: ... param={...}` preamble contains
+    a brace; naive first-`{` scanning parses the wrong object."""
+
+    class R:
+        returncode = 0
+        stdout = '[Line 295] Exec WebAPI: api=X, param={"a":1}\n{"success":true,"data":{"b":2}}'
+        stderr = ""
+
+    monkeypatch.setattr(m, "_run", lambda cmd: R())
+    assert m._exec("X", "method=load") == {"success": True, "data": {"b": 2}}
 
 
 PUBLISH_ARGS = [
@@ -200,7 +284,7 @@ PUBLISH_ARGS = [
     "--protocol",
     "udp",
     "--cipher",
-    "AES-256-GCM",
+    "AES-256-CBC",
     "--auth-digest",
     "SHA512",
     "--tls-auth",
@@ -266,48 +350,15 @@ def test_publish_fails_on_missing_share(monkeypatch, tmp_path, capsys):
     assert "does not exist" in capsys.readouterr().out
 
 
-def test_package_starts_when_stopped(monkeypatch, capsys):
-    calls = []
-
-    class R:
-        def __init__(self, rc, out=""):
-            self.returncode, self.stdout, self.stderr = rc, out, ""
-
-    def fake_run(cmd):
-        calls.append(cmd)
-        if "status" in cmd:
-            return R(0, '{"package":"VPNCenter","status":"stop"}')
-        return R(0)
-
-    monkeypatch.setattr(m, "_run", fake_run)
-    assert m.main(["package"]) == 0
-    assert capsys.readouterr().out.startswith("CHANGED")
-    assert any("start" in c for c in calls)
-
-
-def test_package_no_change_when_running(monkeypatch, capsys):
-    class R:
-        def __init__(self, rc, out=""):
-            self.returncode, self.stdout, self.stderr = rc, out, ""
-
-    monkeypatch.setattr(m, "_run", lambda cmd: R(0, '{"status":"start"}'))
-    assert m.main(["package"]) == 0
-    assert "OK no-change" in capsys.readouterr().out
-
-
 class _Res:
     def __init__(self, rc, out=""):
         self.returncode, self.stdout, self.stderr = rc, out, ""
 
 
-# Real payloads captured from DSM 7.3.2 (e4e-nas, 2026-08-16). The exit codes
-# are the point: synopkg signals package STATE through rc, so rc != 0 does not
-# mean "absent".
 STOPPED_RC, STOPPED_OUT = (
     17,
     (
         '{"aspect":{"active":{"status":"stop","status_code":273}},'
-        '"description":"Status: [273], package is stopped",'
         '"package":"VPNCenter","status":"stop"}'
     ),
 )
@@ -315,17 +366,14 @@ ABSENT_RC, ABSENT_OUT = (
     255,
     (
         '{"aspect":{"active":{"status":"stop","status_code":273},'
-        '"error":{"status":"non_installed","status_code":255,'
-        '"status_description":"failed to locate package"}},'
+        '"error":{"status":"non_installed","status_code":255}},'
         '"package":"NoSuchPkg","status":"stop"}'
     ),
 )
 
 
 def test_package_stopped_is_not_mistaken_for_absent(monkeypatch, capsys):
-    """rc=17 means installed-but-stopped. Treating non-zero rc as 'not
-    installed' made the role refuse to start the very package it exists to
-    start."""
+    """rc=17 means installed-but-stopped."""
     calls = []
 
     def fake_run(cmd):
@@ -338,14 +386,7 @@ def test_package_stopped_is_not_mistaken_for_absent(monkeypatch, capsys):
     assert any("start" in c for c in calls)
 
 
-def test_package_absent_is_detected_by_error_key(monkeypatch, capsys):
-    monkeypatch.setattr(m, "_run", lambda cmd: _Res(ABSENT_RC, ABSENT_OUT))
-    assert m.main(["package"]) == 1
-    out = capsys.readouterr().out
-    assert out.startswith("FAIL") and "not installed" in out
-
-
-def test_package_absent_never_attempts_start(monkeypatch):
+def test_package_absent_never_attempts_start(monkeypatch, capsys):
     calls = []
 
     def fake_run(cmd):
@@ -354,72 +395,11 @@ def test_package_absent_never_attempts_start(monkeypatch):
 
     monkeypatch.setattr(m, "_run", fake_run)
     assert m.main(["package"]) == 1
+    assert "not installed" in capsys.readouterr().out
     assert not any("start" in c for c in calls)
 
 
-def test_package_unparseable_status_fails_cleanly(monkeypatch, capsys):
-    monkeypatch.setattr(m, "_run", lambda cmd: _Res(1, "synopkg: command not found"))
-    assert m.main(["package"]) == 1
-    assert "could not parse" in capsys.readouterr().out
-
-
-def test_openvpn_without_password_fails_clearly(monkeypatch, capsys):
-    """The VPNServer APIs need a web session; a missing password must say so
-    rather than surfacing as a connection error."""
-    monkeypatch.delenv("DSM_PASSWORD", raising=False)
-    args = [x for x in SPEC_ARGS if x != "s3cret"]
-    args.remove("--password")
-    assert m.main(args) == 1
-    out = capsys.readouterr().out
-    assert out.startswith("FAIL") and "password" in out
-
-
-def test_password_can_come_from_env(monkeypatch):
-    """Lets an operator keep the secret off argv."""
-    monkeypatch.setenv("DSM_PASSWORD", "from-env")
-    captured = {}
-
-    class A:
-        account = "e4e-admin"
-        password = ""
-
-    monkeypatch.setattr(m, "DSMSession", lambda **kw: captured.update(kw) or object())
-    m._session(A())
-    assert captured["password"] == "from-env"
-
-
-def test_dump_never_returns_nonzero_even_on_error(monkeypatch, capsys):
-    """`dump` runs unattended in CD. It must not be able to fail a deploy."""
-
-    def boom(a):
-        raise m.DSMError("login failed (code=400)")
-
-    monkeypatch.setattr(m, "_session", boom)
-    assert m.main(["dump", "--password", "s3cret"]) == 0
-    out = capsys.readouterr().out
-    assert "dump-error" in out
-    # must not trip the role's sentinel greps
-    assert "FAIL" not in out and "CHANGED" not in out
-
-
-def test_dump_prints_key_names(monkeypatch, capsys):
-    fake, _ = _factory(LIVE)
-    monkeypatch.setattr(m, "_session", lambda a: fake)
-    assert m.main(["dump", "--password", "s3cret"]) == 0
-    out = capsys.readouterr().out
-    assert "SCHEMA" in out
-    assert m.OUT_KEYS["subnet"] in out
-    assert "FAIL" not in out and "CHANGED" not in out
-
-
-def test_dump_redacts_secret_looking_values(monkeypatch, capsys):
-    secretish = dict(LIVE)
-    secretish.update({"ovpn_ca_cert": "-----BEGIN CERT", "admin_password": "hunter2"})
-    fake, _ = _factory(secretish)
-    monkeypatch.setattr(m, "_session", lambda a: fake)
-    assert m.main(["dump", "--password", "s3cret"]) == 0
-    out = capsys.readouterr().out
-    assert "hunter2" not in out and "BEGIN CERT" not in out
-    assert "<redacted>" in out
-    # key NAMES still survive — that is the whole point of the dump
-    assert "admin_password" in out and "ovpn_ca_cert" in out
+def test_package_no_change_when_running(monkeypatch, capsys):
+    monkeypatch.setattr(m, "_run", lambda cmd: _Res(0, '{"status":"start"}'))
+    assert m.main(["package"]) == 0
+    assert "OK no-change" in capsys.readouterr().out

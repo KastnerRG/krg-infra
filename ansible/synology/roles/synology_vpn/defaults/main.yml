@@ -31,12 +31,17 @@ synology_vpn_enabled: false
 # synology_vpn_enabled flips, until the mapping is filled in.
 synology_vpn_privilege_enabled: false
 
-# Read-only schema capture. ON by default and safe to leave on: `dump` only
-# calls `load`, redacts secret-looking values, and always exits 0 — it cannot
-# fail a deploy. It exists because OUT_KEYS can only be confirmed from a live
-# payload, the payload needs a DSM web session, and CD is the one place that
-# credential legitimately exists (deploy-ansible.sh brokers it from OpenBao).
+# Read-only schema capture. OFF: the schema is known and mapped in
+# apply_vpn.py FIELDS (captured live 2026-08-16).
 #
-# TEMPORARY — set false once OUT_KEYS is reconciled. There is no reason to keep
-# logging into DSM on every deploy after that.
-synology_vpn_discover: true
+# Kept rather than deleted because it is what broke the err-600 deadlock. The
+# 600 was read as "this API needs an authenticated web session" — by analogy
+# with Firewall.Profile, which genuinely does — and an inlined HTTP client was
+# built on that theory. `dump` running over the SAME transport and ALSO
+# returning 600 is what falsified it; the real cause was a missing mandatory
+# `serv_type` parameter, and the plain CLI runner had worked all along.
+#
+# So switch it on for one deploy whenever DSM returns something inexplicable.
+# It only READS, redacts secret-looking values, and always exits 0 — it cannot
+# fail a deploy, which is what makes it usable in an unattended pipeline.
+synology_vpn_discover: false

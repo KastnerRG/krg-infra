@@ -61,15 +61,25 @@
 #       turned on, status: [262]") until a protocol is enabled. This confirms
 #       "inert until configured" more strongly than first written: nothing
 #       listens because nothing RUNS.
-#   PENDING (chicken-and-egg — a STOPPED package does not register its webapi,
-#   so every SYNO.VPNServer.* call returns err 102 until something starts it,
-#   and the thing that starts it is this role):
-#     * the field names for every key under `openvpn:` below. Treat them as
-#       INTENT, not confirmed wire names. `synology_vpn`'s `package` subcommand
-#       starts the package; `--tags export` then dumps the live `load` payload,
-#       which IS the schema. Flip OUT_KEYS in apply_vpn.py to match — the same
-#       pattern apply_ad.py / apply_external_access.py already use. The script
-#       fails loudly on a stale mapping rather than configuring nothing.
+#   CONFIRMED 2026-08-16 — the live Settings.Config payload, captured from CD:
+#     serv_enable False | serv_ip 10.8.0.0 | serv_range 5 | port 1194
+#     protocol udp | comp_enable 1 | push_route_enable 0 | tls_auth_key 0
+#     enable_ipv6_server 0 | encryption AUTO | authentication SHA512
+#     serv_type 3 | serv_run False | auth_conn 3 | mssfix_value 1450
+#     no_inter_cert False | user_conf False | verify_server_cn 0 | ipv6_prefix ""
+#
+#   TWO TRAPS, both paid for:
+#     * `serv_type="openvpn"` is MANDATORY on every Settings.Config call (the
+#       package also serves pptp/l2tp). Omit it and DSM returns err 600 with no
+#       hint that a parameter is missing. 600 was first misread as "needs an
+#       authenticated web session" and an entire HTTP client was written before
+#       a parameter sweep showed the plain CLI runner works.
+#     * the payload is NESTED under data.items, not data.
+#
+#   FIELD TYPES ARE MIXED and it matters for idempotence: serv_enable is a JSON
+#   bool, while comp_enable/push_route_enable/tls_auth_key/enable_ipv6_server
+#   are 0/1 INTEGERS. Push a bool where DSM stores an int and it is accepted but
+#   never compares equal again — the role reports CHANGED forever.
 
 # --- Protocols -----------------------------------------------------------------
 # DSM's VPN Server offers three. Only OpenVPN is acceptable:
@@ -100,7 +110,9 @@ openvpn:
   # (192.168.0/1.x, 10.0.0/1.x, 172.20.10.x tethering).
   # The NAS takes .1 — that is the address clients mount:  \\10.90.24.1\<share>
   subnet: 10.90.24.0
-  netmask: 255.255.255.0
+  # NOTE: DSM exposes no netmask field — the mask is implied, and `serv_range`
+  # is max-clients (not a range), matching `max-clients 5` in the stock
+  # openvpn.conf. Confirmed against the live payload 2026-08-16.
 
   # Concurrency. E4E is small; this is a backstop against a runaway client, not
   # a capacity plan. Raise if it ever actually binds.
@@ -113,7 +125,8 @@ openvpn:
   # more than the per-user session accountability you give up. Flip to false if
   # "one session per account" ever matters; note the audit trail then comes
   # from the connection log (Management.Connection enum), not from the tunnel.
-  duplicate_cn: true
+  # duplicate_cn: real (it is in openvpn.conf) but NOT settable through this
+  # API, so the laptop+phone question is moot at this layer.
 
   # --- The isolation switches (the whole point of this file) -----------------
   # ⚠️ LOAD-BEARING. `true` makes DSM enable ip_forward + MASQUERADE and push a
@@ -128,7 +141,8 @@ openvpn:
   # networks and (b) be useless anyway, since the DC is not reachable through
   # this tunnel. Consequence, documented for the client runbook: users mount by
   # IP (10.90.24.1), not by FQDN.
-  push_dns: false
+  # push_dns: NOT EXPOSED by Settings.Config. Clients keep their own resolver
+  # regardless, which is the behaviour we wanted anyway.
 
   # IPv6 off — the tunnel carries one protocol to one host; a v6 path would be a
   # second, unaudited route into the same box.
@@ -143,9 +157,13 @@ openvpn:
   # ⚠️ DSM SHIPS `comp-lzo` ON — confirmed by reading the stock openvpn.conf
   # on-box 2026-08-16. So `compression: false` is a REAL drift fix, not a
   # belt-and-braces restatement of a safe default. Don't "simplify" it away.
-  cipher: AES-256-GCM
+  # `encryption` is a DSM ENUM, live value AUTO. AES-256-GCM is NOT known to be
+  # offered (the UI historically lists AES-256-CBC/Blowfish/DES/AUTO), so this
+  # starts at CBC; apply_vpn.py fails loudly rather than silently accepting a
+  # weaker value. Revisit if a GCM option is confirmed.
+  cipher: AES-256-CBC
   auth_digest: SHA512
-  tls_min_version: "1.2"
+  # tls_min_version: NOT EXPOSED by Settings.Config.
   compression: false
 
   # Control-channel HMAC (`tls-auth ta.key 0`). Packets without a valid HMAC are
@@ -283,13 +301,10 @@ client:
 #      UNATTENDED on merge, and an unreconciled OUT_KEYS fails the play and
 #      blocks the deploy phases behind it. See "merging IS applying" in
 #      CLAUDE.md. Drive it by hand:
-#          # NOTE the password: the SYNO.VPNServer.* APIs need a DSM web
-#          # session (CLI runner returns err 600), so the config steps SKIP
-#          # with a warning without it.
-#          ansible-playbook playbook.yml -e '{"synology_vpn_enabled": true}' \
-#            -e @~/.config/krg/secrets-syno.yml -e nas_admin_password="{{ synology_user_passwords['e4e-admin'] }}" --check --diff
-#          # then without --check, then:
-#          ansible-playbook playbook.yml -e '{"synology_vpn_enabled": true}' --tags export
+#          ansible-playbook playbook.yml -e '{"synology_vpn_enabled": true}' --check --diff
+#          ansible-playbook playbook.yml -e '{"synology_vpn_enabled": true}'
+#      No DSM credential is needed: the Settings.Config API works over the
+#      plain synowebapi CLI runner once serv_type is supplied.
 #      Then reconcile OUT_KEYS in apply_vpn.py against the exported payload and
 #      re-run until the openvpn step reports `OK no-change`, THEN flip
 #      synology_vpn_enabled to true in the role defaults.
