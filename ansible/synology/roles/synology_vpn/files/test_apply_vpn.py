@@ -399,7 +399,23 @@ def test_package_absent_never_attempts_start(monkeypatch, capsys):
     assert not any("start" in c for c in calls)
 
 
+RUNNING_OUT = (
+    '{"aspect":{"active":{"status":"running","status_code":0}},'
+    '"description":"Status: [0], package is started",'
+    '"package":"VPNCenter","status":"running"}'
+)
+
+
 def test_package_no_change_when_running(monkeypatch, capsys):
-    monkeypatch.setattr(m, "_run", lambda cmd: _Res(0, '{"status":"start"}'))
+    """DSM says "running", not "start". Guessing that sentinel made the task
+    non-idempotent: CHANGED every run, plus a pointless restart."""
+    calls = []
+
+    def fake_run(cmd):
+        calls.append(cmd)
+        return _Res(0, RUNNING_OUT)
+
+    monkeypatch.setattr(m, "_run", fake_run)
     assert m.main(["package"]) == 0
     assert "OK no-change" in capsys.readouterr().out
+    assert not any("start" in c for c in calls)
