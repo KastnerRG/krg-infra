@@ -353,34 +353,96 @@ def cmd_openvpn(a):
 
 
 # --- privilege ----------------------------------------------------------------
+# CAPTURED FROM THE UI 2026-08-17 (DevTools HAR). The privilege model is NOT
+# what the spec originally assumed, and the difference is load-bearing:
+#
+#   * `Management.Account` enumerates LOCAL ACCOUNTS ONLY. On this box
+#     (AD-joined, thousands of domain users available) `load` returns total=4:
+#     admin, e4e-admin, e4e-automation, guest. There is NO AD-user and NO
+#     AD-group privilege surface — not here, and not in SYNO.Core.AppPriv,
+#     which still lists no VPN application after the package is installed.
+#
+#   * So "grant the VPN to KRG\Domain Users" is NOT EXPRESSIBLE. AD users are
+#     admitted by the auth path itself (OpenVPN -> radiusplugin -> radiusd ->
+#     ntlm_auth -> winbind -> DC), with no per-user allowlist in front of it.
+#     "Any authorised AD user" is therefore not a policy choice we made — it is
+#     the only behaviour DSM offers. The compensating controls are the ones
+#     already in the spec: tls_auth, geoip-scoped 1194, DSM auto-block, and the
+#     12-char AD password policy.
+#
+#   * What IS controllable is the LOCAL accounts, and DSM ships them all
+#     ENABLED for every protocol. Live before this role ran: admin,
+#     e4e-admin, e4e-automation and guest all enable_ovpn=True. e4e-admin and
+#     e4e-automation are active `administrators` accounts, so that is a
+#     password-authenticated internet front door into two admin accounts —
+#     exactly what key-only SSH exists to prevent. Denying them is the whole
+#     job of this subcommand.
+#
+# READ/WRITE ASYMMETRY (again): `load` returns items keyed `username` with a
+# `status` field; `apply` takes `priv=[{name, enable_pptp, enable_l2tp,
+# enable_ovpn}]` — key renamed, status dropped.
 def cmd_privilege(a):
-    """Grant VPN access to the AD groups named in the spec.
+    """Deny every local account access to every VPN protocol.
 
-    Deliberately group-scoped, never `everyone`: an everyone-grant would include
-    the LOCAL accounts (e4e-admin break-glass, e4e-automation), handing two
-    administrators-group accounts a password-authenticated internet front door
-    and undoing the point of key-only SSH.
+    Deliberately not a grant: there is nothing to grant to (see above). The
+    spec's `deny_local` list names the accounts to lock out; `all` means every
+    account Management.Account enumerates, which is the correct default because
+    everything it can see IS a local account.
     """
-    groups = json.loads(a.groups) if a.groups else []
-    if not isinstance(groups, list) or not groups:
-        print("FAIL --groups must be a non-empty JSON list")
+    deny = json.loads(a.deny_local) if a.deny_local else []
+    if not isinstance(deny, list):
+        print('FAIL --deny-local must be a JSON list (or ["all"])')
         return 1
 
-    current, err = _load(ACCOUNT_API)
-    if err is not None:
-        print("FAIL %s load failed with err %s (run `dump`)" % (ACCOUNT_API, err))
+    resp = _exec(ACCOUNT_API, "version=1", "method=load", 'action="enum"', "start=0", "limit=200")
+    if not resp.get("success", False):
+        print(
+            "FAIL %s load failed with err %s" % (ACCOUNT_API, (resp.get("error") or {}).get("code"))
+        )
+        return 1
+    items = (resp.get("data") or {}).get("items") or []
+    if not items:
+        print("FAIL %s returned no accounts" % ACCOUNT_API)
         return 1
 
-    print("LIVE-ACCOUNT-OBJECT " + json.dumps(current)[:1500])
-    if a.check:
-        print("WOULD-CHANGE privilege -> %s" % json.dumps(groups))
+    deny_all = "all" in deny
+    priv, drift = [], []
+    for it in items:
+        user = it.get("username")
+        locked = deny_all or user in deny
+        want = {
+            "name": user,  # NOTE: `name` on write, `username` on read
+            "enable_pptp": False,  # pptp/l2tp are off at the server level
+            "enable_l2tp": False,  # too; deny per-account as well
+            "enable_ovpn": not locked,
+        }
+        priv.append(want)
+        for wire_key, read_key in (
+            ("enable_ovpn", "enable_ovpn"),
+            ("enable_l2tp", "enable_l2tp"),
+            ("enable_pptp", "enable_pptp"),
+        ):
+            if bool(it.get(read_key)) != want[wire_key]:
+                drift.append("%s.%s" % (user, wire_key))
+
+    if not drift:
+        print("OK no-change")
         return 0
-    print(
-        "FAIL privilege push not implemented: the Management.Account object "
-        "shape is unconfirmed (dumped above). Fill in the mapping, then remove "
-        "this guard — refusing to guess at an ACCESS-CONTROL payload."
+    if a.check:
+        print("WOULD-CHANGE " + json.dumps(sorted(drift)))
+        return 0
+
+    resp = _exec(
+        ACCOUNT_API,
+        "version=1",
+        "method=apply",
+        "priv=" + json.dumps(priv, separators=(",", ":")),
     )
-    return 1
+    if not resp.get("success", False):
+        print("FAIL %s apply failed: %s" % (ACCOUNT_API, json.dumps(resp.get("error"))))
+        return 1
+    print("CHANGED " + json.dumps(sorted(drift)))
+    return 0
 
 
 # --- service ------------------------------------------------------------------
@@ -533,16 +595,18 @@ def cmd_publish(a):
         tls_auth_block=tls_block,
     )
 
-    if a.check:
-        print("WOULD-CHANGE publish %s (%d bytes)" % (a.dest, len(body)))
-        return 0
-
     dest_dir = os.path.dirname(a.dest)
     if not os.path.isdir(dest_dir):
         print("FAIL destination share %s does not exist" % dest_dir)
         return 1
+    # Compare BEFORE honouring --check: returning WOULD-CHANGE unconditionally
+    # made `--check --diff` report a change on an already-converged file, which
+    # is exactly the signal a dry run exists to give honestly.
     if os.path.exists(a.dest) and _read(a.dest) == body:
         print("OK no-change")
+        return 0
+    if a.check:
+        print("WOULD-CHANGE publish %s (%d bytes)" % (a.dest, len(body)))
         return 0
 
     tmp = a.dest + ".tmp"
@@ -589,7 +653,7 @@ def main(argv=None):
         o.add_argument(flag, required=True)
 
     v = _sub("privilege")
-    v.add_argument("--groups", required=True)
+    v.add_argument("--deny-local", required=True)
 
     b = _sub("publish")
     for flag in (

@@ -233,16 +233,41 @@ openvpn:
   # If this ever needs narrowing, `KRG\E4E-NAS` already exists in AD and is the
   # drop-in replacement — one line, no other change.
   privilege:
-    # app_id: PENDING — read from `SYNO.Core.AppPriv.App list version=3` after
-    # the package installs (expect a `SYNO.SDS.VPNCenter.*` id). The role must
-    # fail loudly rather than guess: a wrong app_id writes a rule that silently
-    # governs nothing.
-    app_id: ""                                   # ⚠️ fill from discovery
-    grant:
-      - entity_type: group
-        entity_name: 'KRG\Domain Users'
-        allow_ip: ["0.0.0.0"]                    # 0.0.0.0 = any source
-        deny_ip: []
+    # ⚠️ REWRITTEN 2026-08-17 after capturing the UI's Privilege tab. The
+    # original design here — grant `KRG\Domain Users` via an AppPriv-style rule
+    # — is NOT EXPRESSIBLE. DSM offers no AD-user and no AD-group privilege
+    # surface for the VPN:
+    #
+    #   * SYNO.VPNServer.Management.Account enumerates LOCAL ACCOUNTS ONLY. On
+    #     this AD-joined box it returns total=4 (admin, e4e-admin,
+    #     e4e-automation, guest) — no domain principals, at any page size.
+    #   * SYNO.Core.AppPriv.App still lists NO VPN application even with
+    #     VPNCenter installed and running, so the AD-group mechanism that works
+    #     for FileStation/Drive (see [[dsm-apppriv-rule-accepts-ad-groups]])
+    #     does not apply here.
+    #
+    # So AD users are admitted by the AUTH PATH itself — OpenVPN ->
+    # radiusplugin -> radiusd -> ntlm_auth -> winbind -> DC — with no allowlist
+    # in front of it. "Any authorised AD user" is therefore NOT a policy choice
+    # we made; it is the only behaviour DSM offers. It happens to match the
+    # decision already taken, but record it as a constraint: if the VPN ever
+    # needs to be narrowed to a subset of staff, that CANNOT be done here and
+    # needs a different front door entirely.
+    #
+    # What IS controllable is the local accounts — and DSM ships them all
+    # enabled for every protocol. Live before this role first ran:
+    #     admin ovpn=True | e4e-admin ovpn=True | e4e-automation ovpn=True
+    #     guest ovpn=True
+    # e4e-admin and e4e-automation are ACTIVE `administrators` accounts, so
+    # that is a password-authenticated internet front door into two admin
+    # accounts — precisely what key-only SSH exists to prevent, and precisely
+    # the risk the earlier `KRG\Domain Users`-not-`everyone` reasoning was
+    # trying to avoid. Denying them is now the whole job of this block.
+    #
+    # `all` = every account Management.Account enumerates, which is the right
+    # default because everything it can see IS a local account. Name accounts
+    # explicitly only if one ever legitimately needs VPN access.
+    deny_local: ["all"]
 
 # --- Client distribution --------------------------------------------------------
 # The .ovpn is the SAME file for every user (auth is username/password; there
