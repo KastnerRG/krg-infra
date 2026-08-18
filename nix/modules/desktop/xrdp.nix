@@ -16,6 +16,23 @@ with lib; let
     ++ optional (tls.ipSans != []) ''"ip_sans=${concatStringsSep "," tls.ipSans}"''
     ++ [''"ttl=720h"'']
   );
+
+  # The bundle→cert/key split, shared by the oneshot that runs it at boot AND by the
+  # vault-agent reloadCommand that re-runs it on rotation. Deliberately a plain script
+  # rather than `systemctl restart xrdp-tls-split`: xrdp `Requires=` that unit, so
+  # restarting it propagates a stop to xrdp and would drop every live desktop session.
+  xrdpTlsSplit = pkgs.writeShellScript "xrdp-tls-split" ''
+    set -euo pipefail
+    cd /run/xrdp-tls
+    ${pkgs.gawk}/bin/awk '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/' bundle.pem > cert.pem
+    ${pkgs.gawk}/bin/awk '/-BEGIN [A-Z ]*PRIVATE KEY-/,/-END [A-Z ]*PRIVATE KEY-/' bundle.pem > key.pem
+    # awk runs as root, so the split files land root:root. The xrdp daemon
+    # drops to the unprivileged `xrdp` user/group, so it must own the group
+    # to read its own key — without this, TLS init fails and every RDP
+    # connection (Guacamole or SSH-tunneled) dies during negotiation.
+    chown root:xrdp cert.pem key.pem
+    chmod 0640 cert.pem key.pem
+  '';
 in {
   imports = [
     ../users.nix
@@ -147,6 +164,14 @@ in {
               {{ .Data.private_key }}
               {{- end }}
             '';
+            # On rotation the BUNDLE changes but the split cert.pem/key.pem that xrdp
+            # actually serves do not, so re-run the split in place. xrdp re-reads
+            # sslCert/sslKey when it accepts a connection, so new sessions get the
+            # rotated pair and live sessions keep their negotiated TLS. We do NOT
+            # restart xrdp itself: that drops every live desktop session to fix a cert
+            # with ~10 days left (30d `host` role at the 33% window). If xrdp ever turns
+            # out to cache the pair process-wide, the fallback is restarting it here.
+            reloadCommand = "${xrdpTlsSplit}";
           }
         ];
       };
@@ -164,18 +189,7 @@ in {
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
-          ExecStart = pkgs.writeShellScript "xrdp-tls-split" ''
-            set -euo pipefail
-            cd /run/xrdp-tls
-            ${pkgs.gawk}/bin/awk '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/' bundle.pem > cert.pem
-            ${pkgs.gawk}/bin/awk '/-BEGIN [A-Z ]*PRIVATE KEY-/,/-END [A-Z ]*PRIVATE KEY-/' bundle.pem > key.pem
-            # awk runs as root, so the split files land root:root. The xrdp daemon
-            # drops to the unprivileged `xrdp` user/group, so it must own the group
-            # to read its own key — without this, TLS init fails and every RDP
-            # connection (Guacamole or SSH-tunneled) dies during negotiation.
-            chown root:xrdp cert.pem key.pem
-            chmod 0640 cert.pem key.pem
-          '';
+          ExecStart = xrdpTlsSplit;
         };
       };
 

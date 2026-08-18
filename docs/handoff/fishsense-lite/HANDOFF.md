@@ -124,11 +124,18 @@ route). Request them one at a time.
   against the lab CA (`issuing_ca`); set the gRPC TLS **server-name override to
   `workflows.krg.ucsd.edu`**.
 - **Client-cert delivery** (ADR 0023):
-  - **In-slot workers — WIRED.** Set `temporal = { namespace = "fishsense"; }` in your `mkTenant`
-    call (the admin grants `pki_int/issue/temporal-client` on your tenant policy). Your in-VM
-    vault-agent then renders a `fishsense-worker` client cert to
-    **`/run/tenant/temporal/{tls.crt,tls.key,ca.crt}`**, auto-renewed — mount it into your workers
-    like `fishsense.vm`. Fail-closed if OpenBao is unreachable.
+  - **In-slot workers — WIRED.** Set `temporal = { namespace = "fishsense"; reload = [...]; }` in
+    your `mkTenant` call (the admin grants `pki_int/issue/temporal-client` on your tenant policy).
+    Your in-VM vault-agent then renders a `fishsense-worker` client cert to
+    **`/run/tenant/temporal/{tls.crt,tls.key,ca.crt}`** — mount it into your workers like
+    `fishsense.vm`. Fail-closed if OpenBao is unreachable.
+  - **Rotation — the leaf is 7 days and BOTH halves matter.** The platform re-renders it inside
+    the last third of its lifetime (`krg.vaultAgent.renewal`, ADR 0021 §2b). A fresh file is
+    inert for a worker that builds its TLS config once at `Client.connect`, so list the compose
+    services that dial Temporal in `temporal.reload` — they get restarted on rotation. Omitting
+    it restarts your whole interior stack instead (correct, but it bounces your web path too).
+    Renewal no longer depends on a deploy landing: before this existed the leaf expired exactly
+    7 days after provisioning and took the pipeline down (2026-08-17).
   - **Off-prem NRP worker — manual (interim).** NRP is off our OpenBao, so it can't self-render:
     an admin mints a 30-day `temporal-client` cert and hands you the PEM trio to load as a k8s
     Secret; renew at 30 days. (Automated krg-deploy→NRP-Secret delivery is a tracked follow-up —

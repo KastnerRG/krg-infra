@@ -35,7 +35,15 @@
       image = "krg-golden"; # the slot boots from the hardened template (already applied)
       compose = ./deploy/compose.yml; # YOUR interior — repo-owns-deploy
       repo = "UCSD-E4E/fishsense-lite"; # LOAD-BEARING: scopes the auto-provisioned runner (ADR 0022)
-      temporal = {namespace = "fishsense";}; # in-VM vault-agent renders a temporal-client cert to /run/tenant/temporal/ (ADR 0023)
+      # in-VM vault-agent renders a temporal-client cert to /run/tenant/temporal/ (ADR 0023).
+      # `reload` = the compose services that DIAL Temporal. The platform re-renders the leaf
+      # before it expires, but a worker that builds its TLS config at Client.connect holds the
+      # old cert for the life of the process, so it must be restarted on rotation. Naming your
+      # worker(s) keeps the restart off your web path; omitting it restarts the whole stack.
+      temporal = {
+        namespace = "fishsense";
+        reload = ["fishsense-api-workflow-worker"];
+      };
     };
   in {
     # The Incus slot (already booted at 10.100.0.10) converges to THIS config via your

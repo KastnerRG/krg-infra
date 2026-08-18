@@ -44,7 +44,9 @@ For a tenant that opted in (§1), extend its OpenBao policy (`terraform/openbao/
 `pki_int/issue/temporal-client`, and add a render to `nixosModules.tenant` (mirroring the
 `<tenant>.vm` render, [ADR 0021 §2](0021-tenant-tls-vault-agent-and-secret-zero.md)):
 `{{ with secret "pki_int/issue/temporal-client" "common_name=<cn>" }}` → cert + key + issuing CA
-to **`/run/tenant/temporal/{tls.crt,tls.key,ca.crt}`**, auto-renewed well inside the 7-day TTL. The
+to **`/run/tenant/temporal/{tls.crt,tls.key,ca.crt}`**, renewed inside the 7-day TTL by
+`krg.vaultAgent.renewal` ([ADR 0021 §2b](0021-tenant-tls-vault-agent-and-secret-zero.md)) — *this
+sentence originally asserted auto-renewal that was never built; see the amendment below*. The
 worker dials `krg-prod.ucsd.edu:7233`, presents that cert, verifies the server against `ca.crt`
 with **TLS server-name `workflows.krg.ucsd.edu`**, and targets its namespace.
 
@@ -97,5 +99,18 @@ cert and delivers it as an **NRP k8s Secret** the worker mounts:
   avoids it.
 - **TTL/renewal:** 7-day issued / 30-day max. The in-slot agent re-renders on its schedule; the NRP
   Secret is refreshed by the timer (or manually at 30d).
+
+**Amendment (2026-08-17) — "re-renders on its schedule" was false when written.** The in-slot
+agent had no schedule: `krg.vaultAgent` is a `RemainAfterExit` oneshot with
+`exit_after_auth = true`, so the leaf was rendered once at provision and expired exactly 7 days
+later, taking the fishsense workflow pipeline down (`received fatal alert: CertificateExpired`,
+~2,400 failed task-queue polls). Fleet hosts were masked from this by `deploy/deploy-nixos.sh`
+restarting the agent each switch; tenants converge from their own flake and never run it. Two
+things were missing and are now built (see [ADR 0021 §2b](0021-tenant-tls-vault-agent-and-secret-zero.md)):
+`krg.vaultAgent.renewal` re-renders a leaf inside the last third of its lifetime, and the render
+carries a `reloadCommand` so the worker — which builds its TLS config once at `Client.connect` —
+actually picks the new cert up. **Keeping the 7-day TTL is deliberate** (`pki.tf`: *short — callers
+re-issue*); with renewal real, a short TTL costs nothing and limits exposure of a leaked leaf.
+The isolation posture in §3 is unchanged.
 - Supersedes the "not yet wired" Temporal note in `docs/handoff/fishsense-lite/HANDOFF.md` §6 and
   the deferred-provisioning note in `terraform/temporal/README.md`.

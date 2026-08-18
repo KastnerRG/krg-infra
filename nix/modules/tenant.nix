@@ -107,12 +107,30 @@ in {
       tdir = "/run/tenant/temporal";
       tcn = "${t.name}-worker";
       tissue = field: "{{ with secret \"pki_int/issue/temporal-client\" \"common_name=${tcn}\" }}${field}{{ end }}";
+      # Cert rotation is only half a fix without a consumer restart: a worker that builds
+      # its TLS config at Client.connect holds the expired leaf for the life of the
+      # process (the second half of the 2026-08-17 fishsense outage — re-rendering alone
+      # would not have recovered it). The tenant names the compose services that dial
+      # Temporal via `mkTenant`'s `temporal.reload`; empty restarts the whole stack.
+      # Mirrors compose-stack.nix's invocation so it targets the SAME compose project.
+      tReload = t.boundary.temporal.reload or [];
+      tReloadCmd = concatStringsSep " " ([
+          "${pkgs.docker}/bin/docker compose"
+          "--project-directory ${config.krg.composeStacks.${t.name}.workingDirectory}"
+          "-f ${toString t.interior.compose}"
+          "restart"
+        ]
+        ++ tReload);
+
       temporalRenders = optionals hasTemporal [
         {
           destination = "${tdir}/tls.crt";
           perms = "0644";
           dirPerms = "0755";
           contents = tissue "{{ .Data.certificate }}\n";
+          # Set on THIS render only. All three renders re-issue together, so putting the
+          # command on each would restart the consumer three times per rotation.
+          reloadCommand = tReloadCmd;
         }
         {
           destination = "${tdir}/tls.key";

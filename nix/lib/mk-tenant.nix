@@ -26,7 +26,7 @@
   sso ? {}, # { group ? name } — AD group gating access at the edge
   resources ? {}, # { cpu ? 2; ram ? "4GiB"; disk ? "20GiB"; }
   isolation ? "virtual-machine", # "virtual-machine" (untrusted/developed) | "container"
-  temporal ? null, # { namespace } — request a krg-prod Temporal client cert (ADR 0023). null = none.
+  temporal ? null, # { namespace, reload ? [] } — request a krg-prod Temporal client cert (ADR 0023). null = none.
   # ── interior (tenant-owned) ───────────────────────────────────────────────────
   compose ? null, # path to the tenant's compose file (repo-owns-deploy)
   image ? "", # golden-template image for the slot; "" = boundary only (no instance yet)
@@ -74,10 +74,22 @@ in
       # pki_int/issue/temporal-client on the tenant policy + confirms the namespace, and
       # nixosModules.tenant renders the client cert to /run/tenant/temporal/. The worker
       # cert CN is "<name>-worker".
+      #
+      # `reload` is the tenant-owned half of cert ROTATION: the platform re-renders the
+      # leaf before it expires (krg.vaultAgent.renewal), but a worker that builds its TLS
+      # config once at Client.connect keeps the OLD cert for the life of the process, so
+      # a fresh file on /run recovers nothing by itself. This lists the compose SERVICE
+      # names to restart when the cert rotates. Only the tenant knows which of its
+      # services dial Temporal, hence a request field rather than a platform guess.
+      # EMPTY = restart the whole interior stack: correct but blunt (it bounces the
+      # tenant's web path too), so name the worker service(s) to narrow it.
       temporal =
         if temporal == null
         then null
-        else {inherit (temporal) namespace;};
+        else {
+          inherit (temporal) namespace;
+          reload = temporal.reload or [];
+        };
     };
 
     # Admin-side spec→provision projection: the EXACT object terraform/incus's
