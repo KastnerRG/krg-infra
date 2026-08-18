@@ -75,21 +75,22 @@
   check_mode: false
   when: synology_vpn_enabled | default(false) | bool
 
-# ⚠️ GATED OFF by default. The Management.Account object shape is unconfirmed —
-# the API only became readable once this role first started the package. The
-# subcommand dumps the live object (LIVE-ACCOUNT-OBJECT) and then refuses to
-# push, on purpose: guessing at an ACCESS-CONTROL payload is how you end up
-# granting everyone. Run once with `-e synology_vpn_privilege_enabled=true` in
-# --check to capture the shape, fill in the mapping, then flip this default.
+# Deny every LOCAL account access to the VPN. Management.Account enumerates
+# local accounts ONLY (total=4 on this AD-joined box), so there is nothing to
+# GRANT here — AD users are admitted by the RADIUS/ntlm_auth path with no
+# allowlist in front of it. What DSM does expose is the local accounts, and it
+# ships them all ENABLED: e4e-admin and e4e-automation are active
+# `administrators`, so leaving this off means two admin accounts with a
+# password-authenticated internet front door. See spec/e4e-nas/vpn.yml.
 #
 # Uses the explicit `cmd:` form rather than free-form: the `map(attribute=...)`
 # filter contains an `=`, which ansible-lint's no-free-form rule reads as a
 # key=value module arg.
-- name: Grant VPN access to the AD groups in the spec
+- name: Deny local accounts VPN access (no AD surface exists to grant on)
   ansible.builtin.script:
     cmd: >-
       apply_vpn.py privilege
-      --groups {{ vpn_spec.openvpn.privilege.grant | map(attribute="entity_name") | list | to_json | quote }}
+      --deny-local {{ vpn_spec.openvpn.privilege.deny_local | default(["all"]) | to_json | quote }}
       {{ "--check" if ansible_check_mode else "" }}
   register: vpn_priv
   when:

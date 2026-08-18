@@ -25,11 +25,11 @@ synology_export_dir: "/var/lib/krg-deploy/synology-export"
 # ungated, no matter how good its error message is.
 synology_vpn_enabled: false
 
-# Separate, narrower gate: the Management.Account object shape is still
-# unconfirmed, so the privilege subcommand dumps the live object and refuses to
-# push rather than guessing at an ACCESS-CONTROL payload. Stays off even after
-# synology_vpn_enabled flips, until the mapping is filled in.
-synology_vpn_privilege_enabled: false
+# The privilege payload is now CAPTURED and implemented, and applied + converged
+# against the NAS (2026-08-17), so this is on. It only ever REMOVES access —
+# it denies local accounts every VPN protocol — so it fails safe.
+# Still governed by synology_vpn_enabled, which remains false.
+synology_vpn_privilege_enabled: true
 
 # Read-only schema capture. OFF: the schema is known and mapped in
 # apply_vpn.py FIELDS (captured live 2026-08-16).

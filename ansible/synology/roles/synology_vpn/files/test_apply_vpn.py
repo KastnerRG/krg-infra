@@ -208,21 +208,6 @@ def test_unsupported_spec_keys_are_declared():
         assert key not in m.FIELDS
 
 
-def test_privilege_refuses_to_guess(monkeypatch, capsys):
-    fake, captured = _factory({"accounts": []})
-    monkeypatch.setattr(m, "_exec", fake)
-    rc = m.main(["privilege", "--groups", json.dumps(["KRG\\Domain Users"])])
-    assert rc == 1
-    out = capsys.readouterr().out
-    assert "LIVE-ACCOUNT-OBJECT" in out and "FAIL" in out
-    assert captured == []
-
-
-def test_privilege_rejects_empty_groups(capsys):
-    assert m.main(["privilege", "--groups", "[]"]) == 1
-    assert capsys.readouterr().out.startswith("FAIL")
-
-
 def test_dump_never_returns_nonzero(monkeypatch, capsys):
     def boom(api, *params):
         raise RuntimeError("boom")
@@ -524,3 +509,120 @@ def test_service_leaves_daemon_down_when_spec_disables(monkeypatch, capsys):
     assert m.main(["service"]) == 0
     assert "OK no-change" in capsys.readouterr().out
     assert calls == []
+
+
+# --- privilege: local-account deny (captured from the UI, 2026-08-17) ---------
+# Management.Account enumerates LOCAL accounts only — no AD principals exist to
+# grant to, so the job is denying the locals DSM ships enabled.
+ACCOUNTS = {
+    "items": [
+        {
+            "username": "admin",
+            "enable_ovpn": True,
+            "enable_l2tp": True,
+            "enable_pptp": True,
+            "status": 2,
+        },
+        {
+            "username": "e4e-admin",
+            "enable_ovpn": True,
+            "enable_l2tp": True,
+            "enable_pptp": True,
+            "status": 1,
+        },
+        {
+            "username": "e4e-automation",
+            "enable_ovpn": True,
+            "enable_l2tp": True,
+            "enable_pptp": True,
+            "status": 1,
+        },
+        {
+            "username": "guest",
+            "enable_ovpn": True,
+            "enable_l2tp": True,
+            "enable_pptp": True,
+            "status": 2,
+        },
+    ],
+    "total": 4,
+}
+
+
+def _acct_factory(accounts):
+    captured = []
+
+    def fake(api, *params):
+        if "method=load" in params:
+            return {"success": True, "data": dict(accounts)}
+        captured.append((api, params))
+        return {"success": True}
+
+    return fake, captured
+
+
+def test_privilege_denies_every_local_account(monkeypatch, capsys):
+    fake, captured = _acct_factory(ACCOUNTS)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(["privilege", "--deny-local", '["all"]']) == 0
+    assert capsys.readouterr().out.startswith("CHANGED")
+    payload = [p for p in captured[0][1] if p.startswith("priv=")][0]
+    priv = json.loads(payload[len("priv=") :])
+    assert {p["name"] for p in priv} == {"admin", "e4e-admin", "e4e-automation", "guest"}
+    assert all(p["enable_ovpn"] is False for p in priv)
+    assert all(p["enable_l2tp"] is False and p["enable_pptp"] is False for p in priv)
+
+
+def test_privilege_uses_name_on_write_not_username(monkeypatch):
+    """load returns `username`; apply takes `name`. Another read/write rename."""
+    fake, captured = _acct_factory(ACCOUNTS)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(["privilege", "--deny-local", '["all"]']) == 0
+    priv = json.loads([p for p in captured[0][1] if p.startswith("priv=")][0][len("priv=") :])
+    assert all("name" in p and "username" not in p for p in priv)
+    assert all("status" not in p for p in priv)  # status is read-only
+
+
+def test_privilege_can_spare_a_named_account(monkeypatch):
+    fake, captured = _acct_factory(ACCOUNTS)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(["privilege", "--deny-local", '["e4e-admin","guest"]']) == 0
+    priv = json.loads([p for p in captured[0][1] if p.startswith("priv=")][0][len("priv=") :])
+    by = {p["name"]: p for p in priv}
+    assert by["e4e-admin"]["enable_ovpn"] is False
+    assert by["guest"]["enable_ovpn"] is False
+    assert by["admin"]["enable_ovpn"] is True  # not named -> untouched
+    assert by["e4e-automation"]["enable_ovpn"] is True
+
+
+def test_privilege_converges(monkeypatch, capsys):
+    denied = {
+        "items": [
+            dict(i, enable_ovpn=False, enable_l2tp=False, enable_pptp=False)
+            for i in ACCOUNTS["items"]
+        ],
+        "total": 4,
+    }
+    fake, captured = _acct_factory(denied)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(["privilege", "--deny-local", '["all"]']) == 0
+    assert "OK no-change" in capsys.readouterr().out
+    assert captured == []
+
+
+def test_privilege_check_mode_does_not_apply(monkeypatch, capsys):
+    fake, captured = _acct_factory(ACCOUNTS)
+    monkeypatch.setattr(m, "_exec", fake)
+    assert m.main(["privilege", "--deny-local", '["all"]', "--check"]) == 0
+    assert capsys.readouterr().out.startswith("WOULD-CHANGE")
+    assert captured == []
+
+
+def test_publish_check_mode_reports_no_change_when_converged(monkeypatch, tmp_path, capsys):
+    """--check must not claim a change on an already-published, identical file."""
+    _stub_keys(monkeypatch, tmp_path)
+    dest = tmp_path / "e4e-nas.ovpn"
+    assert m.main(PUBLISH_ARGS + ["--dest", str(dest)]) == 0
+    capsys.readouterr()
+    assert m.main(PUBLISH_ARGS + ["--dest", str(dest), "--check"]) == 0
+    assert "OK no-change" in capsys.readouterr().out
