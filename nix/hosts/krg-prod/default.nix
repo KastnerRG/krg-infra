@@ -364,6 +364,11 @@ in {
           {{ .Data.private_key }}
           {{- end }}
         '';
+        # The frontend loads its TLS material once at process start, so a rotation is
+        # inert until it restarts. Without this the renewal timer would quietly re-render
+        # a valid cert while the running server kept serving the expiring one — and this
+        # cert gates EVERY Temporal caller (all tenants + temporal-ui), not one worker.
+        reloadCommand = "${pkgs.docker}/bin/docker restart temporal";
       }
       # Trust anchor: the intermediate CA. Serves as BOTH the frontend's client-CA
       # (verifying caller certs) and the UI's server-CA (verifying the frontend).
@@ -389,6 +394,11 @@ in {
           {{ .Data.private_key }}
           {{- end }}
         '';
+        # Same 7d temporal-client role the fishsense worker died on — the UI just never
+        # noticed because a fleet deploy re-rendered it inside every TTL. Restart on
+        # rotation so it does not depend on that. (ui.env carries the same command for
+        # the OIDC secret; the two rotate on different clocks, so both need it.)
+        reloadCommand = "${pkgs.docker}/bin/docker restart temporal-ui";
       }
 
       # ── Authentik ────────────────────────────────────────────────────────────

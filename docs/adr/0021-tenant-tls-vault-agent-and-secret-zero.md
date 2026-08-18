@@ -51,8 +51,39 @@ together; they must be split into separate files **without** re-issuing (a secon
 non-matching key). Primary approach: two `krg.vaultAgent` renders with **identical** issue args
 (consul-template dedups the PKI dependency within a run → one issuance, consistent cert/key) —
 crt = `certificate` + `issuing_ca`, key = `private_key`. If the openbao-agent fork does not
-dedup the write, fall back to one render of the raw JSON bundle plus a split step. A
-`reloadCommand` restarts the inner Traefik on rotation.
+dedup the write, fall back to one render of the raw JSON bundle plus a split step. The inner
+Traefik's file provider watches these paths and hot-reloads, so this pair needs no
+`reloadCommand`; a consumer that loads TLS once at process start does (see §2b).
+
+### 2b. Renewal — the agent is a one-shot, so something must re-run it (amended 2026-08-17)
+
+The original text of this ADR assumed a rendered leaf stayed fresh. It does not: `krg.vaultAgent`
+runs `bao agent` with `exit_after_auth = true` as a `RemainAfterExit` oneshot, so it renders once
+and never runs again on its own. A dependent stack's `requires=` does **not** restart an
+already-active unit, and `nixos-rebuild switch` only restarts it when the unit *definition*
+changes. On fleet hosts this was masked by `deploy/deploy-nixos.sh`, which restarts the agent
+after every switch. **Tenants have no such path** — they converge from their own flake via
+`<tenant>-selfupdate` — so a tenant leaf expired exactly one TTL after provisioning. That is the
+2026-08-17 fishsense Temporal outage (`received fatal alert: CertificateExpired`, 7d after the
+single render); every tenant's 30d `<tenant>.vm` cert carried the same fuse on a slower clock.
+
+Renewal is therefore part of the platform contract, in two halves:
+
+1. **Re-render** — `krg.vaultAgent.renewal` (on by default) runs an hourly check that parses each
+   render destination as X.509 and restarts the agent once a leaf drops below
+   `percentRemaining` (33%) of its **total lifetime**. Windowing by fraction-of-lifetime rather
+   than a fixed number of days makes it TTL-agnostic: 7d `temporal-client` renews with ~2.3d of
+   slack, 30d `host`/`tenant-internal` with ~10d. It is a windowed check and not an unconditional
+   periodic restart because a PKI template re-issues on *every* run, so its content always
+   changes and its `reloadCommand` always fires — an unconditional restart would bounce every
+   cert consumer on every tick.
+2. **Reload** — re-rendering is inert for a consumer that built its TLS config at startup and
+   holds it for the life of the process. Such a render must set `reloadCommand`. For tenants the
+   services to restart are named by the tenant via `mkTenant`'s `temporal.reload` (only the
+   tenant knows which of its containers dial Temporal); empty restarts the whole interior stack.
+
+Both halves are asserted in the `mkTenant-contract` flake check, so a future tenant cannot get a
+short-TTL render with no renewal path without failing CI.
 
 ### 3. Secret-zero is pushed by krg-deploy via `incus file push` at provision (option A)
 

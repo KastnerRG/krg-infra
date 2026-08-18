@@ -144,8 +144,24 @@ names differing in this image tag (check `temporalio/ui` docs for the tag).
 
 ## Renewal
 
-vault-agent here is a **oneshot** (`exit_after_auth`), so certs are re-issued on
-each render — i.e. on deploy and on the nightly nixos-upgrade stack restart, well
-inside the 30–90 day leaf TTLs. There is no in-place hot renewal; if a cert ever
-expires between restarts, restart the stack (`systemctl restart <krg-prod stack>`)
-to re-render. A long-running agent with `refreshInterval` is a future option.
+vault-agent here is a **oneshot** (`exit_after_auth`), so a render happens only when
+the agent itself runs. Two things run it: `deploy/deploy-nixos.sh` after every fleet
+switch, and `krg.vaultAgent.renewal` — an hourly check that restarts the agent once a
+rendered leaf drops under a third of its total lifetime.
+
+Both matter here, because the two leaves on this host sit on **different clocks**: the
+frontend server cert is `temporal-frontend` (**30d** issued), but `ui-client.pem` is
+`temporal-client` — the same **7d** role whose expiry took the fishsense worker down on
+2026-08-17. Before the renewal timer existed, only the deploy cadence kept the 7d leaf
+alive, which is a schedule nobody was actually holding.
+
+Two corrections to what this section used to say:
+
+- **A stack restart does NOT re-render.** The agent is `RemainAfterExit`, so it stays
+  `active (exited)`; a dependent stack's `requires=` will not restart an already-active
+  unit, and neither will the nightly nixos-upgrade unless the unit *definition* changed.
+  The manual re-render is `systemctl restart openbao-agent`, not a stack restart.
+- **Re-rendering alone is not enough for these two.** The Temporal server and UI both
+  load TLS material at process start, so each render carries a `reloadCommand` that
+  restarts its container on rotation. Without it the timer would quietly refresh a valid
+  cert on disk while the running process kept serving the expiring one.

@@ -9,9 +9,31 @@
 # Mechanism: one-shot render (`exit_after_auth = true`) — the agent authenticates,
 # renders every template once, and exits. Run as a systemd oneshot ordered BEFORE
 # the consuming compose stack (which `requires`/`after`s it), so the stack fails
-# closed if bao is sealed/unreachable (no stale or empty secrets). To re-render
-# after a rotation, restart the consuming stack (which restarts this first) or
-# `systemctl restart openbao-agent`.
+# closed if bao is sealed/unreachable (no stale or empty secrets).
+#
+# Re-rendering: the unit is a oneshot with RemainAfterExit, so it stays `active
+# (exited)` and NOTHING re-runs it on its own. In particular a dependent stack's
+# `requires=` does NOT restart an already-active unit (an earlier version of this
+# comment claimed it did — it does not), and `nixos-rebuild switch` only restarts it
+# when the UNIT DEFINITION changes (e.g. a nixpkgs bump moving `pkgs.openbao`), never
+# because a rendered VALUE went stale. Three things re-render:
+#
+#   1. `krg.vaultAgent.renewal` (below) — a timer that restarts the agent once any
+#      rendered CERT enters the last third of its lifetime. This is what keeps
+#      short-TTL PKI leaves alive (`pki_int/issue/temporal-client` is 7d) on hosts
+#      that can go weeks without a deploy — notably Incus TENANTS, which converge
+#      from their own flake via `<tenant>-selfupdate` and never run deploy-nixos.sh.
+#      Without it a leaf expires in place: that is the fishsense Temporal worker
+#      outage of 2026-08-17 (`received fatal alert: CertificateExpired`, exactly 7d
+#      after the single render); every tenant's 30d `<tenant>.vm` cert carried the
+#      same fuse, just a slower one.
+#   2. deploy/deploy-nixos.sh, after every fleet switch — this is why krg-prod /
+#      waiter / kastner-ml never hit the above, and why tenants did.
+#   3. `systemctl restart openbao-agent` by hand.
+#
+# A render whose consumer caches the secret in memory (a TLS cert loaded once at
+# process start) must ALSO set `reloadCommand` — re-rendering alone leaves the old
+# material live in the running process.
 #
 # Secret-zero: the agent needs a `secret_id` to authenticate — the single on-box
 # bootstrap credential (root-only file, minted by the krg-deploy AppRole, which
@@ -146,6 +168,63 @@ with lib; let
       inherit (r) dirPerms;
     })
     cfg.renders;
+  renewalActive = cfg.renewal.enable && cfg.renders != [];
+
+  # Renewal check (krg.vaultAgent.renewal). The agent is a ONE-SHOT, so a rendered PKI
+  # leaf otherwise sits on /run until it expires. Walk every render destination; anything
+  # that parses as an X.509 cert has its remaining life compared against its TOTAL
+  # lifetime, so the window follows the issuing role's TTL instead of a hardcoded number
+  # of days. Non-cert renders (KV env files, bare private keys) fail the openssl parse and
+  # are skipped — no per-render "this one is a cert" flag to keep in sync. A single
+  # qualifying cert restarts the agent, which re-issues every template and fires each
+  # CHANGED render's reloadCommand.
+  #
+  # NOTE a PKI template re-renders a *fresh* cert on every agent run, so its content
+  # always "changes" and its reloadCommand always fires. That is exactly why this is a
+  # windowed check and not an unconditional periodic restart: an unconditional restart
+  # would bounce every cert consumer on every tick.
+  renewScript = pkgs.writeShellScript "openbao-agent-renew" ''
+    set -uo pipefail
+
+    openssl=${pkgs.openssl}/bin/openssl
+    date=${pkgs.coreutils}/bin/date
+
+    now=$($date +%s)
+    need=0
+
+    for f in ${concatMapStringsSep " " (r: escapeShellArg r.destination) cfg.renders}; do
+      # A destination that vanished (or a render that never completed) is itself a
+      # reason to re-run the agent — fail-closed consumers stay down until it does.
+      if [ ! -r "$f" ]; then
+        echo "renew: $f is missing or unreadable — re-rendering"
+        need=1
+        continue
+      fi
+
+      # Not a certificate (env file, bare private key) → skip quietly.
+      nb=$($openssl x509 -in "$f" -noout -startdate 2>/dev/null) || continue
+      na=$($openssl x509 -in "$f" -noout -enddate 2>/dev/null) || continue
+      nbs=$($date -d "''${nb#notBefore=}" +%s 2>/dev/null) || continue
+      nas=$($date -d "''${na#notAfter=}" +%s 2>/dev/null) || continue
+
+      life=$((nas - nbs))
+      [ "$life" -gt 0 ] || continue
+      rem=$((nas - now))
+
+      if [ $((rem * 100)) -lt $((life * ${toString cfg.renewal.percentRemaining})) ]; then
+        echo "renew: $f has $((rem / 3600))h of $((life / 3600))h left" \
+             "(under ${toString cfg.renewal.percentRemaining}%) — re-rendering"
+        need=1
+      fi
+    done
+
+    if [ "$need" -eq 1 ]; then
+      exec ${config.systemd.package}/bin/systemctl restart openbao-agent.service
+    fi
+
+    echo "renew: every rendered cert is outside its renewal window; nothing to do"
+  '';
+
   destDirs =
     map (d: {
       dir = d;
@@ -199,6 +278,48 @@ in {
       default = [];
       description = "Secret render specs; each renders one OpenBao template to a file.";
     };
+
+    renewal = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Re-render before a rendered CERTIFICATE expires. The agent is a one-shot, so
+          without this a PKI leaf rendered to /run lives exactly as long as its issued
+          TTL and then expires in place — which is how the fishsense Temporal worker died
+          7 days after its only render (see the re-rendering note at the top of this
+          file). A timer inspects every render destination that parses as an X.509 cert
+          and restarts the agent once a leaf is inside its renewal window; that re-issues
+          EVERY template and fires each changed render's reloadCommand. A harmless no-op
+          on hosts whose renders are all KV values (krg-prod's env files skip the parse),
+          so it is ON by default rather than opt-in — the failure mode it prevents is
+          silent right up until the outage.
+        '';
+      };
+
+      onCalendar = mkOption {
+        type = types.str;
+        default = "hourly";
+        description = ''
+          systemd OnCalendar for the renewal CHECK (not the renewal itself — the check is
+          a few openssl calls and re-renders nothing until a leaf is in-window). Keep it
+          far below the window implied by percentRemaining.
+        '';
+      };
+
+      percentRemaining = mkOption {
+        type = types.ints.between 1 99;
+        default = 33;
+        description = ''
+          Renew once less than this percent of a leaf's TOTAL lifetime (notAfter minus
+          notBefore) remains. Expressed as a fraction of lifetime, not a fixed number of
+          days, so the window scales with whatever TTL the issuing role carries: a 7d
+          `temporal-client` leaf renews with ~2.3d of slack, a 30d `host` or
+          `tenant-internal` leaf with ~10d. Both comfortably exceed a nightly
+          autoUpgrade/converge cycle, so renewal never depends on a deploy landing.
+        '';
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -229,6 +350,36 @@ in {
           concatMapStringsSep "\n" (d: "${pkgs.coreutils}/bin/install -d -m ${d.perms} ${escapeShellArg d.dir}") destDirs
         );
         ExecStart = "${pkgs.openbao}/bin/bao agent -config=${agentConfig}";
+      };
+    };
+
+    # ── renewal ────────────────────────────────────────────────────────────────
+    # Gated on renders != [] so a vaultAgent host with nothing to render carries no
+    # timer (and the check script's `for` loop is never built with an empty word list).
+    systemd.services.openbao-agent-renew = mkIf renewalActive {
+      description = "Re-render OpenBao Agent secrets when a rendered cert nears expiry";
+      # network-online so the restart it triggers can actually reach bao. If bao is
+      # unreachable the agent fails closed and the PREVIOUS /run files stay in place
+      # (consumers keep the last-good cert) — the next tick retries, and the renewal
+      # window is wide enough to absorb a long bao outage before anything expires.
+      after = ["network-online.target"];
+      wants = ["network-online.target"];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = renewScript;
+      };
+    };
+
+    systemd.timers.openbao-agent-renew = mkIf renewalActive {
+      description = "Periodic expiry check for OpenBao Agent cert renders";
+      wantedBy = ["timers.target"];
+      timerConfig = {
+        OnCalendar = cfg.renewal.onCalendar;
+        # Spread the fleet + tenants so they do not all hit bao on the hour.
+        RandomizedDelaySec = "15m";
+        # Catch up after downtime — a box off for a week must check on the way up
+        # rather than wait for the next tick holding an already-expired leaf.
+        Persistent = true;
       };
     };
   };

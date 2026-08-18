@@ -121,7 +121,10 @@
           };
           compose = ./templates/tenant/deploy/compose.yml;
           repo = "UCSD-E4E/example";
-          temporal = {namespace = "example";};
+          temporal = {
+            namespace = "example";
+            reload = ["worker"];
+          };
         };
         sys = nixpkgs.lib.nixosSystem {
           inherit system;
@@ -156,6 +159,19 @@
           && builtins.isString "${sys.config.systemd.services.example-selfupdate.script}"
           # a tenant that requested temporal gets the temporal-client render (ADR 0023 §2)
           && builtins.any (r: r.destination == "/run/tenant/temporal/tls.crt") sys.config.krg.vaultAgent.renders
+          # ...and BOTH halves of cert rotation are wired, because a rendered 7d leaf with
+          # neither is exactly the 2026-08-17 fishsense outage. (a) something re-renders the
+          # leaf before it expires — tenants converge from their own flake and never run
+          # deploy-nixos.sh, so the timer is the only thing that does it:
+          && sys.config.systemd.timers.openbao-agent-renew.timerConfig.OnCalendar == "hourly"
+          && builtins.isString "${sys.config.systemd.services.openbao-agent-renew.serviceConfig.ExecStart}"
+          # (b) the rotation restarts the consumer that cached the old cert, targeting the
+          # services the tenant named in mkTenant's temporal.reload:
+          && builtins.any (r:
+            r.destination
+            == "/run/tenant/temporal/tls.crt"
+            && nixpkgs.lib.hasInfix "restart worker" r.reloadCommand)
+          sys.config.krg.vaultAgent.renders
           # committed config MUST apply on converge (issue #458): the tenant stack force-recreates
           && nixpkgs.lib.hasInfix "--force-recreate" sys.config.systemd.services.example.serviceConfig.ExecStart
           # the nightly auto-upgrade targets the TENANT's own flake, not krg-infra's (else it
