@@ -1,5 +1,5 @@
 {
-  "_comment": "Single source of truth for trusted networks / Proxmox IPSets. Consumers: ansible proxmox_firewall (templates cluster.fw IPSETs), ansible group_vars (trusted nets → crowdsec_whitelist_cidrs), nix krg.firewall (monitoring source, service SSH restriction). Edit here only. Lives under nix/ because the flake can only read its own subtree. monitoring_host = the IP that runs Prometheus and scrapes the node/ipmi exporters (currently krg-prod, which hosts the monitoring compose stack).",
+  "_comment": "Single source of truth for trusted networks / Proxmox IPSets. Consumers: ansible proxmox_firewall (templates cluster.fw IPSETs), ansible group_vars (trusted nets → crowdsec_whitelist_cidrs), nix krg.firewall (monitoring source, service SSH restriction). Edit here only. Lives under nix/ because the flake can only read its own subtree. monitoring_host = the IP that runs Prometheus and scrapes the node/ipmi exporters (currently krg-prod, which hosts the monitoring compose stack). NOTE ON `ops`: those are per-admin RESIDENTIAL addresses, so they are DYNAMIC and go stale without warning — chris's rotated between 2026-08-18 and 2026-08-19 and locked us out of SSH fleet-wide (symptom: port 22 TIMES OUT while DSM web still answers 200 — dropped, not down). REPLACE a stale entry, never append: a residential address you no longer hold gets reassigned to another customer, and appending would leave a stranger holding an SSH allow into the fleet. `ops` gates SSH via nix sshSources, the cluster.fw IPSets below and the synology_security prepends, so one stale line is a fleet-wide lockout, not a single-host one. Do NOT add explanatory keys inside `ipsets` — cluster.fw.j2 iterates it with .items() and would render a bogus IPSet.",
   "monitoring_host": "137.110.161.106",
   "ipsets": {
     "public": [
@@ -26,8 +26,8 @@
       { "cidr": "132.239.17.123",  "comment": "kastner-ml.ucsd.edu (compute; domain member)" }
     ],
     "ops": [
-      { "cidr": "97.170.130.76", "comment": "admin remote (chris)" },
-      { "cidr": "107.132.34.148", "comment": "admin remote (sean)"}
+      { "cidr": "97.190.45.136", "comment": "admin remote (chris) — refreshed 2026-08-19, was 97.170.130.76" },
+      { "cidr": "107.132.34.148", "comment": "admin remote (sean) — unverified since 2026-08-19; may also be stale"}
     ],
     "machines": [
       { "cidr": "137.110.161.67",  "comment": "waiter.ucsd.edu (compute; domain member)" },

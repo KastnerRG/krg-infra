@@ -162,12 +162,23 @@ firewall:
             # first would have exposed e4e-admin and e4e-automation —
             # active `administrators` — to password auth from the internet.
             #
-            # ROLLBACK: flip both rules back to false and merge; the deploy
-            # closes the port in ~30 min. For an INCIDENT that is too slow —
-            # `synopkg stop VPNCenter` on the box kills the listener at
-            # once. That is a live mutation, so treat it as break-glass and
-            # follow it with the spec change, or the role restores the
-            # daemon on the next run.
+            # ROLLBACK, in the order you can actually reach for them:
+            #   1. Flip both rules back to false and merge. The deploy closes
+            #      the port in ~30 min, and CD runs from krg-deploy ON CAMPUS,
+            #      so this works regardless of where the operator is.
+            #   2. Faster, if you can reach the box: stop VPNCenter. In
+            #      Package Center over the DSM web UI (reachable US-wide via
+            #      `geoip-US-web`), or `synopkg stop VPNCenter` over SSH.
+            #
+            # ⚠️ DO NOT assume the SSH path. SSH here is allowed only from
+            # ucsd/sealab/`ops`, and `ops` holds per-admin RESIDENTIAL IPs
+            # that rotate: on 2026-08-19 chris's address changed and port 22
+            # dropped fleet-wide while DSM web still answered. An operator
+            # off-campus during an incident may well have the web UI and no
+            # SSH at all — which is why the web-UI stop is listed as a peer
+            # of the SSH one, not a footnote. Either is a live mutation:
+            # break-glass, then follow with the spec change or the role
+            # restarts the daemon on its next run.
             #
             # geoip-US scoped to match `geoip-US-web` below rather than a
             # worldwide allow: DSM's OpenVPN has no 2FA, so this is a
