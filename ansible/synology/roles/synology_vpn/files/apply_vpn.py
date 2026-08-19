@@ -63,7 +63,19 @@ ERR_API_NOT_EXIST = 102  # package stopped -> webapi unregistered
 ERR_BAD_PARAMS = 600  # almost always a missing/renamed parameter
 
 KEYS_DIR = "/usr/syno/etc/packages/VPNCenter/openvpn/keys"
-CA_CRT = os.path.join(KEYS_DIR, "ca.crt")
+# ⚠️ PUBLISH THE BUNDLE, NOT ca.crt. DSM serves the VPN with the DSM SYSTEM
+# certificate — here a Let's Encrypt cert for CN=e4e-nas.ucsd.edu — so the
+# client must be able to build a chain to a ROOT. `ca.crt` is only the
+# INTERMEDIATE (CN=YR2); `ca_bundle.crt` is the full chain
+# (YR2 -> ISRG Root YR -> ISRG Root X1).
+#
+# An `<ca>` block REPLACES the client's trust store rather than adding to it,
+# so shipping the intermediate alone leaves no path to a trusted root and every
+# connection dies at "VERIFY ERROR: depth=2, unable to get issuer certificate".
+# Verified against the live service 2026-08-19: intermediate-only fails, bundle
+# gives VERIFY OK at all four depths.
+CA_BUNDLE = os.path.join(KEYS_DIR, "ca_bundle.crt")
+CA_CRT = os.path.join(KEYS_DIR, "ca.crt")  # fallback only (self-signed setups)
 TA_KEY = os.path.join(KEYS_DIR, "ta.key")
 
 # --- The write contract -------------------------------------------------------
@@ -547,6 +559,14 @@ auth-user-pass
 # (Leave redirect-gateway commented — the service only serves SMB on this box.)
 cipher {cipher}
 auth {auth_digest}
+# The server presents the DSM system certificate, which is issued by a PUBLIC
+# CA (Let's Encrypt). Chain validation alone would therefore accept ANY
+# LE-issued certificate, so an attacker able to redirect traffic could present
+# their own and MITM the tunnel. These two lines close that:
+#   remote-cert-tls server  — the peer cert must carry the TLS-server EKU
+#   verify-x509-name        — and its subject must be exactly this host
+remote-cert-tls server
+verify-x509-name {host} name
 verb 3
 {compression_line}
 <ca>
@@ -574,10 +594,24 @@ def cmd_publish(a):
     they have a tunnel, via DSM's web UI / File Station, which is reachable
     US-wide (security.yml `geoip-US-web`). Don't close that without moving this.
     """
-    for path in (CA_CRT,) + ((TA_KEY,) if _bool(a.tls_auth) else ()):
+    # Full chain if DSM has one (it does whenever the VPN uses the system
+    # certificate); ca.crt alone only suffices for a self-signed setup.
+    ca_path = CA_BUNDLE if os.path.exists(CA_BUNDLE) else CA_CRT
+    for path in (ca_path,) + ((TA_KEY,) if _bool(a.tls_auth) else ()):
         if not os.path.exists(path):
             print("FAIL missing %s — is VPNCenter installed?" % path)
             return 1
+
+    ca_pem = _read(ca_path)
+    # A single certificate here means no path to a root, which fails EVERY
+    # client at depth=2 — the failure this check exists to prevent recurring.
+    if ca_path == CA_BUNDLE and ca_pem.count("BEGIN CERTIFICATE") < 2:
+        print(
+            "FAIL %s holds only %d certificate(s) — expected a chain. Clients "
+            "cannot verify a publicly-issued server cert without one."
+            % (CA_BUNDLE, ca_pem.count("BEGIN CERTIFICATE"))
+        )
+        return 1
 
     tls_block = TLS_AUTH_BLOCK.format(ta=_read(TA_KEY)) if _bool(a.tls_auth) else ""
 
@@ -591,7 +625,7 @@ def cmd_publish(a):
         # comp-lzo is OFF by policy (VORACLE); say so rather than staying silent,
         # since the server default ships it ON and a stale client would mismatch.
         compression_line="# compression disabled by policy (VORACLE)",
-        ca=_read(CA_CRT),
+        ca=ca_pem,
         tls_auth_block=tls_block,
     )
 

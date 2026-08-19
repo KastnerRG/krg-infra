@@ -626,3 +626,51 @@ def test_publish_check_mode_reports_no_change_when_converged(monkeypatch, tmp_pa
     capsys.readouterr()
     assert m.main(PUBLISH_ARGS + ["--dest", str(dest), "--check"]) == 0
     assert "OK no-change" in capsys.readouterr().out
+
+
+# --- client CA chain (regression: the tunnel could not establish) -------------
+# DSM serves the VPN with the DSM system certificate (Let's Encrypt here), so
+# the client needs a chain to a ROOT. Publishing ca.crt — the intermediate
+# alone — failed every client at "VERIFY ERROR: depth=2".
+CHAIN = (
+    "-----BEGIN CERTIFICATE-----\nYR2\n-----END CERTIFICATE-----\n"
+    "-----BEGIN CERTIFICATE-----\nROOTYR\n-----END CERTIFICATE-----\n"
+    "-----BEGIN CERTIFICATE-----\nX1\n-----END CERTIFICATE-----\n"
+)
+
+
+def test_publish_prefers_the_full_chain_bundle(monkeypatch, tmp_path):
+    _stub_keys(monkeypatch, tmp_path)
+    bundle = tmp_path / "ca_bundle.crt"
+    bundle.write_text(CHAIN)
+    monkeypatch.setattr(m, "CA_BUNDLE", str(bundle))
+    dest = tmp_path / "e4e-nas.ovpn"
+    assert m.main(PUBLISH_ARGS + ["--dest", str(dest)]) == 0
+    body = dest.read_text()
+    assert body.count("BEGIN CERTIFICATE") >= 3  # chain, not just the leaf CA
+    assert "ROOTYR" in body and "X1" in body
+
+
+def test_publish_rejects_a_single_cert_bundle(monkeypatch, tmp_path, capsys):
+    """A one-cert bundle means no path to a root — fail loudly rather than
+    shipping a config that cannot connect."""
+    _stub_keys(monkeypatch, tmp_path)
+    bundle = tmp_path / "ca_bundle.crt"
+    bundle.write_text("-----BEGIN CERTIFICATE-----\nONLY\n-----END CERTIFICATE-----\n")
+    monkeypatch.setattr(m, "CA_BUNDLE", str(bundle))
+    dest = tmp_path / "e4e-nas.ovpn"
+    assert m.main(PUBLISH_ARGS + ["--dest", str(dest)]) == 1
+    assert "expected a chain" in capsys.readouterr().out
+    assert not dest.exists()
+
+
+def test_publish_pins_the_server_identity(monkeypatch, tmp_path):
+    """Trusting a PUBLIC CA means any LE-issued cert would satisfy the chain,
+    so the config must also pin EKU and subject name."""
+    _stub_keys(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "CA_BUNDLE", str(tmp_path / "absent"))
+    dest = tmp_path / "e4e-nas.ovpn"
+    assert m.main(PUBLISH_ARGS + ["--dest", str(dest)]) == 0
+    body = dest.read_text()
+    assert "remote-cert-tls server" in body
+    assert "verify-x509-name e4e-nas.ucsd.edu name" in body
