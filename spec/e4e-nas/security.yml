@@ -154,21 +154,30 @@ firewall:
             # (vpn.yml `allow_lan: false` is the load-bearing switch; the
             # `vpn` adapter block below is the enforcement).
             #
-            # ⚠️ SHIPS DISABLED. `enable: false` until the `synology_vpn`
-            # role exists and the service is actually configured — no port
-            # is opened ahead of a listener. Flip this together with
-            # `vpn-smb-only` (vpn.yml "Bring-up sequence" step 4).
+            # ⚠️ THIS IS THE RULE THAT EXPOSES THE SERVICE. Enabled
+            # 2026-08-19, deliberately last: the daemon was configured and
+            # converged, and every local account was denied every VPN
+            # protocol (vpn.yml `privilege`), while this stayed off. DSM
+            # ships local accounts ENABLED for OpenVPN, so opening this
+            # first would have exposed e4e-admin and e4e-automation —
+            # active `administrators` — to password auth from the internet.
+            #
+            # ROLLBACK: flip both rules back to false and merge; the deploy
+            # closes the port in ~30 min. For an INCIDENT that is too slow —
+            # `synopkg stop VPNCenter` on the box kills the listener at
+            # once. That is a live mutation, so treat it as break-glass and
+            # follow it with the spec change, or the role restores the
+            # daemon on the next run.
             #
             # geoip-US scoped to match `geoip-US-web` below rather than a
-            # worldwide allow: DSM's OpenVPN supports neither 2FA nor
-            # tls-crypt, so this is a password-authenticated endpoint and
-            # the country scope is one of the few cheap brakes available
-            # (the others being auto-block 3/24h/permanent and the 12-char
-            # AD complexity policy). If a collaborator abroad ever needs
-            # in, widen to `source_ip_group: all` — one line, and note the
-            # trade in that PR.
+            # worldwide allow: DSM's OpenVPN has no 2FA, so this is a
+            # password-authenticated endpoint and the country scope is one
+            # of the few cheap brakes available (the others being tls-auth,
+            # auto-block 3/24h/permanent, and the 12-char AD complexity
+            # policy). If a collaborator abroad ever needs in, widen to
+            # `source_ip_group: all` — one line, and note the trade there.
             - name: openvpn-1194
-              enable: false
+              enable: true
               log: false
               policy: allow
               port_direction: destination
@@ -289,11 +298,14 @@ firewall:
             # from `smb-deny-fall-through` above — that rule lists 139
             # only because it is a catch-all deny.
             #
-            # ⚠️ SHIPS DISABLED alongside `openvpn-1194`. Fail-closed if
-            # the bring-up order ever slips: rule off + adapter policy
-            # `drop` means a tunnel that comes up early reaches nothing.
+            # Enabled 2026-08-19 alongside `openvpn-1194`. The adapter
+            # policy stays `drop`, so this ONE allow is the entire in-tunnel
+            # surface: 445/tcp to this box, nothing else — no DSM UI on
+            # 6020/6021, no SSH, no Garage, no NFS. Do not add rules here
+            # without re-reading the threat model in vpn.yml; every addition
+            # widens what a VPN client can reach on the NAS.
             - name: vpn-smb-only
-              enable: false
+              enable: true
               log: false
               policy: allow
               port_direction: destination
