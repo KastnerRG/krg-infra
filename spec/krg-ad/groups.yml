@@ -45,14 +45,26 @@ groups:
   # Space-FREE name on purpose (like proxmox-admins): consumed as `%E4E-NAS` in a
   # sudoers rule (nix krg.nasMount) where an unescaped space would break the rule,
   # and looked up by name in Authentik (terraform/authentik app_access.tf).
-  # `members: [E4E Admin]` — E4E administrators inherit E4E NAS mount access
-  # (nested), so they don't need a separate direct grant.
-  - { name: "E4E-NAS", description: "Mount access to the E4E NAS (e4e-nas.ucsd.edu) CIFS shares via the kastner-ml e4e-nas-mount sudo wrapper (nix krg.nasMount); also gates the E4E NAS app tile in Authentik (app_access.tf)", members: ["E4E Admin"] }
+  # `members:` — nested groups whose members inherit E4E NAS mount access, so they
+  # don't need a separate direct grant:
+  #   * "E4E Admin"    — E4E administrators.
+  #   * "Junkyard-NAS" — the junkyard share's grant group. Nested BECAUSE that share
+  #     is its members' only reason to touch the NAS: un-nested they held the RW ACE
+  #     on /volume2/junkyard with no way to reach it (no e4e-nas-mount sudo, no E4E
+  #     NAS / Garage tile in Authentik). The other per-share groups below stay
+  #     UN-nested on purpose — their members are E4E people who hold E4E-NAS in
+  #     their own right via roster.
+  # Both consumers resolve nesting transitively: Authentik via ldap.tf's
+  # group_membership_field (AD LDAP_MATCHING_RULE_IN_CHAIN), sudo on kastner-ml via
+  # ordinary SSSD group expansion.
+  - { name: "E4E-NAS", description: "Mount access to the E4E NAS (e4e-nas.ucsd.edu) CIFS shares via the kastner-ml e4e-nas-mount sudo wrapper (nix krg.nasMount); also gates the E4E NAS app tile in Authentik (app_access.tf)", members: ["E4E Admin", "Junkyard-NAS"] }
   # --- e4e-nas per-share grant groups (consumed by spec/e4e-nas/acls.yml -> synology_acls) ---
   # These replace principals from the DEAD KRG-UCSD-EDU domain, translated from the
   # 2026-05-28 pre-reset capture (`synoshare --list_acl`, off-repo per the runbook).
-  # All space-free for the same reason as E4E-NAS. None of them grant the *mount* —
-  # a member also needs E4E-NAS for the kastner-ml sudo wrapper (nix krg.nasMount).
+  # All space-free for the same reason as E4E-NAS. None of them grants the *mount* by
+  # itself — a member also needs E4E-NAS for the kastner-ml sudo wrapper (nix
+  # krg.nasMount) and the Authentik NAS tile. Junkyard-NAS is the one exception: it is
+  # nested INTO E4E-NAS (declared on that group above), so its members inherit it.
   #
   # Collapses TWO old principals that agreed on every share: the local DSM group
   # `@fishsense` and the AD group `@KRG-UCSD-EDU\FishSense NAS` (both RW on fishsense +
@@ -78,7 +90,7 @@ groups:
   # the pre-existing `junkyard-fishsense` / `junkyard_backup` shares — this group holds no
   # grant on those (they stay absent from acls.yml, so the role leaves them untouched; the
   # `junkyard.service` account decision on junkyard-fishsense is still open).
-  - { name: "Junkyard-NAS", description: "RW on the junkyard share on e4e-nas.ucsd.edu (spec/e4e-nas/acls.yml). Mounting also requires E4E-NAS." }
+  - { name: "Junkyard-NAS", description: "RW on the junkyard share on e4e-nas.ucsd.edu (spec/e4e-nas/acls.yml). Mount access is INHERITED, not separate: this group is a nested member of E4E-NAS (declared there), so members also get the kastner-ml e4e-nas-mount sudo wrapper and the E4E NAS / Garage app tiles in Authentik." }
 
   - { name: "Guacamole Admins", description: "Apache Guacamole administrators" }
   # Space-FREE name on purpose: PVE's AD-realm sync rejects group ids with spaces
