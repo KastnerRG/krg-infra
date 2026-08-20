@@ -211,6 +211,33 @@ materialize() { # <target>
       } >"${icdir}/client.crt"
       jq -r '.data.private_key' <<<"$icj" >"${icdir}/client.key"
       chmod 600 "${icdir}/client.key"
+      # PIN krg-nat's SERVER cert (the other direction of the handshake). Incus's own
+      # server cert is self-signed with SAN `DNS:krg-nat` ONLY — no FQDN, no LAN IP —
+      # but every consumer dials krg-nat.ucsd.edu, so plain verification fails with
+      # `x509: certificate is valid for krg-nat, not krg-nat.ucsd.edu`. Dropping the
+      # pinned copy here fixes BOTH halves at once: the incus client lib adds a pinned
+      # server cert to its root pool AND sets tls ServerName from the cert's first DNS
+      # name (shared/tls TLSConfigWithTrustedCert), so the FQDN dial verifies.
+      #
+      # This does NOT rely on the provider's accept_remote_certificate: that fallback
+      # only fires when its own early probe returns an error, and the provider discards
+      # the error from getIncusConfigInstanceServer — so on a TLS failure it silently
+      # skips the fetch and dies later in InstanceServer(). Shipping the cert in git is
+      # also the stronger posture: a real pin, reviewed in a diff, instead of trusting
+      # whatever answers on :8443 at deploy time.
+      #
+      # The pin is bound to krg-nat's CURRENT server.crt. If the daemon ever regenerates
+      # it (host rebuild / wiped /var/lib/incus), refresh the committed copy from the box:
+      #   ssh krg-admin@krg-nat.ucsd.edu cat /var/lib/incus/server.crt
+      # FOLLOW-UP: issuing the SERVER cert from the fleet PKI too (SANs for both names,
+      # like every other fleet service) would retire this pin entirely.
+      if [[ ! -r "${TF_DIR}/incus/krg-nat-server.crt" ]]; then
+        echo "  missing terraform/incus/krg-nat-server.crt (pinned server cert) — skipping incus" >&2
+        return 1
+      fi
+      mkdir -p "${icdir}/servercerts"
+      # Filename MUST match the provider's remote name (providers.tf `remote.name`).
+      cp "${TF_DIR}/incus/krg-nat-server.crt" "${icdir}/servercerts/krg-nat.crt"
       export TF_VAR_incus_config_dir="$icdir"
       ;;
     *)

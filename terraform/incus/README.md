@@ -30,7 +30,25 @@ nothing lives in a user's `~/.config/incus`:
 - `krg-nat` **trusts the fleet CA**: the `krg.incus` nix module installs it as Incus's
   `server.ca` and sets `core.trust_ca_certificates=true`, so any fleet-signed client cert
   is accepted — **no per-cert `incus config trust add`**.
-- `accept_remote_certificate` trusts krg-nat's server cert on the trusted internal segment.
+- The **server** direction is a real **pin**, not TOFU: `krg-nat-server.crt` in this
+  directory is krg-nat's Incus server certificate, committed to git, and deploy-tofu.sh
+  copies it to `servercerts/krg-nat.crt` in that same ephemeral dir. Required, not
+  cosmetic — Incus self-signs with SAN `DNS:krg-nat` **only**, so dialing
+  `krg-nat.ucsd.edu` fails hostname verification unless the cert is pinned (the incus
+  client lib takes TLS `ServerName` from the pinned cert's first DNS name).
+  `accept_remote_certificate` is left on as a backstop but does **not** cover this case.
+
+  Refresh the pin if the daemon ever regenerates its cert (host rebuild, wiped
+  `/var/lib/incus`) — the symptom is a `tofu apply incus` failing with
+  `x509: certificate is valid for krg-nat, not krg-nat.ucsd.edu`:
+
+  ```sh
+  ssh krg-admin@krg-nat.ucsd.edu cat /var/lib/incus/server.crt \
+    > terraform/incus/krg-nat-server.crt
+  ```
+
+  *Follow-up:* issuing the **server** cert from the fleet PKI as well (SANs for both
+  names, like every other fleet service) would retire the pin entirely.
 
 The API is **ucsd+ops-restricted** at the firewall (the nix module's `sourcedPorts`) and
 OIDC-gated for humans; this cert is the machine identity. No secret in tfvars, no drift.
