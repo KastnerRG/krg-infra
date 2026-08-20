@@ -36,9 +36,15 @@ provider "incus" {
   # $HOME/.config/incus (that reliance was the drift this replaces).
   config_dir = var.incus_config_dir
 
-  # Trust krg-nat's (self-signed) server certificate — no interactive TOFU. Safe on the
-  # trusted internal segment; the client-auth trust is the load-bearing direction and
-  # is anchored to the fleet CA (server.ca) on krg-nat.
+  # Belt-and-braces only. The real server trust is the PINNED cert deploy-tofu.sh lays
+  # into ${config_dir}/servercerts/krg-nat.crt from the committed
+  # terraform/incus/krg-nat-server.crt — do NOT rely on this flag alone. Incus's
+  # self-signed server cert carries SAN `DNS:krg-nat` and nothing else, so dialing the
+  # FQDN fails hostname verification; the pin is what fixes it (the client lib takes tls
+  # ServerName from the pinned cert's first DNS name). This flag's fetch-and-accept
+  # fallback does not cover that case: it only fires when the provider's early probe
+  # returns an error, and the provider discards that error, so it skips the fetch and
+  # fails later in InstanceServer().
   accept_remote_certificate = true
 
   # The remote used when a resource doesn't name one. In lxc/incus 1.x this moved to a
