@@ -70,16 +70,22 @@ resource "authentik_property_mapping_provider_saml" "label_studio_last_name" {
 }
 
 # Multi-valued: AD group names, TRIMMED to Label-Studio-relevant groups only
-# (names starting with "Label Studio", e.g. "Label Studio Admins" — spec/krg-ad/groups.yml).
-# The prior attempt sent the full AD group list; don't over-share the whole
-# directory structure with a third-party SaaS. In Label Studio, Organization →
-# map these group NAMES to org roles / workspaces / projects — names must match
-# byte-for-byte.
+# (names CONTAINING "Label Studio" — spec/krg-ad/groups.yml). The prior attempt
+# sent the full AD group list; don't over-share the whole directory structure with
+# a third-party SaaS. In Label Studio, Organization → map these group NAMES to org
+# roles / workspaces / projects — names must match byte-for-byte.
+#
+# SUBSTRING, not startswith(): the org-wide tiers lead with the phrase ("Label
+# Studio Admins"/"Label Studio Users") but the per-project admin tiers lead with the
+# PROJECT ("FishSense Label Studio Admin", "Frog ID Label Studio Admin"), matching
+# how the other per-project groups are named. A prefix test would silently drop
+# those — the assertion would carry no Groups value and the user would land with
+# Label Studio's default role instead of their workspace-admin role.
 resource "authentik_property_mapping_provider_saml" "label_studio_groups" {
   name       = "Label Studio — Groups"
   saml_name  = "Groups"
   expression = <<-EOT
-    return [group.name for group in request.user.groups.all() if group.name.startswith("Label Studio")]
+    return [group.name for group in request.user.groups.all() if "Label Studio" in group.name]
   EOT
 }
 

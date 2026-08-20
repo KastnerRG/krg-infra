@@ -34,11 +34,14 @@ locals {
     fishsense_orchestrator = ["FishSense-Prod-Admins"] # FishSense API — prod admins only (space-free AD name; see groups.yml)
     e4e_nas                = ["E4E-NAS"]               # NAS SSO tile visible only to NAS-access group (matches the nix krg.nasMount sudo gate)
     garage_ui              = ["E4E-NAS"]               # Garage (S3-on-NAS) admin/data browser — same NAS-access gate as e4e_nas
-    # Both groups exist in KRG.LOCAL (spec/krg-ad/groups.yml) and must be synced into
-    # Authentik before apply. The label_studio_groups SAML mapping (label_studio.tf) also
-    # emits both names to Label Studio, where they map to org roles — this binding is the
-    # outer tile/launch gate; that attribute is the in-app role gate (complementary).
-    label_studio = ["Label Studio Users", "Label Studio Admins"]
+    # All four groups exist in KRG.LOCAL (spec/krg-ad/groups.yml) and must be synced
+    # into Authentik before apply. The label_studio_groups SAML mapping (label_studio.tf)
+    # also emits these names to Label Studio, where they map to org roles / workspace
+    # roles — this binding is the outer tile/launch gate; that attribute is the in-app
+    # role gate (complementary). The two per-project admin tiers MUST be listed here as
+    # well: a project admin who holds only their project group would otherwise be denied
+    # the tile and the launch, and never reach the app the attribute is scoping.
+    label_studio = ["Label Studio Users", "Label Studio Admins", "FishSense Label Studio Admin", "Frog ID Label Studio Admin"]
   }
 
   # app local-name → its application UUID (the policy-binding target).
