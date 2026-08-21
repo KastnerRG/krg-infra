@@ -33,7 +33,7 @@ This re-attempt restores the same IdP config with a **freshly-issued ACS/Audienc
 URL** (Heartex regenerates this token whenever the org's SSO connection is
 re-created, so the old one is dead regardless), and additionally **trims the
 `Groups` SAML attribute** to only Label-Studio-relevant AD group names
-(`startswith("Label Studio")`) instead of the full AD group list — a hardening
+(names containing `"Label Studio"`) instead of the full AD group list — a hardening
 follow-up noted when this was parked, applied now regardless of the 500 outcome.
 
 **If the ACS 500 recurs:** don't debug blind a second time. Get an org admin to
@@ -56,7 +56,7 @@ again per the checklist at the bottom of this doc rather than leave it half-wire
   | `Email`     | `request.user.email`                                                      |
   | `FirstName` | first token of `request.user.name`                                        |
   | `LastName`  | rest of `request.user.name`                                              |
-  | `Groups`    | `[g.name for g in request.user.groups.all() if g.name.startswith("Label Studio")]` |
+  | `Groups`    | `[g.name for g in request.user.groups.all() if "Label Studio" in g.name]` |
 
 - `authentik_application.label_studio` — slug **`label-studio`** (load-bearing: the
   metadata/SSO URLs embed it), dashboard tile → `app.heartex.com`.
@@ -99,10 +99,22 @@ order:
    you must pick a different preset, change the `saml_name`s in
    `label_studio.tf` to match and re-apply.
 4. **Label Studio → group → role mapping.** Map the AD group **names** emitted in
-   `Groups` to Label Studio org roles / workspaces / projects. Only `Label Studio
-   Admins` is emitted today (the attribute is trimmed — see above); add more
-   `Label Studio *`-prefixed AD groups (`spec/krg-ad/groups.yml`) if finer-grained
-   roles are needed. Names must match byte-for-byte.
+   `Groups` to Label Studio org roles / workspaces / projects. The attribute is
+   trimmed (see above), so only AD groups whose name **contains** `Label Studio`
+   are emitted — today that is:
+
+   | AD group | map it to |
+   |----------|-----------|
+   | `Label Studio Admins` | org **Administrator** |
+   | `Label Studio Users` | a standard org role |
+   | `FishSense Label Studio Admin` | admin of the **FishSense** workspace/projects |
+   | `Frog ID Label Studio Admin` | admin of the **Frog ID** workspace/projects |
+
+   Names must match byte-for-byte. To add another finer-grained group, put `Label
+   Studio` **somewhere** in the name (`spec/krg-ad/groups.yml`) — the mapping is a
+   substring test, so a name that omits the phrase is silently never emitted — and
+   add it to `label_studio` in `terraform/authentik/app_access.tf` too, or its
+   members cannot launch the app at all.
 5. **Test both flows.** SP-initiated, from Label Studio's own **Login URL** /
    "Log in with SSO" (company domain `krg.ucsd.edu`) — **confirmed working
    2026-07-09**, once the metadata URL was switched to the direct one. Then the

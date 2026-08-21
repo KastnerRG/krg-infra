@@ -103,7 +103,22 @@ groups:
   - { name: "proxmox-admins", description: "Administrator on the Proxmox VE web UI + apps via the PVE Active Directory realm (ansible pve_ad). Direct members only." }
   - { name: "Temporal Users", description: "May mint a lab-PKI client cert to reach the Temporal mTLS frontend (OpenBao ldap auth -> pki_int/issue/user; terraform/openbao var.pki_ad_group_roles)" }
   - { name: "Label Studio Admins", description: "Administrator in the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio emits this name in the Groups attribute; map it to the Administrator org role in Label Studio Organization -> Roles)" }
-  - { name: "Label Studio Users", description: "Standard (non-admin) access to the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio's Groups mapping emits every name starting with 'Label Studio', so no tofu change is needed; map this name to a standard org role in Label Studio Organization -> Roles)" }
+  - { name: "Label Studio Users", description: "Standard (non-admin) access to the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio's Groups mapping emits every name containing 'Label Studio', so no tofu change is needed; map this name to a standard org role in Label Studio Organization -> Roles)" }
+  # Per-PROJECT Label Studio admin tiers. Org-wide "Label Studio Admins" above is
+  # the whole-org Administrator; these two are scoped to one project's workspace,
+  # so a project can own its own labeling without holding the org.
+  #
+  # NAME SHAPE: these do NOT carry the "Label Studio " PREFIX the two groups above
+  # use — the project name leads, matching how the other per-project groups read
+  # ("FishSense", "fishsense-superset-admin"). The SAML Groups mapping in
+  # terraform/authentik/label_studio.tf therefore matches "Label Studio" as a
+  # SUBSTRING, not a prefix; keep that phrase verbatim in any future name here or
+  # the group is silently not emitted to Label Studio.
+  #
+  # Each also needs an entry in terraform/authentik/app_access.tf `label_studio`
+  # (the tile/launch gate) or a member holding ONLY this group cannot reach the app.
+  - { name: "FishSense Label Studio Admin", description: "Administrator of the FishSense workspace/projects in the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio emits this name in the Groups attribute; map it to the FishSense workspace admin role in Label Studio Organization -> Roles). Project-scoped, NOT org-wide admin — that is 'Label Studio Admins'." }
+  - { name: "Frog ID Label Studio Admin", description: "Administrator of the Frog ID workspace/projects in the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio emits this name in the Groups attribute; map it to the Frog ID workspace admin role in Label Studio Organization -> Roles). Project-scoped, NOT org-wide admin — that is 'Label Studio Admins'." }
   - { name: "MLflow Users", description: "Standard (non-admin) access to mlflow.krg.ucsd.edu via Authentik OIDC; emitted in the groups claim and matched by the mlflow-oidc-auth OIDC_GROUP_NAME (nix/docker-compose/krg-prod/compose.mlflow.yml)" }
   - { name: "MLflow Admins", description: "Administrator access in MLflow via Authentik OIDC; matched by the mlflow-oidc-auth OIDC_ADMIN_GROUP_NAME" }
   # Space-FREE names on purpose: emitted verbatim in the Authentik `groups` claim
