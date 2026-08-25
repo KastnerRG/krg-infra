@@ -926,9 +926,7 @@ def _age_fake_daemon(seconds_ago=10_000):
             os.utime(os.path.join(m.PROC_DIR, entry), (1, 1))
 
 
-def test_auth_reconverges_when_files_are_right_but_daemon_is_stale(
-    monkeypatch, tmp_path, capsys
-):
+def test_auth_reconverges_when_files_are_right_but_daemon_is_stale(monkeypatch, tmp_path, capsys):
     """The half-applied state the first apply actually left behind: correct
     files, daemon still running the old site. File-drift alone sees nothing,
     so without the staleness check the role goes green on a broken box."""
@@ -943,9 +941,7 @@ def test_auth_reconverges_when_files_are_right_but_daemon_is_stale(
     assert "WOULD-CHANGE" in out and "vpnauthd" in out
 
 
-def test_auth_is_no_change_when_daemon_is_newer_than_its_config(
-    monkeypatch, tmp_path, capsys
-):
+def test_auth_is_no_change_when_daemon_is_newer_than_its_config(monkeypatch, tmp_path, capsys):
     _stub_auth(monkeypatch, tmp_path)
     assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
     capsys.readouterr()
@@ -963,14 +959,22 @@ def test_published_ovpn_tells_users_to_qualify_the_username(monkeypatch, tmp_pat
         m.main(
             [
                 "publish",
-                "--host", "e4e-nas.ucsd.edu",
-                "--vpn-ip", "10.90.24.1",
-                "--port", "1194",
-                "--protocol", "udp",
-                "--cipher", "AES-256-CBC",
-                "--auth-digest", "SHA512",
-                "--tls-auth", "true",
-                "--dest", str(dest),
+                "--host",
+                "e4e-nas.ucsd.edu",
+                "--vpn-ip",
+                "10.90.24.1",
+                "--port",
+                "1194",
+                "--protocol",
+                "udp",
+                "--cipher",
+                "AES-256-CBC",
+                "--auth-digest",
+                "SHA512",
+                "--tls-auth",
+                "true",
+                "--dest",
+                str(dest),
             ]
         )
         == 0
