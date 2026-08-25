@@ -674,3 +674,155 @@ def test_publish_pins_the_server_identity(monkeypatch, tmp_path):
     body = dest.read_text()
     assert "remote-cert-tls server" in body
     assert "verify-x509-name e4e-nas.ucsd.edu name" in body
+
+
+# --- auth backend (regression: every AD login was "Incorrect user name") ------
+# The live files as VPNCenter ships them, read off e4e-nas 2026-08-25 — still at
+# their install-time mtime, which is what proved nothing had ever reconciled
+# them. rad_site_def selecting `_local` is the whole bug.
+SHIPPED_SITE_DEF = "$INCLUDE /var/packages/VPNCenter/etc/syno_conf/rad_site_def_local\n"
+SHIPPED_NTLM = (
+    'program = "/usr/local/bin/ntlm_auth --request-nt-key --domain=MYDOMAIN '
+    '--username=%{mschap:User-Name} --password=%{User-Password}"\n'
+)
+
+
+def _stub_auth(monkeypatch, tmp_path, joined="yes", protocols="runopenvpn=yes\n", workgroup="KRG"):
+    """Redirect every path cmd_auth touches into tmp_path, seeded as-shipped."""
+    conf = tmp_path / "syno_conf"
+    conf.mkdir()
+    (conf / "rad_site_def").write_text(SHIPPED_SITE_DEF)
+    (conf / "rad_ntlm_auth").write_text(SHIPPED_NTLM)
+    for site in ("ad", "local", "ldap"):
+        (conf / ("rad_site_def_%s" % site)).write_text("# site %s\n" % site)
+
+    synoinfo = tmp_path / "synoinfo.conf"
+    synoinfo.write_text('unique="synology_x"\ndomainjoined="%s"\n' % joined)
+    smb = tmp_path / "smb.conf"
+    smb.write_text("[global]\n\tworkgroup=%s\n\tsecurity=ads\n\trealm=KRG.LOCAL\n" % workgroup)
+    synovpn = tmp_path / "synovpn.conf"
+    synovpn.write_text(protocols)
+
+    monkeypatch.setattr(m, "SYNO_CONF_DIR", str(conf))
+    monkeypatch.setattr(m, "RAD_SITE_DEF", str(conf / "rad_site_def"))
+    monkeypatch.setattr(m, "RAD_NTLM_AUTH", str(conf / "rad_ntlm_auth"))
+    monkeypatch.setattr(m, "SYNOINFO_CONF", str(synoinfo))
+    monkeypatch.setattr(m, "SMB_CONF", str(smb))
+    monkeypatch.setattr(m, "SYNOVPN_CONF", str(synovpn))
+
+    calls = []
+
+    def fake_run(cmd):
+        calls.append(cmd)
+        return _Res(0)
+
+    monkeypatch.setattr(m, "_run", fake_run)
+    return conf, calls
+
+
+def test_auth_switches_the_shipped_local_site_to_ad(monkeypatch, tmp_path, capsys):
+    conf, calls = _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    out = capsys.readouterr().out
+    assert "CHANGED" in out
+    site = (conf / "rad_site_def").read_text()
+    assert site.endswith("rad_site_def_ad\n"), site
+    assert "_local" not in site
+    # and vpnauthd was actually bounced, or the running daemon keeps the old site
+    assert any("radiusd.sh" in str(c) and "force-restart" in str(c) for c in calls), calls
+
+
+def test_auth_templates_the_real_domain_over_mydomain(monkeypatch, tmp_path):
+    conf, _ = _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    ntlm = (conf / "rad_ntlm_auth").read_text()
+    assert "MYDOMAIN" not in ntlm
+    # The xlat form, not a bare domain: it must accept BOTH `KRG\user` (Realm
+    # set by rad_site_def_ad) and a bare username (falls back to the default).
+    assert "--domain=%{%{Realm}:-KRG}" in ntlm
+    assert "--username=%{mschap:User-Name}" in ntlm
+    assert "--password=%{User-Password}" in ntlm
+
+
+def test_auth_falls_back_to_the_smb_workgroup(monkeypatch, tmp_path):
+    conf, _ = _stub_auth(monkeypatch, tmp_path, workgroup="OTHER")
+    assert m.main(["auth", "--backend", "ad", "--domain", ""]) == 0
+    assert "--domain=%{%{Realm}:-OTHER}" in (conf / "rad_ntlm_auth").read_text()
+
+
+def test_auth_converges_to_no_change(monkeypatch, tmp_path, capsys):
+    _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    capsys.readouterr()
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("OK no-change"), out
+
+
+def test_auth_second_run_does_not_bounce_vpnauthd(monkeypatch, tmp_path):
+    _, calls = _stub_auth(monkeypatch, tmp_path)
+    m.main(["auth", "--backend", "ad", "--domain", "KRG"])
+    before = len(calls)
+    m.main(["auth", "--backend", "ad", "--domain", "KRG"])
+    # A converged box must not drop live tunnels on every deploy.
+    assert len(calls) == before, calls
+
+
+def test_auth_check_mode_writes_nothing(monkeypatch, tmp_path, capsys):
+    conf, calls = _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG", "--check"]) == 0
+    out = capsys.readouterr().out
+    assert "WOULD-CHANGE" in out
+    assert (conf / "rad_site_def").read_text() == SHIPPED_SITE_DEF
+    assert not calls
+
+
+def test_auth_refuses_ad_when_the_box_is_not_joined(monkeypatch, tmp_path, capsys):
+    conf, _ = _stub_auth(monkeypatch, tmp_path, joined="no")
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL" in out and "domainjoined" in out
+    # It must not have half-applied: an AD site with no winbind rejects everyone,
+    # which is the SAME symptom as the bug this fixes.
+    assert (conf / "rad_site_def").read_text() == SHIPPED_SITE_DEF
+
+
+def test_auth_rejects_an_unknown_backend(monkeypatch, tmp_path, capsys):
+    _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "kerberos"]) == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_auth_does_not_bounce_when_no_protocol_is_enabled(monkeypatch, tmp_path, capsys):
+    # radiusd.sh's start branch exits 0 without starting unless a protocol is
+    # on, so an unconditional force-restart would stop vpnauthd and leave it down.
+    _, calls = _stub_auth(monkeypatch, tmp_path, protocols="runopenvpn=no\n")
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    assert "CHANGED" in capsys.readouterr().out
+    assert not calls
+
+
+def test_auth_fails_loudly_if_the_restart_fails(monkeypatch, tmp_path, capsys):
+    # Files written but the daemon still on the old site == auth unchanged.
+    _stub_auth(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "_run", lambda cmd: _Res(1, "vpnauthd refused"))
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_auth_local_backend_leaves_ntlm_alone(monkeypatch, tmp_path, capsys):
+    # `local` is the vendor default and is already live, so this is a no-op —
+    # the point of the test is that it does not rewrite rad_ntlm_auth.
+    conf, _ = _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "local"]) == 0
+    assert capsys.readouterr().out.startswith("OK no-change")
+    assert (conf / "rad_ntlm_auth").read_text() == SHIPPED_NTLM
+
+
+def test_key_value_parses_dsm_conf_forms(tmp_path):
+    p = tmp_path / "c.conf"
+    p.write_text('# comment\n\tworkgroup=KRG\nfoo = "bar"\ndomainjoined="yes"\n')
+    assert m._key_value(str(p), "workgroup") == "KRG"
+    assert m._key_value(str(p), "foo") == "bar"
+    assert m._key_value(str(p), "domainjoined") == "yes"
+    assert m._key_value(str(p), "absent") is None

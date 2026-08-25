@@ -75,6 +75,27 @@
   check_mode: false
   when: synology_vpn_enabled | default(false) | bool
 
+# Point vpnauthd's RADIUS at the AD directory. WITHOUT THIS the VPN is closed to
+# everyone: a fresh VPNCenter install leaves `syno_conf/rad_site_def` on the
+# local-accounts site (only `vpn_updater`, which runs on package UPGRADE, ever
+# switches it), so every AD login is rejected as "Incorrect user name" — and the
+# privilege task below has correctly denied all four local accounts. Found the
+# hard way on the first off-campus test, 2026-08-25; see spec/e4e-nas/vpn.yml.
+#
+# Runs AFTER `service`: it bounces vpnauthd via radiusd.sh force-restart, whose
+# start branch is a no-op unless a protocol is already enabled.
+- name: Point the VPN's RADIUS at the AD directory
+  ansible.builtin.script: >-
+    apply_vpn.py auth
+    --backend {{ vpn_spec.auth.backend | default('ad') }}
+    --domain {{ vpn_spec.auth.domain | default('') | quote }}
+    {{ '--check' if ansible_check_mode else '' }}
+  register: vpn_auth
+  changed_when: "'CHANGED' in vpn_auth.stdout or 'WOULD-CHANGE' in vpn_auth.stdout"
+  failed_when: "vpn_auth.rc != 0 or 'FAIL' in vpn_auth.stdout"
+  check_mode: false
+  when: synology_vpn_enabled | default(false) | bool
+
 # Deny every LOCAL account access to the VPN. Management.Account enumerates
 # local accounts ONLY (total=4 on this AD-joined box), so there is nothing to
 # GRANT here — AD users are admitted by the RADIUS/ntlm_auth path with no
