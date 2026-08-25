@@ -674,3 +674,311 @@ def test_publish_pins_the_server_identity(monkeypatch, tmp_path):
     body = dest.read_text()
     assert "remote-cert-tls server" in body
     assert "verify-x509-name e4e-nas.ucsd.edu name" in body
+
+
+# --- auth backend (regression: every AD login was "Incorrect user name") ------
+# The live files as VPNCenter ships them, read off e4e-nas 2026-08-25 — still at
+# their install-time mtime, which is what proved nothing had ever reconciled
+# them. rad_site_def selecting `_local` is the whole bug.
+SHIPPED_SITE_DEF = "$INCLUDE /var/packages/VPNCenter/etc/syno_conf/rad_site_def_local\n"
+SHIPPED_NTLM = (
+    'program = "/usr/local/bin/ntlm_auth --request-nt-key --domain=MYDOMAIN '
+    '--username=%{mschap:User-Name} --password=%{User-Password}"\n'
+)
+
+
+def _stub_auth(monkeypatch, tmp_path, joined="yes", protocols="runopenvpn=yes\n", workgroup="KRG"):
+    """Redirect every path cmd_auth touches into tmp_path, seeded as-shipped."""
+    conf = tmp_path / "syno_conf"
+    conf.mkdir()
+    (conf / "rad_site_def").write_text(SHIPPED_SITE_DEF)
+    (conf / "rad_ntlm_auth").write_text(SHIPPED_NTLM)
+    for site in ("ad", "local", "ldap"):
+        (conf / ("rad_site_def_%s" % site)).write_text("# site %s\n" % site)
+
+    synoinfo = tmp_path / "synoinfo.conf"
+    synoinfo.write_text('unique="synology_x"\ndomainjoined="%s"\n' % joined)
+    smb = tmp_path / "smb.conf"
+    smb.write_text("[global]\n\tworkgroup=%s\n\tsecurity=ads\n\trealm=KRG.LOCAL\n" % workgroup)
+    synovpn = tmp_path / "synovpn.conf"
+    synovpn.write_text(protocols)
+
+    monkeypatch.setattr(m, "SYNO_CONF_DIR", str(conf))
+    monkeypatch.setattr(m, "RAD_SITE_DEF", str(conf / "rad_site_def"))
+    monkeypatch.setattr(m, "RAD_NTLM_AUTH", str(conf / "rad_ntlm_auth"))
+    monkeypatch.setattr(m, "SYNOINFO_CONF", str(synoinfo))
+    monkeypatch.setattr(m, "SMB_CONF", str(smb))
+    monkeypatch.setattr(m, "SYNOVPN_CONF", str(synovpn))
+
+    # A fake /proc so the stale-daemon check has a vpnauthd to look at. Its
+    # dir mtime IS the process start time, so "restarting" means replacing it.
+    proc = tmp_path / "proc"
+    proc.mkdir(exist_ok=True)
+    (proc / "100").mkdir()
+    (proc / "100" / "comm").write_text("vpnauthd\n")
+    monkeypatch.setattr(m, "PROC_DIR", str(proc))
+
+    calls = []
+    counter = [100]
+
+    def fake_run(cmd, env=None):
+        calls.append(cmd)
+        for old in list(proc.iterdir()):
+            if old.is_dir() and old.name.isdigit():
+                (old / "comm").unlink()
+                old.rmdir()
+        counter[0] += 1
+        new = proc / str(counter[0])
+        new.mkdir()
+        (new / "comm").write_text("vpnauthd\n")
+        return _Res(0)
+
+    monkeypatch.setattr(m, "_run", fake_run)
+    return conf, calls
+
+
+def test_auth_switches_the_shipped_local_site_to_ad(monkeypatch, tmp_path, capsys):
+    conf, calls = _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    out = capsys.readouterr().out
+    assert "CHANGED" in out
+    site = (conf / "rad_site_def").read_text()
+    assert site.endswith("rad_site_def_ad\n"), site
+    assert "_local" not in site
+    # and vpnauthd was actually bounced, or the running daemon keeps the old site
+    assert any("radiusd.sh" in str(c) and "force-restart" in str(c) for c in calls), calls
+
+
+def test_auth_templates_the_real_domain_over_mydomain(monkeypatch, tmp_path):
+    conf, _ = _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    ntlm = (conf / "rad_ntlm_auth").read_text()
+    assert "MYDOMAIN" not in ntlm
+    # The xlat form, not a bare domain: it must accept BOTH `KRG\user` (Realm
+    # set by rad_site_def_ad) and a bare username (falls back to the default).
+    assert "--domain=%{%{Realm}:-KRG}" in ntlm
+    assert "--username=%{mschap:User-Name}" in ntlm
+    assert "--password=%{User-Password}" in ntlm
+
+
+def test_auth_falls_back_to_the_smb_workgroup(monkeypatch, tmp_path):
+    conf, _ = _stub_auth(monkeypatch, tmp_path, workgroup="OTHER")
+    assert m.main(["auth", "--backend", "ad", "--domain", ""]) == 0
+    assert "--domain=%{%{Realm}:-OTHER}" in (conf / "rad_ntlm_auth").read_text()
+
+
+def test_auth_converges_to_no_change(monkeypatch, tmp_path, capsys):
+    _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    capsys.readouterr()
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("OK no-change"), out
+
+
+def test_auth_second_run_does_not_bounce_vpnauthd(monkeypatch, tmp_path):
+    _, calls = _stub_auth(monkeypatch, tmp_path)
+    m.main(["auth", "--backend", "ad", "--domain", "KRG"])
+    before = len(calls)
+    m.main(["auth", "--backend", "ad", "--domain", "KRG"])
+    # A converged box must not drop live tunnels on every deploy.
+    assert len(calls) == before, calls
+
+
+def test_auth_check_mode_writes_nothing(monkeypatch, tmp_path, capsys):
+    conf, calls = _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG", "--check"]) == 0
+    out = capsys.readouterr().out
+    assert "WOULD-CHANGE" in out
+    assert (conf / "rad_site_def").read_text() == SHIPPED_SITE_DEF
+    assert not calls
+
+
+def test_auth_refuses_ad_when_the_box_is_not_joined(monkeypatch, tmp_path, capsys):
+    conf, _ = _stub_auth(monkeypatch, tmp_path, joined="no")
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL" in out and "domainjoined" in out
+    # It must not have half-applied: an AD site with no winbind rejects everyone,
+    # which is the SAME symptom as the bug this fixes.
+    assert (conf / "rad_site_def").read_text() == SHIPPED_SITE_DEF
+
+
+def test_auth_rejects_an_unknown_backend(monkeypatch, tmp_path, capsys):
+    _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "kerberos"]) == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_auth_does_not_bounce_when_no_protocol_is_enabled(monkeypatch, tmp_path, capsys):
+    # radiusd.sh's start branch exits 0 without starting unless a protocol is
+    # on, so an unconditional force-restart would stop vpnauthd and leave it down.
+    _, calls = _stub_auth(monkeypatch, tmp_path, protocols="runopenvpn=no\n")
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    assert "CHANGED" in capsys.readouterr().out
+    assert not calls
+
+
+def test_auth_fails_loudly_if_the_restart_fails(monkeypatch, tmp_path, capsys):
+    # Files written but the daemon still on the old site == auth unchanged.
+    _stub_auth(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "RESTART_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(m, "_run", lambda cmd, env=None: _Res(1, "vpnauthd refused"))
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_auth_local_backend_leaves_ntlm_alone(monkeypatch, tmp_path, capsys):
+    # `local` is the vendor default and is already live, so this is a no-op —
+    # the point of the test is that it does not rewrite rad_ntlm_auth.
+    conf, _ = _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "local"]) == 0
+    assert capsys.readouterr().out.startswith("OK no-change")
+    assert (conf / "rad_ntlm_auth").read_text() == SHIPPED_NTLM
+
+
+def test_key_value_parses_dsm_conf_forms(tmp_path):
+    p = tmp_path / "c.conf"
+    p.write_text('# comment\n\tworkgroup=KRG\nfoo = "bar"\ndomainjoined="yes"\n')
+    assert m._key_value(str(p), "workgroup") == "KRG"
+    assert m._key_value(str(p), "foo") == "bar"
+    assert m._key_value(str(p), "domainjoined") == "yes"
+    assert m._key_value(str(p), "absent") is None
+
+
+# --- the restart must be PROVEN, not trusted ---------------------------------
+# radiusd.sh exits 0 whether it restarted vpnauthd, no-opped, or failed every
+# command inside — and on the first real apply it no-opped (it calls
+# `synosystemctl` unqualified, which is not on ansible's remote PATH) while the
+# role reported CHANGED. These pin that down.
+def _fake_proc(tmp_path, pids, comm="vpnauthd"):
+    proc = tmp_path / "proc"
+    proc.mkdir(exist_ok=True)
+    for pid in pids:
+        d = proc / str(pid)
+        d.mkdir(exist_ok=True)
+        (d / "comm").write_text(comm + "\n")
+    (proc / "notapid").mkdir(exist_ok=True)  # must be skipped, not crashed on
+    return proc
+
+
+def test_pids_named_reads_proc_comm(monkeypatch, tmp_path):
+    monkeypatch.setattr(m, "PROC_DIR", str(_fake_proc(tmp_path, [7, 42])))
+    assert m._pids_named("vpnauthd") == [7, 42]
+    assert m._pids_named("openvpn") == []
+
+
+def test_restart_passes_the_syno_path(monkeypatch, tmp_path):
+    # The whole bug: radiusd.sh calls `synosystemctl` unqualified.
+    proc = _fake_proc(tmp_path, [11])
+    monkeypatch.setattr(m, "PROC_DIR", str(proc))
+    seen = {}
+
+    def fake_run(cmd, env=None):
+        seen["cmd"], seen["env"] = cmd, env
+        (proc / "22").mkdir()
+        (proc / "22" / "comm").write_text("vpnauthd\n")
+        for stale in proc.glob("11"):
+            (stale / "comm").unlink()
+            stale.rmdir()
+        return _Res(0)
+
+    monkeypatch.setattr(m, "_run", fake_run)
+    ok, detail = m._restart_vpnauthd()
+    assert ok, detail
+    assert "/usr/syno/bin" in seen["env"]["PATH"]
+    assert "force-restart" in seen["cmd"]
+
+
+def test_restart_fails_when_the_pid_does_not_change(monkeypatch, tmp_path):
+    # The exact observed failure: rc 0, same pid, old site still being served.
+    monkeypatch.setattr(m, "PROC_DIR", str(_fake_proc(tmp_path, [26836])))
+    monkeypatch.setattr(m, "RESTART_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(m, "_run", lambda cmd, env=None: _Res(0))
+    ok, detail = m._restart_vpnauthd()
+    assert not ok
+    assert "26836" in detail and "OLD RADIUS SITE" in detail
+
+
+def test_restart_fails_when_the_daemon_does_not_come_back(monkeypatch, tmp_path):
+    monkeypatch.setattr(m, "PROC_DIR", str(_fake_proc(tmp_path, [])))
+    monkeypatch.setattr(m, "RESTART_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(m, "_run", lambda cmd, env=None: _Res(1, "boom"))
+    ok, detail = m._restart_vpnauthd()
+    assert not ok
+    assert "did not come back up" in detail
+
+
+def test_auth_reports_fail_when_the_restart_no_ops(monkeypatch, tmp_path, capsys):
+    _stub_auth(monkeypatch, tmp_path)
+    monkeypatch.setattr(m, "PROC_DIR", str(_fake_proc(tmp_path, [26836])))
+    monkeypatch.setattr(m, "RESTART_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(m, "_run", lambda cmd, env=None: _Res(0))
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def _age_fake_daemon(seconds_ago=10_000):
+    """Make the fake vpnauthd look as if it started before the config was
+    written — the half-applied state the first real apply left behind."""
+    for entry in os.listdir(m.PROC_DIR):
+        if entry.isdigit():
+            os.utime(os.path.join(m.PROC_DIR, entry), (1, 1))
+
+
+def test_auth_reconverges_when_files_are_right_but_daemon_is_stale(monkeypatch, tmp_path, capsys):
+    """The half-applied state the first apply actually left behind: correct
+    files, daemon still running the old site. File-drift alone sees nothing,
+    so without the staleness check the role goes green on a broken box."""
+    conf, _ = _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    capsys.readouterr()
+    assert (conf / "rad_site_def").read_text().endswith("rad_site_def_ad\n")
+
+    _age_fake_daemon()
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG", "--check"]) == 0
+    out = capsys.readouterr().out
+    assert "WOULD-CHANGE" in out and "vpnauthd" in out
+
+
+def test_auth_is_no_change_when_daemon_is_newer_than_its_config(monkeypatch, tmp_path, capsys):
+    _stub_auth(monkeypatch, tmp_path)
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    capsys.readouterr()
+    assert m.main(["auth", "--backend", "ad", "--domain", "KRG"]) == 0
+    assert capsys.readouterr().out.startswith("OK no-change")
+
+
+def test_published_ovpn_tells_users_to_qualify_the_username(monkeypatch, tmp_path):
+    """Bare usernames are rejected by vpnauthd's Synology pre-check before
+    ntlm_auth ever runs (measured 2026-08-25), so the self-serve config has to
+    say so — it is the only instruction most users will ever read."""
+    _stub_keys(monkeypatch, tmp_path)
+    dest = tmp_path / "e4e-nas-vpn.ovpn"
+    assert (
+        m.main(
+            [
+                "publish",
+                "--host",
+                "e4e-nas.ucsd.edu",
+                "--vpn-ip",
+                "10.90.24.1",
+                "--port",
+                "1194",
+                "--protocol",
+                "udp",
+                "--cipher",
+                "AES-256-CBC",
+                "--auth-digest",
+                "SHA512",
+                "--tls-auth",
+                "true",
+                "--dest",
+                str(dest),
+            ]
+        )
+        == 0
+    )
+    body = dest.read_text()
+    assert "KRG\\<your-ad-username>" in body
+    assert "REQUIRED" in body

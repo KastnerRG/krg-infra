@@ -39,6 +39,16 @@
   check_mode: false
   failed_when: false
 
+# The RADIUS backend selection. Invisible in every API above — it is a plain
+# include file — and it is what decides whether AD users can authenticate at
+# all, so a drift snapshot without it hides the exact failure we already hit.
+- name: Get the RADIUS site + ntlm_auth wiring
+  ansible.builtin.raw: "cat /usr/syno/etc/packages/VPNCenter/syno_conf/rad_site_def /usr/syno/etc/packages/VPNCenter/syno_conf/rad_ntlm_auth"
+  register: vpn_rad_site
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
 - name: Write the live-state snapshot
   ansible.builtin.copy:
     dest: "{{ synology_export_dir }}/{{ inventory_hostname }}-vpn.yml"
@@ -48,4 +58,5 @@
       settings_config_raw: {{ vpn_cfg_load.stdout_lines | default([]) | to_json }}
       management_account_raw: {{ vpn_acct_load.stdout_lines | default([]) | to_json }}
       openvpn_conf_raw: {{ vpn_ovpn_conf.stdout_lines | default([]) | to_json }}
+      radius_site_raw: {{ vpn_rad_site.stdout_lines | default([]) | to_json }}
   delegate_to: localhost

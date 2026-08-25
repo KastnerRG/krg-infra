@@ -11,6 +11,10 @@ Subcommands:
               webapi is not registered at all (err 102).
   openvpn     SYNO.VPNServer.Settings.Config   load -> overlay -> apply
   privilege   SYNO.VPNServer.Management.Account load -> overlay -> apply
+  auth        point vpnauthd's RADIUS at the AD directory (rad_site_def) and
+              template the NetBIOS domain into rad_ntlm_auth. Without this a
+              fresh install authenticates LOCAL accounts only and every AD
+              login is rejected as "Incorrect user name".
   dump        read-only schema print; never fails (used to capture the schema
               from CD without anyone handling a password)
   publish     render the client .ovpn into a share so users can self-serve it
@@ -50,6 +54,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 WEBAPI = "/usr/syno/bin/synowebapi"
 SYNOPKG = "/usr/syno/bin/synopkg"
@@ -151,8 +156,8 @@ FIELDS = {
 UNSUPPORTED = ("netmask", "push_dns", "duplicate_cn", "tls_min_version")
 
 
-def _run(cmd):
-    return subprocess.run(cmd, capture_output=True, text=True)
+def _run(cmd, env=None):
+    return subprocess.run(cmd, capture_output=True, text=True, env=env)
 
 
 def _exec(api, *params):
@@ -497,6 +502,307 @@ def cmd_service(a):
     return 0
 
 
+# --- auth backend (which directory vpnauthd actually asks) --------------------
+# THE BUG THIS EXISTS TO FIX (found 2026-08-25, first off-campus test):
+# every AD login was rejected with
+#
+#     radius.log: Login incorrect: Incorrect user name [c.crutchfield.642]
+#
+# — "user not found", not "wrong password". VPN Server was authenticating
+# against LOCAL DSM accounts only, so no domain principal could ever match.
+#
+# WHY. VPNCenter's FreeRADIUS (vpnauthd) picks its directory backend from ONE
+# include file, `syno_conf/rad_site_def`, which selects one of three shipped
+# sites:
+#     rad_site_def_local   unix + smbpasswd          <- what we were running
+#     rad_site_def_ad      Auth-Type := ntlm_auth    <- what an AD box needs
+#     rad_site_def_ldap    rlm_ldap
+# `scripts/postinst` copies the shipped default, which points at _local, and
+# NOTHING in the install path ever revisits it. The only thing that switches it
+# to _ad is `bin/vpn_updater`, and that runs from `postupgrade` / backup-import
+# only. So the AD backend is selected as a side effect of UPGRADING the package
+# on an already-joined box — install it fresh onto a joined NAS, as terraform
+# did here on 2026-08-15, and the switch never happens. Verified on-box: every
+# file in syno_conf still carried its 18:27 install mtime, untouched by the
+# Aug-17 Settings.Config apply.
+#
+# This is why spec/e4e-nas/vpn.yml's "AD users are admitted by the auth path
+# itself, with no allowlist in front of it" was true in design and false in
+# fact — the path existed but was pointed at the wrong directory. Combined with
+# `deny_local: ["all"]` (correctly locking out admin/e4e-admin/e4e-automation/
+# guest), the service was closed to literally everyone.
+#
+# The second half of the same defect: `rad_ntlm_auth` still held the shipped
+# placeholder `--domain=MYDOMAIN`. vpn_updater's job is to rewrite that with the
+# real workgroup, so it was never templated either.
+#
+# So this subcommand reconciles both files from the spec, every run. It is not a
+# one-shot repair: a DSM or package update restores the vendor defaults, and the
+# next apply puts them back — which is the whole reason it lives here rather
+# than in a runbook.
+SYNO_CONF_DIR = "/usr/syno/etc/packages/VPNCenter/syno_conf"
+RAD_SITE_DEF = os.path.join(SYNO_CONF_DIR, "rad_site_def")
+RAD_NTLM_AUTH = os.path.join(SYNO_CONF_DIR, "rad_ntlm_auth")
+# The path the SHIPPED rad_site_def uses in its $INCLUDE. /var/packages/
+# VPNCenter/etc and /usr/syno/etc/packages/VPNCenter are the same directory
+# (both symlink to /volume1/@appconf/VPNCenter — same inode, verified on-box);
+# we emit the vendor's spelling so a diff against a stock box is empty.
+SITE_INCLUDE_DIR = "/var/packages/VPNCenter/etc/syno_conf"
+RADIUSD_SH = "/var/packages/VPNCenter/target/scripts/radiusd.sh"
+SYNOVPN_CONF = "/usr/syno/etc/packages/VPNCenter/synovpn.conf"
+SMB_CONF = "/etc/samba/smb.conf"
+SYNOINFO_CONF = "/etc/synoinfo.conf"
+
+BACKENDS = ("ad", "local")
+
+# FreeRADIUS xlat, not python: %{%{Realm}:-KRG} is "Realm if the client sent
+# DOMAIN\user, else the default". rad_site_def_ad's authorize block sets Realm
+# from a leading `KRG\`, so BOTH `KRG\c.user.123` and a bare `c.user.123`
+# resolve to the same domain — which matters because clients disagree about
+# whether to send the prefix. @@DOMAIN@@ is substituted rather than %-formatted
+# precisely because the literal braces would fight str.format/%.
+NTLM_PROGRAM_TEMPLATE = (
+    'program = "/usr/local/bin/ntlm_auth --request-nt-key '
+    "--domain=%{%{Realm}:-@@DOMAIN@@} "
+    "--username=%{mschap:User-Name} "
+    '--password=%{User-Password}"\n'
+)
+
+
+def _read_if(path):
+    try:
+        with open(path, "r") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _key_value(path, key):
+    """Read a `key=value` / `key = "value"` line out of a DSM conf file.
+
+    Used for smb.conf `workgroup` and synoinfo.conf `domainjoined`. Deliberately
+    not a shell-out to /bin/get_key_value: this has to be unit-testable off-box.
+    """
+    text = _read_if(path)
+    if text is None:
+        return None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith(";") or "=" not in stripped:
+            continue
+        name, _, value = stripped.partition("=")
+        if name.strip().lower() == key.lower():
+            return value.strip().strip('"').strip("'")
+    return None
+
+
+def _site_def(backend):
+    return "$INCLUDE %s/rad_site_def_%s\n" % (SITE_INCLUDE_DIR, backend)
+
+
+def _write_conf(path, body):
+    """Replace a syno_conf file atomically at 0600 (radiusd.sh chmods the whole
+    directory to 600 on start; matching it keeps the run a no-op)."""
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        fh.write(body)
+    os.chmod(tmp, 0o600)
+    os.rename(tmp, path)
+
+
+# --- bouncing vpnauthd, and knowing whether it worked ------------------------
+# TWO TRAPS, both paid for on the first real apply (2026-08-25):
+#
+# 1. radiusd.sh CALLS `synosystemctl` UNQUALIFIED. Under ansible's `script:`
+#    module the remote PATH is a bare non-login one with no /usr/syno/bin, so
+#    the command is not found, `$(synosystemctl get-active-status ...)` returns
+#    "", the `[ "active" == "" ]` guard is false, the stop is SKIPPED — and the
+#    script still `exit 0`s. Same class as [[deploy-runner-strict-path-missing-tool]].
+#    Hence the explicit PATH below; every direct DSM call in this file already
+#    uses an absolute path for the same reason.
+#
+# 2. rc 0 FROM THAT SCRIPT MEANS NOTHING. It exits 0 whether it restarted the
+#    daemon, no-opped, or failed every command inside. The first apply reported
+#    "CHANGED (vpnauthd restarted)" while vpnauthd kept the same PID from eight
+#    days earlier — files converged, daemon still serving the OLD site, and the
+#    role would have gone green forever. So the restart is VERIFIED by pid
+#    change, not trusted.
+SYNO_PATH = "/usr/syno/sbin:/usr/syno/bin"
+PROC_DIR = "/proc"
+VPNAUTHD_COMM = "vpnauthd"
+RESTART_TIMEOUT_S = 20.0
+
+
+def _pids_named(comm):
+    """PIDs whose /proc/<pid>/comm matches. Avoids pidof/pgrep, which DSM does
+    not reliably ship, and is trivially fakeable in tests."""
+    pids = []
+    try:
+        entries = os.listdir(PROC_DIR)
+    except OSError:
+        return pids
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(os.path.join(PROC_DIR, entry, "comm"), "r") as fh:
+                if fh.read().strip() == comm:
+                    pids.append(int(entry))
+        except OSError:
+            continue  # process exited between listdir and open
+    return sorted(pids)
+
+
+def _proc_started(pid):
+    """Process start time. /proc/<pid>'s own mtime is set when the process is
+    created, which is all we need and needs no btime/HZ arithmetic."""
+    return os.path.getmtime(os.path.join(PROC_DIR, str(pid)))
+
+
+def _daemon_is_stale(paths):
+    """True when vpnauthd is down, or older than the config it should be serving.
+
+    This is what makes the subcommand converge rather than merely apply: after a
+    run that wrote the files but failed to bounce the daemon, the FILES are
+    correct, so file-drift alone reports no-change and the box stays broken.
+    Comparing against process start time catches exactly that.
+    """
+    pids = _pids_named(VPNAUTHD_COMM)
+    if not pids:
+        return True
+    started = min(_proc_started(p) for p in pids)
+    live = [p for p in paths if os.path.exists(p)]
+    return any(os.path.getmtime(p) > started for p in live)
+
+
+def _restart_vpnauthd():
+    """Bounce vpnauthd and PROVE it happened. Returns (ok, detail)."""
+    before = set(_pids_named(VPNAUTHD_COMM))
+    env = dict(os.environ)
+    env["PATH"] = SYNO_PATH + ":" + env.get("PATH", "")
+    out = _run(["/bin/sh", RADIUSD_SH, "force-restart"], env=env)
+
+    deadline = time.time() + RESTART_TIMEOUT_S
+    while True:
+        now = set(_pids_named(VPNAUTHD_COMM))
+        if now and not (now & before):
+            return True, "vpnauthd restarted (pid %s -> %s)" % (
+                sorted(before) or "none",
+                sorted(now),
+            )
+        if time.time() >= deadline:
+            break
+        time.sleep(0.5)
+
+    now = set(_pids_named(VPNAUTHD_COMM))
+    if not now:
+        return False, "vpnauthd did not come back up (rc=%s): %s" % (
+            out.returncode,
+            (out.stderr or out.stdout).strip()[:200],
+        )
+    return False, (
+        "vpnauthd still running as pid %s after %ss — the restart no-opped, so "
+        "it is STILL SERVING THE OLD RADIUS SITE (rc=%s, which this script "
+        "always returns): %s"
+        % (
+            sorted(now),
+            int(RESTART_TIMEOUT_S),
+            out.returncode,
+            (out.stderr or out.stdout).strip()[:200],
+        )
+    )
+
+
+def cmd_auth(a):
+    """Point vpnauthd at the directory the spec says, and template the domain.
+
+    Idempotent: both files are compared before writing, and vpnauthd is bounced
+    only when something actually changed.
+    """
+    backend = (a.backend or "").strip().lower()
+    if backend not in BACKENDS:
+        print("FAIL --backend must be one of %s, got %r" % (list(BACKENDS), a.backend))
+        return 1
+
+    site_path = os.path.join(SYNO_CONF_DIR, "rad_site_def_%s" % backend)
+    if not os.path.exists(site_path):
+        print("FAIL %s does not exist — is VPNCenter installed?" % site_path)
+        return 1
+
+    domain = (a.domain or "").strip()
+    if backend == "ad":
+        # Fail rather than guess. An AD site on a box that is not joined rejects
+        # EVERY user (ntlm_auth has no winbind to ask), which is the same
+        # symptom as the bug this subcommand fixes — so refuse to create it.
+        joined = (_key_value(SYNOINFO_CONF, "domainjoined") or "").lower()
+        if joined != "yes":
+            print(
+                "FAIL backend=ad but DSM reports domainjoined=%r — the AD RADIUS "
+                "site would reject every user. Run synology_ad first." % joined
+            )
+            return 1
+        if not domain:
+            domain = _key_value(SMB_CONF, "workgroup") or ""
+        if not domain:
+            print(
+                "FAIL backend=ad needs a NetBIOS domain: none given and no "
+                "`workgroup` in %s" % SMB_CONF
+            )
+            return 1
+
+    want = {RAD_SITE_DEF: _site_def(backend)}
+    if backend == "ad":
+        want[RAD_NTLM_AUTH] = NTLM_PROGRAM_TEMPLATE.replace("@@DOMAIN@@", domain)
+
+    drift = []
+    for path, body in sorted(want.items()):
+        current = _read_if(path)
+        if current is None:
+            drift.append(os.path.basename(path) + " (missing)")
+        elif current.strip() != body.strip():
+            # `rad_site_def` shipped pointing at _local; report WHICH site is
+            # live so the deploy log says what changed, not just that it did.
+            drift.append(os.path.basename(path))
+
+    # A converged FILE is not a converged SERVICE. vpnauthd reads its site once,
+    # at start, so a run that wrote the files but failed to bounce it leaves the
+    # box broken with nothing left to diff. Treat that as drift too.
+    stale = _daemon_is_stale(sorted(want.keys()))
+    if stale and not drift:
+        drift.append("vpnauthd (running older than its config)")
+
+    if not drift:
+        print("OK no-change auth backend=%s" % backend)
+        return 0
+    if a.check:
+        print("WOULD-CHANGE " + json.dumps(sorted(drift)))
+        return 0
+
+    for path, body in sorted(want.items()):
+        _write_conf(path, body)
+
+    # Only bounce when a protocol is enabled: radiusd.sh's start branch exits 0
+    # without starting if synovpn.conf has no `yes`, so bouncing a disabled box
+    # would stop vpnauthd and not bring it back.
+    protocols = [_key_value(SYNOVPN_CONF, k) for k in ("runopenvpn", "runpptpd", "runl2tpd")]
+    if not any((p or "").lower() == "yes" for p in protocols):
+        print(
+            "CHANGED %s (no protocol enabled — vpnauthd not bounced, it will "
+            "read the new site when it next starts)" % json.dumps(sorted(drift))
+        )
+        return 0
+
+    ok, detail = _restart_vpnauthd()
+    if not ok:
+        # Loud AND non-zero: the files are right but the daemon is still on the
+        # old site, so authentication behaviour has NOT changed. Reporting this
+        # green is how the first apply hid itself.
+        print("FAIL wrote %s but %s" % (json.dumps(sorted(drift)), detail))
+        return 1
+    print("CHANGED " + json.dumps(sorted(drift)) + " — " + detail)
+    return 0
+
+
 # --- dump (read-only schema capture) ------------------------------------------
 # Kept (off by default) because it is what broke the err-600 deadlock: it proved
 # the failure was NOT transport-related, which is what sent us looking for a
@@ -542,7 +848,14 @@ CLIENT_TEMPLATE = """\
 # Import into your OpenVPN client, then mount SMB from {vpn_ip}:
 #   macOS/Linux:  smb://{vpn_ip}/<share>
 #   Windows:      \\\\{vpn_ip}\\<share>
-# Log in with your KRG.LOCAL (AD) username and password.
+# Log in with your KRG.LOCAL (AD) account, DOMAIN-QUALIFIED:
+#
+#   Username:  KRG\\<your-ad-username>      e.g.  KRG\\a.researcher.123
+#   Password:  your AD password
+#
+# The `KRG\\` prefix is REQUIRED. Without it the NAS rejects you as "Incorrect
+# user name" before it ever checks your password, because VPN Server matches an
+# unqualified name against LOCAL NAS accounts only.
 #
 # This tunnel reaches THIS NAS ONLY — no route to the rest of the campus
 # network. That is deliberate; see spec/e4e-nas/vpn.yml.
@@ -670,6 +983,10 @@ def main(argv=None):
     _sub("dump")
     _sub("service")
 
+    t = _sub("auth")
+    t.add_argument("--backend", required=True)
+    t.add_argument("--domain", default="")
+
     o = _sub("openvpn")
     for flag in (
         "--enable",
@@ -709,6 +1026,7 @@ def main(argv=None):
         "privilege": cmd_privilege,
         "dump": cmd_dump,
         "service": cmd_service,
+        "auth": cmd_auth,
         "publish": cmd_publish,
     }
     if a.cmd not in handlers:
