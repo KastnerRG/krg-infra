@@ -54,6 +54,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 WEBAPI = "/usr/syno/bin/synowebapi"
 SYNOPKG = "/usr/syno/bin/synopkg"
@@ -155,8 +156,8 @@ FIELDS = {
 UNSUPPORTED = ("netmask", "push_dns", "duplicate_cn", "tls_min_version")
 
 
-def _run(cmd):
-    return subprocess.run(cmd, capture_output=True, text=True)
+def _run(cmd, env=None):
+    return subprocess.run(cmd, capture_output=True, text=True, env=env)
 
 
 def _exec(api, *params):
@@ -609,6 +610,109 @@ def _write_conf(path, body):
     os.rename(tmp, path)
 
 
+# --- bouncing vpnauthd, and knowing whether it worked ------------------------
+# TWO TRAPS, both paid for on the first real apply (2026-08-25):
+#
+# 1. radiusd.sh CALLS `synosystemctl` UNQUALIFIED. Under ansible's `script:`
+#    module the remote PATH is a bare non-login one with no /usr/syno/bin, so
+#    the command is not found, `$(synosystemctl get-active-status ...)` returns
+#    "", the `[ "active" == "" ]` guard is false, the stop is SKIPPED — and the
+#    script still `exit 0`s. Same class as [[deploy-runner-strict-path-missing-tool]].
+#    Hence the explicit PATH below; every direct DSM call in this file already
+#    uses an absolute path for the same reason.
+#
+# 2. rc 0 FROM THAT SCRIPT MEANS NOTHING. It exits 0 whether it restarted the
+#    daemon, no-opped, or failed every command inside. The first apply reported
+#    "CHANGED (vpnauthd restarted)" while vpnauthd kept the same PID from eight
+#    days earlier — files converged, daemon still serving the OLD site, and the
+#    role would have gone green forever. So the restart is VERIFIED by pid
+#    change, not trusted.
+SYNO_PATH = "/usr/syno/sbin:/usr/syno/bin"
+PROC_DIR = "/proc"
+VPNAUTHD_COMM = "vpnauthd"
+RESTART_TIMEOUT_S = 20.0
+
+
+def _pids_named(comm):
+    """PIDs whose /proc/<pid>/comm matches. Avoids pidof/pgrep, which DSM does
+    not reliably ship, and is trivially fakeable in tests."""
+    pids = []
+    try:
+        entries = os.listdir(PROC_DIR)
+    except OSError:
+        return pids
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(os.path.join(PROC_DIR, entry, "comm"), "r") as fh:
+                if fh.read().strip() == comm:
+                    pids.append(int(entry))
+        except OSError:
+            continue  # process exited between listdir and open
+    return sorted(pids)
+
+
+def _proc_started(pid):
+    """Process start time. /proc/<pid>'s own mtime is set when the process is
+    created, which is all we need and needs no btime/HZ arithmetic."""
+    return os.path.getmtime(os.path.join(PROC_DIR, str(pid)))
+
+
+def _daemon_is_stale(paths):
+    """True when vpnauthd is down, or older than the config it should be serving.
+
+    This is what makes the subcommand converge rather than merely apply: after a
+    run that wrote the files but failed to bounce the daemon, the FILES are
+    correct, so file-drift alone reports no-change and the box stays broken.
+    Comparing against process start time catches exactly that.
+    """
+    pids = _pids_named(VPNAUTHD_COMM)
+    if not pids:
+        return True
+    started = min(_proc_started(p) for p in pids)
+    live = [p for p in paths if os.path.exists(p)]
+    return any(os.path.getmtime(p) > started for p in live)
+
+
+def _restart_vpnauthd():
+    """Bounce vpnauthd and PROVE it happened. Returns (ok, detail)."""
+    before = set(_pids_named(VPNAUTHD_COMM))
+    env = dict(os.environ)
+    env["PATH"] = SYNO_PATH + ":" + env.get("PATH", "")
+    out = _run(["/bin/sh", RADIUSD_SH, "force-restart"], env=env)
+
+    deadline = time.time() + RESTART_TIMEOUT_S
+    while True:
+        now = set(_pids_named(VPNAUTHD_COMM))
+        if now and not (now & before):
+            return True, "vpnauthd restarted (pid %s -> %s)" % (
+                sorted(before) or "none",
+                sorted(now),
+            )
+        if time.time() >= deadline:
+            break
+        time.sleep(0.5)
+
+    now = set(_pids_named(VPNAUTHD_COMM))
+    if not now:
+        return False, "vpnauthd did not come back up (rc=%s): %s" % (
+            out.returncode,
+            (out.stderr or out.stdout).strip()[:200],
+        )
+    return False, (
+        "vpnauthd still running as pid %s after %ss — the restart no-opped, so "
+        "it is STILL SERVING THE OLD RADIUS SITE (rc=%s, which this script "
+        "always returns): %s"
+        % (
+            sorted(now),
+            int(RESTART_TIMEOUT_S),
+            out.returncode,
+            (out.stderr or out.stdout).strip()[:200],
+        )
+    )
+
+
 def cmd_auth(a):
     """Point vpnauthd at the directory the spec says, and template the domain.
 
@@ -660,6 +764,13 @@ def cmd_auth(a):
             # live so the deploy log says what changed, not just that it did.
             drift.append(os.path.basename(path))
 
+    # A converged FILE is not a converged SERVICE. vpnauthd reads its site once,
+    # at start, so a run that wrote the files but failed to bounce it leaves the
+    # box broken with nothing left to diff. Treat that as drift too.
+    stale = _daemon_is_stale(sorted(want.keys()))
+    if stale and not drift:
+        drift.append("vpnauthd (running older than its config)")
+
     if not drift:
         print("OK no-change auth backend=%s" % backend)
         return 0
@@ -670,14 +781,9 @@ def cmd_auth(a):
     for path, body in sorted(want.items()):
         _write_conf(path, body)
 
-    # Bounce vpnauthd so it re-reads the site. `restart` is NOT enough: its stop
-    # branch bails out early whenever an openvpn/pptp/l2tp daemon is up (so the
-    # tunnel survives a config reload), which is exactly our steady state.
-    # force-restart stops it unconditionally.
-    #
     # Only bounce when a protocol is enabled: radiusd.sh's start branch exits 0
-    # without starting if synovpn.conf has no `yes`, so an unconditional
-    # force-restart on a disabled box would stop vpnauthd and not bring it back.
+    # without starting if synovpn.conf has no `yes`, so bouncing a disabled box
+    # would stop vpnauthd and not bring it back.
     protocols = [_key_value(SYNOVPN_CONF, k) for k in ("runopenvpn", "runpptpd", "runl2tpd")]
     if not any((p or "").lower() == "yes" for p in protocols):
         print(
@@ -686,16 +792,14 @@ def cmd_auth(a):
         )
         return 0
 
-    out = _run(["/bin/sh", RADIUSD_SH, "force-restart"])
-    if out.returncode != 0:
-        # Loud: the files are written but the running daemon is still on the old
-        # site, so auth behaviour has NOT changed yet.
-        print(
-            "FAIL wrote %s but could not restart vpnauthd: %s"
-            % (json.dumps(sorted(drift)), (out.stderr or out.stdout).strip()[:200])
-        )
+    ok, detail = _restart_vpnauthd()
+    if not ok:
+        # Loud AND non-zero: the files are right but the daemon is still on the
+        # old site, so authentication behaviour has NOT changed. Reporting this
+        # green is how the first apply hid itself.
+        print("FAIL wrote %s but %s" % (json.dumps(sorted(drift)), detail))
         return 1
-    print("CHANGED " + json.dumps(sorted(drift)) + " (vpnauthd restarted)")
+    print("CHANGED " + json.dumps(sorted(drift)) + " — " + detail)
     return 0
 
 
@@ -744,7 +848,14 @@ CLIENT_TEMPLATE = """\
 # Import into your OpenVPN client, then mount SMB from {vpn_ip}:
 #   macOS/Linux:  smb://{vpn_ip}/<share>
 #   Windows:      \\\\{vpn_ip}\\<share>
-# Log in with your KRG.LOCAL (AD) username and password.
+# Log in with your KRG.LOCAL (AD) account, DOMAIN-QUALIFIED:
+#
+#   Username:  KRG\\<your-ad-username>      e.g.  KRG\\a.researcher.123
+#   Password:  your AD password
+#
+# The `KRG\\` prefix is REQUIRED. Without it the NAS rejects you as "Incorrect
+# user name" before it ever checks your password, because VPN Server matches an
+# unqualified name against LOCAL NAS accounts only.
 #
 # This tunnel reaches THIS NAS ONLY — no route to the rest of the campus
 # network. That is deliberate; see spec/e4e-nas/vpn.yml.

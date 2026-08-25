@@ -19,11 +19,19 @@
 # Changing the tunnel subnet here means changing `vpn-smb-only`'s source_ip
 # there too. They are deliberately not derived from one another (the firewall
 # spec is consumed by a different role); keep them in sync by hand.
+#
+# TAGGED PER-TASK, not on synology_base's import_role: a role-level tag composes
+# DOWN onto imported tasks and overrides `never`, which would drag the drift
+# export into every targeted run. Same reasoning as synology_certificate/
+# synology_sso — see the note in playbook.yml. Target this role alone with:
+#   ansible-playbook playbook.yml --tags=synology_vpn \
+#     -e '{"synology_vpn_enabled": true}' --check --diff
 
 - name: Load the VPN spec
   ansible.builtin.include_vars:
     file: "{{ synology_vpn_spec }}"
     name: vpn_spec
+  tags: [synology_vpn]
 
 # The package is installed by terraform (terraform/e4e-nas/packages.tf), but DSM
 # leaves VPN Server STOPPED until a protocol is enabled — and while stopped its
@@ -38,6 +46,7 @@
   failed_when: "vpn_pkg.rc != 0 or 'FAIL' in vpn_pkg.stdout"
   check_mode: false
   when: synology_vpn_enabled | default(false) | bool
+  tags: [synology_vpn]
 
 - name: Configure the OpenVPN server
   ansible.builtin.script: >-
@@ -60,6 +69,7 @@
   check_mode: false
   when:
     - synology_vpn_enabled | default(false) | bool
+  tags: [synology_vpn]
 
 # Settings.Config.apply writes serv_enable but does NOT start the daemon — a
 # freshly-applied box sits at serv_enable=True / serv_run=False with nothing
@@ -74,6 +84,7 @@
   failed_when: "vpn_svc.rc != 0 or 'FAIL' in vpn_svc.stdout"
   check_mode: false
   when: synology_vpn_enabled | default(false) | bool
+  tags: [synology_vpn]
 
 # Point vpnauthd's RADIUS at the AD directory. WITHOUT THIS the VPN is closed to
 # everyone: a fresh VPNCenter install leaves `syno_conf/rad_site_def` on the
@@ -95,6 +106,7 @@
   failed_when: "vpn_auth.rc != 0 or 'FAIL' in vpn_auth.stdout"
   check_mode: false
   when: synology_vpn_enabled | default(false) | bool
+  tags: [synology_vpn]
 
 # Deny every LOCAL account access to the VPN. Management.Account enumerates
 # local accounts ONLY (total=4 on this AD-joined box), so there is nothing to
@@ -120,6 +132,7 @@
   changed_when: "'CHANGED' in vpn_priv.stdout or 'WOULD-CHANGE' in vpn_priv.stdout"
   failed_when: "vpn_priv.rc != 0 or 'FAIL' in vpn_priv.stdout"
   check_mode: false
+  tags: [synology_vpn]
 
 # Publish the client config into a share so users can self-serve it. With
 # tls_auth on, the .ovpn embeds ta.key and IS a shared secret — the `installers`
@@ -148,6 +161,7 @@
   changed_when: "'CHANGED' in vpn_pub.stdout or 'WOULD-CHANGE' in vpn_pub.stdout"
   failed_when: "vpn_pub.rc != 0 or 'FAIL' in vpn_pub.stdout"
   check_mode: false
+  tags: [synology_vpn]
 
 # --- Schema capture (read-only, cannot fail the deploy) ------------------------
 # OFF by default now that the schema is known and mapped. Kept because it is
@@ -171,11 +185,13 @@
   check_mode: false
   when:
     - synology_vpn_discover | default(true) | bool
+  tags: [synology_vpn]
 
 - name: Show the captured VPNServer schema
   ansible.builtin.debug:
     var: vpn_dump.stdout_lines
   when: vpn_dump.stdout_lines | default([]) | length > 0
+  tags: [synology_vpn]
 
 # --- Drift export (read-only) — only with `--tags export` ---------------------
 - name: Export live state for drift detection

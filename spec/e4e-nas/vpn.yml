@@ -329,11 +329,22 @@ auth:
   # join already sets; pinned here so the spec states it rather than inheriting
   # it silently. Must match spec/krg-ad.
   domain: KRG
-  # Client username format is NOT a constraint: rad_site_def_ad extracts `Realm`
-  # from a leading `KRG\`, and the rendered ntlm_auth line falls back to
-  # `domain` above when there is no prefix. So `KRG\c.user.123` and a bare
-  # `c.user.123` both work — which matters, because clients disagree about
-  # whether to send the prefix.
+  # ⚠️ CLIENTS MUST SEND `KRG\<username>`. A bare username does NOT work, and
+  # the reason is a layer above FreeRADIUS: `vpnauthd` runs its own Synology
+  # pre-check (SYNOWinsEnumAllDomains + the `privilege` file) BEFORE the site
+  # config is consulted, and an unqualified name matches no LOCAL account, so it
+  # is rejected as "Incorrect user name" without ntlm_auth ever being called.
+  # Measured 2026-08-25 with radclient against the live daemon:
+  #     c.crutchfield.642       -> Login incorrect: Incorrect user name
+  #     KRG\c.crutchfield.642   -> ntlm_auth ... NT_STATUS_WRONG_PASSWORD
+  # The second is the SUCCESS signal for this purpose: the account resolved via
+  # winbind and only the (deliberately wrong) password failed.
+  #
+  # So `domain` above is a belt-and-braces fallback that never actually fires —
+  # rad_site_def_ad sets Realm from the prefix, which is always present by the
+  # time ntlm_auth runs. Keep it anyway: without it an unprefixed name that DID
+  # reach FreeRADIUS would go to the wrong domain rather than fail closed.
+  # The published .ovpn says so in its header; the runbook must too.
 
 # --- Client distribution --------------------------------------------------------
 # The .ovpn is the SAME file for every user (auth is username/password; there
@@ -429,22 +440,32 @@ client:
 #           tunnel; the DSM UI on :6021 must NOT be reachable through it.
 #        d. ping to 10.90.24.1 WILL fail — ICMP is dropped by the `vpn`
 #           adapter. Expected, not a fault. Use the SMB mount as the test.
-#   8. ⬜ THIS CHANGE (2026-08-25) — `auth:` above + `apply_vpn.py auth`. The
+#   8. ✅ THIS CHANGE (2026-08-25) — `auth:` above + `apply_vpn.py auth`. The
 #      first real credentialed attempt was rejected with "Incorrect user name",
 #      because a fresh package install never switches the RADIUS backend off the
 #      local-accounts site (full story on the `auth:` block). Apply by hand —
 #      the role is still gated OFF for CD (see synology_vpn_enabled):
 #          ansible-playbook playbook.yml -e '{"synology_vpn_enabled": true}' --check --diff
 #          ansible-playbook playbook.yml -e '{"synology_vpn_enabled": true}'
-#      Then confirm on-box, in this order, before asking anyone to retest:
-#        * syno_conf/rad_site_def includes rad_site_def_ad, and rad_ntlm_auth
-#          no longer says MYDOMAIN;
-#        * a fresh client attempt writes something OTHER than "Incorrect user
-#          name" to target/var/log/radius/radius.log.
-#      ⚠️ WATCH FOR A SECOND WALL. `vpnauthd` also consults the per-account
-#      `privilege` file, which lists local accounts only. Whether it
-#      default-ALLOWS a principal with no entry (in which case AD users pass) or
-#      default-DENIES is not established — DSM offers no AD privilege surface to
-#      set one either way. If the retest logs `Permission deny.` rather than a
-#      credential error, that is this, not the auth backend, and it needs its own
-#      discovery pass.
+#      APPLIED + VALIDATED 2026-08-25 (three runs: change, change, no-change):
+#        * rad_site_def now includes rad_site_def_ad; rad_ntlm_auth carries KRG.
+#        * vpnauthd bounced 26836 -> 2423 and logged "Ready to process requests".
+#          The FIRST attempt silently did not bounce it — radiusd.sh calls
+#          `synosystemctl` unqualified and ansible's remote PATH lacks
+#          /usr/syno/bin, so the stop was skipped and the script still exited 0.
+#          apply_vpn.py now passes the PATH and VERIFIES the pid changed, and
+#          treats "daemon older than its config" as drift so a half-applied box
+#          re-converges instead of reporting green.
+#        * end-to-end auth proven with radclient against the live daemon:
+#          ntlm_auth -> winbind -> DC returned NT_STATUS_WRONG_PASSWORD for a
+#          real account and a deliberately wrong password. That IS the success
+#          signal: the account resolved, only the password failed.
+#        * the privilege wall did NOT bite — no `Permission deny.`. AD users
+#          are admitted with no per-user entry, exactly as the block above hoped.
+#      ⚠️ ONE REAL CONSTRAINT FOUND: clients must log in as `KRG\<username>`.
+#      A bare username is rejected as "Incorrect user name" before ntlm_auth is
+#      ever called. The published .ovpn header now says so — see `auth:` above.
+#   9. ⬜ Remaining: (b)-(d) of step 7 with a real password — the SMB mount over
+#      the tunnel, the Kerberos->NTLMv2 fallback against smb-globals.yml's SMB3
+#      + signing floor, and the isolation checks. Nothing in the auth path is
+#      known to block them now.
