@@ -597,3 +597,73 @@ def test_firewall_profile_dsm_error_surfaces_as_fail(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 1 and "FAIL" in out and "120" in out
     assert _FakeDSMSession.last_apply_name is None  # never reached Apply
+
+
+# --- spec invariants: the `global` adapter is an ordering hazard --------------
+# REGRESSION GUARD, 2026-08-25. `global` rules are NOT interface-scoped and
+# evaluate BEFORE every per-adapter block, so a port-scoped deny there silently
+# pre-empts per-adapter allows that look like they should win.
+#
+# That is not hypothetical: `smb-deny-fall-through` lived in `global` and ate
+# every SMB packet arriving through the OpenVPN tunnel, eight rules before the
+# `vpn` adapter's own allow was reached. On the live chain the deny showed 45
+# matched packets — tun0's entire RX count — while the allow showed 0, and the
+# client saw a 30s timeout rather than a refusal. Interface-specific denies
+# belong on the interface.
+import yaml  # noqa: E402
+
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *([os.pardir] * 5)))
+_SECURITY_SPEC = os.path.join(_REPO_ROOT, "spec", "e4e-nas", "security.yml")
+
+
+def _adapters():
+    with open(_SECURITY_SPEC) as fh:
+        spec = yaml.safe_load(fh)
+    return spec["firewall"]["profiles"]["default"]["adapters"]
+
+
+def test_spec_fixture_resolves():
+    """Guard the guard: a wrong path would make every assertion below vacuous."""
+    assert os.path.isfile(_SECURITY_SPEC), _SECURITY_SPEC
+    assert "global" in _adapters()
+
+
+def test_global_has_no_catch_all_source_deny():
+    """A deny in `global` whose source is `all` can only be distinguished by
+    port — so it applies to every adapter, including `vpn`. Put it on the
+    adapter it is meant for (see the eth0 block). A SOURCE-scoped global deny
+    (blocklisting one IP everywhere) stays legitimate and is not caught here."""
+    offenders = [
+        r["name"]
+        for r in _adapters()["global"].get("rules") or []
+        if r.get("policy") in ("drop", "deny") and r.get("source_ip_group") == "all"
+    ]
+    assert not offenders, (
+        "these `global` rules deny by port with source=all, so they pre-empt "
+        "every per-adapter allow — including the VPN tunnel's: %s" % offenders
+    )
+
+
+def test_vpn_adapter_stays_default_drop_with_one_allow():
+    """The in-tunnel surface is the whole point of vpn.yml's threat model:
+    default-drop plus exactly one 445/tcp allow. Widening it is a deliberate
+    decision that should have to edit this test."""
+    vpn = _adapters()["vpn"]
+    assert vpn["policy"] == "drop"
+    rules = vpn.get("rules") or []
+    assert len(rules) == 1, [r["name"] for r in rules]
+    assert rules[0]["policy"] == "allow"
+    assert rules[0]["ports"] == "445"
+    assert rules[0]["protocol"] == "tcp"
+
+
+def test_eth0_keeps_the_deny_fall_throughs():
+    """They moved here from `global`; losing them would drop the documented
+    belt-and-suspenders (eth0's own `drop` policy is the primary control)."""
+    names = {r["name"] for r in _adapters()["eth0"].get("rules") or []}
+    assert {
+        "ssh-deny-fall-through",
+        "smb-deny-fall-through",
+        "nfs-deny-fall-through",
+    } <= names, names
+    assert _adapters()["eth0"]["policy"] == "drop"

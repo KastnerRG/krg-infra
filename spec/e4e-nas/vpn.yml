@@ -9,8 +9,22 @@
 # Researchers off campus need to mount e4e-nas shares. The requirement is NOT
 # "a campus VPN": clients must reach *this NAS on port 445* and have no route to
 # anything else. Terminating the tunnel on the NAS itself is what makes that
-# true by construction — the NAS is an endpoint, not a gateway, so there is no
-# forwarding path to the 132.239.17.0/24 campus network behind it.
+# true by construction — the NAS is an endpoint, not a gateway.
+#
+# ⚠️ CORRECTED 2026-08-25: "by construction" IS TOO STRONG, and the difference
+# matters. The live box has `net.ipv4.ip_forward = 1` AND a nat rule
+# `-A DEFAULT_POSTROUTING -s 10.90.24.0/24 -j MASQUERADE` — DSM sets both when
+# VPN Server starts, regardless of `allow_lan`. (`push_route_enable` IS 0, so
+# the spec value applied correctly; it just governs the pushed ROUTE, not the
+# kernel's willingness to forward.) So the kernel would happily route a VPN
+# client onto the campus network. What actually stops it is one firewall rule:
+#
+#   FORWARD_FIREWALL: -i tun0 -j DROP     (with a 445/tcp RETURN above it)
+#
+# That is a real control, but it is an ENFORCED one, not an architectural
+# impossibility — it is one bad edit to the `vpn` adapter block away from being
+# a campus gateway. Treat the firewall block below as load-bearing, and do not
+# rely on "the NAS can't forward" in any future reasoning: it can.
 #
 # THREAT MODEL / non-goals, stated so nobody "helpfully" widens this later:
 #   * NOT a general campus VPN. No `redirect-gateway`, no LAN route push, no DNS
@@ -119,6 +133,27 @@ openvpn:
   # (DSM ships `max-clients 5` — confirmed on-box 2026-08-16. Real drift.)
   max_connections: 20
 
+  # TOPOLOGY — inherited, not chosen, and worth stating because it is visible
+  # to clients. DSM's openvpn.conf carries no `topology` directive, so OpenVPN
+  # 2.5's default `net30` applies: each client gets a /30 out of this subnet and
+  # the server pushes `ifconfig 10.90.24.6 10.90.24.5`-style pairs. A client is
+  # therefore on e.g. 10.90.24.4/30, and 10.90.24.1 is OUTSIDE its own subnet —
+  # reached via the pushed route, not on-link.
+  #
+  # That works (verified end-to-end 2026-08-25), but it means a client library
+  # that assumes `topology subnet` — everyone on 10.90.24.0/24 with the NAS
+  # on-link — will build a different local routing table. Both are legitimate;
+  # this records WHICH one this service actually serves so a client author does
+  # not have to discover it by packet capture.
+  #
+  # NOT SETTABLE from here: `Settings.Config` exposes no topology field (the
+  # captured write contract is 15 fields and this is not one of them). Changing
+  # it would mean hand-editing openvpn.conf, which a DSM/package update would
+  # revert — so this stays documentation, not configuration. If a future client
+  # genuinely needs `subnet`, that is a request for a different front door.
+  topology: net30      # OBSERVED default, NOT applied by the role — see above.
+
+
   # Multiple concurrent tunnels per AD account — laptop AND phone. DSM ships
   # this ON (`duplicate-cn` + `username-as-common-name` in the stock
   # openvpn.conf), and for a share-mounting service the convenience is worth
@@ -219,6 +254,33 @@ openvpn:
   # so a spray CANNOT lock users out — but that also means there is no
   # account-level rate limit, only the IP-level auto-block. If this service ever
   # carries more than "mount a share", revisit with a real MFA front door.
+
+  #
+  # ⚠️ THE LOGIN NAME MUST BE `KRG\<username>`. This is the single most likely
+  # thing to waste someone's afternoon, so it is stated here as well as on the
+  # `auth:` block and in the published .ovpn header. Measured 2026-08-25:
+  #
+  #     c.crutchfield.642          -> rejected, "Incorrect user name"
+  #     KRG.local\c.crutchfield.642 -> rejected
+  #     KRG\c.crutchfield.642      -> accepted
+  #
+  # It needs the NETBIOS name (`KRG`), not the DNS/realm name (`KRG.local`).
+  # The reason it is not derivable from the auth path described above:
+  # `vpnauthd` runs a Synology pre-check (SYNOWinsEnumAllDomains + the
+  # `privilege` file) BEFORE it defers to the FreeRADIUS site config, and an
+  # unqualified name matches no LOCAL account in that pre-check. So it is
+  # refused before the password is looked at, and rad_site_def_ad's Realm
+  # regex — which would have accepted the bare form — never runs.
+  #
+  # ⚠️ AND EACH WRONG GUESS IS EXPENSIVE. security.yml sets auto-block to
+  # 3 attempts / 1440 min / expiry 0 (NEVER), and that file's own honesty note
+  # records that the allow-list is informational only — synology_security
+  # debug-prints it but cannot push it (the AutoBlock.Rules param shape errors
+  # 5100). So a third failed attempt permanently blocks that source IP from the
+  # WHOLE NAS — HTTPS and File Station included — until someone clears it by
+  # hand. Anyone iterating on credential forms should read
+  # `SYNO.VPNServer.Management.Log load` (or radius.log on-box) rather than
+  # guessing, and should count their attempts.
 
   # --- Privilege -------------------------------------------------------------
   # DECISION (2026-08-13): grant to ALL AD users rather than a bespoke VPN
@@ -465,7 +527,29 @@ client:
 #      ⚠️ ONE REAL CONSTRAINT FOUND: clients must log in as `KRG\<username>`.
 #      A bare username is rejected as "Incorrect user name" before ntlm_auth is
 #      ever called. The published .ovpn header now says so — see `auth:` above.
-#   9. ⬜ Remaining: (b)-(d) of step 7 with a real password — the SMB mount over
-#      the tunnel, the Kerberos->NTLMv2 fallback against smb-globals.yml's SMB3
-#      + signing floor, and the isolation checks. Nothing in the auth path is
-#      known to block them now.
+#   9. ✅ THIS CHANGE (2026-08-25) — the SMB path itself, which had NEVER been
+#      exercised. With auth fixed, the first real off-campus mount got a tunnel,
+#      an address and an AD login in ~300ms, then sent SYNs to 10.90.24.1:445
+#      and got SILENCE — 5 packets out, 0 back, 30s timeout. Silence rather
+#      than a TCP RST is the tell: a closed port refuses, a firewall drops.
+#
+#      It was `smb-deny-fall-through` in security.yml's `global` adapter.
+#      `global` rules are not interface-scoped and evaluate BEFORE every
+#      per-adapter block, so it matched in-tunnel SMB eight rules before
+#      `vpn-smb-only` was ever reached. The live counters said it outright:
+#      the deny had 45 packets (== tun0's entire RX), the allow had 0, and
+#      tun0's TX was 0. Fixed by moving the three deny-fall-throughs to the
+#      `eth0` block they were always written for — see security.yml. Verified
+#      after apply: rules 62-66 now carry `-i eth0`, and nothing above rule 68
+#      can match `-i tun0 -s 10.90.24.0/24 --dport 445`.
+#
+#      Widens nothing: eth1..eth3 were the only other adapters those rules
+#      covered and all three are unplugged (carrier=0, RX 0).
+#  10. ⬜ Remaining: re-run the client. The NAS half of 7b is now unblocked but
+#      the mount itself is UNPROVEN — no client has completed one. Then (c)/(d):
+#      isolation (traceroute must not traverse the tunnel; :6021 must not be
+#      reachable through it) and the ICMP no-op. Watch specifically for the
+#      Kerberos->NTLMv2 fallback against smb-globals.yml's min_protocol SMB3 +
+#      server_signing + ntlmv1_auth false — clients cannot reach the DC through
+#      this tunnel BY DESIGN, so SPN acquisition fails and NTLMv2 is the only
+#      path. That combination has never met DSM over this route.
