@@ -153,7 +153,10 @@ FIELDS = {
 #   push_dns        not exposed
 #   duplicate_cn    real, but lives only in openvpn.conf — not settable here
 #   tls_min_version not exposed
-UNSUPPORTED = ("netmask", "push_dns", "duplicate_cn", "tls_min_version")
+#   topology        not exposed; DSM inherits OpenVPN's net30 default. vpn.yml
+#                   records the OBSERVED value so client authors do not have to
+#                   packet-capture for it — it is documentation, not config.
+UNSUPPORTED = ("netmask", "push_dns", "duplicate_cn", "tls_min_version", "topology")
 
 
 def _run(cmd, env=None):

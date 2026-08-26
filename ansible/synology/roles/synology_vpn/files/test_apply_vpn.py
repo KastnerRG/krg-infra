@@ -202,8 +202,9 @@ def test_stale_field_map_fails_loudly(monkeypatch, capsys):
 
 
 def test_unsupported_spec_keys_are_declared():
-    """netmask/push_dns/duplicate_cn/tls_min_version have no DSM equivalent.
-    Recorded so nobody adds them to FIELDS expecting them to apply."""
+    """These spec keys have no DSM equivalent. Recorded so nobody adds them to
+    FIELDS expecting them to apply — `topology` especially, since vpn.yml now
+    states a value for it and that value is OBSERVED, not pushed."""
     for key in m.UNSUPPORTED:
         assert key not in m.FIELDS
 

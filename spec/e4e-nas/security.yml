@@ -89,65 +89,24 @@ firewall:
         #     trusted.json `machines`. e4e-nas is an AD MEMBER (see
         #     spec/e4e-nas/ad.yml), so nothing listens on these inbound
         #     today; this is a forward-looking restriction.
-        # (6) the static rules below: ssh/smb/nfs-deny-fall-through,
-        #     lets-encrypt-http-01 (port 80, worldwide), then
-        #     geoip-US-web (ports 443/6020/6021 ONLY, US-geoip — NOT the
-        #     old all-ports floor). Everything else — SMB, NFS, domain
-        #     ports, any port not explicitly listed above — is denied by
-        #     eth0's own `drop` policy. The deny-fall-through rules exist
-        #     as explicit, self-documenting belts-and-suspenders in case
-        #     a broader allow is ever reintroduced above them.
+        # (6) the static rules below: openvpn-1194, lets-encrypt-http-01
+        #     (port 80, worldwide), then geoip-US-web (ports 443/6020/6021
+        #     ONLY, US-geoip — NOT the old all-ports floor). Everything
+        #     else — SMB, NFS, domain ports, any port not explicitly listed
+        #     above — is denied by eth0's own `drop` policy.
+        #
+        # ⚠️ NOTHING INTERFACE-SPECIFIC BELONGS IN `global`. These rules
+        # apply to EVERY adapter and evaluate BEFORE every per-adapter
+        # block, so a `global` rule can silently pre-empt a per-adapter one
+        # that looks like it should win. That is exactly what happened to
+        # the OpenVPN tunnel: `smb-deny-fall-through` lived here and ate
+        # in-tunnel SMB before the `vpn` block was consulted. The
+        # ssh/smb/nfs deny-fall-throughs now live on `eth0`, where their
+        # own comments always said they belonged — see that block for the
+        # measurement and the reasoning.
         global:
           policy: none
           rules:
-            # Drop SSH from anyone not explicitly allowed above (trusted-
-            # nets / ops / ucsd). Without this rule, the geoip-US-floor
-            # below would allow SSH from arbitrary US IPs — making the
-            # NAS less restricted than the nix service-host pattern.
-            # The NAS is a service host (storage appliance, not compute),
-            # so SSH source must match `sshSources` from nix base
-            # (ucsd + ops) — and ONLY those.
-            - name: ssh-deny-fall-through
-              enable: true
-              log: false
-              policy: drop
-              port_direction: destination
-              port_group: custom
-              ports: "22"
-              protocol: tcp
-              source_ip_group: all
-              source_ip: all
-
-            # Drop SMB from anyone not explicitly allowed above (ucsd,
-            # via the prepended allow, or sealab/machines/monitoring via
-            # the trusted-net allow). Belt-and-suspenders: eth0's own
-            # default is already `drop`, so this rule is not load-bearing
-            # by itself, but it documents the boundary explicitly and
-            # keeps SMB safe even if a broader allow is ever added above.
-            - name: smb-deny-fall-through
-              enable: true
-              log: false
-              policy: drop
-              port_direction: destination
-              port_group: custom
-              ports: "139,445"
-              protocol: all
-              source_ip_group: all
-              source_ip: all
-
-            # Drop NFS (+ its support ports) from anyone not explicitly
-            # allowed above. Same rationale as smb-deny-fall-through.
-            - name: nfs-deny-fall-through
-              enable: true
-              log: false
-              policy: drop
-              port_direction: destination
-              port_group: custom
-              ports: "111,662,892,2049,4045"
-              protocol: all
-              source_ip_group: all
-              source_ip: all
-
             # OpenVPN remote access (spec/e4e-nas/vpn.yml) — the
             # off-campus SMB path. The tunnel terminates ON the NAS, so a
             # client gets reach to this box and no route anywhere else
@@ -271,14 +230,97 @@ firewall:
               source_ip_group: geoip
               source_ip: US
 
-        # eth0 is the planned public interface (132.239.17.124; currently
-        # disconnected, gets cabled later). Default-DROP everything that
-        # didn't match an earlier allow — SMB/NFS/domain ports and
-        # everything else besides SSH + the DSM UI now hit this default,
-        # instead of falling through to a country-wide floor.
+        # eth0 is the public interface (132.239.17.124) — live: it carries
+        # the default route, and eth1..eth3 have carrier=0 (confirmed on-box
+        # 2026-08-25). Default-DROP everything that didn't match an earlier
+        # allow — SMB/NFS/domain ports and everything else besides SSH + the
+        # DSM UI hit this default, instead of falling through to a
+        # country-wide floor.
+        #
+        # ⚠️ THE DENY-FALL-THROUGHS LIVE HERE, NOT IN `global` — MOVED
+        # 2026-08-25, and the move is a BUG FIX, not tidying.
+        #
+        # They were written as belt-and-suspenders for THIS interface, and
+        # their own comments said so ("eth0's own default is already `drop`,
+        # so this rule is not load-bearing by itself"). But `global` rules
+        # are NOT interface-scoped and evaluate BEFORE every per-adapter
+        # block — so `smb-deny-fall-through` was silently eating the OpenVPN
+        # tunnel's SMB traffic eight rules before the `vpn` adapter was ever
+        # consulted. Measured on the live chain during the first real
+        # off-campus mount attempt:
+        #
+        #   60    45 pkts  DROP   tcp  *     0.0.0.0/0  dports 139,445   <- here
+        #   67   135K pkts DROP   all  eth0  0.0.0.0/0
+        #   68     0 pkts  RETURN tcp  tun0  10.90.24.0/24  dpt:445      <- never reached
+        #   69     0 pkts  DROP   all  tun0  0.0.0.0/0
+        #
+        # 45 dropped packets == tun0's entire RX count, and tun0's TX was 0:
+        # the client's SYNs arrived and nothing was ever sent back, which is
+        # why it presented as a 30s timeout rather than a refusal.
+        #
+        # Scoping them to eth0 restores the documented intent and lets the
+        # `vpn` block below actually govern the tunnel. It widens NOTHING:
+        # eth1..eth3 are the only other adapters these rules used to cover,
+        # and all three are unplugged (carrier=0, operstate=down, RX 0). If
+        # one is ever cabled, give it its own block with `policy: drop`
+        # rather than moving these back to `global`.
+        #
+        # The alternative — a `global` allow for 10.90.24.0/24:445 placed
+        # above the denies — was rejected: `global` cannot match on
+        # interface, so it would admit anything CLAIMING that source on
+        # eth0, and it would leave the ordering trap in place for the next
+        # per-adapter rule someone adds.
         eth0:
           policy: drop
-          rules: []
+          rules:
+            # Drop SSH from anyone not explicitly allowed above (trusted-
+            # nets / ops / ucsd). Without this rule, the geoip-US-floor
+            # below would allow SSH from arbitrary US IPs — making the
+            # NAS less restricted than the nix service-host pattern.
+            # The NAS is a service host (storage appliance, not compute),
+            # so SSH source must match `sshSources` from nix base
+            # (ucsd + ops) — and ONLY those.
+            - name: ssh-deny-fall-through
+              enable: true
+              log: false
+              policy: drop
+              port_direction: destination
+              port_group: custom
+              ports: "22"
+              protocol: tcp
+              source_ip_group: all
+              source_ip: all
+
+            # Drop SMB from anyone not explicitly allowed above (ucsd,
+            # via the prepended allow, or sealab/machines/monitoring via
+            # the trusted-net allow). Belt-and-suspenders: eth0's own
+            # default is already `drop`, so this rule is not load-bearing
+            # by itself, but it documents the boundary explicitly and
+            # keeps SMB safe even if a broader allow is ever added above.
+            - name: smb-deny-fall-through
+              enable: true
+              log: false
+              policy: drop
+              port_direction: destination
+              port_group: custom
+              ports: "139,445"
+              protocol: all
+              source_ip_group: all
+              source_ip: all
+
+            # Drop NFS (+ its support ports) from anyone not explicitly
+            # allowed above. Same rationale as smb-deny-fall-through.
+            - name: nfs-deny-fall-through
+              enable: true
+              log: false
+              policy: drop
+              port_direction: destination
+              port_group: custom
+              ports: "111,662,892,2049,4045"
+              protocol: all
+              source_ip_group: all
+              source_ip: all
+
 
         # The `vpn` adapter — traffic arriving THROUGH the OpenVPN tunnel.
         # (The tunnel's own 1194/udp ingress is the `openvpn-1194` rule in
