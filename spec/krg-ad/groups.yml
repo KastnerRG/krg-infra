@@ -102,6 +102,7 @@ groups:
   # then delete the old one by hand (this apply is non-authoritative; it won't).
   - { name: "proxmox-admins", description: "Administrator on the Proxmox VE web UI + apps via the PVE Active Directory realm (ansible pve_ad). Direct members only." }
   - { name: "Temporal Users", description: "May mint a lab-PKI client cert to reach the Temporal mTLS frontend (OpenBao ldap auth -> pki_int/issue/user; terraform/openbao var.pki_ad_group_roles)" }
+  - { name: "ARM PDK Access", description: "Read access to the export-controlled ARM PDK VeraCrypt vault on waiter (nix krg.armpdkVault.accessGroups -> ad-group-sync 'armpdk' group); membership is the ARM agreement/TCP authorized-user list" }
   - { name: "Label Studio Admins", description: "Administrator in the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio emits this name in the Groups attribute; map it to the Administrator org role in Label Studio Organization -> Roles)" }
   - { name: "Label Studio Users", description: "Standard (non-admin) access to the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio's Groups mapping emits every name containing 'Label Studio', so no tofu change is needed; map this name to a standard org role in Label Studio Organization -> Roles)" }
   # Per-PROJECT Label Studio admin tiers. Org-wide "Label Studio Admins" above is

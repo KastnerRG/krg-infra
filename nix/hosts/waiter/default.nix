@@ -14,6 +14,7 @@
     ../../modules/nfs-home.nix
     ../../modules/scratch.nix
     ../../modules/local-cache.nix
+    ../../modules/security/armpdk-vault.nix
   ];
 
   # Physical host — keep the NixOS firewall enabled (this is the default).
@@ -143,6 +144,17 @@
     perUser.enable = true;
   };
 
+  # ARM PDK — export-controlled IP, encrypted at rest in a VeraCrypt volume (ARM TCP;
+  # see docs/arm-pdk-veracrypt.md). The single canonical container lives on fabricant
+  # and is served READ-ONLY over NFS (rpool/nfs/armpdk; ansible nfs_server). This box
+  # mounts it read-only and an admin veracrypt-mounts it read-only after each boot —
+  # the passphrase is admin-only in VaultWarden, never on the box (no auto-mount key).
+  # Access is gated to the AD group "ARM PDK Access" (bridged to the local `armpdk`
+  # group via krg.adGroupSync). Defaults cover server/export/mountpoint/group, so just
+  # enable. ON-BOX: the volume must be created on fabricant + the .hc placed under
+  # rpool/nfs/armpdk first (runbook); the access half is krg.xrdp.gatewayDeny + key-only SSH.
+  krg.armpdkVault.enable = true;
+
   # Swap = zram (no on-disk swap; ZFS swap zvols are deadlock-prone under memory
   # pressure). zstd-compressed RAM cushion for OOM bursts. memoryPercent is a cap on
   # the zram device size, not a reservation. Interacts with earlyoom + the ARC cap below.
@@ -211,6 +223,16 @@
   # (`getent Administrator` resolves). Explicit marker; base.nix defaults enable on.
   krg.adClient.enable = true;
   krg.adClient.allowedGroups = ["Domain Admins" "Waiter"];
+
+  # Technology control plan: the ARM PDK engineers and everyone who can sudo must use
+  # waiter's desktop ONLY over an auditable SSH tunnel, never the one-click Guacamole
+  # browser RDP. Guacamole can't enforce this (its admins are superusers), so the gate
+  # lives in xrdp's auth and keys on the RDP source IP — Guacamole arrives from krg-prod
+  # (krg.firewall.rdpSources, inherited as gatewayDeny.sources), the SSH tunnel from
+  # loopback. "ARM PDK Access" plus krg.adClient.sudoGroups (Domain Admins) plus local
+  # wheel are denied from the gateway origin; everyone else keeps clientless RDP.
+  # On-box validation (PAM_RHOST) + caveats: docs/arm-pdk-tcp.md.
+  krg.xrdp.gatewayDeny.enable = true;
 
   networking = {
     hostName = "waiter";
