@@ -1,6 +1,6 @@
 # Mounting E4E NAS shares (`e4e-nas-mount`)
 
-On **kastner-ml**, members of the **`E4E-NAS`** AD group can mount E4E NAS
+On **kastner-ml** and **waiter**, members of the **`E4E-NAS`** AD group can mount E4E NAS
 (`e4e-nas.ucsd.edu`) CIFS/SMB shares into their home directory **without full
 sudo**, using a small validated wrapper. You authenticate as *yourself* with your
 Kerberos ticket — there is **no password or credentials file stored on disk**.
@@ -15,7 +15,7 @@ Kerberos ticket — there is **no password or credentials file stored on disk**.
 > ```
 
 This is wired by the NixOS module [`nix/modules/nas-mount.nix`](../nix/modules/nas-mount.nix)
-(`krg.nasMount`), enabled on kastner-ml. It replaces the old "give people raw
+(`krg.nasMount`), enabled on kastner-ml and waiter. It replaces the old "give people raw
 `sudo mount`" approach, which couldn't stop a user mounting a share over `/etc`
 or passing hostile mount options.
 
@@ -25,9 +25,9 @@ or passing hostile mount options.
 
 ### Prerequisites (one-time)
 
-- You can **SSH into kastner-ml** with your AD account. (Login is gated by
-  `krg.adClient.allowedGroups` — E4E users already have this via the `kastnerml`
-  group.)
+- You can **SSH into the host** (kastner-ml or waiter) with your AD account. (Login is gated by
+  `krg.adClient.allowedGroups` — `kastnerml` on kastner-ml, `Waiter` on waiter. E4E
+  users already have this.)
 - You are a member of the **`E4E-NAS`** AD group. If `sudo e4e-nas-mount …` says
   *"a password is required"* or *"user is not allowed to run sudo"*, you're not in
   the group yet — ask an admin (see [Granting access](#for-operators-granting-access)).
@@ -112,6 +112,7 @@ your home directory, which we deliberately avoid.
 | `mount error(13): Permission denied` | You have a ticket, but the **share's SMB permissions** on the NAS don't grant you access. This is a NAS-side ACL (`spec/e4e-nas/`), not the wrapper. |
 | `mount error(126)` / `Key has expired` on a long mount | Your ticket lapsed and wasn't renewed. Re-run `kinit`; check `klist`. `krg-krenew` should keep it alive while you're logged in. |
 | `Host is down`, then `Required key not available` (but `klist` shows a valid ticket!) | The SMB session itself dropped (network blip, NAS-side idle timeout) and left a stale, negatively-cached kernel key — not a Kerberos problem, so re-`kinit`/`krg-krenew` won't fix it. `krg-nas-mount-healthcheck` self-heals this within ~3 minutes; to fix it immediately, unmount + remount yourself: `sudo e4e-nas-mount -u <mountpoint> && sudo e4e-nas-mount <share> <mountpoint>`. |
+| `journalctl -k` flooding with `Send error in SessSetup = -126` (thousands per hour) | A mount made **by hand** with raw `sudo mount -t cifs`, outside the wrapper, whose ticket then lapsed: `krg-krenew` was never started for it and `krg-nas-mount-healthcheck` does not know about it (it only tracks wrapper-made mounts), so the kernel retries session setup ~1.5x/s indefinitely and never re-invokes `cifs.upcall` — it does not recover on its own even after a fresh `kinit`. Fix: unmount, `kinit`, then remount **through the wrapper** (`sudo e4e-nas-mount <share> <dir>`) so renewal + the health-check cover it. |
 | `refuses: mountpoint must be under your home` | The mountpoint has to resolve to a path inside your home directory. Pick a spot under `~`. |
 | `refuses: invalid share name` | Share names are bare (`[A-Za-z0-9._-]`), no slashes or `..`. Pass just the share name. |
 
@@ -153,9 +154,10 @@ Membership propagates automatically:
   user may need to log out/in for a fresh session. No redeploy needed.
 - **Authentik tile** — appears after the next LDAP sync.
 
-> The user must **also be able to log into kastner-ml** (`krg.adClient.allowedGroups`
-> = `Domain Admins` / `kastnerml`). E4E users already are; if a new NAS user can't
-> SSH in, add their login group there too and redeploy.
+> The user must **also be able to log into the host** (`krg.adClient.allowedGroups`
+> = `Domain Admins` / `kastnerml` on kastner-ml, `Domain Admins` / `Waiter` on
+> waiter). E4E users already are; if a new NAS user cannot SSH in, add their login
+> group there too and redeploy.
 
 ### First-time setup / new host
 
@@ -177,5 +179,6 @@ Authentik apply, or the `data.authentik_group` lookup fails `tofu apply`.
 
 1. **AD group** (if not already present): `ansible krg-ad` apply — creates the
    group object (non-authoritative; it never deletes or edits membership).
-2. **NixOS**: `nixos-rebuild switch --flake ./nix#kastner-ml --target-host …`.
+2. **NixOS**: `nixos-rebuild switch --flake ./nix#kastner-ml --target-host …`
+   (and `./nix#waiter` — both hosts run the wrapper).
 3. **Authentik**: `tofu apply` in `terraform/authentik`.

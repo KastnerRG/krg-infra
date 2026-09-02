@@ -14,6 +14,7 @@
     ../../modules/nfs-home.nix
     ../../modules/scratch.nix
     ../../modules/local-cache.nix
+    ../../modules/nas-mount.nix
   ];
 
   # Physical host — keep the NixOS firewall enabled (this is the default).
@@ -142,6 +143,26 @@
     enable = true;
     perUser.enable = true;
   };
+
+  # Let E4E-NAS members mount e4e-nas CIFS shares into their home without full sudo:
+  # `sudo e4e-nas-mount <share> [dir]` (validated root wrapper, sec=krb5 — no secret on
+  # disk; the wrapper kinit's on demand). Same enablement as kastner-ml, gated on the
+  # E4E-NAS AD group (spec/krg-ad/groups.yml). Defaults target e4e-nas.ucsd.edu — which
+  # resolves (132.239.17.124) and has a `cifs/e4e-nas.ucsd.edu@KRG.LOCAL` SPN from here,
+  # exactly like the `e4e-nas.krg.local` name people had been hand-mounting.
+  #
+  # WHY waiter needs it (incident 2026-09-01): people were mounting e4e-nas shares by
+  # hand with raw `sudo mount -t cifs -o sec=krb5,cruid=…`. Nothing renewed their TGT,
+  # so ~10h after the mount the ticket lapsed, cifs.upcall could no longer get a service
+  # ticket ("Unable to obtain service ticket"), and the kernel wedged the SMB session —
+  # then retried session setup ~1.5x/s for 24h straight (126k `SessSetup = -126` ENOKEY
+  # lines in the journal) WITHOUT re-invoking the upcall, so it never self-healed even
+  # once the ticket could have been renewed. The two module defaults are the fix:
+  # perUserRenew (krg-krenew) keeps the session's TGT alive so it never lapses, and
+  # autoReconnect (krg-nas-mount-healthcheck) unmounts+remounts a session that wedges
+  # anyway. Both only cover mounts made THROUGH the wrapper — which is the other half of
+  # why the hand-rolled `mount -t cifs` path goes away here.
+  krg.nasMount.enable = true;
 
   # Swap = zram (no on-disk swap; ZFS swap zvols are deadlock-prone under memory
   # pressure). zstd-compressed RAM cushion for OOM bursts. memoryPercent is a cap on
