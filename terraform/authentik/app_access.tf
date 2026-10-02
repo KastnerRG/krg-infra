@@ -29,11 +29,10 @@ locals {
     # claim (AUTH_ROLES_MAPPING); a FishSense member without a role group gets no
     # Superset role, so scope the tile/launch to exactly the role-holders. OR-ed
     # (policy_engine_mode "any"), so membership in any one is enough.
-    fishsense_analytics    = ["fishsense-superset-admin", "fishsense-superset-editor", "fishsense-superset-viewer"]
-    fishsense_oauth        = ["FishSense"]
-    fishsense_orchestrator = ["FishSense-Prod-Admins"] # FishSense API — prod admins only (space-free AD name; see groups.yml)
-    e4e_nas                = ["E4E-NAS"]               # NAS SSO tile visible only to NAS-access group (matches the nix krg.nasMount sudo gate)
-    garage_ui              = ["E4E-NAS"]               # Garage (S3-on-NAS) admin/data browser — same NAS-access gate as e4e_nas
+    fishsense_analytics = ["fishsense-superset-admin", "fishsense-superset-editor", "fishsense-superset-viewer"]
+    fishsense_oauth     = ["FishSense"]
+    e4e_nas             = ["E4E-NAS"] # NAS SSO tile visible only to NAS-access group (matches the nix krg.nasMount sudo gate)
+    garage_ui           = ["E4E-NAS"] # Garage (S3-on-NAS) admin/data browser — same NAS-access gate as e4e_nas
     # All four groups exist in KRG.LOCAL (spec/krg-ad/groups.yml) and must be synced
     # into Authentik before apply. The label_studio_groups SAML mapping (label_studio.tf)
     # also emits these names to Label Studio, where they map to org roles / workspace
@@ -46,17 +45,16 @@ locals {
 
   # app local-name → its application UUID (the policy-binding target).
   app_access_uuids = {
-    grafana                = authentik_application.grafana.uuid
-    guacamole              = authentik_application.guacamole.uuid
-    fleet                  = authentik_application.fleet.uuid
-    proxmox                = authentik_application.proxmox.uuid
-    incus                  = authentik_application.incus.uuid
-    fishsense_analytics    = authentik_application.fishsense_analytics.uuid
-    fishsense_oauth        = authentik_application.fishsense_oauth.uuid
-    fishsense_orchestrator = authentik_application.fishsense_orchestrator.uuid
-    e4e_nas                = authentik_application.e4e_nas.uuid
-    garage_ui              = authentik_application.garage_ui.uuid
-    label_studio           = authentik_application.label_studio.uuid
+    grafana             = authentik_application.grafana.uuid
+    guacamole           = authentik_application.guacamole.uuid
+    fleet               = authentik_application.fleet.uuid
+    proxmox             = authentik_application.proxmox.uuid
+    incus               = authentik_application.incus.uuid
+    fishsense_analytics = authentik_application.fishsense_analytics.uuid
+    fishsense_oauth     = authentik_application.fishsense_oauth.uuid
+    e4e_nas             = authentik_application.e4e_nas.uuid
+    garage_ui           = authentik_application.garage_ui.uuid
+    label_studio        = authentik_application.label_studio.uuid
   }
 
   # Flatten to one binding per (app, group) pair, keyed "app:group".
