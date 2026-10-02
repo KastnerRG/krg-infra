@@ -78,7 +78,7 @@ Already confirmed (no action):
 | `org` | **exists**: `fishsense_org` in `fishsense_collaborators.tf` emits `{tenant, org}` from user attributes (set by the collaborator enrollment flow; null for lab AD members, whom v2 treats as lab) and is already mapped on the web client | — |
 | Redirect URI | `https://fishsense.e4e.ucsd.edu/api/auth/callback/authentik` | unchanged |
 | **Signing key** (not in the ask) | **none**, so HS256 with an empty JWKS. v2's API accepts **RS256 only** (`auth.py` `ALGORITHMS`), so every API call would 401. | `signing_key` = default cert |
-| Web service account | none | `svc-fishsense-web`, native `service_account`, app password, user binding on the web app, written to `secret/tenants/fishsense/oidc/web-service-account {username, password}` |
+| Web service account | none | reuses **`svc_fishsense`** (the existing KRG.LOCAL service account, already in `FishSense`, so it passes the web app's binding): a new app-password token on it, written to `secret/tenants/fishsense/oidc/web-service-account {username, password}`. Its groups and NAS access are unchanged. The web gets an Authentik app password, not the AD password. |
 
 ### Tenant module compatibility (ask 5)
 
@@ -123,7 +123,7 @@ unset S W
 ```
 
 The same call is the end-to-end test of the grant: a non-null `sub` means the
-grant type, the app password and the user binding all work.
+grant type, the app password and `svc_fishsense`'s access to the web app all work.
 
 ---
 
@@ -237,10 +237,10 @@ By hand / other repos:
 - Admin: **re-enable** `update-flake.yml` on fishsense-services only:
   `gh workflow enable update-flake.yml -R UCSD-E4E/fishsense-services`.
   Skip it and the slot freezes on old packages (docs/tenant-updates.md).
-- Keep `svc_fishsense` itself: it's a KRG.LOCAL principal with other domain access.
+- Keep `svc_fishsense` itself: it's the NAS identity, and since #550 it also holds the web's own app password (`fishsense-web-service-account-apppw`). #552 removes only the data-worker token.
 
 ## 6. Platform follow-ups (not cutover-blocking)
 
 - **Non-root readers of platform renders (B1, done properly):** let a tenant name the gid its Temporal consumers run as (e.g. `mkTenant { temporal.readerGid = 10001; }`). `nixosModules.tenant` would then deliver `tls.key` as `0640 root:<gid>`. The OpenBao Agent docs don't expose a template `group` setting, so this is likely a post-render `chgrp`, ordered before the reload hook. It's an additive contract change, so it needs a tenant pin bump. Too late for this weekend.
 - `deploy/mint-runner-token.sh` points to `docs/tenant-runner-bringup.md` §4, which doesn't exist.
-- Rotation of the non-expiring app passwords (`svc-fishsense-web`, and the outpost/data-worker ones until retired).
+- Rotation of the non-expiring app passwords (the web's token on `svc_fishsense`, and the outpost/data-worker ones until retired).
