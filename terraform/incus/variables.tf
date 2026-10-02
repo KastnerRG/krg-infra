@@ -118,7 +118,8 @@ variable "tenants" {
   }))
 
   # fishsense — tenant #1 (docs/onboarding-fishsense.md §2b). This is exactly
-  # `nix eval .#krgTenant.terraformTenant --json` from the fishsense-lite flake
+  # `nix eval .#krgTenant.terraformTenant --json` from the tenant flake (identical for
+  # fishsense-lite v1 and fishsense-services v2 — the 2026-10 cutover changed no boundary)
   # (zone/cpu/memory/disk/isolation/image — the mkTenant spec→provision projection),
   # PLUS the three admin-allocated fields: `image` (the published golden template,
   # gate 3 DONE), `nat_ip` (a pinned NAT address for the ingress forward's target), and
@@ -126,15 +127,20 @@ variable "tenants" {
   # The tenant cannot self-grant any — an admin lands them here (ADR 0020 §3).
   default = {
     fishsense = {
-      zone      = "e4e"                     # fronted by the e4e-prod edge (*.e4e.ucsd.edu)
-      cpu       = 6                         # resources.cpu from mkTenant
-      memory    = "12GiB"                   # resources.ram (renamed to the Incus field)
-      disk      = "50GiB"                   # Postgres + Superset images/volumes; dir-pool root size IS the cap
-      isolation = "virtual-machine"         # untrusted developed code = separate kernel (§4)
-      image     = "krg-golden"              # boot the slot from the hardened template
-      nat_ip    = "10.100.0.10"             # pinned NAT target for the ingress forward
-      edge_port = 30443                     # krg-nat port the e4e edge dials → network forward → nat_ip:443
-      repo      = "UCSD-E4E/fishsense-lite" # repo-owns-deploy runner scope (ADR 0022)
+      zone      = "e4e"             # fronted by the e4e-prod edge (*.e4e.ucsd.edu)
+      cpu       = 6                 # resources.cpu from mkTenant
+      memory    = "12GiB"           # resources.ram (renamed to the Incus field)
+      disk      = "50GiB"           # Postgres + Superset images/volumes; dir-pool root size IS the cap
+      isolation = "virtual-machine" # untrusted developed code = separate kernel (§4)
+      image     = "krg-golden"      # boot the slot from the hardened template
+      nat_ip    = "10.100.0.10"     # pinned NAT target for the ingress forward
+      edge_port = 30443             # krg-nat port the e4e edge dials → network forward → nat_ip:443
+      # repo-owns-deploy runner scope (ADR 0022). Re-scoped fishsense-lite → fishsense-services
+      # for the v2 cutover (docs/handoff/fishsense-services/). In-place: `user.krg_repo` is a
+      # plain config key (no RequiresReplace on incus_instance.config), so the slot is NOT
+      # recreated. From the next deploy, phase 3.6 brokers tokens for fishsense-services; the
+      # runner re-registers there on the first converge whose mkTenant `repo` matches.
+      repo = "UCSD-E4E/fishsense-services"
     }
   }
 
