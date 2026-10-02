@@ -22,6 +22,7 @@ actually operate / recover this" layer.
 | [troubleshooting.md](troubleshooting.md) | Symptom-first recovery for the gotchas this fleet has hit (boot freeze, AD/login, scratch, ZFS) |
 | [kastner-ml-onboarding.md](kastner-ml-onboarding.md) | As-planned record + remote bring-up runbook for onboarding kastner-ml (GPU box, Ubuntu → NixOS + ZFS); destructive disk wipe gated on the end checklist |
 | [onboarding-fishsense.md](onboarding-fishsense.md) | End-to-end runbook for fishsense — tenant #1 on the Incus platform (ADR 0017/0020): the repo-owned tenant declaration, the admin-provisioned boundary, and bring-up |
+| [handoff/fishsense-services/HANDOFF.md](handoff/fishsense-services/HANDOFF.md) | fishsense v1 → v2 cutover (fishsense-lite → fishsense-services, same slot, 2026-10-10/11): platform vs tenant ownership, the admin's switch + rollback procedure, what to retire after the window |
 | [guacamole-temporal-consolidation.md](guacamole-temporal-consolidation.md) | One-time cutover folding the Guacamole + Temporal compose stacks into the single krg-prod compose project (they already shared the one openbao-agent) |
 | [postgres-16-to-18-migration.md](postgres-16-to-18-migration.md) | Major-version upgrade of the krg-prod Postgres containers 16 → 18 (per-service data volumes, dump/restore) |
 

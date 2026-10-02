@@ -96,6 +96,14 @@ with lib; let
           re-renders after phase 3 to converge in one run. Guard the template body
           with `{{ if .Data.data.<field> }}…{{ end }}` so a missing field yields an
           EMPTY file, not the literal `<no value>`.
+
+          ⚠ FALSE softens a missing FIELD only, never a missing PATH. A `with secret`
+          on a path that holds no secret is a hard error in openbao-template
+          (`no secret exists at <path>`, dependency/vault_read.go), and
+          `exit_on_retry_failure` turns it into a failure of the WHOLE agent — every
+          render, cert renders included. So the path behind a soft render must
+          EXIST before the agent runs; seed a placeholder (`bao kv put <path>
+          placeholder=1`) when the real value isn't ready yet.
         '';
       };
       reloadCommand = mkOption {
