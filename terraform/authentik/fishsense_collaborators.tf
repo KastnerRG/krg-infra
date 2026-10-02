@@ -56,9 +56,8 @@ resource "authentik_policy_expression" "fishsense_collaborator" {
 # To stop exposing a given app to external partners, drop it from this map.
 locals {
   fishsense_collab_targets = {
-    analytics    = authentik_application.fishsense_analytics.uuid
-    oauth        = authentik_application.fishsense_oauth.uuid
-    orchestrator = authentik_application.fishsense_orchestrator.uuid
+    analytics = authentik_application.fishsense_analytics.uuid
+    oauth     = authentik_application.fishsense_oauth.uuid
   }
 }
 
