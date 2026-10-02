@@ -153,7 +153,7 @@ resource "authentik_provider_oauth2" "fishsense_oauth" {
   ])
   # Set explicitly: goauthentik 2026.x enforces grant_types and defaults it EMPTY on
   # create (see the incus provider). v2 uses all three — the browser login, its
-  # refresh, and client_credentials for the web's service account
+  # refresh, and client_credentials as svc_fishsense
   # (fishsense_web_service_account.tf), whose token the public landing page sends to
   # the API.
   grant_types = ["authorization_code", "refresh_token", "client_credentials"]
