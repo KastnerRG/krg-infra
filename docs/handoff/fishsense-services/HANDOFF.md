@@ -19,11 +19,11 @@ unchanged. Read it for those.
 
 | # | Item | Owner | Status |
 |---|---|---|---|
-| B1 | **v2's workers can't read the Temporal key or the NRP kubeconfig.** `orchestrator`, `backup`, `nrp-temporal-cert-sync` and `smoke` run as uid 10001 (`USER app`, confirmed in the published `v0.1.0` image config). The platform renders `/run/tenant/temporal/tls.key` **0640 root:root**, and v2's own render puts `/run/tenant/nrp/` at **0750** with `kubeconfig` **0640 root:root**. Bind mounts keep host ownership, so uid 10001 gets `EACCES`: no Temporal connection (so no schedules and no backups) and no NRP. v1's workers ran as root, so this never came up. **Minimal fix (tenant):** add `group_add: ["0"]` to those four services in `deploy/incus/compose.yml`. That makes the process a member of gid 0, which can read both files (group `r`) and traverse `/run/tenant/nrp` (group `r-x`). **Better fix (platform, after the cutover):** see §6. The rehearsal missed it because `stage.py` rewrites `/run/tenant` to files owned by the operator. | FishSense owner | **BLOCKER** |
-| B2 | **The `nrp_orchestrator` path must exist in OpenBao**, even if the kubeconfig isn't ready. `errorOnMissingKey = false` softens a missing **field** only. A missing **path** is a hard `no secret exists at …` error in openbao-template, and with `exit_on_retry_failure` it fails the whole agent: every render, the `fishsense.vm` cert, and so the entire stack. If the kubeconfig isn't ready, seed a placeholder (`bao kv put secret/tenants/fishsense/nrp_orchestrator placeholder=1`). Also guard the template body with `{{ if .Data.data.kubeconfig }}…{{ end }}`, or a missing field renders the literal `<no value>` instead of an empty file. | FishSense owner | before switch |
+| B1 | **v2's workers couldn't read the Temporal key or the NRP kubeconfig.** `orchestrator`, `backup`, `nrp-temporal-cert-sync` and `smoke` run as uid 10001 (`USER app` in the published `v0.1.0` images). The platform renders `/run/tenant/temporal/tls.key` **0640 root:root**, and v2's own render puts `/run/tenant/nrp/` at 0750 with `kubeconfig` 0640 root:root. Bind mounts keep host ownership, so uid 10001 got `EACCES`. The owner reproduced it on v0.1.0. **Fixed in fishsense-services #22:** `group_add: ["0"]` on those four services (root's group only, not root), pinned by a deploy test. The fix needs no new release, because the slot reads the compose from `main`. A platform-side gid option is a follow-up (§6). | FishSense owner | ✅ fixed (#22) |
+| B2 | **The `nrp_orchestrator` path must exist in OpenBao**, even if the kubeconfig isn't ready. `errorOnMissingKey = false` softens a missing **field** only. A missing **path** is a hard `no secret exists at …` error in openbao-template, and with `exit_on_retry_failure` it fails the whole agent: every render, the `fishsense.vm` cert, and so the entire stack. If the kubeconfig isn't ready, seed `bao kv put secret/tenants/fishsense/nrp_orchestrator kubeconfig=""`. v2 treats an empty kubeconfig as "no NRP yet" (fishsense-services #22 runbook). | FishSense owner | before switch |
 | B3 | **GitHub App installed on fishsense-services**: add the repo to the org installation's *selected repositories*. The installation is the same, so `secret/krg-deploy/github-app/UCSD-E4E` doesn't change. Without it, phase 3.6 warns and mints nothing, and the slot has no runner after the switch. | admin | before switch |
-| B4 | `web_service_account` seeded (see §3). | owner, from the admin-provisioned value | before switch |
-| — | **Superset goes dark at the switch, not at §3 step 5c.** cutover.md §4 says v1's Superset keeps running across the switch. It won't: `fishsense.service` changes on the switch, so `switch-to-configuration` **stops** the old unit first, and its `ExecStop` is v1's `docker compose … down`. That removes every container in v1's file, Superset included, before v2's `up`. `analytics.fishsense` answers 502 from the switch until step 5c. | FishSense owner | accept or reschedule 5c |
+| B4 | **#550 must be APPLIED before the switch.** Since fishsense-services #22, v2's `web.env` reads `secret/tenants/fishsense/oidc/web-service-account` directly. That's a hard render, so if #550 hasn't run, the path is missing and the whole agent fails (as in B2). Nothing to copy (§3). | admin | before switch |
+| — | **Superset goes dark at the switch, not at §3 step 5c.** `fishsense.service` changes on the switch, so `switch-to-configuration` **stops** the old unit first, and its `ExecStop` is v1's `docker compose … down`. That removes v1's Superset along with everything else. `analytics.fishsense` answers 502 until v2's Superset profile is turned on. The owner accepts this (consistent with sunsetting v1), and the runbook is corrected in #22. | FishSense owner | ✅ accepted |
 
 Already confirmed (no action):
 
@@ -42,8 +42,8 @@ Already confirmed (no action):
 | Runner token push | CD phase 3.6 `deploy/stage-tenant-secret-zero.sh` | — |
 | `fishsense-selfupdate`, nightly `system.autoUpgrade` | `nixosModules.tenant`; both derive from mkTenant's `repo` | the flake those units build |
 | OpenBao AppRole + policy `tenant-fishsense` | `terraform/openbao` `tenants.tf`: **prefix grant, unchanged** | the values under `secret/tenants/fishsense/*` |
-| `oidc/web`, `oidc/analytics`, `oidc/web-service-account` | `terraform/authentik` (**#550**) | — |
-| `services_db`, `web_service_account`, `nrp_orchestrator`, `model_weights` | — | seeded by the owner (cutover.md §1.3) |
+| `oidc/web`, `oidc/analytics`, `oidc/web-service-account` | `terraform/authentik` (**#550**) | read directly by v2's renders |
+| `services_db`, `nrp_orchestrator`, `model_weights` | — | seeded by the owner (cutover.md §1.3) |
 | Interior: compose, `secrets.nix`, `workdir.nix`, `prune.nix`, `cert-sync-timer.nix` | — | all of it |
 | Temporal namespace `fishsense`, client cert CN `fishsense-worker` | `terraform/temporal`, `terraform/openbao`: **unchanged** | `temporal.reload` list |
 | Lab memberships (who sees what in v2) | — | rows in v2's DB keyed on OIDC `sub` (§3 step 4d) |
@@ -92,26 +92,19 @@ Evaluated from fishsense-services' `nixosConfigurations.fishsense` at krg-infra 
 | Project directory | `/var/lib/krg/fishsense`. There's no top-level `name:` in the compose, so the project stays `fishsense` and `pgdata` is v1's `fishsense_pgdata`. |
 | `up -d --remove-orphans --force-recreate` | Yes. `ExecStart` carries both (`recreateOnConfigChange = true`, the #458 fix). |
 | `superset` profile off | `compose.env` → `/var/lib/krg/fishsense/.env` with `COMPOSE_PROFILES=` (empty), which the stack and the reload hook both read via `--project-directory`. The platform passes no `--profile` or `--env-file`. Superset stays off, but see the "goes dark at the switch" note in §0. |
-| Container uid vs render perms | **B1**: the platform renders assume a root consumer. |
+| Container uid vs render perms | **B1**: the platform renders assumed a root consumer. Fixed tenant-side (`group_add: ["0"]`, fishsense-services #22). |
 
-**Platform changes needed for the cutover:** none in `nixosModules.tenant`. The changes are the runner scope (#549), Authentik (#550), and the corrected `errorOnMissingKey` description (this PR). B1 is fixed on the tenant side for now.
+**Platform changes needed for the cutover:** none in `nixosModules.tenant`. The changes are the runner scope (#549), Authentik (#550), and the corrected `errorOnMissingKey` description (this PR). B1 was fixed on the tenant side (fishsense-services #22).
 
 ---
 
-## 3. Seeding `web_service_account` (B4)
+## 3. The web service account (B4)
 
 After #550 applies, the account's credential is in OpenBao at
-`secret/tenants/fishsense/oidc/web-service-account`. v2's `secrets.nix` reads
-`secret/tenants/fishsense/web_service_account`. Either copy it across without
-printing it:
-
-```bash
-bao kv get -format=json secret/tenants/fishsense/oidc/web-service-account \
-  | jq '.data.data' | bao kv put secret/tenants/fishsense/web_service_account -
-```
-
-or, better (no copy to drift on rotation), point v2's `web.env` render at
-`secret/data/tenants/fishsense/oidc/web-service-account`.
+`secret/tenants/fishsense/oidc/web-service-account` (`username`, `password`).
+Since fishsense-services #22, v2's `web.env` render reads that path directly, so
+nothing is copied, and a rotation is a tofu re-apply plus a re-render. The old
+owner-seeded `web_service_account` path is no longer read.
 
 The account's **`sub`** (needed for its lab membership, §3 step 4d). This prints
 the `sub` claim only, never the token:
@@ -153,16 +146,16 @@ grant type, the app password and the user binding all work.
 3. **Confirm OpenBao is seeded** (B2, B4). Keys only, no values:
    ```bash
    for p in postgres superset web label_studio object_store nas services_db \
-            web_service_account nrp_orchestrator model_weights oidc/web oidc/analytics oidc/web-service-account; do
+            nrp_orchestrator model_weights oidc/web oidc/analytics oidc/web-service-account; do
      printf '%s: ' "$p"; bao kv get -format=json "secret/tenants/fishsense/$p" | jq -c '.data.data | keys'
    done
    ```
-   Every line must print keys. An error on any path rendered on the slot fails the whole agent, and `nrp_orchestrator` counts.
-4. **Confirm B1 is fixed** on fishsense-services `main`:
+   Every line must print keys. An error on any path rendered on the slot fails the whole agent: `nrp_orchestrator` counts (B2), and so does `oidc/web-service-account`, which exists only once #550 has applied (B4).
+4. **Confirm B1 is still fixed** on fishsense-services `main` (merged in #22):
    ```bash
    gh api repos/UCSD-E4E/fishsense-services/contents/deploy/incus/compose.yml --jq .content | base64 -d | grep -c 'group_add'
    ```
-   Expect at least 4, or whatever the owner's chosen fix is.
+   Expect 4 (orchestrator, backup, nrp-temporal-cert-sync, smoke).
 5. **Freeze the flake bumps** (ask 7): both repos' weekly `update-flake.yml` runs Mondays 08:00 UTC. Pause both through the rollback window, then check the locks still match:
    ```bash
    gh workflow disable update-flake.yml -R UCSD-E4E/fishsense-lite
