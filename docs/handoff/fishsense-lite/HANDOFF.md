@@ -1,5 +1,11 @@
 # fishsense-lite → Incus platform: interior hand-off
 
+> **Superseded for the interior on 2026-10-10/11** by UCSD-E4E/fishsense-services (v2), on the
+> same slot. See [`../fishsense-services/HANDOFF.md`](../fishsense-services/HANDOFF.md). The
+> boundary sections here still hold: ingress chain (§1), Temporal (§6), secret delivery (§9),
+> patching (§10). §7's forwardAuth outpost and data-worker app password are v1-only and are
+> retired after the rollback window.
+
 fishsense is **tenant #1** on the KRG Incus platform ([ADR 0017](../../adr/0017-incus-nat-self-serve-platform.md) /
 [ADR 0020](../../adr/0020-tenant-deploy-contract-mktenant.md)). The **admin boundary is
 built, deployed, and validated on real hardware** (2026-07-05). This directory is the
