@@ -69,7 +69,7 @@
         subtree = "fishsense.e4e.ucsd.edu";
         hostnames = [
           "fishsense.e4e.ucsd.edu"
-          "api.fishsense.e4e.ucsd.edu" # orchestrator API — gated in the inner Traefik (fishsense_orchestrator forward-auth)
+          "api.fishsense.e4e.ucsd.edu" # the API — validates bearer tokens in-app (fishsense-services v2)
           "analytics.fishsense.e4e.ucsd.edu" # Superset — OIDC (fishsense_analytics) in-app
         ];
         backend = "137.110.161.105:30443"; # krg-nat:30443 → proxy device → instance:443
