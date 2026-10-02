@@ -23,6 +23,12 @@ data "authentik_property_mapping_provider_scope" "profile" {
   managed = "goauthentik.io/providers/oauth2/scope-profile"
 }
 
+# Stock since Authentik 2024.2 (blueprints/system/providers-oauth2.yaml): a refresh
+# token is issued only to a provider carrying this mapping. Opt-in per provider.
+data "authentik_property_mapping_provider_scope" "offline_access" {
+  managed = "goauthentik.io/providers/oauth2/scope-offline_access"
+}
+
 # NOTE: the `groups` scope mapping is CREATED as a resource (not looked up) in
 # applications_e4e.tf — stock Authentik ships no managed `scope-groups`, so a
 # data lookup 400s ("not one of the available choices"). See the resource there.

@@ -143,10 +143,26 @@ resource "authentik_provider_oauth2" "fishsense_oauth" {
   # collaborator's tenant/org reaches the FishSense site on the token. Note an
   # external collaborator holds NO AD groups, so `groups` is [] for them and the
   # portal gate denies them — deliberate (the portal is a lab-team surface).
+  # + `offline_access` (fishsense-services v2): the web asks for a refresh token
+  # (scope "openid email profile groups org offline_access"), and Authentik issues
+  # one only when this mapping is on the provider AND refresh_token is a grant type.
   property_mappings = concat(local.std_scopes, [
     authentik_property_mapping_provider_scope.groups.id,
     authentik_property_mapping_provider_scope.fishsense_org.id,
+    data.authentik_property_mapping_provider_scope.offline_access.id,
   ])
+  # Set explicitly: goauthentik 2026.x enforces grant_types and defaults it EMPTY on
+  # create (see the incus provider). v2 uses all three — the browser login, its
+  # refresh, and client_credentials for the web's service account
+  # (fishsense_web_service_account.tf), whose token the public landing page sends to
+  # the API.
+  grant_types = ["authorization_code", "refresh_token", "client_credentials"]
+  # RS256 — REQUIRED by v2. Its API validates bearer tokens itself against
+  # {issuer}jwks/ and accepts RS256 only (fishsense-services
+  # services/fishsense-services-api/.../auth.py ALGORITHMS). Without a signing_key
+  # Authentik signs HS256 with the client secret and serves an empty JWKS, so every
+  # API call would 401. Same fix as garage_ui / e4e_nas / fishsense_analytics (#491).
+  signing_key            = data.authentik_certificate_key_pair.default.id
   sub_mode               = "hashed_user_id"
   access_token_validity  = "minutes=60"
   refresh_token_validity = "days=30"
