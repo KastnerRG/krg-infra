@@ -18,10 +18,16 @@
 # disable of svc_fishsense breaks the landing page's API calls (sign-in is unaffected).
 #
 # Grant prerequisite on fishsense_oauth (applications_e4e.tf): grant_types includes
-# "client_credentials". data.authentik_user.svc_fishsense lives in fishsense_data_worker.tf.
+# "client_credentials".
+
+# svc_fishsense is a real KRG.LOCAL service account (spec/krg-ad/service-accounts.yml)
+# synced into Authentik by the samba_ad LDAP source (ldap.tf), with its FishSense groups.
+data "authentik_user" "svc_fishsense" {
+  username = "svc_fishsense" # sAMAccountName as synced by the samba_ad source
+}
 
 # Its own token (not the data-worker's): rotated / revoked independently, and the
-# data-worker one is retired with v1's API proxy. Non-expiring, matching the
+# data-worker one was retired with v1's API proxy. Non-expiring, matching the
 # data-worker / outpost-token pattern (rotation is a follow-up); retrieve_key reads it
 # back into (encrypted) state so it can be written to OpenBao.
 resource "authentik_token" "fishsense_web_service_account" {
