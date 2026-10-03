@@ -32,7 +32,9 @@ Only the secrets a **fail-closed P2 consumer** (the krg-prod `krg.vaultAgent`) r
 need to be generated early — those are the ones that can fail-close the stack. Today:
 **temporal** (db + oidc), **guacamole** (db; its OIDC is implicit-flow, no secret),
 **vaultwarden** (oidc), **mlflow** (db + secret_key + oidc), **outline** (db +
-secret_key + utils_secret + oidc). The rest (`grafana-oidc`, roster, `guacamole-oidc`,
+secret_key + utils_secret + oidc), and the Incus tenant **fishsense** (its five v2 DB
+passwords, `tenants/fishsense/generated/services_db` — read by the TENANT's fail-closed
+in-VM vault-agent; written under krg-deploy's `tenants/+/generated` glob). The rest (`grafana-oidc`, roster, `guacamole-oidc`,
 the e4e-nas pair, `proxmox-ldap-bind`) are consumed at tofu-time or by graceful
 ansible — they can't fail-close the stack, so they stay in `terraform/authentik`.
 **Rule:** when a secret becomes a vault-agent (P2) consumer, move it here.
