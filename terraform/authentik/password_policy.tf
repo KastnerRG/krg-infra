@@ -93,8 +93,11 @@ resource "authentik_policy_password" "default_password_change" {
   amount_symbols   = 0
   # Authentik's default charset literally contains a backslash before the quote
   # (!\"…) and inside [\] — match it byte-for-byte (HCL: \\\" = \", [\\] = [\]) so
-  # the import is a no-op on this field. Trailing space is part of the stock value.
-  symbol_charset = "!\\\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ "
+  # the import is a no-op on this field. NO trailing space: the stock blueprint value
+  # ends in one, but Authentik's API strips surrounding whitespace on write (DRF
+  # CharField trim_whitespace), so live never holds it — pinning it made every deploy
+  # re-apply this field as a perpetual `1 changed`.
+  symbol_charset = "!\\\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 }
 
 # ── Coverage summary ───────────────────────────────────────────────────────────
