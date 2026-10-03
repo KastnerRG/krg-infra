@@ -112,6 +112,13 @@ locals {
     # tenant tripped the privileged openbao apply — the #438 deploy 403. Templating it
     # ends that class of manual apply.)
     "tenants/+/oidc",
+    # Per-tenant secrets the PLATFORM GENERATES for a tenant (terraform/secrets — e.g.
+    # fishsense's services_db: generate-once DB passwords its fail-closed vault-agent
+    # renders). A dedicated subtree, like .../oidc: the writer still can't touch the
+    # tenant-seeded paths beside it (postgres, nas, …), and the tenant AppRole already
+    # reads it via secret/data/tenants/<name>/*. One `+` rule for every tenant, so the
+    # next tenant's generated secrets need no privileged apply.
+    "tenants/+/generated",
   ]
 
   # Render the per-path rules as one string to interpolate into the policy heredoc
