@@ -43,7 +43,8 @@ Already confirmed (no action):
 | `fishsense-selfupdate`, nightly `system.autoUpgrade` | `nixosModules.tenant`; both derive from mkTenant's `repo` | the flake those units build |
 | OpenBao AppRole + policy `tenant-fishsense` | `terraform/openbao` `tenants.tf`: **prefix grant, unchanged** | the values under `secret/tenants/fishsense/*` |
 | `oidc/web`, `oidc/analytics`, `oidc/web-service-account` | `terraform/authentik` (**#550**) | read directly by v2's renders |
-| `services_db`, `nrp_orchestrator`, `model_weights` | — | seeded by the owner (cutover.md §1.3) |
+| `nrp_orchestrator`, `model_weights` | — | seeded by the owner (cutover.md §1.3) |
+| `generated/services_db` (v2's five DB passwords) | `terraform/secrets` (**#554**, under krg-deploy's `tenants/+/generated` glob, **#553**) | read by v2's renders; not seeded |
 | Interior: compose, `secrets.nix`, `workdir.nix`, `prune.nix`, `cert-sync-timer.nix` | — | all of it |
 | Temporal namespace `fishsense`, client cert CN `fishsense-worker` | `terraform/temporal`, `terraform/openbao`: **unchanged** | `temporal.reload` list |
 | Lab memberships (who sees what in v2) | — | rows in v2's DB keyed on OIDC `sub` (§3 step 4d) |
@@ -66,7 +67,7 @@ Already confirmed (no action):
 
 ### OpenBao policy (ask 4)
 
-`terraform/openbao/tenants.tf` grants `secret/data/tenants/fishsense/*` (read) and `secret/metadata/tenants/fishsense/*` (read, list) **by prefix**. `services_db`, `web_service_account`, `nrp_orchestrator` and `model_weights` are all covered. **No change.**
+`terraform/openbao/tenants.tf` grants `secret/data/tenants/fishsense/*` (read) and `secret/metadata/tenants/fishsense/*` (read, list) **by prefix**. `generated/services_db`, `oidc/web-service-account`, `nrp_orchestrator` and `model_weights` are all covered, so the tenant side needs **no change**. (krg-deploy's WRITE side gained `tenants/+/generated` in #553, so `terraform/secrets` can generate `services_db`.)
 
 ### Authentik (ask 3), #550
 
@@ -145,7 +146,7 @@ grant type, the app password and `svc_fishsense`'s access to the web app all wor
    - Phase 3.6 must print `staged runner token for fishsense (repo UCSD-E4E/fishsense-services)`.
 3. **Confirm OpenBao is seeded** (B2, B4). Keys only, no values:
    ```bash
-   for p in postgres superset web label_studio object_store nas services_db \
+   for p in postgres superset web label_studio object_store nas generated/services_db \
             nrp_orchestrator model_weights oidc/web oidc/analytics oidc/web-service-account; do
      printf '%s: ' "$p"; bao kv get -format=json "secret/tenants/fishsense/$p" | jq -c '.data.data | keys'
    done
