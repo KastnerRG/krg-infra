@@ -1,6 +1,6 @@
 services:
   vaultwarden:
-    image: vaultwarden/server:1.36.0
+    image: vaultwarden/server:1.37.4
     container_name: vaultwarden
     user: '1000'
     restart: unless-stopped
