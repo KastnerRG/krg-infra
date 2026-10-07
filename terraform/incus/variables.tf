@@ -205,4 +205,18 @@ variable "tenants" {
     condition     = alltrue([for t in var.tenants : t.edge_port == 0 || (t.edge_port >= 30000 && t.edge_port <= 30999)])
     error_message = "Each tenant.edge_port must be within the reserved ingress range 30000-30999 (krg.incus.tenantIngressPortRange)."
   }
+
+  # ...and actually be unique (the comment above always claimed it; nothing checked).
+  # Every exposed tenant is a port entry in the ONE forward on krg-nat's IP (forwards.tf),
+  # so a duplicate would be two DNATs for one listen port.
+  validation {
+    condition     = length([for t in var.tenants : t.edge_port if t.edge_port > 0]) == length(distinct([for t in var.tenants : t.edge_port if t.edge_port > 0]))
+    error_message = "Each tenant.edge_port (> 0) must be unique: all exposed tenants share krg-nat's one listen address."
+  }
+
+  # Likewise nat_ip: each is a pinned instance NIC address, so two tenants can't share one.
+  validation {
+    condition     = length([for t in var.tenants : t.nat_ip if t.nat_ip != ""]) == length(distinct([for t in var.tenants : t.nat_ip if t.nat_ip != ""]))
+    error_message = "Each tenant.nat_ip (when set) must be unique across tenants."
+  }
 }

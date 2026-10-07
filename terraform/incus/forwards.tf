@@ -23,25 +23,45 @@
 #
 # FLOW:  edge → incus_host_ip:edge_port  --Incus DNAT-->  nat_ip:443 (instance inner Traefik)
 # The edge re-encrypts to the instance's `*.vm` cert (edge.nix serverName), verified by
-# chain against the fleet CA — end-to-end TLS survives the DNAT. Per exposed tenant: one
-# forward, one distinct port on krg-nat's single IP (edge_port), one pinned target (nat_ip).
-resource "incus_network_forward" "tenant" {
-  for_each = { for k, t in var.tenants : k => t if t.edge_port > 0 }
+# chain against the fleet CA — end-to-end TLS survives the DNAT.
+#
+# ONE FORWARD, ONE PORT PER TENANT. Incus allows a single network forward per LISTEN
+# ADDRESS; every exposed tenant shares krg-nat's one uplink IP, so each tenant is a PORT
+# ENTRY in that one forward (its own edge_port → its own nat_ip:443). This was a forward
+# PER TENANT until the second exposed tenant (reference-manager, #562) hit "A forward
+# for that listen address already exists" at create. `ports` updates in place in the
+# lxc/incus provider (only network/listen_address/project/remote force replacement), so
+# adding or removing a tenant edits this one forward without touching the others' DNATs.
+locals {
+  exposed_tenants = { for k, t in var.tenants : k => t if t.edge_port > 0 }
+}
+
+resource "incus_network_forward" "edge" {
+  count = length(local.exposed_tenants) > 0 ? 1 : 0
 
   network        = incus_network.nat.name
   listen_address = var.incus_host_ip
-  description    = "Edge ingress for tenant ${each.key} (ADR 0017 §5)"
+  description    = "Edge ingress for Incus tenants (ADR 0017 §5): ${join(", ", sort(keys(local.exposed_tenants)))}"
 
-  ports = [{
+  ports = [for k, t in local.exposed_tenants : {
     # description MUST be set to "" (not omitted). The lxc/incus provider marks the port
     # `description` optional-not-computed, so omitting it plans `null` — but Incus always
     # returns "" for a port description, so the post-apply read can't correlate the `ports`
     # set element ("Provider produced inconsistent result after apply: .ports: planned set
     # element ... does not correlate"). Setting "" makes plan == the value Incus returns.
+    # (Which tenant a port belongs to is in the forward's description and var.tenants.)
     description    = ""
     protocol       = "tcp"
-    listen_port    = tostring(each.value.edge_port)
-    target_address = each.value.nat_ip
+    listen_port    = tostring(t.edge_port)
+    target_address = t.nat_ip
     target_port    = "443"
   }]
+}
+
+# Adopt the existing per-tenant forward (fishsense, the only one that ever applied) as
+# the shared one: same network + listen_address, so this plans an IN-PLACE update that
+# adds the new port(s), never a destroy/recreate of fishsense's live ingress.
+moved {
+  from = incus_network_forward.tenant["fishsense"]
+  to   = incus_network_forward.edge[0]
 }
