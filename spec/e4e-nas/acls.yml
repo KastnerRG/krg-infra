@@ -136,6 +136,14 @@ acls:
       - { group: administrators, access: rw }
       - { group: 'KRG\Junkyard-NAS', access: rw }
 
+  # NEW share (not in the pre-reset capture): /volume2/coral-gardeners, shares.yml.
+  # Greenfield — nothing to revoke. `administrators` explicit (grant list is authoritative).
+  - share: coral-gardeners
+    path: /volume2/coral-gardeners
+    grants:
+      - { group: administrators, access: rw }
+      - { group: 'KRG\collab-coral-gardeners', access: rw }
+
   # `installers` — the VPN client-config distribution point
   # (spec/e4e-nas/vpn.yml `client.publish_to`). DECISION 2026-08-17: everyone
   # with NAS access gets READ-ONLY; only admins publish.

@@ -45,6 +45,9 @@ groups:
   # covers ONLY the new `junkyard` share (junkyard-fishsense / junkyard_backup are a
   # separate, still-open porting question).
   - { name: Junkyard-NAS,        description: "Junkyard",                    governs: [junkyard] }
+  # PORTED: real AD group (spec/krg-ad/groups.yml, "collab-coral-gardeners"), nested in
+  # "e4e-collaborators". Greenfield grant, exact like Junkyard-NAS.
+  - { name: collab-coral-gardeners, description: "Coral Gardeners (collaborator)", governs: [coral-gardeners] }
   - { name: burrowing_owl,       description: "Burrowing Owl",               governs: [owl-behavior] }   # renamed from "Burrowing Owl" (no spaces in AD)
   - { name: floods_of_lubra,     description: "Floods of Lubra",             governs: ["Floods of Lubra"] }
   - { name: e4e,                 description: "E4E (broad)",                 governs: [] }               # broad access — confirm scope
