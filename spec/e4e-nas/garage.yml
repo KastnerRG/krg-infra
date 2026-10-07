@@ -224,14 +224,19 @@ buckets:
   # PDF attachments for the e4e reference manager (bib.krg.ucsd.edu). Its API
   # mints presigned GETs with the `reference-manager` key; the in-browser PDF
   # viewer (pdf.js) then fetches them cross-origin with Range requests to load
-  # pages on demand, so the preflight must allow `Range` and the response must
-  # expose Content-Range / Accept-Ranges. Uploads go through the API
+  # pages on demand, so the preflight must allow the Range header and the response
+  # must expose Content-Range / Accept-Ranges. Uploads go through the API
   # (server-side, no browser CORS involved), hence read-only methods.
+  #
+  # allowed_headers is "*", not [Range]: Garage matches header names
+  # case-sensitively, and browsers always send Access-Control-Request-Headers
+  # lowercased (`range`), so [Range] 403s every real preflight (verified live
+  # against s3.e4e.ucsd.edu). Same choice as labels-fishsense-lite above.
   - name: reference-manager
     cors:
       - allowed_origins: [https://bib.krg.ucsd.edu]
         allowed_methods: [GET, HEAD]
-        allowed_headers: [Range]
+        allowed_headers: ["*"]
         expose_headers: [Accept-Ranges, Content-Range, Content-Length, Content-Type, ETag]
         max_age_seconds: 3600
 
