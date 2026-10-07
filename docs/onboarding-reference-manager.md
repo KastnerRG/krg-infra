@@ -31,11 +31,11 @@ No SeaweedFS: that's for local development only.
 | Piece | Where | State |
 |---|---|---|
 | Garage bucket `reference-manager` (+ CORS for `https://bib.krg.ucsd.edu`, GET/HEAD, `range`) and key `reference-manager` (rw on that bucket) | `spec/e4e-nas/garage.yml` (#558, CORS fixed in #560/#561) | live. CD minted `secret/e4e-nas/garage-keys/reference-manager` (create-once, `deploy/deploy-ansible.sh`) and `synology_garage` imported it. No manual OpenBao step. |
-| Boundary: Incus project + quota | `terraform/incus` `var.tenants.reference-manager` | project live (#559); instance + forward in the flip PR (§4) |
-| OpenBao AppRole `tenant-reference-manager` | `terraform/openbao` `var.tenants.reference-manager` | needs a **privileged** apply (§3.3); CD never applies `openbao` |
+| Boundary: Incus project + quota | `terraform/incus` `var.tenants.reference-manager` | live: project (#559), instance + shared forward port 30444 (#562, #563) |
+| OpenBao AppRole `tenant-reference-manager` | `terraform/openbao` `var.tenants.reference-manager` | applied by the operator 2026-10-07 (privileged; CD never applies `openbao`) |
 | Generated secrets `tenants/reference-manager/generated/app` `{db_password, session_secret}` | `terraform/secrets/reference_manager.tf` | live (#559, krg-deploy's `tenants/+/generated` glob) |
 | Authentik OIDC provider + app (slug `reference-manager`), client secret → `tenants/reference-manager/oidc/web` | `terraform/authentik/reference_manager.tf` | live (#559, `tenants/+/oidc` glob) |
-| krg-zone edge | `nix/hosts/krg-prod` `krg.edge` (`provider = "file"`) + the `krg-edge-routes` unit | live with no routes (#559); the bib route lands in the flip PR |
+| krg-zone edge | `nix/hosts/krg-prod` `krg.edge` (`provider = "file"`) + the `krg-edge-routes` unit | live (#559); bib route live (#562), hot-reloaded |
 
 ### The CORS header-case gotcha
 
@@ -187,7 +187,8 @@ The golden image doesn't run the app yet. The first converge onto the tenant fla
 by hand, as for fishsense:
 
 ```bash
-slot() { ssh krg-admin@krg-nat.ucsd.edu "incus exec reference-manager --project reference-manager -- $*"; }
+# --env PATH: `incus exec` starts with a bare PATH, so systemctl/docker aren't found without it.
+slot() { ssh krg-admin@krg-nat.ucsd.edu "incus exec reference-manager --project reference-manager --env PATH=/run/current-system/sw/bin -- $*"; }
 slot nixos-rebuild switch --flake github:UCSD-E4E/e4e-reference-manager#reference-manager --refresh
 slot systemctl show openbao-agent.service reference-manager.service -p Id -p Result   # both success
 slot docker ps -a --format '{{.Names}} {{.Status}}'   # ollama-models: Exited (0) once both models are pulled
@@ -196,11 +197,48 @@ slot docker ps -a --format '{{.Names}} {{.Status}}'   # ollama-models: Exited (0
 Exit 4 from `switch-to-configuration` is not the signal; the unit results are. From
 then on, merged `auto-deploy/*` PRs in the app repo converge the slot.
 
+### What happened on the real bring-up (2026-10-07)
+
+- **The flip deploy went red: one forward per listen address.** Incus allows a single
+  network forward per IP. `forwards.tf` made one per tenant on krg-nat's shared IP,
+  so the second exposed tenant failed with `A forward for that listen address
+  already exists`. Fixed in #563: one shared forward with one port per tenant,
+  fishsense's adopted via `moved`. The plan was `0 to add, 1 to change` in place.
+  incus is the last tofu target, so that run also skipped phase 3.6 (secret-zero).
+- **The runner raced the manual converge.** The switch starts the runner. It
+  registers within seconds and immediately takes any QUEUED app Deploy job (here,
+  `auto-deploy/v1.0.0`, merged before the slot existed). That job starts
+  `reference-manager-selfupdate`, whose `nixos-rebuild` then collides with the
+  running switch (`Unit nixos-rebuild-switch-to-configuration.service was already
+  loaded`). It fails, and the runner it stopped stays down. The switch itself
+  landed (exit 4 only flagged the failed selfupdate). Recovery:
+  `slot systemctl reset-failed reference-manager-selfupdate.service`, then
+  `slot systemctl start github-runner-reference-manager.service`. Leaving the
+  selfupdate unit `failed` would make every later switch exit 4. **For the next
+  tenant:** cancel queued app Deploy runs before the first converge, or let the
+  queued job do the converge instead of running it by hand.
+- **The stack's first start takes ~15 min** (pulling GROBID and Ollama, then the
+  models), so `nixos-rebuild` returns only after it.
+- **translation-server 2.0.4 self-upgrades its translators** (`git pull` in its
+  entrypoint) to versions its Node 10 can't run, so every lookup 500s. Fixed in the
+  interior with `entrypoint: ["npm", "start"]` (HANDOFF copy updated).
+- The slot's transient hostname stays `krg-golden` until its first reboot
+  (`networking.hostName` = `reference-manager` takes effect at boot). Cosmetic.
+
 ## 5. Verify
 
-- `curl -sI https://bib.krg.ucsd.edu/` → 200, LE-issued (not `(STAGING)`).
-- `curl -s https://bib.krg.ucsd.edu/api/health` → `{"status":"ok"}`.
+Results from 2026-10-07 are noted inline.
+
+- `curl -sI https://bib.krg.ucsd.edu/` → 200, LE-issued (not `(STAGING)`). ✅ issuer
+  `Let's Encrypt YR2`; nginx serves the SPA, and `/libraries/x` → 200 (fallback).
+- `curl -s https://bib.krg.ucsd.edu/api/health` → `{"status":"ok"}`. ✅ Unauthenticated
+  `/api/auth/me` → 401.
+- `/api/auth/login` → 302 to `auth.krg.ucsd.edu/application/o/authorize/` with
+  `client_id=reference-manager`, `redirect_uri=https://bib.krg.ucsd.edu/api/auth/callback`
+  and `scope=openid email profile groups`. Authentik accepts it (→ its login flow).
+  The issuer at `/application/o/reference-manager/` publishes an RS256 JWKS. ✅
 - Log in: the browser lands on `auth.krg.ucsd.edu`, then on `https://bib.krg.ucsd.edu/`.
+  (Needs a human; see below.)
 - CORS preflight, with the header **lowercase** as browsers send it (§1):
   ```bash
   for o in https://bib.krg.ucsd.edu https://evil.example; do
@@ -208,9 +246,18 @@ then on, merged `auto-deploy/*` PRs in the app repo converge the slot.
       -H "Origin: $o" -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: range'
   done   # bib → 200, evil → 403
   ```
-- Upload a PDF and open it in the viewer. The PDF requests go to `s3.e4e.ucsd.edu`
-  with `Range` headers and 206 responses (that proves the CORS rules and the `garage`
-  SigV4 region).
+  ✅ bib → 200 (`access-control-allow-headers: range`), evil → 403.
+- Storage, server side, without exposing a credential: inside `reference-manager-api-1`,
+  use the app's own `app.storage` to `upload_bytes` a probe object, `presigned_get_url`
+  it, fetch it with `Range: bytes=0-99` + `Origin: https://bib.krg.ucsd.edu`, print
+  only status + headers, then delete it. ✅ upload ok; **206**,
+  `Content-Range: bytes 0-99/1009`, `Access-Control-Allow-Origin: https://bib.krg.ucsd.edu`,
+  the pdf.js headers exposed.
+- Upload a PDF in the browser and open it in the viewer. The PDF requests go to
+  `s3.e4e.ucsd.edu` with `Range` headers and 206 responses. (Needs a human.)
+- Slot: `ollama-models` Exited (0), `qwen2.5:3b` + `nomic-embed-text` present; GROBID
+  `/api/isalive` → true; Alembic at head. The app repo's own `verify-incus` passed
+  (deployed pins = main's v1.0.0, stack `success`). ✅
 - Next day: `slot docker logs reference-manager-pg-backup-sync-1 | tail` shows `synced`.
 
 ## Notes / follow-ups
@@ -223,3 +270,11 @@ then on, merged `auto-deploy/*` PRs in the app repo converge the slot.
 - **Backups** are a sleep-loop pair of containers (`pg-dump`, `pg-backup-sync`), the
   simplest thing that works. The platform's Temporal-based backup template (ADR 0017)
   can replace them when it exists.
+- **Platform follow-ups found during bring-up** (not specific to this tenant):
+  - `deploy/deploy-authentik-sync.sh` looks for container `authentik_worker`, but the
+    compose service has no `container_name`, so it runs as `krg-prod-authentik_worker-1`.
+    The AD→Authentik sync step fails (non-fatally) on every deploy.
+  - Every fleet deploy restarts `openbao-agent` on krg-prod twice (phase 2
+    `deploy-nixos.sh`, phase 3.5 `deploy-rerender-secrets.sh`). `krg-prod.service`
+    `requires` it, so each restart runs `docker compose down` and bounces every lab
+    service.

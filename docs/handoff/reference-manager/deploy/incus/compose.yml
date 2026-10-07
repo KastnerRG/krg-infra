@@ -133,6 +133,14 @@ services:
   translation-server:
     image: zotero/translation-server:2.0.4
     restart: unless-stopped
+    # SKIP the image's entrypoint. docker-entrypoint.sh runs `git pull origin master`
+    # on modules/translators at EVERY start, upgrading the bundled 2021 translators to
+    # today's, which need a newer JavaScript runtime than this image's Node 10.7
+    # (`SyntaxError: Unexpected token .` from `?.`, `requestText is not defined`), so
+    # every URL/DOI lookup 500s. `npm start` (the entrypoint's last step) serves the
+    # bundled translators, which match the runtime. Found on the first bring-up,
+    # 2026-10-07; verified: /search DOI and /web arXiv both return 200 with metadata.
+    entrypoint: ["npm", "start"]
     expose: ["1969"]
     networks: [interior]
 
