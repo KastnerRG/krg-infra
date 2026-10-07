@@ -26,16 +26,25 @@ Inside the slot: api, web, postgres (pgvector), translation-server, grobid, olla
 (+ a one-shot model pull), a nightly `pg_dump` and its rclone mirror to Garage.
 No SeaweedFS: that's for local development only.
 
-## 1. What's already landed
+## 1. What's landed
 
 | Piece | Where | State |
 |---|---|---|
-| Garage bucket `reference-manager` (+ CORS for `https://bib.krg.ucsd.edu`, GET/HEAD, `Range`) and key `reference-manager` (rw on that bucket) | `spec/e4e-nas/garage.yml` (PR "feat(garage): reference-manager bucket + key") | **Merging it IS the apply**: CD mints `secret/e4e-nas/garage-keys/reference-manager` (create-once, `deploy/deploy-ansible.sh`) and `synology_garage` imports it. No manual OpenBao step. |
-| Boundary: Incus project + quota (no instance) | `terraform/incus` `var.tenants.reference-manager` | applies on merge; `image = ""` |
-| OpenBao AppRole `tenant-reference-manager` | `terraform/openbao` `var.tenants.reference-manager` | needs a **privileged** apply (§3); CD never applies `openbao` |
-| Generated secrets `tenants/reference-manager/generated/app` `{db_password, session_secret}` | `terraform/secrets/reference_manager.tf` | applies on merge (krg-deploy's `tenants/+/generated` glob) |
-| Authentik OIDC provider + app (slug `reference-manager`), client secret → `tenants/reference-manager/oidc/web` | `terraform/authentik/reference_manager.tf` | applies on merge (`tenants/+/oidc` glob) |
-| krg-zone edge (no routes yet) | `nix/hosts/krg-prod` `krg.edge` (`provider = "file"`) + `compose.yml` mounts | applies on merge; empty route set = no new issuance |
+| Garage bucket `reference-manager` (+ CORS for `https://bib.krg.ucsd.edu`, GET/HEAD, `range`) and key `reference-manager` (rw on that bucket) | `spec/e4e-nas/garage.yml` (#558, CORS fixed in #560/#561) | live. CD minted `secret/e4e-nas/garage-keys/reference-manager` (create-once, `deploy/deploy-ansible.sh`) and `synology_garage` imported it. No manual OpenBao step. |
+| Boundary: Incus project + quota | `terraform/incus` `var.tenants.reference-manager` | project live (#559); instance + forward in the flip PR (§4) |
+| OpenBao AppRole `tenant-reference-manager` | `terraform/openbao` `var.tenants.reference-manager` | needs a **privileged** apply (§3.3); CD never applies `openbao` |
+| Generated secrets `tenants/reference-manager/generated/app` `{db_password, session_secret}` | `terraform/secrets/reference_manager.tf` | live (#559, krg-deploy's `tenants/+/generated` glob) |
+| Authentik OIDC provider + app (slug `reference-manager`), client secret → `tenants/reference-manager/oidc/web` | `terraform/authentik/reference_manager.tf` | live (#559, `tenants/+/oidc` glob) |
+| krg-zone edge | `nix/hosts/krg-prod` `krg.edge` (`provider = "file"`) + the `krg-edge-routes` unit | live with no routes (#559); the bib route lands in the flip PR |
+
+### The CORS header-case gotcha
+
+Garage matches `AllowedHeaders` **case-sensitively**, and browsers send
+`Access-Control-Request-Headers` **lowercased** (`range`, never `Range`). #558's rule
+listed `Range`, so every real pdf.js preflight got a 403 while a hand-written
+`curl -H 'Access-Control-Request-Headers: Range'` returned 200 and looked fine. Since
+#561 `synology_garage` lowercases `allowed_headers` on apply, so the spec's case no
+longer matters. Always test a preflight with the **lowercase** header (§5).
 
 ## 2. The boundary (reference)
 
@@ -103,35 +112,69 @@ from the existing `s3.e4e.ucsd.edu`.
 
 ## 3. Gates before the flip
 
-1. **This PR merged and deployed.** Check `Deploy fleet` really ran (not the ~9 s
-   "skipping deploy" success). The `incus` plan creates `incus_project.tenant["reference-manager"]`
-   only; `secrets` creates one KV secret; `authentik` creates the provider, app and KV
-   secret; krg-prod's Traefik is recreated once with the empty edge file.
-2. **The Garage PR merged and deployed.** Then check that the key exists (keys only, no values):
-   `bao kv get -format=json secret/e4e-nas/garage-keys/reference-manager | jq -c '.data.data|keys'`.
-3. **Privileged OpenBao apply** (creates the AppRole + its policy):
-   `TOFU_TARGETS=openbao` through `deploy/deploy-tofu.sh` with the privileged token,
-   as for #438. Expect `vault_policy.tenant["reference-manager"]` and
-   `vault_approle_auth_backend_role.tenant["reference-manager"]` created; **no change**
-   to `tenant-fishsense` (its policy text is unchanged by design).
-4. **The app repo carries the interior** (HANDOFF §2): root `flake.nix` + `flake.lock`,
-   `deploy/incus/*`, `.github/workflows/*`, the production `web/Dockerfile`, the app
-   changes in HANDOFF §6. A `v0.1.0` tag has published both GHCR images, and both
-   packages are **public**.
-5. **The app repo is PUBLIC.** It was **private** on 2026-10-06. `reference-manager-selfupdate`
-   and the nightly `system.autoUpgrade` fetch `github:UCSD-E4E/e4e-reference-manager`
-   anonymously (`nix/modules/tenant.nix`: "Assumes a PUBLIC tenant repo; a private repo
-   needs a fetch token — a tracked follow-up"). A private repo means the slot can never
-   converge or patch itself. Either make it public (as fishsense-services is), or build
-   that fetch-token follow-up first.
-6. **The GitHub App is installed on UCSD-E4E/e4e-reference-manager** (the org
-   installation's selected repositories). Without it, phase 3.6 warns and mints
-   nothing, and the slot has no runner.
-7. **The CNAME is published** (§2d). It gates only the edge route, not the slot.
+Status as checked on 2026-10-07.
 
+1. **#559 merged and deployed.** ✅ Run 37572404376 (c489471) applied it: the `incus`
+   plan created `incus_project.tenant["reference-manager"]` only, `secrets` created
+   one KV secret, `authentik` created the provider, app and KV secret, and krg-prod
+   started `krg-edge-routes.service`.
+   **Check the post phase, not the run's conclusion.** A `Deploy fleet` run whose
+   checked-out commit isn't main head ends in ~8 s with `success` and the notice
+   "is not current main head — skipping (no downgrade)". Its "Apply to fleet
+   (systems + config + verify)" job is `skipped`. Only a run where that job is
+   `success` applied anything:
+   `gh run view <id> --json jobs --jq '.jobs[] | "\(.name)=\(.conclusion)"'`.
+2. **The Garage PR merged and deployed.** ✅ Same run: `garage: 3 key credential(s)
+   ready in OpenBao: … reference-manager`, then `synology_garage` on e4e-nas. Check the
+   key exists (keys only, no values):
+   `bao kv get -format=json secret/e4e-nas/garage-keys/reference-manager | jq -c '.data.data|keys'`
+   → `["access_key_id","secret_access_key"]`. Also check the two other paths the slot
+   renders, because vault-agent is fail-closed: `tenants/reference-manager/generated/app`
+   → `["db_password","session_secret"]` and `tenants/reference-manager/oidc/web` →
+   `["client_id","client_secret","issuer_url"]`. ✅ all three.
+   **The CORS fix (#561) must be applied too** before a browser can view a PDF (§1, the
+   header-case gotcha). Check with the §5 preflight.
+3. **Privileged OpenBao apply** (creates the AppRole + its policy). From an up-to-date
+   main checkout on krg-deploy, as `krg-admin`:
+   ```bash
+   cd /var/lib/krg-admin/krg-infra && git pull --ff-only
+   # 1) plan only
+   TOFU_TARGETS=openbao TOFU_PLAN_ONLY=1 TOFU_OPENBAO_TOKEN=<privileged token> \
+     TOFU_STATE_PASSPHRASE=<state passphrase> ./deploy/deploy-tofu.sh
+   # 2) apply, once the plan matches
+   TOFU_TARGETS=openbao TOFU_OPENBAO_TOKEN=<privileged token> \
+     TOFU_STATE_PASSPHRASE=<state passphrase> ./deploy/deploy-tofu.sh
+   ```
+   Expected plan: **2 to add, 0 to change, 0 to destroy**:
+   `vault_policy.tenant["reference-manager"]` and
+   `vault_approle_auth_backend_role.tenant["reference-manager"]`. **No change** to
+   `tenant-fishsense` (its policy text is unchanged by design). Anything else in the
+   plan is unrelated drift; stop and look before applying.
+4. **The app repo carries the interior** (HANDOFF §2) and the app changes in HANDOFF §6.
+   ✅ Releases come from **release-please**, not hand-pushed tags: merging its release
+   PR cuts the GitHub release, builds and pushes both images at that version, and
+   opens `auto-deploy/vX.Y.Z`. The first release was **v1.0.0**.
+   `ghcr.io/ucsd-e4e/e4e-reference-manager-{api,web}:v1.0.0` exist and pull
+   anonymously, and `auto-deploy/v1.0.0` is merged, so main's compose pins v1.0.0. Its
+   `flake.lock` pins krg-infra at c489471, which carries the krg edge.
+5. **The app repo is PUBLIC.** ✅ (It was private on 2026-10-06.)
+   `reference-manager-selfupdate` and the nightly `system.autoUpgrade` fetch
+   `github:UCSD-E4E/e4e-reference-manager` anonymously (`nix/modules/tenant.nix`), so a
+   private repo could never converge or patch itself.
+6. **The runner GitHub App is installed on UCSD-E4E/e4e-reference-manager.** ✅ Check on
+   krg-deploy:
+   `./deploy/mint-runner-token.sh --is-registered UCSD-E4E/e4e-reference-manager reference-manager`.
+   It answers `runner 'reference-manager' is NOT registered …` (rc=1) when the App
+   can see the repo. `could not list runners` means it can't. Without it, phase 3.6
+   warns and mints nothing, and the slot has no runner.
+7. **The CNAME is published** (§2d). ✅ `bib.krg.ucsd.edu → krg-prod.ucsd.edu → 137.110.161.106`.
+   It gates only the edge route, not the slot.
 ## 4. The flip PR
 
-One krg-infra PR: §2b's three fields and §2c's route. With all gates passed, CD then:
+One krg-infra PR: §2b's three fields and §2c's route. Merge it only **after** gate 3's
+apply. Merged earlier, phase 3.6 skips the slot ("AppRole not found", a warning, not a
+red deploy), and it waits for the next deploy for its secret-zero. With all gates
+passed, CD then:
 
 - creates the instance from `krg-golden` at 10.100.0.11, and the forward
   `137.110.161.105:30444 → 10.100.0.11:443`;
@@ -158,6 +201,13 @@ then on, merged `auto-deploy/*` PRs in the app repo converge the slot.
 - `curl -sI https://bib.krg.ucsd.edu/` → 200, LE-issued (not `(STAGING)`).
 - `curl -s https://bib.krg.ucsd.edu/api/health` → `{"status":"ok"}`.
 - Log in: the browser lands on `auth.krg.ucsd.edu`, then on `https://bib.krg.ucsd.edu/`.
+- CORS preflight, with the header **lowercase** as browsers send it (§1):
+  ```bash
+  for o in https://bib.krg.ucsd.edu https://evil.example; do
+    curl -s -o /dev/null -w "$o %{http_code}\n" -X OPTIONS https://s3.e4e.ucsd.edu/reference-manager/x \
+      -H "Origin: $o" -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: range'
+  done   # bib → 200, evil → 403
+  ```
 - Upload a PDF and open it in the viewer. The PDF requests go to `s3.e4e.ucsd.edu`
   with `Range` headers and 206 responses (that proves the CORS rules and the `garage`
   SigV4 region).

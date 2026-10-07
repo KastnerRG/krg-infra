@@ -256,10 +256,22 @@ in {
     certResolver = "letsencrypt";
     rootCAs = ["/etc/traefik/edge/krg-pki-ca.pem"]; # copied in by krg-edge-routes (below)
 
-    # reference-manager (bib.krg.ucsd.edu) is NOT routed yet: its CNAME isn't
-    # published, and a route without one would only fail HTTP-01 against the shared
-    # ucsd.edu budget. docs/onboarding-reference-manager.md §2c has the route to add.
-    routes = {};
+    routes = {
+      # reference-manager — the first krg-zone tenant (docs/onboarding-reference-manager.md
+      # §2c). Its CNAME (bib.krg.ucsd.edu → krg-prod.ucsd.edu) is published. backend =
+      # krg-nat:edge_port (the ingress network forward from terraform/incus, output
+      # tenant_edge_backends.reference-manager), NOT the instance address. serverName
+      # defaults to "reference-manager.vm" and reencrypt to true: the edge verifies the
+      # tenant-internal cert by chain against the fleet CA (rootCAs above). Until the
+      # interior is up (its inner Traefik serving reference-manager.vm) this backend is
+      # unreachable and the route answers 502; the public cert still issues (HTTP-01 is
+      # answered here, independent of the backend).
+      reference-manager = {
+        subtree = "bib.krg.ucsd.edu";
+        hostnames = ["bib.krg.ucsd.edu"];
+        backend = "137.110.161.105:30444"; # krg-nat:30444 → network forward → 10.100.0.11:443
+      };
+    };
   };
 
   # Deliver the edge routes to the compose Traefik WITHOUT restarting the stack. The

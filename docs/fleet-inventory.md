@@ -37,7 +37,7 @@ zone edge re-encrypts to. Boundary: `terraform/incus` `var.tenants`; secrets:
 | Tenant | Public name(s) | Zone edge | NAT IP | Edge port | Interior repo | Status |
 |---|---|---|---|---|---|---|
 | **fishsense** | `fishsense.e4e.ucsd.edu` (+ `api.`, `analytics.`) | e4e-prod | 10.100.0.10 | 30443 | UCSD-E4E/fishsense-services | live |
-| **reference-manager** | `bib.krg.ucsd.edu` | krg-prod | 10.100.0.11 | 30444 | UCSD-E4E/e4e-reference-manager | boundary only (no instance yet) — [onboarding](onboarding-reference-manager.md) |
+| **reference-manager** | `bib.krg.ucsd.edu` | krg-prod | 10.100.0.11 | 30444 | UCSD-E4E/e4e-reference-manager | bring-up — [onboarding](onboarding-reference-manager.md) |
 
 Other fixed addresses:
 

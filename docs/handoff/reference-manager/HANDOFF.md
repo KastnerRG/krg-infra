@@ -8,12 +8,20 @@ described in [`docs/onboarding-reference-manager.md`](../../onboarding-reference
 ready to copy in. It mirrors fishsense-services' layout, so the fishsense repos are a
 working reference for anything not covered here.
 
+> **Copied in (2026-10-07). The app repo is now the source of truth** for everything
+> below; this directory is the original snapshot. One divergence: the app releases with
+> **release-please**, not the tag-triggered `release.yml` here, and the first release
+> was **v1.0.0** (not v0.1.0).
+
 ## 1. How a deploy works
 
-1. You tag `vX.Y.Z`. `release.yml` builds and pushes
-   `ghcr.io/ucsd-e4e/e4e-reference-manager-{api,web}:vX.Y.Z`, then opens a PR
+1. Conventional-commit merges to `main` feed a **release-please** PR. Merging that PR
+   cuts the GitHub release `vX.Y.Z`. The app's `release.yml` then builds and pushes
+   `ghcr.io/ucsd-e4e/e4e-reference-manager-{api,web}:vX.Y.Z` and opens a PR
    `auto-deploy/vX.Y.Z` that bumps the two pins in `deploy/incus/compose.yml`.
-2. A human merges that PR.
+   (This directory's `release.yml` triggers on a pushed `v*.*.*` tag instead. Same
+   chain, but superseded by the app's.)
+2. A human merges the `auto-deploy/*` PR.
 3. `deploy.yml` runs on the slot's own self-hosted runner (label
    `[self-hosted, reference-manager]`). It starts `reference-manager-selfupdate`, which runs
    `nixos-rebuild switch --flake github:UCSD-E4E/e4e-reference-manager#reference-manager`.

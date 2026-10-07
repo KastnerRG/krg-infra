@@ -144,19 +144,19 @@ variable "tenants" {
     }
 
     # reference-manager — bib.krg.ucsd.edu, the first KRG-zone tenant
-    # (docs/onboarding-reference-manager.md §2b), fronted by the krg-prod edge.
-    # BOUNDARY ONLY for now: image = "" creates the project + quota and NO instance.
-    # The slot can't converge yet: its tenant-reference-manager AppRole needs a
-    # privileged openbao apply, and the app repo doesn't carry its flake/interior yet.
-    # The flip PR (runbook §4) sets, in one change:
-    #   image = "krg-golden", nat_ip = "10.100.0.11", edge_port = 30444
-    # and adds the krg-prod edge route to "137.110.161.105:30444".
+    # (docs/onboarding-reference-manager.md §2b), fronted by the krg-prod edge
+    # (nix/hosts/krg-prod krg.edge.routes.reference-manager → incus_host_ip:30444).
+    # The first four fields are `nix eval .#krgTenant.terraformTenant --json` from
+    # UCSD-E4E/e4e-reference-manager; image/nat_ip/edge_port are the admin's allocation.
     reference-manager = {
       zone      = "krg"             # fronted by the krg-prod edge (*.krg.ucsd.edu)
       cpu       = 6                 # Ollama CPU inference + GROBID
       memory    = "12GiB"           # GROBID ~4G, Ollama (qwen2.5:3b + nomic-embed) ~4G, Postgres, api
       disk      = "60GiB"           # GROBID + Ollama images (~12G) + models (~2.5G); PDFs live in Garage
       isolation = "virtual-machine" # developed code = separate kernel (ADR 0017 §4)
+      image     = "krg-golden"      # boot the slot from the hardened template
+      nat_ip    = "10.100.0.11"     # pinned NAT target for the ingress forward (fishsense is .10)
+      edge_port = 30444             # krg-nat port the krg edge dials → network forward → nat_ip:443
       repo      = "UCSD-E4E/e4e-reference-manager"
     }
   }
