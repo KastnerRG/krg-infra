@@ -209,6 +209,8 @@ buckets:
     # from $image value" even though the presigned GET itself is a clean 200.
     # Read-only methods only: annotations are written back through the
     # labels-fishsense-lite KEY (server-side, no browser CORS involved).
+    # allowed_headers is "*" because the origin is a third-party SaaS whose
+    # request headers we don't control (contrast reference-manager below).
     cors:
       - allowed_origins: [https://app.heartex.com]
         allowed_methods: [GET, HEAD]
@@ -226,17 +228,14 @@ buckets:
   # viewer (pdf.js) then fetches them cross-origin with Range requests to load
   # pages on demand, so the preflight must allow the Range header and the response
   # must expose Content-Range / Accept-Ranges. Uploads go through the API
-  # (server-side, no browser CORS involved), hence read-only methods.
-  #
-  # allowed_headers is "*", not [Range]: Garage matches header names
-  # case-sensitively, and browsers always send Access-Control-Request-Headers
-  # lowercased (`range`), so [Range] 403s every real preflight (verified live
-  # against s3.e4e.ucsd.edu). Same choice as labels-fishsense-lite above.
+  # (server-side, no browser CORS involved), hence read-only methods. Header
+  # case is irrelevant: synology_garage lowercases allowed_headers to match
+  # what browsers send (Garage compares them case-sensitively).
   - name: reference-manager
     cors:
       - allowed_origins: [https://bib.krg.ucsd.edu]
         allowed_methods: [GET, HEAD]
-        allowed_headers: ["*"]
+        allowed_headers: [Range]
         expose_headers: [Accept-Ranges, Content-Range, Content-Length, Content-Type, ETag]
         max_age_seconds: 3600
 

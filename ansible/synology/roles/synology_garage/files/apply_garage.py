@@ -686,7 +686,12 @@ def _cors_api_rule(rule, bucket):
     out = {
         "AllowedOrigin": list(origins),
         "AllowedMethod": list(methods),
-        "AllowedHeader": list(rule.get("allowed_headers") or []),
+        # Lowercased: Garage matches AllowedHeader against the preflight's
+        # Access-Control-Request-Headers case-SENSITIVELY, and browsers always
+        # send those names lowercased (Fetch spec). HTTP header names are
+        # case-insensitive, so a spec `Range` must go on the wire as `range` or
+        # every real preflight 403s. ("*" is unaffected.)
+        "AllowedHeader": [h.lower() for h in rule.get("allowed_headers") or []],
         "ExposeHeader": list(rule.get("expose_headers") or []),
     }
     # ID / MaxAgeSeconds are Option<> on Garage's side and are omitted from
