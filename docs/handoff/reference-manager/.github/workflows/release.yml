@@ -1,0 +1,92 @@
+name: Release
+
+# Tag vX.Y.Z → build + push both images at that version → open an
+# `auto-deploy/vX.Y.Z` PR bumping deploy/incus/compose.yml's pins. A human merges it,
+# and deploy.yml converges the slot. Mirrors fishsense-services' release → promote
+# chain, trimmed: two images, no release-please.
+#
+# Why the PR merge is the trigger (not the tag): the slot converges to whatever is on
+# main, so the pins on main must name images that already exist. This workflow
+# guarantees the images are pushed before the PR that names them is opened.
+#
+# Needs (repo settings): Actions → General → "Allow GitHub Actions to create and
+# approve pull requests". And the two GHCR packages must be PUBLIC (the slot pulls
+# anonymously): after the first release, Packages → e4e-reference-manager-{api,web}
+# → Package settings → Change visibility → Public.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions: {}
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - image: e4e-reference-manager-api
+            context: api
+          - image: e4e-reference-manager-web
+            context: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image name (GHCR paths must be lowercase)
+        id: img
+        run: |
+          owner_lc="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "name=${{ env.REGISTRY }}/${owner_lc}/${{ matrix.image }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          # Same-origin production build: the API is under /api on bib.krg.ucsd.edu.
+          # (Ignored by the api image, which declares no such ARG.)
+          build-args: |
+            VITE_API_URL=/api
+          tags: ${{ steps.img.outputs.name }}:${{ github.ref_name }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+  pin-bump-pr:
+    needs: images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Bump the pins and open the auto-deploy PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          branch="auto-deploy/${TAG}"
+          sed -E -i "s#(ghcr\.io/ucsd-e4e/e4e-reference-manager-(api|web)):v[0-9]+\.[0-9]+\.[0-9]+#\1:${TAG}#g" deploy/incus/compose.yml
+          if git diff --quiet -- deploy/incus/compose.yml; then
+            echo "::notice::pins already at ${TAG}; nothing to deploy."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "deploy: ${TAG}"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" --title "deploy: ${TAG}" \
+            --body "Bumps the e4e-reference-manager-{api,web} pins in deploy/incus/compose.yml to \`${TAG}\` (images already pushed). Merging converges the reference-manager slot (deploy.yml)."

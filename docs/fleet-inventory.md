@@ -17,7 +17,7 @@ comments and per-host configs; this is the one table to update when they change.
 | **krg-ldap** | 137.110.161.109 | krg-ldap.ucsd.edu | Samba AD DC, `KRG.LOCAL` (`directory`) | NixOS flake | VM on fabricant | 100 |
 | **krg-vault** | 137.110.161.123 | krg-vault.ucsd.edu | OpenBao secrets manager (`base`) | NixOS flake | VM on fabricant | 101 |
 | **krg-deploy** | 137.110.161.122 | krg-deploy.ucsd.edu | Ansible + OpenTofu control node; GitHub Actions deploy runner (`base`) | NixOS flake | VM on fabricant | 102 |
-| **krg-prod** | 137.110.161.106 | krg-prod.ucsd.edu | Lab-wide services (`server` profile) | NixOS flake | VM on fabricant | 103 |
+| **krg-prod** | 137.110.161.106 | krg-prod.ucsd.edu | Lab-wide services (`server` profile); `*.krg` public edge for Incus tenants (compose Traefik + `krg.edge` file provider) | NixOS flake | VM on fabricant | 103 |
 | **e4e-prod** | 137.110.161.107 | e4e-prod.ucsd.edu | `*.e4e` public edge (Traefik LE-terminate → re-encrypt), E4E services (`server`) | NixOS flake | VM on fabricant | 104 |
 | **krg-nat** | 137.110.161.105 | krg-nat.ucsd.edu | Incus platform host / hypervisor for tenant instances on the NAT ([ADR 0017](adr/0017-incus-nat-self-serve-platform.md)) | NixOS flake | VM on fabricant | 105 |
 | **kastner-ml** | 132.239.17.123 | kastner-ml.ucsd.edu | E4E GPU compute, RTX A6000 (`compute` profile) | NixOS flake | physical | — |
@@ -25,6 +25,19 @@ comments and per-host configs; this is the one table to update when they change.
 
 > The old `krg-ad` host (breached, decommissioned) is gone; its address
 > **137.110.161.107** is now reused by **e4e-prod**.
+
+### Incus tenant slots (on krg-nat)
+
+Tenant instances live on krg-nat's internal NAT (`10.100.0.0/24`), not on the campus
+network. Each publicly-exposed slot has a pinned NAT address and an ingress port on
+krg-nat (`137.110.161.105:<edge_port>`, network forward → `<nat_ip>:443`) that its
+zone edge re-encrypts to. Boundary: `terraform/incus` `var.tenants`; secrets:
+`terraform/openbao` `var.tenants`; interior: the tenant's own repo (ADR 0020).
+
+| Tenant | Public name(s) | Zone edge | NAT IP | Edge port | Interior repo | Status |
+|---|---|---|---|---|---|---|
+| **fishsense** | `fishsense.e4e.ucsd.edu` (+ `api.`, `analytics.`) | e4e-prod | 10.100.0.10 | 30443 | UCSD-E4E/fishsense-services | live |
+| **reference-manager** | `bib.krg.ucsd.edu` | krg-prod | 10.100.0.11 | 30444 | UCSD-E4E/e4e-reference-manager | boundary only (no instance yet) — [onboarding](onboarding-reference-manager.md) |
 
 Other fixed addresses:
 

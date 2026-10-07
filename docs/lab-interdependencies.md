@@ -26,9 +26,10 @@ at the end). Keep this current when you add a host, a mount, or a service.
 | **e4e-nas** | ansible (Synology DSM) | Storage appliance. Serves NFS `/home` for E4E compute (`e4e-home`), SMB shares, Garage S3. |
 | **krg-ldap** | nix (VM) | Samba AD domain controller — `KRG.LOCAL` identity for **every** host. |
 | **krg-vault** | nix (VM) | OpenBao — secrets for services (vault-agent) and for the deploy itself (AppRole). |
-| **krg-prod** | nix (VM) | Lab-wide services: Authentik (SSO), Traefik, Grafana/Prometheus/Loki, Outline, … |
+| **krg-prod** | nix (VM) | Lab-wide services: Authentik (SSO), Traefik, Grafana/Prometheus/Loki, Outline, … — and the `*.krg` public edge for Incus tenants. |
 | **e4e-prod** | nix (VM) | E4E project services + the `*.e4e` public edge (Traefik LE-terminate → re-encrypt). |
 | **krg-nat** | nix (VM) | Incus platform host — hypervisor for self-serve / tenant instances on the NAT ([ADR 0017](adr/0017-incus-nat-self-serve-platform.md)). |
+| **reference-manager** (`bib.krg.ucsd.edu`) | nix (Incus tenant VM on krg-nat) + tofu boundary | E4E reference manager (FastAPI + PWA). Public via the **krg-prod** edge; PDFs in **e4e-nas** Garage; login via **Authentik**. [Onboarding](onboarding-reference-manager.md). |
 | **waiter** | nix (physical) | KRG GPU compute. |
 | **kastner-ml** | nix (physical) | E4E GPU compute. |
 | **krg-deploy** | nix (VM) | Control node — runs the CD pipeline (`deploy.yml`) and the nightly pull-apply. |
@@ -48,6 +49,7 @@ graph TD
     VAULT[krg-vault<br/>OpenBao]
     PROD[krg-prod<br/>services]
     NAT[krg-nat<br/>Incus platform]
+    BIB[reference-manager<br/>bib.krg tenant]
     WAITER[waiter<br/>compute]
     KML[kastner-ml<br/>compute]
   end
@@ -80,6 +82,12 @@ graph TD
   AUTH -->|writes secrets| VAULT
   NASCFG -->|configures| NAS
   INCUS -->|configures| NAT
+
+  BIB -->|VM runs on| NAT
+  PROD -->|krg edge: re-encrypt to bib| BIB
+  BIB -->|PDFs: Garage S3| NAS
+  BIB -->|OIDC login| PROD
+  BIB -->|secrets: tenant AppRole| VAULT
 
   DEPLOY[krg-deploy] -->|AppRole creds| VAULT
   DEPLOY -->|pinned host keys / SSH| nixos
@@ -143,6 +151,10 @@ it with a one-off `nixos-rebuild switch --flake .#krg-deploy` on the box.
 | krg-deploy (CD) | **krg-vault** | AppRole login → KV | tofu/ansible creds unavailable → targets skip | graceful skip with a notice. |
 | krg-deploy (CD) | **each host** | SSH, `StrictHostKeyChecking=yes` | host unreachable / new host not in `known_hosts` → deploy fails | pin the key in `krg-deploy`'s `programs.ssh.knownHosts`; `DEPLOY_SSH_ACCEPT_NEW=true` for first bring-up only. |
 | Prometheus (krg-prod) | every host | scrapes node/ipmi/dcgm exporters | metrics gaps | soft — no functional impact. |
+| reference-manager (`bib.krg`) | **e4e-nas** Garage (`s3.e4e.ucsd.edu`) | API uploads PDFs server-side; the BROWSER fetches presigned path-style GETs cross-origin (bucket CORS); nightly Postgres dumps sync to `reference-manager/_backups/` | uploads, PDF viewing and backups fail; library metadata/search still work | none beyond the NAS's own availability. Bucket, key + CORS: `spec/e4e-nas/garage.yml`. |
+| reference-manager (`bib.krg`) | **Authentik** (krg-prod) | in-app OIDC (authlib) via `auth.krg.ucsd.edu` | new logins fail; existing session cookies keep working | — |
+| reference-manager (`bib.krg`) | **krg-prod** edge | public TLS + re-encrypt to `krg-nat:30444` (verifies `reference-manager.vm` by chain) | site unreachable | the edge is krg-prod's existing Traefik: same fate as every lab service. |
+| reference-manager (`bib.krg`) | **krg-vault** | in-VM vault-agent (tenant AppRole) renders the `.vm` cert + app secrets; FAIL-CLOSED | the stack won't (re)start; a running stack is unaffected | — |
 
 ---
 

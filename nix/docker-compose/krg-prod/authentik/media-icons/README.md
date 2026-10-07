@@ -50,6 +50,7 @@ owner — used here only to label first-party links to those services).
 | `fleet.svg`           | Fleet (MDM)          | `fleetdm`                |
 | `incus.svg`           | Incus                | `incus`                  |
 | `label-studio.svg`    | Label Studio         | (HumanSignal asset)³     |
+| `reference-manager.svg` | E4E Reference Manager | (UCSD-E4E asset)⁴      |
 
 ¹ `temporal.svg` is Temporal's official "Symbol (dark)" mark from the Temporal
 brand assets, not dashboard-icons. Note it's a near-black (`#141414`) glyph — fine
@@ -66,6 +67,11 @@ FishSense Orchestrator (no orchestrator-specific logo exists).
 (`images/heartex_icon_opossum_green.svg` from github.com/HumanSignal/label-studio,
 the project's de-facto app/favicon icon), not dashboard-icons — dashboard-icons has
 no `label-studio`/`humansignal` entry as of 2026-06. Square (156×156), clean vector.
+
+⁴ `reference-manager.svg` is the E4E Reference Manager's own PWA icon
+(`web/public/icon.svg`, github.com/UCSD-E4E/e4e-reference-manager): a square
+(512×512) dark tile with an "e4e" wordmark. First-party mark for a first-party app.
+It draws the text with the viewer's `sans-serif`, so glyphs vary slightly by browser.
 
 Not yet iconed (no clean off-the-shelf logo in dashboard-icons — follow-up):
 KRG Roster.
