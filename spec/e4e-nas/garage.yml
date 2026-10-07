@@ -221,6 +221,24 @@ buckets:
   # artifacts. Nothing holds WRITE yet — whoever trains the models gets a
   # separate write-granted key so a consumer key can never overwrite weights.
   - name: model-weights
+  # PDF attachments for the e4e reference manager (bib.krg.ucsd.edu). Its API
+  # mints presigned GETs with the `reference-manager` key; the in-browser PDF
+  # viewer (pdf.js) then fetches them cross-origin with Range requests to load
+  # pages on demand, so the preflight must allow the Range header and the response
+  # must expose Content-Range / Accept-Ranges. Uploads go through the API
+  # (server-side, no browser CORS involved), hence read-only methods.
+  #
+  # allowed_headers is "*", not [Range]: Garage matches header names
+  # case-sensitively, and browsers always send Access-Control-Request-Headers
+  # lowercased (`range`), so [Range] 403s every real preflight (verified live
+  # against s3.e4e.ucsd.edu). Same choice as labels-fishsense-lite above.
+  - name: reference-manager
+    cors:
+      - allowed_origins: [https://bib.krg.ucsd.edu]
+        allowed_methods: [GET, HEAD]
+        allowed_headers: ["*"]
+        expose_headers: [Accept-Ranges, Content-Range, Content-Length, Content-Type, ETag]
+        max_age_seconds: 3600
 
 # Access keys. Only the NAME + bucket grants are declared here (git is truth);
 # the actual {access_key_id, secret_access_key} is NOT in the spec. The control
@@ -250,4 +268,11 @@ keys:
   - name: labels-fishsense-lite
     buckets:
       - name: labels-fishsense-lite
+        permissions: [read, write]
+  # Held by the reference manager API (bib.krg.ucsd.edu): stores uploaded PDFs
+  # and presigns the GETs the browser uses to view/download them. Scoped to its
+  # own bucket only.
+  - name: reference-manager
+    buckets:
+      - name: reference-manager
         permissions: [read, write]

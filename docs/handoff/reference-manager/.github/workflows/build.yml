@@ -1,0 +1,39 @@
+name: Build
+
+# Dockerfile-validity check: builds both images on every PR and push to main, pushes
+# nothing (release.yml pushes, at a version tag). Also evaluates the tenant flake so a
+# broken deploy/incus/*.nix or a krg-infra contract change fails here, not on the slot.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        context: [api, web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: false
+          build-args: |
+            VITE_API_URL=/api
+
+  tenant-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - name: Evaluate the slot's NixOS config
+        run: nix eval --raw .#nixosConfigurations.reference-manager.config.system.build.toplevel.drvPath

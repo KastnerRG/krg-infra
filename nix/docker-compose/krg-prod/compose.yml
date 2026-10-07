@@ -34,11 +34,20 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik-data/letsencrypt:/letsencrypt:z
+      # The krg-zone EDGE routes to Incus tenants (krg.edge, provider = "file"; ADR 0017
+      # §5): edge.yml + the fleet CA its re-encrypt transports verify each tenant's
+      # <name>.vm cert against (the container can't see the host trust store). Copied
+      # here by the krg-edge-routes unit (nix/hosts/krg-prod/default.nix) and WATCHED,
+      # so a route change hot-reloads without restarting this stack.
+      - ./traefik-edge:/etc/traefik/edge:ro
     command:
       - "--log.level=INFO"
       # - "--api.insecure=true"
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
+      # krg-zone tenant routes (the traefik-edge mount above), hot-reloaded on change.
+      - "--providers.file.filename=/etc/traefik/edge/edge.yml"
+      - "--providers.file.watch=true"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
       - "--entrypoints.web.http.redirections.entryPoint.scheme=https"

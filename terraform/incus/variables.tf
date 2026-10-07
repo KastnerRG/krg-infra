@@ -142,6 +142,23 @@ variable "tenants" {
       # runner re-registers there on the first converge whose mkTenant `repo` matches.
       repo = "UCSD-E4E/fishsense-services"
     }
+
+    # reference-manager — bib.krg.ucsd.edu, the first KRG-zone tenant
+    # (docs/onboarding-reference-manager.md §2b), fronted by the krg-prod edge.
+    # BOUNDARY ONLY for now: image = "" creates the project + quota and NO instance.
+    # The slot can't converge yet: its tenant-reference-manager AppRole needs a
+    # privileged openbao apply, and the app repo doesn't carry its flake/interior yet.
+    # The flip PR (runbook §4) sets, in one change:
+    #   image = "krg-golden", nat_ip = "10.100.0.11", edge_port = 30444
+    # and adds the krg-prod edge route to "137.110.161.105:30444".
+    reference-manager = {
+      zone      = "krg"             # fronted by the krg-prod edge (*.krg.ucsd.edu)
+      cpu       = 6                 # Ollama CPU inference + GROBID
+      memory    = "12GiB"           # GROBID ~4G, Ollama (qwen2.5:3b + nomic-embed) ~4G, Postgres, api
+      disk      = "60GiB"           # GROBID + Ollama images (~12G) + models (~2.5G); PDFs live in Garage
+      isolation = "virtual-machine" # developed code = separate kernel (ADR 0017 §4)
+      repo      = "UCSD-E4E/e4e-reference-manager"
+    }
   }
 
   validation {

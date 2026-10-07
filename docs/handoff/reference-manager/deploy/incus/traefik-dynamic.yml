@@ -1,0 +1,62 @@
+# Traefik file-provider dynamic config for the reference-manager interior.
+#
+# Loaded by the inner traefik (compose.yml `--providers.file.filename`). Mirrors
+# fishsense-services deploy/incus/traefik-dynamic.yml. Two concerns:
+#   (1) serve the vault-agent `reference-manager.vm` cert on :443 for every route —
+#       the krg-prod edge re-encrypts to us and verifies serverName=reference-manager.vm
+#       regardless of the public Host;
+#   (2) route by PATH on the one public name: /api/* → the API (prefix stripped; the
+#       app runs with --root-path /api), everything else → the static web build.
+#
+# No auth middleware: login is in-app OIDC (the API's own Authentik client), and the
+# API answers 401 itself — a forwardAuth here would turn its 401s into login redirects.
+
+tls:
+  # Single cert served for all routers. `reference-manager.vm.{crt,key}` is rendered by
+  # the in-instance vault-agent to /run/tenant/tls (mounted read-only). It is the
+  # default cert, so the edge's re-encrypt handshake (SNI=reference-manager.vm) matches.
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/traefik/tls/reference-manager.vm.crt
+        keyFile: /etc/traefik/tls/reference-manager.vm.key
+  certificates:
+    - certFile: /etc/traefik/tls/reference-manager.vm.crt
+      keyFile: /etc/traefik/tls/reference-manager.vm.key
+
+http:
+  routers:
+    # The API under /api. `/api` itself or `/api/...` — not `/apifoo`, which belongs to
+    # the SPA. Explicit priority so it always wins over the catch-all below.
+    api:
+      rule: "Host(`bib.krg.ucsd.edu`) && (Path(`/api`) || PathPrefix(`/api/`))"
+      entryPoints: [websecure]
+      middlewares: [strip-api]
+      service: api
+      priority: 100
+      tls: {}
+
+    # Everything else: the static PWA build (nginx serves index.html for unknown paths).
+    web:
+      rule: "Host(`bib.krg.ucsd.edu`)"
+      entryPoints: [websecure]
+      service: web
+      priority: 1
+      tls: {}
+
+  middlewares:
+    # /api/auth/callback → /auth/callback. uvicorn --root-path /api puts the prefix
+    # back into every URL the app generates.
+    strip-api:
+      stripPrefix:
+        prefixes: ["/api"]
+
+  services:
+    api:
+      loadBalancer:
+        servers:
+          - url: "http://api:8000"
+    web:
+      loadBalancer:
+        servers:
+          - url: "http://web:8080"

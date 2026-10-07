@@ -1,0 +1,242 @@
+# e4e-reference-manager INTERIOR — the KRG Incus platform's `reference-manager` tenant
+# (ADR 0017 / 0020), serving https://bib.krg.ucsd.edu. Mirrors fishsense-services'
+# deploy/incus/compose.yml.
+#
+# Converged by `nixos-rebuild`, never by hand: the repo-root flake.nix hands this file
+# to mkTenant, and krg's composeStack runs
+#   docker compose --project-directory /var/lib/krg/reference-manager -f <this> up -d --remove-orphans --force-recreate
+# So the compose PROJECT is `reference-manager`, and the named volumes below are
+# `reference-manager_<name>`: rename one and the converge starts empty. Relative paths
+# (`./x`) resolve against /var/lib/krg/reference-manager, where workdir.nix links the
+# committed config.
+#
+# INGRESS CONTRACT (wired admin-side in krg-infra — do not change the shape):
+#   public -> krg-prod edge (prod LE cert for bib.krg.ucsd.edu, TLS-terminate)
+#          -> re-encrypt HTTPS, verify serverName=reference-manager.vm vs the fleet CA
+#          -> krg-nat:30444 -> incus_network_forward -> 10.100.0.11:443 (traefik below)
+#
+# ONE ORIGIN: bib.krg.ucsd.edu/api/* is the API (prefix stripped; uvicorn
+# --root-path /api), everything else is the static web build with SPA fallback.
+# PDFs are NOT served here: the API presigns path-style GETs on
+# https://s3.e4e.ucsd.edu (e4e-nas Garage, bucket `reference-manager`) and the browser
+# fetches them directly (the bucket's CORS allows this origin; krg-infra
+# spec/e4e-nas/garage.yml).
+#
+# Secrets come from the in-VM vault-agent as env files under /run/tenant/secrets
+# (secrets.nix) — never in this file. Every image is pinned; the two
+# ghcr.io/ucsd-e4e/e4e-reference-manager-* pins move together, one release at a time.
+
+services:
+  # ── inner edge: TLS on :443 with reference-manager.vm, route path → container ───────
+  traefik:
+    image: traefik:3.7.8
+    restart: unless-stopped
+    command:
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --providers.file.watch=true
+      - --entrypoints.websecure.address=:443
+    ports:
+      # The ONE published port, and it must be on 0.0.0.0: the incus_network_forward
+      # DNATs krg-nat:30444 to the instance NIC's :443. (krg.docker.defaultPublishAddress
+      # would bind an unprefixed publish to loopback, where the forward can't reach it.)
+      # Nothing else here publishes a port.
+      - "0.0.0.0:443:443"
+    volumes:
+      - /run/tenant/tls:/etc/traefik/tls:ro # reference-manager.vm.{crt,key} — vault-agent (nixosModules.tenant)
+      - ./traefik-dynamic.yml:/etc/traefik/dynamic.yml:ro
+    depends_on: [web, api]
+    networks: [interior]
+
+  # ── Postgres + pgvector (embeddings) ──────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg16-trixie
+    restart: unless-stopped
+    shm_size: 128mb
+    environment:
+      POSTGRES_USER: refman
+      POSTGRES_DB: refman
+    # POSTGRES_PASSWORD from the vault-agent render (generated/app.db_password). The
+    # image applies it ONLY when initialising an empty volume; afterwards the role's
+    # password lives in the database, which is why that secret is generate-once.
+    env_file:
+      - /run/tenant/secrets/postgres.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U refman -d refman"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    expose: ["5432"]
+    networks: [interior]
+
+  # ── API → bib.krg.ucsd.edu/api (FastAPI; migrations, then uvicorn) ───────────────────
+  api:
+    image: ghcr.io/ucsd-e4e/e4e-reference-manager-api:v0.1.0
+    restart: unless-stopped
+    # Migrations run on every start, before the server: a failing migration keeps the
+    # API down (and the converge's verify red) rather than serving a stale schema.
+    # --root-path /api: the inner Traefik strips /api, so the app's routes stay
+    # prefix-free while every URL it generates (docs, redirects) carries /api.
+    command:
+      - sh
+      - -c
+      - uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --root-path /api
+    environment:
+      # Run from the image's prebuilt venv. Without this `uv run` re-syncs at start,
+      # installing the project — which fetches its build backend (hatchling) from PyPI
+      # on every container start. (App change: install the project in the image.)
+      UV_NO_SYNC: "1"
+      REFMAN_APP_BASE_URL: https://bib.krg.ucsd.edu/api
+      # Same origin as the web build, so no CORS needed (and none allowed).
+      REFMAN_CORS_ORIGINS: "[]"
+      # e4e-nas Garage via its public S3 endpoint. Path-style presigned GETs; the
+      # browser fetches them from the same host, so both endpoints are the public one.
+      REFMAN_S3_ENDPOINT_URL: https://s3.e4e.ucsd.edu
+      REFMAN_S3_PUBLIC_ENDPOINT_URL: https://s3.e4e.ucsd.edu
+      # MUST be `garage`: Garage rejects SigV4 signed for any other region, and the
+      # app's default (us-east-1) breaks every upload and presign.
+      REFMAN_S3_REGION: garage
+      REFMAN_S3_BUCKET: reference-manager
+      REFMAN_DEV_AUTH: "false"
+      REFMAN_OIDC_REDIRECT_URI: https://bib.krg.ucsd.edu/api/auth/callback
+      REFMAN_POST_LOGIN_REDIRECT: https://bib.krg.ucsd.edu/
+      # Optional: members of this Authentik/AD group become org admins. Group names
+      # reach the token only once the app requests the `groups` scope (HANDOFF §6).
+      # REFMAN_OIDC_ADMIN_GROUP: "<AD group name>"
+      REFMAN_TRANSLATION_SERVER_URL: http://translation-server:1969
+      REFMAN_GROBID_URL: http://grobid:8070
+      REFMAN_OLLAMA_URL: http://ollama:11434
+    # REFMAN_DATABASE_URL, REFMAN_SESSION_SECRET, REFMAN_S3_ACCESS_KEY/_SECRET_KEY,
+    # REFMAN_OIDC_ISSUER/_CLIENT_ID/_CLIENT_SECRET — from the vault-agent render.
+    env_file:
+      - /run/tenant/secrets/api.env
+    expose: ["8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Not on grobid/ollama/translation-server: the API starts without them and its
+      # ingest calls fail loudly until they're up (GROBID takes ~1 min to warm).
+    networks: [interior]
+
+  # ── web → bib.krg.ucsd.edu/* (static Vite/React PWA build, SPA fallback) ─────────────
+  # Built with VITE_API_URL=/api (the API is same-origin under /api). A static server
+  # (nginx) — never the Vite dev server.
+  web:
+    image: ghcr.io/ucsd-e4e/e4e-reference-manager-web:v0.1.0
+    restart: unless-stopped
+    expose: ["8080"]
+    networks: [interior]
+
+  # ── ingestion: Zotero translation-server (URL/DOI → metadata) ────────────────────────
+  # 2.0.4 is the newest tag published for amd64.
+  translation-server:
+    image: zotero/translation-server:2.0.4
+    restart: unless-stopped
+    expose: ["1969"]
+    networks: [interior]
+
+  # ── ingestion: GROBID (PDF → structured metadata + references) ───────────────────────
+  # The full image (deep-learning models): ~4 GB RAM in use, slow first start.
+  grobid:
+    image: grobid/grobid:0.8.1
+    restart: unless-stopped
+    expose: ["8070"]
+    networks: [interior]
+
+  # ── local ML: Ollama (embeddings + summaries) ─────────────────────────────────────────
+  # CPU-only (the slot has no GPU). Models persist in the `ollama` volume.
+  ollama:
+    image: ollama/ollama:0.40.0
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    expose: ["11434"]
+    networks: [interior]
+
+  # One-shot, every converge: make sure the two models the API uses are present.
+  # `ollama pull` is idempotent (an existing model is a manifest check, no re-download)
+  # and talks to the server above via OLLAMA_HOST, so the models land in its volume.
+  # Keep in step with the app's settings (embedding_model / llm_model). Not a
+  # dependency of the API: a registry blip must not keep the app down.
+  ollama-models:
+    image: ollama/ollama:0.40.0
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull nomic-embed-text && ollama pull qwen2.5:3b"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_started
+    networks: [interior]
+
+  # ── nightly Postgres dumps → Garage ──────────────────────────────────────────────────
+  # The slot's disk is not a backup: pg-dump writes a custom-format dump to a local
+  # volume once a day and keeps 14; pg-backup-sync mirrors that directory to
+  # s3://reference-manager/_backups/postgres/ on e4e-nas (snapshotted there). The
+  # mirror is a `sync`, so Garage holds the same 14-dump window.
+  # Restore: HANDOFF.md §7.
+  pg-dump:
+    image: pgvector/pgvector:0.8.7-pg16-trixie
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        while :; do
+          f="/backups/refman-$$(date -u +%Y%m%dT%H%M%SZ).dump"
+          if pg_dump -h postgres -U refman -d refman -Fc -f "$$f.tmp"; then
+            mv "$$f.tmp" "$$f"
+            echo "pg-dump: wrote $$f"
+          else
+            rm -f "$$f.tmp"
+            echo "pg-dump: FAILED" >&2
+          fi
+          ls -1t /backups/refman-*.dump 2>/dev/null | tail -n +15 | xargs -r rm -f
+          sleep 86400
+        done
+    # PGPASSWORD (the refman role's) from the vault-agent render.
+    env_file:
+      - /run/tenant/secrets/pg-dump.env
+    volumes:
+      - pgbackups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [interior]
+
+  pg-backup-sync:
+    image: rclone/rclone:1.75.1
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while :; do
+          rclone sync /backups garage:reference-manager/_backups/postgres --include 'refman-*.dump' \
+            && echo "pg-backup-sync: synced" || echo "pg-backup-sync: FAILED" >&2
+          sleep 3600
+        done
+    environment:
+      # An rclone remote named `garage`, configured entirely from env.
+      RCLONE_CONFIG_GARAGE_TYPE: s3
+      RCLONE_CONFIG_GARAGE_PROVIDER: Other
+      RCLONE_CONFIG_GARAGE_ENDPOINT: https://s3.e4e.ucsd.edu
+      RCLONE_CONFIG_GARAGE_REGION: garage
+      RCLONE_CONFIG_GARAGE_FORCE_PATH_STYLE: "true"
+    # RCLONE_CONFIG_GARAGE_ACCESS_KEY_ID / _SECRET_ACCESS_KEY (the app's Garage key)
+    # from the vault-agent render.
+    env_file:
+      - /run/tenant/secrets/pg-backup-sync.env
+    volumes:
+      - pgbackups:/backups:ro
+    networks: [interior]
+
+volumes:
+  pgdata:
+  ollama:
+  pgbackups:
+
+networks:
+  interior:
+    driver: bridge
