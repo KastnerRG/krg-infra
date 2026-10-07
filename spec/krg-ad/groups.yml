@@ -54,10 +54,12 @@ groups:
   #     NAS / Garage tile in Authentik). The other per-share groups below stay
   #     UN-nested on purpose — their members are E4E people who hold E4E-NAS in
   #     their own right via roster.
+  #   * "collab-coral-gardeners" — same reason as Junkyard-NAS: external collaborators
+  #     whose only NAS access is the coral-gardeners share.
   # Both consumers resolve nesting transitively: Authentik via ldap.tf's
   # group_membership_field (AD LDAP_MATCHING_RULE_IN_CHAIN), sudo on kastner-ml via
   # ordinary SSSD group expansion.
-  - { name: "E4E-NAS", description: "Mount access to the E4E NAS (e4e-nas.ucsd.edu) CIFS shares via the kastner-ml e4e-nas-mount sudo wrapper (nix krg.nasMount); also gates the E4E NAS app tile in Authentik (app_access.tf)", members: ["E4E Admin", "Junkyard-NAS"] }
+  - { name: "E4E-NAS", description: "Mount access to the E4E NAS (e4e-nas.ucsd.edu) CIFS shares via the kastner-ml e4e-nas-mount sudo wrapper (nix krg.nasMount); also gates the E4E NAS app tile in Authentik (app_access.tf)", members: ["E4E Admin", "Junkyard-NAS", "collab-coral-gardeners"] }
   # --- e4e-nas per-share grant groups (consumed by spec/e4e-nas/acls.yml -> synology_acls) ---
   # These replace principals from the DEAD KRG-UCSD-EDU domain, translated from the
   # 2026-05-28 pre-reset capture (`synoshare --list_acl`, off-repo per the runbook).
@@ -91,6 +93,13 @@ groups:
   # grant on those (they stay absent from acls.yml, so the role leaves them untouched; the
   # `junkyard.service` account decision on junkyard-fishsense is still open).
   - { name: "Junkyard-NAS", description: "RW on the junkyard share on e4e-nas.ucsd.edu (spec/e4e-nas/acls.yml). Mount access is INHERITED, not separate: this group is a nested member of E4E-NAS (declared there), so members also get the kastner-ml e4e-nas-mount sudo wrapper and the E4E NAS / Garage app tiles in Authentik." }
+  # NEW (not from the capture): governs the new `coral-gardeners` share
+  # (/volume2/coral-gardeners, spec/e4e-nas/shares.yml). Coral Gardeners is an EXTERNAL
+  # collaborator org — the `collab-` prefix keeps it distinct from any future E4E team
+  # of the same name. Nested into "e4e-collaborators" AND "E4E-NAS" (both declared on
+  # those groups), so members inherit mount access + the E4E NAS / Garage tiles like
+  # Junkyard-NAS.
+  - { name: "collab-coral-gardeners", description: "Coral Gardeners (external E4E collaborator); RW on the coral-gardeners share on e4e-nas.ucsd.edu (spec/e4e-nas/acls.yml). Nested member of 'e4e-collaborators' and E4E-NAS (inherits NAS mount access + Authentik tiles)." }
 
   - { name: "Guacamole Admins", description: "Apache Guacamole administrators" }
   # Space-FREE name on purpose: PVE's AD-realm sync rejects group ids with spaces
@@ -149,6 +158,10 @@ groups:
   - { name: "E4E Admin", description: "E4E administrators", members: ["Domain Admins"] }
   - { name: "E4E Garage Admins", description: "E4E Garage (S3/object-store) administrators", members: ["E4E Admin"] }
   - { name: "e4e-project-lead", description: "E4E project leads" }
+  # External collaborators of E4E (partner orgs, not lab members). Umbrella group: each
+  # collaborator org is its own group nested in via `members:`. Grants nothing by itself
+  # yet (no consumer keys off this name) — it's the handle collaborator-wide grants hang off.
+  - { name: "e4e-collaborators", description: "External E4E collaborators (partner orgs); umbrella over per-collaborator groups nested via members", members: ["collab-coral-gardeners"] }
 
   # --- E4E project groups ---
   - { name: "FishSense", description: "E4E FishSense project" }
