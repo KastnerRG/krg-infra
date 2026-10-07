@@ -169,6 +169,13 @@ variable "tenants" {
     # (a "<name>-worker" client cert) and adds "<name>-worker" to the temporal-client
     # role's allowed CNs (pki.tf). Mirrors the mkTenant `temporal` request (ADR 0023).
     temporal = optional(bool, false)
+    # EXACT kv-v2 paths (under the `secret` mount, no `data/` prefix, no globs) this
+    # tenant may also READ outside its own prefix. For a credential whose source of
+    # truth lives elsewhere: an e4e-nas Garage key is minted by the deploy under
+    # secret/e4e-nas/garage-keys/<name> (deploy/deploy-ansible.sh, create-once) and
+    # IMPORTED into Garage from there, so a copy under tenants/<name>/ would go stale
+    # on a rotation. Reading the original keeps one source of truth.
+    extra_read_paths = optional(list(string), [])
   }))
 
   # fishsense — tenant #1 (docs/onboarding-fishsense.md §2a). kv_prefix mirrors
@@ -180,5 +187,24 @@ variable "tenants" {
       kv_prefix = "tenants/fishsense"
       temporal  = true
     }
+    # reference-manager — bib.krg.ucsd.edu (docs/onboarding-reference-manager.md §2a).
+    # Reads its own tenants/reference-manager/* (the .vm cert's AppRole, the app's
+    # generated DB/session secrets, its Authentik OIDC client) plus ONE foreign path:
+    # its Garage key, whose source of truth is the e4e-nas key store (see above).
+    # A NEW AppRole: CD never applies this target, so land it with a privileged
+    # `TOFU_TARGETS=openbao` apply before the slot is booted (the flip PR).
+    reference-manager = {
+      kv_prefix        = "tenants/reference-manager"
+      extra_read_paths = ["e4e-nas/garage-keys/reference-manager"]
+    }
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for t in var.tenants : [
+        for p in t.extra_read_paths : can(regex("^[a-z0-9][a-z0-9/_-]*[a-z0-9]$", p)) && !startswith(p, "data/") && !strcontains(p, "*") && !strcontains(p, "+")
+      ]
+    ]))
+    error_message = "Each tenants.*.extra_read_paths entry must be an exact kv-v2 path under the secret mount (no `data/` prefix, no `*`/`+` globs)."
   }
 }

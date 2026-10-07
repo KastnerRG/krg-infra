@@ -1,4 +1,8 @@
-{pkgs, ...}: let
+{
+  config,
+  pkgs,
+  ...
+}: let
   # Referencing the directory (not individual files) puts the entire
   # docker-compose/krg-prod/ subtree into a single Nix store path so that
   # relative symlinks and config bind-mounts below all point into the same
@@ -13,6 +17,7 @@ in {
   imports = [
     ../../profiles/services.nix
     ../../modules/services/vault-agent.nix
+    ../../modules/edge.nix # krg.edge — the *.krg zone edge's tenant routes (ADR 0017 §5)
     ./hardware-configuration.nix
   ];
 
@@ -236,6 +241,55 @@ in {
   # nixos-rebuild restarts krg-prod.service and `up -d` recreates Prometheus with the
   # fresh config; when it doesn't change, the unit is stable and nothing restarts.
   systemd.services.krg-prod.environment.PROM_CONFIG_DIR = "${promConfig}";
+
+  # The krg DNS-zone EDGE (ADR 0017 §5): krg-prod owns public ingress + LE issuance for
+  # `*.krg.ucsd.edu` and re-encrypts to the Incus tenants whose names are in this zone,
+  # as e4e-prod does for `*.e4e.ucsd.edu`. Same module, provider = "file": krg-prod's
+  # compose Traefik already owns :80/:443 and the LE account (resolver "letsencrypt"),
+  # so the routes are rendered to a file-provider config it mounts (compose.yml) rather
+  # than run as a second Traefik. Each route is a per-name admin act gated on its CNAME
+  # (ADR 0017 §6): an EMPTY route set issues nothing.
+  krg.edge = {
+    enable = true;
+    zone = "krg";
+    provider = "file";
+    certResolver = "letsencrypt";
+    rootCAs = ["/etc/traefik/edge/krg-pki-ca.pem"]; # copied in by krg-edge-routes (below)
+
+    # reference-manager (bib.krg.ucsd.edu) is NOT routed yet: its CNAME isn't
+    # published, and a route without one would only fail HTTP-01 against the shared
+    # ucsd.edu budget. docs/onboarding-reference-manager.md §2c has the route to add.
+    routes = {};
+  };
+
+  # Deliver the edge routes to the compose Traefik WITHOUT restarting the stack. The
+  # rendered file is COPIED (not store-path mounted) into a stable directory Traefik
+  # bind-mounts and watches (compose.yml `./traefik-edge`, `--providers.file.watch`),
+  # so a route change hot-reloads in Traefik. Mounting it by store path through the
+  # krg-prod unit's environment (the PROM_CONFIG_DIR trick) would change the unit on
+  # every route change, and its restart runs `docker compose down`: every lab service
+  # down and up for one route. Re-runs on any switch that changes the file (its script
+  # embeds the store paths). The fleet CA rides along for the re-encrypt transports
+  # (the container can't see the host trust store). Atomic: write a temp file, then
+  # rename, so Traefik never reads a half-written config.
+  systemd.services.krg-edge-routes = {
+    description = "Install the krg-zone edge routes for the compose Traefik";
+    wantedBy = ["krg-prod.service"];
+    before = ["krg-prod.service"];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = let
+      dir = "/var/lib/krg/krg-prod/traefik-edge";
+    in ''
+      install -d -m 0755 ${dir}
+      install -m 0644 ${../../keys/krg-pki-ca.pem} ${dir}/.krg-pki-ca.pem.tmp
+      mv -f ${dir}/.krg-pki-ca.pem.tmp ${dir}/krg-pki-ca.pem
+      install -m 0644 ${config.krg.edge.dynamicConfigFile} ${dir}/.edge.yml.tmp
+      mv -f ${dir}/.edge.yml.tmp ${dir}/edge.yml
+    '';
+  };
 
   # E4E Roster V3 — source lives at /var/lib/krg/e4e-roster (git-managed, not nix store).
   # Bootstrap: git clone https://github.com/UCSD-E4E/E4E-Roster-V3.git /var/lib/krg/e4e-roster

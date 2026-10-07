@@ -14,6 +14,20 @@
 # keys/admins.json / networks/trusted.json) could dedupe it later; kept as a tofu var
 # for now since the two layers consume it very differently.
 
+locals {
+  # Exact foreign paths a tenant may also read (var.tenants extra_read_paths), e.g. its
+  # own e4e-nas Garage key. Read-only, one exact path each, never a glob. Rendered as a
+  # suffix that is EMPTY for a tenant without any, so existing tenants' policy text
+  # (fishsense) stays byte-identical and plans no change.
+  tenant_extra_read_rules = {
+    for name, t in var.tenants : name => join("", [
+      # No indentation: the heredoc's `<<-` dedent applies to its literal lines only,
+      # so this lines up with them after the strip.
+      for p in t.extra_read_paths : "\n\npath \"secret/data/${p}\" {\n  capabilities = [\"read\"]\n}"
+    ])
+  }
+}
+
 resource "vault_policy" "tenant" {
   for_each = var.tenants
   name     = "tenant-${each.key}"
@@ -37,7 +51,7 @@ resource "vault_policy" "tenant" {
     }
     path "secret/metadata/${each.value.kv_prefix}/*" {
       capabilities = ["read", "list"]
-    }
+    }${local.tenant_extra_read_rules[each.key]}
   EOT
 }
 
