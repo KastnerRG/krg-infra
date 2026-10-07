@@ -177,7 +177,7 @@ buckets:
     cors:                         # optional; browser CORS policy for the bucket
       - allowed_origins: [https://app.heartex.com]
         allowed_methods: [GET, HEAD]        # subset of GET/HEAD/PUT/POST/DELETE/PATCH/OPTIONS
-        allowed_headers: ["*"]              # optional
+        allowed_headers: ["*"]              # optional; lowercased on apply (Garage is case-sensitive)
         expose_headers: [ETag]              # optional
         max_age_seconds: 3600               # optional
         # id: my-rule                       # optional

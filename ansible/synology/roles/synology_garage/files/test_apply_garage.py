@@ -1101,6 +1101,32 @@ def test_sync_buckets_cors_omits_unset_optionals(monkeypatch, capsys):
     assert sent["AllowedHeader"] == [] and sent["ExposeHeader"] == []
 
 
+def test_cors_allowed_headers_lowercased():
+    """Garage matches AllowedHeader case-sensitively against the browser's
+    always-lowercase Access-Control-Request-Headers, so a spec `Range` must be
+    sent as `range` (else every real preflight 403s)."""
+    rule = dict(_SPEC_CORS, allowed_headers=["Range", "Content-Type", "*"])
+    assert m._cors_api_rule(rule, "b")["AllowedHeader"] == ["range", "content-type", "*"]
+
+
+def test_sync_buckets_cors_mixed_case_headers_idempotent(monkeypatch, capsys):
+    """Spec `Range` vs Garage's readback `range` (what we sent) is not drift."""
+    monkeypatch.setenv("GARAGE_ADMIN_TOKEN", "tok" * 16)
+    live = dict(_API_CORS, AllowedHeader=["range"])
+    fake, calls = _fake_admin(
+        {
+            ("GET", "/v2/ListBuckets"): (200, [{"id": "b1", "globalAliases": ["label-studio"]}]),
+            ("GET", "/v2/GetBucketInfo"): (200, {"id": "b1", "corsRules": [live]}),
+        }
+    )
+    monkeypatch.setattr(m, "_admin_request", fake)
+
+    spec = dict(_SPEC_CORS, allowed_headers=["Range"])
+    rc = m.do_sync_buckets(_sync_buckets_args(buckets_json=_cors_buckets_json([spec])))
+    assert rc == 0
+    assert not any(c[1] == "/v2/UpdateBucket" for c in calls)
+
+
 @pytest.mark.parametrize(
     "rule,expected",
     [
