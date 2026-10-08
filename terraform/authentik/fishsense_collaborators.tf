@@ -1,8 +1,9 @@
 # FishSense multitenant collaborator access (ADR 0013 §4, "group/claim→tenant").
 #
 # FishSense onboards EXTERNAL partners through the shared collaborator enrollment
-# flow (collaborator_enrollment.tf). The invite an admin mints carries the tenant
-# and the partner org in its fixed_data:
+# flow (collaborator_enrollment.tf). The invite — a per-org reusable one declared in
+# collaborator_invites.tf, or a one-off minted in the UI — carries the tenant and the
+# partner org in its fixed_data:
 #
 #     fixed_data = { "attributes.tenant": "fishsense", "attributes.org": "<org-id>" }
 #

@@ -7,9 +7,9 @@
 #
 # Invite-only, no open self-signup: the invitation stage below sets
 # `continue_flow_without_invitation = false`, so hitting the flow URL without a
-# valid invitation token dead-ends. An admin mints each invite out of band (there
-# is NO `authentik_invitation` provider resource — invites are per-collaborator
-# and ephemeral, and would drop pre-fill data into tofu state), see README.
+# valid invitation token dead-ends. Per-org REUSABLE invites are declared as code
+# in collaborator_invites.tf; one-off per-person invites are minted in the UI (see
+# README).
 #
 # Stage chain (bindings below):
 #   invitation  -> validate the invite token (deny if absent)
