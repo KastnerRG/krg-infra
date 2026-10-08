@@ -33,6 +33,12 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
+    # Raw Authentik REST for objects goauthentik has no resource for (invitations,
+    # collaborator_invites.tf).
+    restapi = {
+      source  = "Mastercard/restapi"
+      version = "~> 3.0"
+    }
   }
   # vault provider v5 requires Terraform/OpenTofu >= 1.11.
   required_version = ">= 1.11.0"
@@ -53,3 +59,10 @@ provider "vault" {
 }
 
 provider "random" {}
+
+# Same Authentik API + token as the authentik provider above.
+provider "restapi" {
+  uri                  = "${var.authentik_url}/api/v3"
+  bearer_token         = var.authentik_token
+  write_returns_object = true
+}

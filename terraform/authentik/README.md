@@ -24,7 +24,7 @@ This target manages what lives *inside* Authentik:
   into OpenBao (`vault_secrets.tf`, `roster_secrets.tf`)
 - Custom **flows**: self-service password recovery (`recovery.tf`),
   passwordless **passkey** login (`passkey.tf`), and the external-collaborator
-  **invitation / enrollment** flow (`collaborator_enrollment.tf`,
+  **invitation / enrollment** flow (`collaborator_enrollment.tf`, `collaborator_invites.tf`,
   `fishsense_collaborators.tf`) — see below. Recovery + passkey are wired into
   the live login screen via `brand.tf` (the one fleet-wide stage it manages).
 - **SSO session lifetime** (`session.tf`): 12h base session + a "Remember me"
@@ -78,11 +78,43 @@ self-contained **enrollment** flow:
 - Invitees are `user_type = "external"` — the marker that keeps them out of the
   member/AD trust tier.
 
-### Minting an invite
+### Tenant invites (reusable, as code) — `collaborator_invites.tf`
 
-There is **no `authentik_invitation` provider resource** — invites are
-per-collaborator and ephemeral, and would leak their pre-fill data into tofu
-state. An admin mints each one out of band:
+For a **partner org** whose people should self-serve, declare the org once and
+hand them **one reusable link**. Add an entry to `local.collaborator_invites`:
+
+```hcl
+conservation-angler = {
+  tenant  = "fishsense"              # which app's collaborator gate it passes
+  expires = "2027-01-05T00:00:00Z"   # hard expiry (UTC) — bump to renew, same link
+}
+```
+
+On apply, CD mints a **multi-use** invitation (via the `Mastercard/restapi`
+provider; goauthentik has no invitation resource) whose `fixed_data` stamps every
+account made through it with `attributes.tenant` + `attributes.org = <map key>`,
+and writes the link to OpenBao:
+
+```bash
+bao kv get -field=url secret/krg-prod/authentik-managed/collaborator-invites/conservation-angler
+```
+
+- **Tamper-proof labels.** Hidden prompt fields are pinned server-side to the
+  invite's values; a link holder can't re-label themselves into another org.
+- **Bounded.** Hard expiry, enforced at lookup (an expired token is "invalid
+  invite"), plus email verification. An expired entry is a no-op on later
+  deploys; prune it at leisure.
+- **Revoke / rotate.** Delete the entry → the invite is destroyed (existing
+  accounts stay; deactivate them in Directory → Users). For a leaked link: delete,
+  apply, re-add (new token).
+- **Not the AD group.** Members join the tenant by *attribute*, never the
+  AD-synced app group (e.g. `FishSense`) — the LDAP sync owns that membership.
+
+### Minting a one-off invite (per person)
+
+For a single collaborator, a single-use invite is still minted in the UI (it is
+per-person and ephemeral — not worth a repo change):
+
 
 **Directory → Invitations → Create**, selecting flow `krg-collaborator-enrollment`,
 `Single use = on`, an expiry, and (for a tenant collaborator) **Custom attributes**:
