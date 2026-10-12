@@ -239,6 +239,17 @@ buckets:
         expose_headers: [Accept-Ranges, Content-Range, Content-Length, Content-Type, ETag]
         max_age_seconds: 3600
 
+  # FishSense Mobile sync — ONE bucket per FishSense tenant (fishsense-services
+  # PLAN.md §9.11; handoff docs/handoff/krg-infra/MOBILE_SYNC.md). The tenant's
+  # members' synced captures land under mobile/captures/<uuid>/. Per-tenant because
+  # Garage grants are per bucket: a tenant's key on its own bucket IS the isolation.
+  # NAMING IS LOAD-BEARING: terraform/secrets/fishsense_object_stores.tf takes every
+  # `fishsense-tenant-<slug>` key below and renders it into the API's stores_json
+  # (slug = the FishSense tenant slug), so adding a tenant = a bucket + key pair here.
+  # No lifecycle rule and no CORS: objects are append-only scientific record, the
+  # phone's presigned PUTs are native (not browser), and <img> GETs need no CORS.
+  - name: fishsense-tenant-lab # the E4E lab's own tenant
+  - name: fishsense-tenant-conservation-angler # first partner org (Authentik collaborator_invites.tf)
 # Access keys. Only the NAME + bucket grants are declared here (git is truth);
 # the actual {access_key_id, secret_access_key} is NOT in the spec. The control
 # node create-once-provisions each in OpenBao (secret/e4e-nas/garage-keys/<name>)
@@ -274,4 +285,15 @@ keys:
   - name: reference-manager
     buckets:
       - name: reference-manager
+        permissions: [read, write]
+  # Held by the fishsense-services API (via tenants/fishsense/generated/object_stores):
+  # presigns the phone's checksum-signed PUTs and the display GETs, HEADs on commit.
+  # Each scoped to its OWN tenant's bucket only — a lab key 403s on a partner bucket.
+  - name: fishsense-tenant-lab
+    buckets:
+      - name: fishsense-tenant-lab
+        permissions: [read, write]
+  - name: fishsense-tenant-conservation-angler
+    buckets:
+      - name: fishsense-tenant-conservation-angler
         permissions: [read, write]

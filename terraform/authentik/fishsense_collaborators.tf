@@ -59,6 +59,7 @@ locals {
   fishsense_collab_targets = {
     analytics = authentik_application.fishsense_analytics.uuid
     oauth     = authentik_application.fishsense_oauth.uuid
+    mobile    = authentik_application.fishsense_mobile.uuid # partners sign in on the phone too
   }
 }
 

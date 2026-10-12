@@ -177,6 +177,58 @@ resource "authentik_application" "fishsense_oauth" {
   group             = "E4E FishSense"
 }
 
+# ── FishSense Mobile (native iOS app) ─────────────────────────────────────────
+# Sign-in for FishSense Mobile sync (fishsense-services PLAN.md §9.6; its handoff
+# docs/handoff/krg-infra/MOBILE_SYNC.md §1). Its OWN application, because Authentik's
+# issuer is per application: the services API accepts this as a second issuer
+# (MultiIssuerValidator), checking iss = .../application/o/fishsense-mobile/ and
+# aud = client_id. A PUBLIC client + PKCE, like incus (applications_krg.tf) — a phone
+# can't keep a secret, so there is none to mint or render.
+#
+# sub_mode MUST stay equal to fishsense_oauth's ("hashed_user_id"): a person has to
+# carry the SAME `sub` on the web and on the phone, or their memberships and captures
+# split into two identities in FishSense's DB.
+#
+# + `org` (fishsense_collaborators.tf) so a partner's account joins its org's tenant on
+# the phone as on the web — it reaches the ACCESS token because Authentik builds that
+# from the ID token's claims (include_claims_in_id_token, left at its default true).
+# + `groups`, as on the web (lab members are keyed off their AD groups).
+# + `offline_access` with a 90-day refresh: divers capture offline for weeks and the
+# app syncs once back on Wi-Fi.
+resource "authentik_provider_oauth2" "fishsense_mobile" {
+  name               = "Provider for FishSense Mobile"
+  client_id          = "fishsense-mobile" # LOAD-BEARING: the `aud` the API checks
+  client_type        = "public"
+  authorization_flow = data.authentik_flow.default_authorization.id
+  invalidation_flow  = data.authentik_flow.default_invalidation.id
+  # goauthentik 2026.x defaults grant_types EMPTY on create (see incus) — set explicitly.
+  grant_types = ["authorization_code", "refresh_token"]
+  # The iOS bundle id as a custom scheme. Must match the app's AppAuth redirect EXACTLY
+  # (agreed with the fishsense-mobile team — its handoff docs/handoff/fishsense-mobile/SYNC.md).
+  allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "com.aqua3d.fishsense:/oauthredirect" }]
+  property_mappings = concat(local.std_scopes, [
+    authentik_property_mapping_provider_scope.groups.id,
+    authentik_property_mapping_provider_scope.fishsense_org.id,
+    data.authentik_property_mapping_provider_scope.offline_access.id,
+  ])
+  # RS256 — the API accepts RS256 only (same as fishsense_oauth, #491).
+  signing_key            = data.authentik_certificate_key_pair.default.id
+  sub_mode               = "hashed_user_id" # MUST match fishsense_oauth (see above)
+  access_token_validity  = "minutes=60"
+  refresh_token_validity = "days=90"
+}
+
+resource "authentik_application" "fishsense_mobile" {
+  name              = "FishSense Mobile"
+  slug              = "fishsense-mobile" # LOAD-BEARING: issuer = ${var.authentik_url}/application/o/fishsense-mobile/
+  protocol_provider = authentik_provider_oauth2.fishsense_mobile.id
+  # A native app has nothing to launch from the dashboard; blank://blank is Authentik's
+  # convention for hiding the tile from the user library (sign-in still works).
+  meta_launch_url = "blank://blank"
+  meta_icon       = "krg-icons/fishsense.svg"
+  group           = "E4E FishSense"
+}
+
 # ── KRG Roster ────────────────────────────────────────────────────────────────
 
 resource "authentik_provider_oauth2" "e4e_roster" {

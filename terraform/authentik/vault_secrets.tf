@@ -194,3 +194,16 @@ resource "vault_kv_secret_v2" "fishsense_oidc_analytics" {
     issuer_url    = "${var.authentik_url}/application/o/fishsense-analytics/"
   })
 }
+
+# FishSense Mobile — a PUBLIC client (applications_e4e.tf), so no client_secret. The
+# fishsense-services API reads issuer_url + client_id to accept the app's tokens as a
+# second issuer (soft-rendered to api-mobile.env by its deploy/incus/secrets.nix).
+# Under tenants/+/oidc like the web client, so no openbao apply.
+resource "vault_kv_secret_v2" "fishsense_oidc_mobile" {
+  mount = "secret"
+  name  = "tenants/fishsense/oidc/mobile"
+  data_json = jsonencode({
+    client_id  = authentik_provider_oauth2.fishsense_mobile.client_id
+    issuer_url = "${var.authentik_url}/application/o/${authentik_application.fishsense_mobile.slug}/"
+  })
+}
