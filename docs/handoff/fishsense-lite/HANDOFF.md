@@ -3,8 +3,11 @@
 > **Superseded for the interior on 2026-10-10/11** by UCSD-E4E/fishsense-services (v2), on the
 > same slot. See [`../fishsense-services/HANDOFF.md`](../fishsense-services/HANDOFF.md). The
 > boundary sections here still hold: ingress chain (§1), Temporal (§6), secret delivery (§9),
-> patching (§10). §7's forwardAuth outpost and data-worker app password are v1-only and are
-> retired after the rollback window.
+> patching (§10). §7's forwardAuth outpost, the `fishsense_orchestrator` proxy app, and the
+> data-worker app password were v1-only and are **RETIRED** (krg-infra #552, after the rollback
+> window closed): those resources, `fishsense_data_worker.tf`, and the KV leaves
+> `oidc/proxy-outpost-token` + `oidc/data-worker-apppw` no longer exist. §7's proxy/outpost/
+> data-worker text below is kept as history only — do not copy that pattern from here.
 
 fishsense is **tenant #1** on the KRG Incus platform ([ADR 0017](../../adr/0017-incus-nat-self-serve-platform.md) /
 [ADR 0020](../../adr/0020-tenant-deploy-contract-mktenant.md)). The **admin boundary is
@@ -165,6 +168,10 @@ Auth lives in **your inner Traefik** (per-path, under your control) — the edge
 
 ### Why a co-located outpost (and not the shared krg-prod one)
 
+> **RETIRED (krg-infra #552)** — the fishsense outpost, `fishsense_orchestrator` and
+> `oidc/proxy-outpost-token` were deleted; fishsense-services v2 validates bearer tokens in-app.
+> The cross-host reasoning still applies to any FUTURE tenant that needs a proxy provider.
+
 A proxy provider's sign-in/callback needs `/outpost.goauthentik.io/*` served **on the app's own
 domain** so the session cookie lands on `api.fishsense`. guacamole "just works" because its app and
 the outpost share krg-prod's Traefik. **You are cross-host** — an `api.fishsense.e4e.ucsd.edu`
@@ -244,6 +251,10 @@ and written to **`secret/tenants/fishsense/oidc/proxy-outpost-token`** — insid
 the outpost container yourself instead of sharing krg-prod's.
 
 ### Non-interactive service access to the API (the off-prem NRP data-worker)
+
+> **RETIRED (krg-infra #552)** — `fishsense_data_worker.tf` and `oidc/data-worker-apppw` were
+> deleted with v1's API proxy. `svc_fishsense` remains (NAS identity + the v2 web's own app
+> password, `terraform/authentik/fishsense_web_service_account.tf`).
 
 The proxy above is fine for a browser, but your **NRP/Nautilus data-worker** has no browser to complete
 the OAuth flow — its SDK talks to the public API with **HTTP Basic**. A proxy provider *does* accept

@@ -211,6 +211,14 @@ The owner then runs §3 steps 4b to 7. From here the owner's own `Deploy` workfl
 
 ### Rollback (within 48 h of reopening, cutover.md §6)
 
+> **⚠ CLOSED — no longer works as written.** The rollback window ended and krg-infra #552
+> retired v1's Authentik side: the `fishsense_orchestrator` proxy app, the fishsense
+> forwardAuth outpost, and `oidc/proxy-outpost-token` are deleted. v1's vault-agent hard-renders
+> that token path, so a v1 switch now fails closed on `no secret exists`, and even with a render
+> the v1 API's forwardAuth gate has no outpost to authenticate against. Rolling back to v1 would
+> first need #552 reverted (and applied) to restore those resources. The steps below are kept as
+> the record of what the window allowed.
+
 1. The owner pauses and deletes v2's schedules.
 2. Admin:
    ```bash
@@ -239,9 +247,16 @@ By hand / other repos:
   `gh workflow enable update-flake.yml -R UCSD-E4E/fishsense-services`.
   Skip it and the slot freezes on old packages (docs/tenant-updates.md).
 - Keep `svc_fishsense` itself: it's the NAS identity, and since #550 it also holds the web's own app password (`fishsense-web-service-account-apppw`). #552 removes only the data-worker token.
+- Admin: **purge the two leaves #552 destroyed.** Tofu's destroy of a `vault_kv_secret_v2` only
+  soft-deletes the latest version — metadata and earlier versions stay, `bao kv undelete` restores
+  them, and the tenant AppRole can still read `?version=N`. The Authentik tokens behind them are
+  revoked, so the values are dead, but remove the orphans (privileged token):
+  `bao kv metadata delete secret/tenants/fishsense/oidc/proxy-outpost-token` and
+  `bao kv metadata delete secret/tenants/fishsense/oidc/data-worker-apppw`.
+  (`terraform/authentik/outpost_tokens.tf` now documents the retirement step that avoids this next time.)
 
 ## 6. Platform follow-ups (not cutover-blocking)
 
 - **Non-root readers of platform renders (B1, done properly):** let a tenant name the gid its Temporal consumers run as (e.g. `mkTenant { temporal.readerGid = 10001; }`). `nixosModules.tenant` would then deliver `tls.key` as `0640 root:<gid>`. The OpenBao Agent docs don't expose a template `group` setting, so this is likely a post-render `chgrp`, ordered before the reload hook. It's an additive contract change, so it needs a tenant pin bump. Too late for this weekend.
 - `deploy/mint-runner-token.sh` points to `docs/tenant-runner-bringup.md` §4, which doesn't exist.
-- Rotation of the non-expiring app passwords (the web's token on `svc_fishsense`, and the outpost/data-worker ones until retired).
+- Rotation of the non-expiring app password on `svc_fishsense` (the web's token, `fishsense-web-service-account-apppw`). The outpost/data-worker tokens were retired in #552.

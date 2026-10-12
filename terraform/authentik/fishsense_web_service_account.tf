@@ -26,10 +26,10 @@ data "authentik_user" "svc_fishsense" {
   username = "svc_fishsense" # sAMAccountName as synced by the samba_ad source
 }
 
-# Its own token (not the data-worker's): rotated / revoked independently, and the
-# data-worker one was retired with v1's API proxy. Non-expiring, matching the
-# data-worker / outpost-token pattern (rotation is a follow-up); retrieve_key reads it
-# back into (encrypted) state so it can be written to OpenBao.
+# Its own token, rotated / revoked independently (v1's data-worker token on this account
+# was retired in #552). Non-expiring, like the outpost tokens (outpost_tokens.tf) — rotation
+# is a tracked follow-up (fishsense-services HANDOFF §6); retrieve_key reads it back into
+# (encrypted) state so it can be written to OpenBao.
 resource "authentik_token" "fishsense_web_service_account" {
   identifier   = "fishsense-web-service-account-apppw"
   user         = data.authentik_user.svc_fishsense.id
