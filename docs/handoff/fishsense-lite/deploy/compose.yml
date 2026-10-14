@@ -44,6 +44,7 @@ services:
       AUTHENTIK_HOST: https://auth.krg.ucsd.edu
       AUTHENTIK_INSECURE: "false"
     env_file:
+      # RETIRED (krg-infra #552): this outpost and its token path no longer exist — v1 history only.
       # AUTHENTIK_TOKEN=… — vault-agent render of secret/tenants/fishsense/oidc/proxy-outpost-token
       # (errorOnMissingKey=false so an unminted token can't brick the stack — HANDOFF §7).
       - /run/tenant/outpost/token.env

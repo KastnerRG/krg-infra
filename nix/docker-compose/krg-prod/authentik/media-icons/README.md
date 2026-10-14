@@ -60,8 +60,8 @@ that reads poorly.
 ² `fishsense.svg` is the FishSense project's own logo (the `fishsense-lite-web`
 public asset, github.com/UCSD-E4E/fishsense-lite), not dashboard-icons — a
 first-party mark for a first-party app. It's a wide wordmark (207×123), so it
-scales down inside the square tile. Shared by the FishSense site and the
-FishSense Orchestrator (no orchestrator-specific logo exists).
+scales down inside the square tile. Used by the FishSense site tile (the
+FishSense Orchestrator tile that also used it was retired in #552).
 
 ³ `label-studio.svg` is Label Studio's official "Heidi the opossum" mascot mark
 (`images/heartex_icon_opossum_green.svg` from github.com/HumanSignal/label-studio,
