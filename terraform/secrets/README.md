@@ -36,7 +36,11 @@ secret_key + utils_secret + oidc), and the Incus tenant **fishsense** (its five 
 passwords, `tenants/fishsense/generated/services_db` — read by the TENANT's fail-closed
 in-VM vault-agent; written under krg-deploy's `tenants/+/generated` glob), and the
 Incus tenant **reference-manager** (`tenants/reference-manager/generated/app`: its
-Postgres password + API session secret, same shape and glob). The rest (`grafana-oidc`, roster, `guacamole-oidc`,
+Postgres password + API session secret, same shape and glob). One DERIVED (not generated) secret also lives here for its timing: fishsense's
+`tenants/fishsense/generated/object_stores` (`fishsense_object_stores.tf`) — the per-tenant
+Garage credentials the control node provisions in Phase 1, re-assembled into the one
+`stores_json` the tenant API reads; it holds no value of its own, so the generate-once
+invariant below does not bind it (recreating it re-derives the same JSON). The rest (`grafana-oidc`, roster, `guacamole-oidc`,
 the e4e-nas pair, `proxmox-ldap-bind`) are consumed at tofu-time or by graceful
 ansible — they can't fail-close the stack, so they stay in `terraform/authentik`.
 **Rule:** when a secret becomes a vault-agent (P2) consumer, move it here.
