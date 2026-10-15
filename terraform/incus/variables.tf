@@ -165,15 +165,15 @@ variable "tenants" {
     # The site is built on GitHub-hosted CI and served by Jacobs web hosting
     # (mywebsite.eng.ucsd.edu), whose SSH is campus-only; this slot is the campus-side
     # hop that rsyncs the built _site/ there (replaces the retired deploy@kastner-ml).
-    # INERT: image = "" (boundary only) until the runbook's gates pass. The flip PR
-    # sets image = "krg-golden".
+    # Booted from the golden template once the runbook's gates passed (privileged
+    # openbao apply, public key on mywebsite, interior in website2.0, runner App).
     e4e-website = {
       zone      = "e4e"             # informational only; never routed (no edge_port)
       cpu       = 2                 # rsync + the slot's own nixos-rebuild
       memory    = "4GiB"            # nix eval on converge dominates
       disk      = "20GiB"           # nix store + one staged _site/
       isolation = "virtual-machine" # repo workflows run here = developed code (ADR 0017 §4)
-      image     = ""                # INERT; flip to "krg-golden" (runbook §3)
+      image     = "krg-golden"      # boot the slot from the hardened template
       repo      = "UCSD-E4E/website2.0"
     }
   }
