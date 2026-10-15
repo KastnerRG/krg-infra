@@ -93,6 +93,9 @@ in {
       glib
       gtk2
       gtk3
+
+      # Claude said Vivado/Vitis need these
+      pixman libpng libunwind elfutils
     ];
     environment.interactiveShellInit = ''
       # Intercept the 'vivado' command to inject zlib safely for ANY installed version
