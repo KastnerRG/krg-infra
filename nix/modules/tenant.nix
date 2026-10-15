@@ -79,7 +79,19 @@ in {
           flakeUrl = mkDefault "github:${t.interior.repo}";
         };
       krg.adminAccount = mkDefault "krg-admin"; # admins own boundary + break-glass recovery
-      krg.docker.enable = true;
+      # Docker only runs the compose interior; a compose-less tenant (e.g. e4e-website, a
+      # runner-only publish slot) carries no daemon and no Docker closure.
+      krg.docker.enable = hasCompose;
+
+      # The in-instance vault-agent authenticates as the tenant's AppRole (terraform/openbao
+      # tenants.tf; secret-zero pushed by krg-deploy, ADR 0021 §3). It runs whenever ANY
+      # render is declared: the compose block's <tenant>.vm cert below, or a tenant's own
+      # renders (a compose-less tenant's interior can still need a secret, e.g. e4e-website's
+      # SSH key). Gating it on compose alone silently dropped such renders.
+      krg.vaultAgent = {
+        enable = config.krg.vaultAgent.renders != [];
+        roleName = "tenant-${t.name}"; # the tofu AppRole (terraform/openbao tenants.tf)
+      };
 
       networking.hostName = mkDefault t.name;
       networking.useDHCP = mkDefault true; # Incus NAT DHCP
@@ -171,10 +183,9 @@ in {
       # Traefik's file provider watches these paths and hot-reloads on rotation, so no
       # reloadCommand is needed. Secret-zero (role-id + secret-id for tenant-<name>) is
       # pushed into the instance by krg-deploy at provision (ADR 0021 §3) — until that
-      # lands, stage it manually; the agent fails closed without it.
+      # lands, stage it manually; the agent fails closed without it. (enable + roleName
+      # are set in the baseline block above: these renders switch the agent on.)
       krg.vaultAgent = {
-        enable = true;
-        roleName = "tenant-${t.name}"; # the tofu AppRole (terraform/openbao tenants.tf)
         renders =
           [
             {

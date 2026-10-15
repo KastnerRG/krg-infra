@@ -38,6 +38,7 @@ zone edge re-encrypts to. Boundary: `terraform/incus` `var.tenants`; secrets:
 |---|---|---|---|---|---|---|
 | **fishsense** | `fishsense.e4e.ucsd.edu` (+ `api.`, `analytics.`) | e4e-prod | 10.100.0.10 | 30443 | UCSD-E4E/fishsense-services | live |
 | **reference-manager** | `bib.krg.ucsd.edu` | krg-prod | 10.100.0.11 | 30444 | UCSD-E4E/e4e-reference-manager | live (2026-10-07) — [onboarding](onboarding-reference-manager.md) |
+| **e4e-website** | — (publishes `e4e.ucsd.edu` to Jacobs hosting; no edge) | — | DHCP | — | UCSD-E4E/website2.0 | inert (boundary only) — [onboarding](onboarding-e4e-website.md) |
 
 Other fixed addresses:
 
