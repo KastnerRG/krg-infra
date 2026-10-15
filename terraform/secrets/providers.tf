@@ -24,6 +24,12 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
+    # SSH keypairs (tls_private_key ED25519), e.g. e4e_website.tf. A local-only
+    # provider: no API, no credentials.
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
   # vault provider v5 requires Terraform/OpenTofu >= 1.11.
   required_version = ">= 1.11.0"
@@ -37,3 +43,5 @@ provider "vault" {
 }
 
 provider "random" {}
+
+provider "tls" {}

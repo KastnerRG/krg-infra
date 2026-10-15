@@ -176,10 +176,47 @@
           && nixpkgs.lib.hasInfix "--force-recreate" sys.config.systemd.services.example.serviceConfig.ExecStart
           # the nightly auto-upgrade targets the TENANT's own flake, not krg-infra's (else it
           # fails silently every night — no system patches). #<name> = the tenant's own config.
-          && sys.config.system.autoUpgrade.flake == "github:UCSD-E4E/example#example";
+          && sys.config.system.autoUpgrade.flake == "github:UCSD-E4E/example#example"
+          && sys.config.krg.docker.enable;
+
+        # A COMPOSE-LESS tenant (runner-only, e.g. e4e-website): no Docker, and its own
+        # vault-agent renders still switch the agent on (they were silently dropped while the
+        # agent was gated on compose); with no renders, no agent (it would only fail closed).
+        bareSys = renders:
+          nixpkgs.lib.nixosSystem {
+            inherit system;
+            specialArgs = {inherit inputs;};
+            modules = [
+              self.nixosModules.tenant
+              {
+                krg.tenant = self.lib.mkTenant {
+                  name = "bare";
+                  zone = "e4e";
+                  hostname = "bare.e4e.ucsd.edu";
+                  repo = "UCSD-E4E/bare";
+                };
+                krg.vaultAgent.renders = renders;
+              }
+            ];
+          };
+        withRender = bareSys [
+          {
+            destination = "/run/tenant/secrets/x";
+            contents = "x";
+          }
+        ];
+        noRender = bareSys [];
+        bareOk =
+          !withRender.config.krg.docker.enable
+          && withRender.config.krg.vaultAgent.enable
+          && withRender.config.krg.vaultAgent.roleName == "tenant-bare"
+          && builtins.isString "${withRender.config.systemd.services.openbao-agent.serviceConfig.ExecStart}"
+          && !(withRender.config.krg.composeStacks ? "bare")
+          && !noRender.config.krg.vaultAgent.enable;
       in
         assert shapeOk;
         assert moduleOk;
+        assert bareOk;
           pkgs.runCommand "mktenant-contract-ok" {} "touch $out";
     };
 

@@ -159,6 +159,23 @@ variable "tenants" {
       edge_port = 30444             # krg-nat port the krg edge dials → network forward → nat_ip:443
       repo      = "UCSD-E4E/e4e-reference-manager"
     }
+
+    # e4e-website — the E4E website's PUBLISH agent for UCSD-E4E/website2.0
+    # (docs/onboarding-e4e-website.md). Runner-only: no edge, so no nat_ip/edge_port.
+    # The site is built on GitHub-hosted CI and served by Jacobs web hosting
+    # (mywebsite.eng.ucsd.edu), whose SSH is campus-only; this slot is the campus-side
+    # hop that rsyncs the built _site/ there (replaces the retired deploy@kastner-ml).
+    # INERT: image = "" (boundary only) until the runbook's gates pass. The flip PR
+    # sets image = "krg-golden".
+    e4e-website = {
+      zone      = "e4e"             # informational only; never routed (no edge_port)
+      cpu       = 2                 # rsync + the slot's own nixos-rebuild
+      memory    = "4GiB"            # nix eval on converge dominates
+      disk      = "20GiB"           # nix store + one staged _site/
+      isolation = "virtual-machine" # repo workflows run here = developed code (ADR 0017 §4)
+      image     = ""                # INERT; flip to "krg-golden" (runbook §3)
+      repo      = "UCSD-E4E/website2.0"
+    }
   }
 
   validation {

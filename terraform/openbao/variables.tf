@@ -197,6 +197,13 @@ variable "tenants" {
       kv_prefix        = "tenants/reference-manager"
       extra_read_paths = ["e4e-nas/garage-keys/reference-manager"]
     }
+    # e4e-website — the E4E website publish agent (docs/onboarding-e4e-website.md).
+    # Reads only tenants/e4e-website/*: its .vm cert and the generated mywebsite SSH key
+    # (terraform/secrets/e4e_website.tf). A NEW AppRole: land it with a privileged
+    # `TOFU_TARGETS=openbao` apply before the slot is booted (the flip PR).
+    e4e-website = {
+      kv_prefix = "tenants/e4e-website"
+    }
   }
 
   validation {
