@@ -50,6 +50,12 @@ locals {
       tenant  = "fishsense"
       expires = "2027-01-05T00:00:00Z"
     }
+    # REEF (Reef Environmental Education Foundation, reef.org) — FishSense
+    # partner org; link issued 2026-10-19 for 90 days.
+    reef = {
+      tenant  = "fishsense"
+      expires = "2027-01-17T00:00:00Z"
+    }
   }
 
   active_collaborator_invites = {

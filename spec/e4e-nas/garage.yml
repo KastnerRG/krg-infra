@@ -250,6 +250,7 @@ buckets:
   # phone's presigned PUTs are native (not browser), and <img> GETs need no CORS.
   - name: fishsense-tenant-lab # the E4E lab's own tenant
   - name: fishsense-tenant-conservation-angler # first partner org (Authentik collaborator_invites.tf)
+  - name: fishsense-tenant-reef # REEF, reef.org (Authentik collaborator_invites.tf)
 # Access keys. Only the NAME + bucket grants are declared here (git is truth);
 # the actual {access_key_id, secret_access_key} is NOT in the spec. The control
 # node create-once-provisions each in OpenBao (secret/e4e-nas/garage-keys/<name>)
@@ -296,4 +297,8 @@ keys:
   - name: fishsense-tenant-conservation-angler
     buckets:
       - name: fishsense-tenant-conservation-angler
+        permissions: [read, write]
+  - name: fishsense-tenant-reef
+    buckets:
+      - name: fishsense-tenant-reef
         permissions: [read, write]
