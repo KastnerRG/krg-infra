@@ -25,7 +25,7 @@ This target manages what lives *inside* Authentik:
 - Custom **flows**: self-service password recovery (`recovery.tf`),
   passwordless **passkey** login (`passkey.tf`), and the external-collaborator
   **invitation / enrollment** flow (`collaborator_enrollment.tf`, `collaborator_invites.tf`,
-  `fishsense_collaborators.tf`) — see below. Recovery + passkey are wired into
+  `collaborator_tenants.tf`) — see below. Recovery + passkey are wired into
   the live login screen via `brand.tf` (the one fleet-wide stage it manages).
 - **SSO session lifetime** (`session.tf`): 12h base session + a "Remember me"
   checkbox extending opted-in sessions to ~30 days. This is the real "stay logged
@@ -129,25 +129,40 @@ The `attributes.*` keys must match the hidden prompt fields' `field_key`s — th
 prefix is what makes `user_write` persist them onto `user.attributes`. A generic
 (non-tenant) collaborator just omits the custom attributes.
 
-### FishSense multitenancy — `fishsense_collaborators.tf`
+### Collaborator tenants — `collaborator_tenants.tf`
 
-FishSense is multitenant: many external partner orgs, isolated **inside
-FishSense's own DB keyed on the stable OIDC `sub`** (its providers use
-`sub_mode = "hashed_user_id"`). Authentik only authenticates the partner and tells
-FishSense which org they are:
+**This file is the whole answer to "what can an external collaborator reach?"**
+Audit or revoke partner access here. `local.collaborator_tenants` maps each tenant
+(the invite's `tenant`) to its apps:
 
-- The invite's `attributes.org` / `attributes.tenant` land on the user.
-- The `org` OIDC scope mapping emits them as claims (FishSense must **request the
-  `org` scope** — same request-to-receive contract as the `groups` scope).
-- Access to the FishSense apps is an **expression policy** (`tenant ==
-  "fishsense"`) bound alongside the existing `FishSense` AD-group gate. Because
-  the apps' `policy_engine_mode` is `any` (OR), access = FishSense **members** OR
-  FishSense **collaborators**.
+| tenant | apps | partner orgs (invites) |
+|--------|------|------------------------|
+| `fishsense` | FishSense web (`oauth`), mobile, Superset (`analytics`) | `conservation-angler`, `reef` |
+| `frog-id` | Label Studio (as the synthetic `Groups` value `Frog ID Label Studio Collaborators`) | `australian-museum` |
 
-This is deliberately **attribute/claim-driven, not per-org Authentik groups** —
-it scales to arbitrarily many partner orgs with no per-org object in this repo,
-and FishSense is authoritative on the sub→org mapping regardless. Per-org isolation
-is FishSense's job; Authentik is the IdP.
+- **Grant.** Each tenant gets an expression policy (`tenant == "<key>"`, the exact
+  tenant only) bound to each of its apps, alongside the app's AD-group gate in
+  `app_access.tf`. Apps use `policy_engine_mode = any` (OR), so access = AD
+  **members** OR that tenant's **collaborators**.
+- **Deny everything else.** Every app with no other gate is in
+  `local.members_only_apps`, bound to a policy that rejects `external` users.
+  Without it Authentik lets *any* authenticated user, collaborators included, into
+  an unbound app. **A new application must go in `app_access.tf`, a tenant's
+  `apps`, or `members_only_apps`.**
+- **OIDC apps** (FishSense) learn the org from the `org` scope (`{tenant, org}`
+  claims; the client must **request** `org`) and isolate per-org in their own DB,
+  keyed on the stable `sub` (`sub_mode = "hashed_user_id"`).
+- **Label Studio** (SAML) learns it from the tenant's `label_studio_group`, which is
+  emitted in the `Groups` attribute for that tenant's `external` users only. These
+  names are reserved: `label_studio.tf` strips them from the AD side, so never
+  create an AD group with one.
+
+This is deliberately **attribute/claim-driven, not per-org Authentik groups**. It
+scales to many partner orgs with no per-org object in this repo. Per-org isolation
+is the app's job; Authentik is the IdP.
+
+**Adding a tenant:** add it to `local.collaborator_tenants` (its apps, plus a
+`label_studio_group` if it labels), then add its orgs to `collaborator_invites.tf`.
 
 ## Prerequisites before this can plan
 

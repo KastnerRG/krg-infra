@@ -76,7 +76,7 @@ Already confirmed (no action):
 | `refresh_token` grant | `grant_types` not set in tofu | explicit `authorization_code, refresh_token, client_credentials` |
 | `offline_access` | not mapped | + managed `scope-offline_access` |
 | `groups` | mapped (#521) | — |
-| `org` | **exists**: `fishsense_org` in `fishsense_collaborators.tf` emits `{tenant, org}` from user attributes (set by the collaborator enrollment flow; null for lab AD members, whom v2 treats as lab) and is already mapped on the web client | — |
+| `org` | **exists**: `fishsense_org` in `collaborator_tenants.tf` emits `{tenant, org}` from user attributes (set by the collaborator enrollment flow; null for lab AD members, whom v2 treats as lab) and is already mapped on the web client | — |
 | Redirect URI | `https://fishsense.e4e.ucsd.edu/api/auth/callback/authentik` | unchanged |
 | **Signing key** (not in the ask) | **none**, so HS256 with an empty JWKS. v2's API accepts **RS256 only** (`auth.py` `ALGORITHMS`), so every API call would 401. | `signing_key` = default cert |
 | Web service account | none | reuses **`svc_fishsense`** (the existing KRG.LOCAL service account, already in `FishSense`, so it passes the web app's binding): a new app-password token on it, written to `secret/tenants/fishsense/oidc/web-service-account {username, password}`. Its groups and NAS access are unchanged. The web gets an Authentik app password, not the AD password. |

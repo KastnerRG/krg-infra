@@ -6,8 +6,9 @@
 # bound to the collaborator enrollment flow (collaborator_enrollment.tf), whose
 # fixed_data stamps every account created through it with
 #
-#     attributes.tenant = <app tenant>   (e.g. "fishsense" — the access gate,
-#                                          fishsense_collaborators.tf)
+#     attributes.tenant = <app tenant>   (a key of local.collaborator_tenants, e.g.
+#                                          "fishsense"/"frog-id" — the access gate,
+#                                          collaborator_tenants.tf)
 #     attributes.org    = <map key>      (the partner org — the `org` OIDC claim
 #                                          the app keys its own isolation on)
 #
@@ -57,7 +58,7 @@ locals {
       expires = "2027-01-17T00:00:00Z"
     }
     # Australian Museum — Frog ID partner org, labels in Label Studio
-    # (frog_id_collaborators.tf); link issued 2026-10-21 for 90 days.
+    # (collaborator_tenants.tf); link issued 2026-10-21 for 90 days.
     australian-museum = {
       tenant  = "frog-id"
       expires = "2027-01-19T00:00:00Z"

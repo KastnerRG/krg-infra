@@ -98,7 +98,7 @@ resource "authentik_provider_oauth2" "fishsense_analytics" {
   # re-synced every login). Reuse the shared `groups` scope (defined above for
   # garage_ui) so userinfo emits the user's Authentik group names (AD-synced) —
   # the fishsense-superset-{admin,editor,viewer} groups gate the Superset roles.
-  # + the `org` scope (fishsense_collaborators.tf) so a multitenant external
+  # + the `org` scope (collaborator_tenants.tf) so a multitenant external
   # collaborator's tenant/org reaches Superset/FishSense on the token.
   property_mappings = concat(local.std_scopes, [
     authentik_property_mapping_provider_scope.groups.id,
@@ -139,7 +139,7 @@ resource "authentik_provider_oauth2" "fishsense_oauth" {
   # "fishsense-portal-admin" (spec/krg-ad/groups.yml) rather than everyone with a
   # realm account. Request-to-receive, same contract as Superset — the app must ask
   # for scope `groups` or the claim is not emitted.
-  # + the `org` scope (fishsense_collaborators.tf) so a multitenant external
+  # + the `org` scope (collaborator_tenants.tf) so a multitenant external
   # collaborator's tenant/org reaches the FishSense site on the token. Note an
   # external collaborator holds NO AD groups, so `groups` is [] for them and the
   # portal gate denies them — deliberate (the portal is a lab-team surface).
@@ -189,7 +189,7 @@ resource "authentik_application" "fishsense_oauth" {
 # carry the SAME `sub` on the web and on the phone, or their memberships and captures
 # split into two identities in FishSense's DB.
 #
-# + `org` (fishsense_collaborators.tf) so a partner's account joins its org's tenant on
+# + `org` (collaborator_tenants.tf) so a partner's account joins its org's tenant on
 # the phone as on the web — it reaches the ACCESS token because Authentik builds that
 # from the ID token's claims (include_claims_in_id_token, left at its default true).
 # + `groups`, as on the web (lab members are keyed off their AD groups).
