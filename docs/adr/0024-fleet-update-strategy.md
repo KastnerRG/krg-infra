@@ -79,7 +79,7 @@ Alternatives considered for the kernel and rejected as the primary mechanism:
 |---|---|
 | NixOS userspace | Unchanged (nightly) |
 | NixOS release | Upgrade within ~30 days of each release, always before the previous one's EOL. A scheduled workflow detects the new `nixos-YY.MM` branch and opens the bump PR automatically. It goes through PR CI with a full build of every host, never through the nightly job, and merges on an approval click (a release upgrade is a migrating upgrade) |
-| Kernels (NixOS) | Monthly window (§4 P4), rebooting only hosts whose running kernel is stale. waiter and kastner-ml use the Slack delay ladder (§3) |
+| Kernels (NixOS) | Monthly window (§4 P4), rebooting only hosts whose running kernel is stale. waiter and kastner-ml reboot at 21:00 and offer self-service Slack delays (§3) |
 | Container images | Renovate + digest pins (§4 P2); patch/digest bumps auto-merge and apply via handoff (§4 P1) |
 | fabricant | Proxmox packages patched monthly by a scheduled Ansible run in the window (an explicit `dist-upgrade` with checks, not `unattended-upgrades`, which Proxmox advises against); quarterly scheduled reboot. Dissolves at the Incus pivot (ADR 0019) |
 | Incus tenants | Renovate on tenant repos bumps the krg-infra pin |
@@ -104,26 +104,46 @@ Alternatives considered for the kernel and rejected as the primary mechanism:
   rebooted in the window, announced in Slack beforehand, no delays.
 - **fabricant**: quarterly, in the window, announced, all guests down. Unavoidable on a
   single-node hypervisor.
-- **Research compute (waiter, kastner-ml): the Slack delay ladder.** Running jobs belong to
-  people, so these hosts ask first:
+- **Research compute (waiter, kastner-ml): self-service delays from Slack.** The goal is to let
+  a researcher say *"oops, I have something running, let it finish first"* without asking an
+  admin, while asking for no more delay than the job actually needs. A long default delay would
+  just invite more long jobs to be started. So every announcement offers a menu of delays, and
+  the shortest one that covers the job is the natural pick:
   1. When a host's kernel is stale, the scheduler posts **one week before** its window to that
      host's announcement channel, in the host's own Slack workspace (§4 P0): *"waiter will
-     reboot at \<time\> for kernel updates. React ⏳ to delay by 14 days."*
-  2. **Any reaction on the current announcement** (from anyone in the channel) delays the reboot
-     by the next step on the ladder. Further reactions on that same message change nothing. The
-     scheduler then posts a new announcement with the new time and the next step's length, and
-     the next delay is a reaction on that one.
-  3. Ladder, counted per pending reboot: **14 days → 7 days → 3.5 days → 2 days → 1 day, then
-     1 day each time thereafter.** Each delay pushes the *current* scheduled time out by that
-     step.
-  4. **A reboot can be delayed indefinitely, one day at a time, but never cancelled.** There is
-     no cancel action. If someone reboots the host by hand onto the current kernel in the
+     reboot at \<time\> for kernel updates. If you need it to wait, react with how long."* The
+     message lists one emoji per available delay, and the bot pre-adds each one as a reaction
+     so people only have to click. The bot's own reactions don't count.
+  2. **Delay menu.** The first announcement offers **1 month, 14 days, 7 days, 4 days, 2 days
+     and 1 day**. Each delay removes the longest remaining option, regardless of which option
+     was picked: after the first delay, **14d / 7d / 4d / 2d / 1d**; after the second,
+     **7d / 4d / 2d / 1d**; and so on down to **1d** only, which stays available indefinitely.
+  3. **Delays are evaluated only at the moment the host would otherwise reboot.** Until then,
+     reactions are just requests and can be added or removed freely (react "2 days", then remove
+     it if the job finishes early). At the scheduled time:
+     - **No reactions** (other than the bot's): the host reboots.
+     - **Otherwise the largest delay anyone selected wins.** The scheduler pushes the reboot out
+       by that amount and posts a new announcement with the new time and the next, shorter
+       menu.
+  4. **Reboots always happen at 21:00 local**, in the evening, so a day's work can finish and
+     an overnight job can start after the reboot. The first reboot is on the monthly window's
+     day. Every computed time rounds **up** to the next 21:00, never earlier. The 1-month option moves
+     the reboot to the same time in the following month's window. A pending reboot keeps its
+     place in the menu sequence when that next window arrives; it doesn't start over.
+  5. **A reboot can be delayed indefinitely, one day at a time, but never cancelled.** There is
+     no cancel option. If someone reboots the host by hand onto the current kernel in the
      meantime, the pending reboot is complete.
-  5. Reminders go in the announcement's thread 24 h and 1 h before the reboot. The result
-     (rebooted / health check passed / failed) is posted after.
-  6. The ladder resets after each successful reboot.
-  7. Emergency reboots (§2) post the same announcement with "delays not accepted", ignore
-     reactions, and reboot **the same day** (§4 P4).
+  6. **Day-of reminder:** on the day of the reboot (morning, e.g. 09:00), if the last message
+     about this reboot was posted **more than a day ago**, the scheduler posts a reminder in the
+     announcement's thread. The reminder shows which delays are currently selected, and the
+     menu stays open until 21:00. After a 1-day delay, the announcement itself went out the
+     evening before, so no day-of reminder is sent. **Every reboot also gets a reminder 1 hour
+     before** (20:00), with the currently selected delays. The result (rebooted / health check
+     passed / failed) is posted after.
+  7. The menu resets to the full set after each successful reboot.
+  8. **Emergency reboots (§2) don't follow any of this.** They aren't tied to the window's time
+     of day: they post an announcement with "delays not accepted", offer no menu, and reboot
+     **the same day** after the minimum notice (§4 P4).
 
   Users should still checkpoint long jobs; that protects against OOM kills and hardware faults
   too, not just reboots.
@@ -244,24 +264,26 @@ Alternatives considered for the kernel and rejected as the primary mechanism:
   in P1's timeframe, since it's what makes "unseal, then everything recovers by itself" true.
 - Check seal packaging before bumping OpenBao: 2.7 moves several built-in mechanisms to plugins.
 
-**P4: Reboot scheduler (automatic windows + the Slack delay ladder).**
+**P4: Reboot scheduler (automatic windows + self-service Slack delays).**
 
 - A NixOS module on **krg-deploy** (the control node), e.g. `krg.rebootScheduler`: a Python
   service on a ~10-minute systemd timer, in the same researcher-maintainable style as
   `modules/scratch/*.py`. It **polls Slack** (`reactions.get`) instead of receiving Slack events,
   so there's no inbound endpoint to expose or secure.
-- State per host (scheduled time, ladder step, current announcement `ts`, emergency flag) is a
+- State per host (scheduled time, number of delays so far, current announcement `ts`, time of
+  the last message, emergency flag) is a
   JSON file under `/var/lib/krg-reboot-scheduler/` on krg-deploy's persistent storage. Slack
   is the UI only; the scheduler never derives state from message history.
 - Each tick:
   1. Read which hosts are stale (the P0 kernel-staleness metric, from Prometheus).
   2. Schedule stale hosts for their next window and post announcements (§3) **one week ahead**,
      to the host's workspace and channel per the host→org map (P0).
-  3. Apply at most one delay per announcement when it has a reaction; post the new
-     announcement.
-  4. Post the 24 h and 1 h reminders.
-  5. At the scheduled time, reboot via `deploy/reboot-fleet.sh <host>` (reusing its SSH
-     identity and boot-id check), then run the health check and post the result.
+  3. Post the day-of and 1-hour reminders when they're due (§3 item 6).
+  4. At a host's scheduled time, read the current announcement's reactions (ignoring the bot's
+     own). If someone selected a delay, apply the **largest** one, rounded up to 21:00 for
+     waiter/kastner-ml, and post the next announcement with the shorter menu (§3 items 2–4).
+     Otherwise, reboot via `deploy/reboot-fleet.sh <host>` (reusing its SSH identity and
+     boot-id check), then run the health check and post the result.
 - **Health check** after each host, not just `boot_id`: OpenBao unsealed, compose units active,
   key endpoints healthy. A failure stops the window, so later hosts stay up, and posts to Slack.
 - **Fail safe:** if the announcement can't be posted (Slack down, token revoked), the reboot does
@@ -346,6 +368,9 @@ A rotating admin owns these. Expected cost: well under an hour a month.
    waiter) and need announcements in both?
 7. **Renovate approval pings:** krg-infra's migrating upgrades affect both groups' services.
    Ping both workspaces, or only KRG's?
+8. **Delay emoji:** custom emoji per option (e.g. `:delay-1mo:` … `:delay-1d:`, added once in
+   each workspace), or standard emoji with a legend in the message? Custom emoji are clearer
+   to click but are a one-time setup step in both workspaces.
 
 ## Related
 
