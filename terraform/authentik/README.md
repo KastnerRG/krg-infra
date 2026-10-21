@@ -115,6 +115,11 @@ bao kv get -field=url secret/krg-prod/authentik-managed/collaborator-invites/con
 For a single collaborator, a single-use invite is still minted in the UI (it is
 per-person and ephemeral — not worth a repo change):
 
+> **Don't move single-use invites into `collaborator_invites.tf`.** Authentik
+> deletes a single-use invite when it's redeemed; the restapi provider reads that
+> 404 as drift and the next deploy mints a **fresh** invite (new token, written to
+> OpenBao). A fixed number of one-time links in code becomes an unbounded number.
+
 
 **Directory → Invitations → Create**, selecting flow `krg-collaborator-enrollment`,
 `Single use = on`, an expiry, and (for a tenant collaborator) **Custom attributes**:
@@ -138,7 +143,7 @@ Audit or revoke partner access here. `local.collaborator_tenants` maps each tena
 | tenant | apps | partner orgs (invites) |
 |--------|------|------------------------|
 | `fishsense` | FishSense web (`oauth`), mobile, Superset (`analytics`) | `conservation-angler`, `reef`, `ccfrp-ucsd` |
-| `frog-id` | Label Studio (as the synthetic `Groups` value `Frog ID Label Studio Collaborators`) | `australian-museum` |
+| `frog-id` | Label Studio (as the synthetic `Groups` value `Frog ID Label Studio Collaborators`) | `australian-museum` (single-use UI invites — "Minting a one-off invite") |
 
 - **Grant.** Each tenant gets an expression policy (`tenant == "<key>"`, the exact
   tenant only) bound to each of its apps, alongside the app's AD-group gate in
