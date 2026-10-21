@@ -251,6 +251,7 @@ buckets:
   - name: fishsense-tenant-lab # the E4E lab's own tenant
   - name: fishsense-tenant-conservation-angler # first partner org (Authentik collaborator_invites.tf)
   - name: fishsense-tenant-reef # REEF, reef.org (Authentik collaborator_invites.tf)
+  - name: fishsense-tenant-ccfrp-ucsd # CCFRP, UC San Diego chapter (Authentik collaborator_invites.tf)
 # Access keys. Only the NAME + bucket grants are declared here (git is truth);
 # the actual {access_key_id, secret_access_key} is NOT in the spec. The control
 # node create-once-provisions each in OpenBao (secret/e4e-nas/garage-keys/<name>)
@@ -301,4 +302,8 @@ keys:
   - name: fishsense-tenant-reef
     buckets:
       - name: fishsense-tenant-reef
+        permissions: [read, write]
+  - name: fishsense-tenant-ccfrp-ucsd
+    buckets:
+      - name: fishsense-tenant-ccfrp-ucsd
         permissions: [read, write]
