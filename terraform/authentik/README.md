@@ -120,13 +120,23 @@ per-person and ephemeral — not worth a repo change):
 > 404 as drift and the next deploy mints a **fresh** invite (new token, written to
 > OpenBao). A fixed number of one-time links in code becomes an unbounded number.
 
-
 **Directory → Invitations → Create**, selecting flow `krg-collaborator-enrollment`,
 `Single use = on`, an expiry, and (for a tenant collaborator) **Custom attributes**:
 
 ```json
-{ "attributes.tenant": "fishsense", "attributes.org": "<org-id>" }
+{
+  "attributes.tenant": "fishsense",
+  "attributes.org": "<org-id>",
+  "attributes.invited_email": "person@example.org"
+}
 ```
+
+**Bind the invite to the invitee's email** with `attributes.invited_email` (do this
+for every per-person invite). Enrollment then only succeeds with that address — a
+forwarded link is useless to anyone else — and the email box is pre-filled with it.
+Matching is case-insensitive. Leave it out and any address is accepted (the
+reusable per-org invites work that way). How it's enforced:
+`collaborator_enrollment.tf`, `collab_invited_email`.
 
 Send the invitee the enrollment URL with the token:
 `https://auth.krg.ucsd.edu/if/flow/krg-collaborator-enrollment/?itoken=<token>`.

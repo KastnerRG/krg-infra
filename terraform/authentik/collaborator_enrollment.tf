@@ -60,6 +60,14 @@ resource "authentik_stage_prompt_field" "collab_email" {
   type      = "email"
   required  = true
   order     = 0
+  # Pre-fill from an email-bound invite (collab_invited_email below) so the invitee
+  # doesn't have to retype it. Convenience only — still editable; the
+  # collaborator_invited_email policy is what enforces the binding. An invite with
+  # no bound email leaves it blank, as before.
+  initial_value_expression = true
+  initial_value            = <<-EOT
+    return prompt_context.get("attributes.invited_email") or ""
+  EOT
 }
 
 resource "authentik_stage_prompt_field" "collab_name" {
@@ -123,6 +131,43 @@ resource "authentik_stage_prompt_field" "collab_org" {
   order     = 6
 }
 
+# Email binding (optional, per invite): set `"attributes.invited_email":
+# "<address>"` in the invite's fixed_data and enrollment only succeeds with that
+# address. Enforced, not advisory, because hidden fields are reset to their
+# server-side (invite) value before validation policies run (authentik
+# stages/prompt/stage.py, PromptChallengeResponse.validate), so the invitee can't
+# edit the bound value; the policy below then requires the typed email to match it,
+# and the email stage proves they own that mailbox. Persisted as
+# user.attributes.invited_email for audit. Users can't change their email afterwards
+# (tenant default_user_change_email = false, enforced by the default user-settings
+# flow), so the binding holds after enrollment too.
+resource "authentik_stage_prompt_field" "collab_invited_email" {
+  name      = "krg-collab-invited-email"
+  field_key = "attributes.invited_email"
+  label     = "Invited email"
+  type      = "hidden"
+  required  = false
+  order     = 7
+}
+
+# No bound email → pass (unbound invites, incl. every reusable per-org one in
+# collaborator_invites.tf, behave exactly as before). Case-insensitive. Plain
+# statements only — Authentik 2026.5's evaluator silently empties comprehensions.
+resource "authentik_policy_expression" "collaborator_invited_email" {
+  name       = "Collaborator enrollment — email must match the invite"
+  expression = <<-EOT
+    prompt_data = request.context.get("prompt_data", {})
+    invited = (prompt_data.get("attributes.invited_email") or "").strip().lower()
+    if not invited:
+        return True
+    email = (prompt_data.get("email") or "").strip().lower()
+    if email != invited:
+        ak_message("This invitation is for a different email address.")
+        return False
+    return True
+  EOT
+}
+
 resource "authentik_stage_prompt" "collaborator_enrollment" {
   name = "krg-collaborator-enrollment-prompt"
   fields = [
@@ -133,6 +178,7 @@ resource "authentik_stage_prompt" "collaborator_enrollment" {
     authentik_stage_prompt_field.collab_password_repeat.id,
     authentik_stage_prompt_field.collab_tenant.id,
     authentik_stage_prompt_field.collab_org.id,
+    authentik_stage_prompt_field.collab_invited_email.id,
   ]
   # Reuse recovery.tf's two validators — they key on the SAME prompt_data field
   # keys (password / password_repeat):
@@ -140,9 +186,11 @@ resource "authentik_stage_prompt" "collaborator_enrollment" {
   #   2. the UCSD strength/breach standard (password_policy.tf). For a local
   #      (non-AD) collaborator this is the ONLY password gate — there is no AD
   #      write-back to enforce complexity.
+  #   3. an email-bound invite's address must be the one entered (above).
   validation_policies = [
     authentik_policy_expression.recovery_password_match.id,
     authentik_policy_password.ucsd.id,
+    authentik_policy_expression.collaborator_invited_email.id,
   ]
 }
 
