@@ -56,6 +56,12 @@ locals {
       tenant  = "fishsense"
       expires = "2027-01-17T00:00:00Z"
     }
+    # Australian Museum — Frog ID partner org, labels in Label Studio
+    # (frog_id_collaborators.tf); link issued 2026-10-21 for 90 days.
+    australian-museum = {
+      tenant  = "frog-id"
+      expires = "2027-01-19T00:00:00Z"
+    }
   }
 
   active_collaborator_invites = {

@@ -109,6 +109,7 @@ order:
    | `Label Studio Users` | a standard org role |
    | `FishSense Label Studio Admin` | admin of the **FishSense** workspace/projects |
    | `Frog ID Label Studio Admin` | admin of the **Frog ID** workspace/projects |
+   | `Frog ID Label Studio Collaborators` | annotator in the **Frog ID** workspace — *synthetic*, not an AD group: emitted for external partners enrolled with `tenant = "frog-id"` (e.g. Australian Museum; `terraform/authentik/frog_id_collaborators.tf`) |
 
    Names must match byte-for-byte. To add another finer-grained group, put `Label
    Studio` **somewhere** in the name (`spec/krg-ad/groups.yml`) — the mapping is a

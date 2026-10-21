@@ -81,11 +81,18 @@ resource "authentik_property_mapping_provider_saml" "label_studio_last_name" {
 # how the other per-project groups are named. A prefix test would silently drop
 # those — the assertion would carry no Groups value and the user would land with
 # Label Studio's default role instead of their workspace-admin role.
+#
+# Frog ID collaborators (non-AD, tenant = "frog-id" — frog_id_collaborators.tf)
+# hold no AD groups, so they get a SYNTHETIC "Frog ID Label Studio Collaborators"
+# value instead; map that name to the Frog ID workspace in Label Studio.
 resource "authentik_property_mapping_provider_saml" "label_studio_groups" {
   name       = "Label Studio — Groups"
   saml_name  = "Groups"
   expression = <<-EOT
-    return [group.name for group in request.user.groups.all() if "Label Studio" in group.name]
+    groups = [group.name for group in request.user.groups.all() if "Label Studio" in group.name]
+    if request.user.attributes.get("tenant") == "frog-id":
+        groups.append("Frog ID Label Studio Collaborators")
+    return groups
   EOT
 }
 
