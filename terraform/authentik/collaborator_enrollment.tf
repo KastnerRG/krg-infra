@@ -20,9 +20,9 @@
 #                  (activate_user_on_success) — the email-verification step
 #   user_login  -> open the session
 #
-# Multitenancy (FishSense): the invite's fixed_data carries the tenant/org, which
-# the hidden prompt fields persist onto user.attributes (see fishsense_collaborators.tf
-# for how that attribute gates the FishSense apps and is emitted as an OIDC claim).
+# Multitenancy (FishSense, Frog ID, …): the invite's fixed_data carries the tenant/org, which
+# the hidden prompt fields persist onto user.attributes (see collaborator_tenants.tf
+# for how that attribute grants each tenant its apps and denies it every other app).
 # Authentik stays the IdP; org isolation is enforced app-side, keyed on the stable
 # `sub` (the FishSense OIDC providers already use sub_mode = "hashed_user_id").
 #

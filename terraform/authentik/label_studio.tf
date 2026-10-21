@@ -81,11 +81,38 @@ resource "authentik_property_mapping_provider_saml" "label_studio_last_name" {
 # how the other per-project groups are named. A prefix test would silently drop
 # those — the assertion would carry no Groups value and the user would land with
 # Label Studio's default role instead of their workspace-admin role.
+#
+# External collaborators (collaborator_tenants.tf) hold no AD groups, so a tenant
+# that uses Label Studio gets a SYNTHETIC value instead (its `label_studio_group`,
+# e.g. "Frog ID Label Studio Collaborators" for frog-id); map that name to the
+# tenant's workspace in Label Studio. Those names are RESERVED: they are emitted only
+# for `external` users of that tenant and stripped from the AD side, so an AD group
+# that happens to share the name can't grant it.
+#
+# Plain loop + literals only: Authentik's evaluator silently empties set/dict
+# comprehensions, and this mapping is on EVERY Label Studio login.
+locals {
+  label_studio_tenant_groups = {
+    for tenant, t in local.collaborator_tenants : tenant => t.label_studio_group
+    if t.label_studio_group != null
+  }
+}
+
 resource "authentik_property_mapping_provider_saml" "label_studio_groups" {
   name       = "Label Studio — Groups"
   saml_name  = "Groups"
   expression = <<-EOT
-    return [group.name for group in request.user.groups.all() if "Label Studio" in group.name]
+    tenant_groups = ${jsonencode(local.label_studio_tenant_groups)}
+    reserved = ${jsonencode(values(local.label_studio_tenant_groups))}
+    groups = []
+    for group in request.user.groups.all():
+        if "Label Studio" in group.name and group.name not in reserved:
+            groups.append(group.name)
+    if request.user.type == "external":
+        extra = tenant_groups.get(request.user.attributes.get("tenant"))
+        if extra:
+            groups.append(extra)
+    return groups
   EOT
 }
 

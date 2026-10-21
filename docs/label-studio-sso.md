@@ -109,6 +109,7 @@ order:
    | `Label Studio Users` | a standard org role |
    | `FishSense Label Studio Admin` | admin of the **FishSense** workspace/projects |
    | `Frog ID Label Studio Admin` | admin of the **Frog ID** workspace/projects |
+   | `Frog ID Label Studio Collaborators` | annotator in the **Frog ID** workspace — *synthetic*, not an AD group: emitted for external partners enrolled with `tenant = "frog-id"` (e.g. Australian Museum; `terraform/authentik/collaborator_tenants.tf`) |
 
    Names must match byte-for-byte. To add another finer-grained group, put `Label
    Studio` **somewhere** in the name (`spec/krg-ad/groups.yml`) — the mapping is a
@@ -131,6 +132,32 @@ order:
    "Heartex doesn't support IdP-initiated" a supported conclusion; SP-initiated
    still works regardless, so revert `meta_launch_url` to `https://app.heartex.com/`
    to leave a working tile while you ask support.
+
+## External collaborators (partner orgs)
+
+Non-AD partners (e.g. the Australian Museum, tenant `frog-id`) enroll through a
+reusable collaborator invite (`terraform/authentik/collaborator_invites.tf`). Their
+Label Studio access comes from `terraform/authentik/collaborator_tenants.tf`, not
+from an AD group:
+
+- **Launch gate:** a `tenant == "frog-id"` policy on the Label Studio app, OR-ed
+  with the AD-group gate.
+- **Role:** the synthetic `Groups` value `Frog ID Label Studio Collaborators`,
+  mapped to the Frog ID workspace in Label Studio.
+- **They can reach nothing else:** every other ungated app denies `external` users.
+
+**How they sign in:** give them the IdP-initiated link
+`https://auth.krg.ucsd.edu/application/saml/label-studio/init/` (bookmark it). Do
+**not** send them to Label Studio's own "Log in with SSO". That path asks for the
+company domain `krg.ucsd.edu`, and their accounts carry non-UCSD emails
+(e.g. `@australian.museum`). It's unconfirmed whether Heartex's domain discovery
+routes those to our IdP.
+
+**Verify on the first partner enrollment:** Label Studio auto-provisions a user
+whose email is outside the org's SSO domain, and that user lands in the Frog ID
+workspace via the group mapping. If Heartex refuses out-of-domain emails, the
+partner's domain has to be added on the Label Studio side (their UI, not this
+repo).
 
 ## Notes / gotchas
 

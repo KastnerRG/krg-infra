@@ -126,6 +126,11 @@ groups:
   #
   # Each also needs an entry in terraform/authentik/app_access.tf `label_studio`
   # (the tile/launch gate) or a member holding ONLY this group cannot reach the app.
+  #
+  # RESERVED, do NOT create as AD groups: the synthetic per-tenant names for external
+  # collaborators (terraform/authentik/collaborator_tenants.tf `label_studio_group`,
+  # e.g. "Frog ID Label Studio Collaborators"). label_studio.tf strips them from the
+  # AD side, so an AD group by that name would silently never be emitted.
   - { name: "FishSense Label Studio Admin", description: "Administrator of the FishSense workspace/projects in the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio emits this name in the Groups attribute; map it to the FishSense workspace admin role in Label Studio Organization -> Roles). Project-scoped, NOT org-wide admin — that is 'Label Studio Admins'." }
   - { name: "Frog ID Label Studio Admin", description: "Administrator of the Frog ID workspace/projects in the Label Studio Enterprise SaaS org via Authentik SAML SSO (terraform/authentik label_studio emits this name in the Groups attribute; map it to the Frog ID workspace admin role in Label Studio Organization -> Roles). Project-scoped, NOT org-wide admin — that is 'Label Studio Admins'." }
   - { name: "MLflow Users", description: "Standard (non-admin) access to mlflow.krg.ucsd.edu via Authentik OIDC; emitted in the groups claim and matched by the mlflow-oidc-auth OIDC_GROUP_NAME (nix/docker-compose/krg-prod/compose.mlflow.yml)" }

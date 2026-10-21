@@ -153,7 +153,7 @@ hatch.
   first consumer, FishSense, the invite's `fixed_data` carries the tenant/org, which
   gates the FishSense apps via an attribute expression policy (OR-ed with the AD-group
   gate) and is emitted as an `org` OIDC claim, keeping per-org isolation app-side on
-  the stable `sub` (`fishsense_collaborators.tf`). Owned by the SSO effort
+  the stable `sub` (`collaborator_tenants.tf`). Owned by the SSO effort
   ([[terraform-openbao-authentik-hands-off]]).
 - **Authentik password-strength/breach policy** — **now landed**
   (`terraform/authentik/password_policy.tf`: length ≥12 + HIBP breach + zxcvbn,

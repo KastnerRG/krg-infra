@@ -31,7 +31,7 @@ locals {
     # (policy_engine_mode "any"), so membership in any one is enough.
     fishsense_analytics = ["fishsense-superset-admin", "fishsense-superset-editor", "fishsense-superset-viewer"]
     fishsense_oauth     = ["FishSense"]
-    fishsense_mobile    = ["FishSense"] # same gate as the web; partners pass via fishsense_collaborators.tf
+    fishsense_mobile    = ["FishSense"] # same gate as the web; partners pass via collaborator_tenants.tf
     e4e_nas             = ["E4E-NAS"]   # NAS SSO tile visible only to NAS-access group (matches the nix krg.nasMount sudo gate)
     garage_ui           = ["E4E-NAS"]   # Garage (S3-on-NAS) admin/data browser — same NAS-access gate as e4e_nas
     # All four groups exist in KRG.LOCAL (spec/krg-ad/groups.yml) and must be synced
