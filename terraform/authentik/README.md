@@ -137,7 +137,7 @@ Audit or revoke partner access here. `local.collaborator_tenants` maps each tena
 
 | tenant | apps | partner orgs (invites) |
 |--------|------|------------------------|
-| `fishsense` | FishSense web (`oauth`), mobile, Superset (`analytics`) | `conservation-angler`, `reef` |
+| `fishsense` | FishSense web (`oauth`), mobile, Superset (`analytics`) | `conservation-angler`, `reef`, `ccfrp-ucsd` |
 | `frog-id` | Label Studio (as the synthetic `Groups` value `Frog ID Label Studio Collaborators`) | `australian-museum` |
 
 - **Grant.** Each tenant gets an expression policy (`tenant == "<key>"`, the exact

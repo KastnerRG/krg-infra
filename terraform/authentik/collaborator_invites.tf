@@ -57,6 +57,12 @@ locals {
       tenant  = "fishsense"
       expires = "2027-01-17T00:00:00Z"
     }
+    # CCFRP UCSD (California Collaborative Fisheries Research Program, UC San
+    # Diego chapter) — FishSense partner org; link issued 2026-10-21 for 90 days.
+    ccfrp-ucsd = {
+      tenant  = "fishsense"
+      expires = "2027-01-19T00:00:00Z"
+    }
     # Australian Museum — Frog ID partner org, labels in Label Studio
     # (collaborator_tenants.tf); link issued 2026-10-21 for 90 days.
     australian-museum = {
