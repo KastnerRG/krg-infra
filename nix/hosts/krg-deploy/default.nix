@@ -8,7 +8,56 @@
     # krg.users + the break-glass admin now come via base.nix (imported by server).
     ../../profiles/server.nix
     ./hardware-configuration.nix
+    ../../modules/security/cve-scan.nix
   ];
+
+  # Nightly fleet CVE scan → each host's node_exporter textfile (ADR 0024 P0; the
+  # "CVEs" Grafana dashboard). Read-only on the scanned hosts. Hosts + users mirror
+  # deploy/lib.sh (ORDER / ADDR / USER_OVERRIDE); keep them in step. fabricant is
+  # reached as root, the same push identity deploy-ansible.sh uses. Incus tenants are a
+  # follow-up: their access is a per-run OpenBao-minted cert (incus-publish-golden.sh).
+  krg.cveScan = {
+    enable = true;
+    hosts = [
+      {
+        name = "krg-ldap";
+        target = "krg-admin@krg-ldap.ucsd.edu";
+      }
+      {
+        name = "krg-vault";
+        target = "krg-admin@krg-vault.ucsd.edu";
+      }
+      {
+        name = "krg-prod";
+        target = "krg-admin@krg-prod.ucsd.edu";
+      }
+      {
+        name = "e4e-prod";
+        target = "e4e-admin@e4e-prod.ucsd.edu";
+      }
+      {
+        name = "krg-nat";
+        target = "krg-admin@krg-nat.ucsd.edu";
+      }
+      {
+        name = "waiter";
+        target = "krg-admin@waiter.ucsd.edu";
+      }
+      {
+        name = "kastner-ml";
+        target = "e4e-admin@kastner-ml.ucsd.edu";
+      }
+      {
+        name = "krg-deploy";
+        target = "local";
+      }
+      {
+        name = "fabricant";
+        target = "root@fabricant.ucsd.edu";
+        kind = "debian";
+      }
+    ];
+  };
 
   krg.adminAccount = "krg-admin";
 
