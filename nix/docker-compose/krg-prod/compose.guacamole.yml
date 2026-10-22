@@ -28,8 +28,19 @@ services:
 
   guacamole:
     image: guacamole/guacamole:1.6.0
-    container_name: guacamole
+    # No container_name: updates are graceful handoffs (krg.rollout below). New
+    # sessions move to the new container; a remote session open on the old one ends
+    # when it's retired (as it would on any restart) and the client reconnects.
     restart: unless-stopped
+    # WEBAPP_CONTEXT=ROOT → the app is at /. Plus the drain clause compose-reload uses
+    # to take the old container out of Traefik's rotation during a handoff.
+    healthcheck:
+      test: ["CMD-SHELL", "test ! -f /tmp/krg-drain && wget -q -O /dev/null http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
     environment:
       # Serve at the root context so the URL is https://remote.krg.ucsd.edu/
       # (not /guacamole). The OIDC redirect URI below must match this base.
@@ -80,6 +91,7 @@ services:
       - guacamole_internal
       - traefik_proxy
     labels:
+      - "krg.rollout=handoff"
       - "traefik.enable=true"
       - "traefik.http.routers.guacamole.rule=Host(`remote.krg.ucsd.edu`)"
       - "traefik.http.routers.guacamole.entrypoints=websecure"

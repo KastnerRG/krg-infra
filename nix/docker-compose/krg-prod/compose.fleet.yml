@@ -83,7 +83,17 @@ services:
         condition: service_started
       fleet_migrate:
         condition: service_completed_successfully
+    # /healthz (plain HTTP, FLEET_SERVER_TLS=false) + the drain clause compose-reload
+    # uses during a graceful handoff. Fleet servers run fine side by side.
+    healthcheck:
+      test: ["CMD-SHELL", "test ! -f /tmp/krg-drain && wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
     labels:
+      - "krg.rollout=handoff"
       - "traefik.enable=true"
       - "traefik.http.routers.fleet.rule=Host(`mdm.e4e.ucsd.edu`)"
       - "traefik.http.routers.fleet.entrypoints=websecure"
