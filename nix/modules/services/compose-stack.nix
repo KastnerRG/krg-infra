@@ -68,8 +68,9 @@ with lib; let
       # restart of every service, stateful ones included), not just the service whose
       # config changed. Off by default (krg-prod's big stateful stack keeps its behavior);
       # nixosModules.tenant turns it ON — repo-owns-deploy tenants MUST have committed
-      # config apply on deploy. Per-service granularity = migrate that config to a
-      # top-level compose `configs:` (compose content-hashes those), then this is moot.
+      # config apply on deploy. Per-service granularity: reloadOnChange (below) detects a
+      # retargeted bind-mount symlink per service and recreates only those, so a stack
+      # on reloadOnChange doesn't need this (the two are mutually exclusive).
       recreateOnConfigChange = mkOption {
         type = types.bool;
         default = false;
@@ -238,9 +239,12 @@ in {
             # reloadOnChange stacks do NOT `pull` on reload: images change only when the
             # committed compose file changes (a floating tag must not silently move on an
             # unrelated reload). `up` still pulls any image that's missing.
+            # --state: per-service resolved bind-mount sources, so a config change that
+            # only retargets an L+ symlink (invisible to compose's hash, #458) still
+            # recreates/hands off exactly the services that mount it.
             ExecReload =
               if stack.reloadOnChange
-              then "${composeReload}/bin/compose-reload --timeout ${toString stack.handoffTimeoutSec} --drain ${toString stack.handoffDrainSec} -- ${composeCmd stack}"
+              then "${composeReload}/bin/compose-reload --timeout ${toString stack.handoffTimeoutSec} --drain ${toString stack.handoffDrainSec} --state ${stack.workingDirectory}/.compose-reload-state.json -- ${composeCmd stack}"
               else
                 pkgs.writeShellScript "reload-${name}" ''
                   ${composeCmd stack} pull

@@ -33,6 +33,18 @@ image) the handoff still works; it just skips step 3.
 Every other changed service is left to the final `up -d`, which recreates it in place
 exactly as before.
 
+Bind-mounted config (issue #458). Compose's config hash does not see a CHANGE TO THE
+CONTENT of a bind-mounted file or directory, and this repo mounts committed config via
+tmpfiles `L+` symlinks into the Nix store (./grafana, ./loki/loki-config.yaml, ...), so
+a config-only change would otherwise never reach the running container. Those symlinks
+resolve to content-addressed store paths, so a service's mounted config changed exactly
+when the RESOLVED path of one of its bind-mount sources changed. With --state, this
+records each service's resolved mount sources after every successful reload and treats
+a service whose sources moved as changed: a handoff for handoff services, and
+`up -d --no-deps --force-recreate` for the rest. Data dirs aren't symlinks, so they
+never trigger it. The first run (no state yet) only records: enabling this recreates
+nothing.
+
 FAIL SAFE, which is the point of doing this carefully: if a new container never
 becomes healthy, it is removed, the OLD container keeps serving, and this exits
 non-zero WITHOUT running the final `up -d` (which would otherwise recreate the
@@ -47,11 +59,12 @@ in-place recreate, with the reason logged.
 
 Usage (from the unit; everything after `--` is the stack's base compose command):
 
-    compose-reload [--timeout S] [--drain S] [--dry-run] -- docker compose --project-directory D -f F ...
+    compose-reload [--timeout S] [--drain S] [--state FILE] [--dry-run] -- docker compose --project-directory D -f F ...
 """
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -134,8 +147,49 @@ def ineligible(spec):
     return None
 
 
-def plan(stack):
-    """[(service, old_container_ids)] to hand off; logs every labelled service skipped."""
+def mount_fingerprints(specs, resolve=os.path.realpath):
+    """{service: sorted resolved bind-mount sources} — see "Bind-mounted config" above."""
+    out = {}
+    for svc, spec in specs.items():
+        srcs = [
+            resolve(v["source"])
+            for v in spec.get("volumes") or []
+            if isinstance(v, dict) and v.get("type") == "bind" and v.get("source")
+        ]
+        out[svc] = sorted(srcs)
+    return out
+
+
+def mounts_changed(prev, cur):
+    """Services whose resolved mount sources moved since the last successful reload.
+
+    No previous state (first run) → nothing: record, don't force.
+    """
+    if prev is None:
+        return set()
+    return {svc for svc, srcs in cur.items() if svc in prev and prev[svc] != srcs}
+
+
+def load_state(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("mounts")
+    except (OSError, ValueError):
+        return None
+
+
+def save_state(path, mounts):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"mounts": mounts}, f, indent=1, sort_keys=True)
+    os.replace(tmp, path)
+
+
+def plan(stack, forced=frozenset()):
+    """[(service, old_container_ids)] to hand off; logs every labelled service skipped.
+
+    `forced`: services whose mounted config changed (compose's hash can't see it).
+    """
     specs = stack.specs()
     desired = stack.desired_hashes()
     todo = []
@@ -147,7 +201,7 @@ def plan(stack):
         if not old:
             log(f"{svc}: not running, `up -d` will start it")
             continue
-        if all(stack.container_hash(c) == desired.get(svc) for c in old):
+        if svc not in forced and all(stack.container_hash(c) == desired.get(svc) for c in old):
             continue  # unchanged: `up -d` leaves it alone
         if len(old) > 1:
             log(
@@ -278,6 +332,10 @@ def main(argv=None):
         default=5,
         help="seconds between healthy and retiring the old container",
     )
+    parser.add_argument(
+        "--state",
+        help="JSON file recording each service's resolved bind-mount sources (#458)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="print the handoff plan and exit")
     parser.add_argument("compose", nargs=argparse.REMAINDER, help="-- base compose command")
     args = parser.parse_args(argv)
@@ -286,10 +344,23 @@ def main(argv=None):
         parser.error("missing the base compose command after --")
 
     stack = Stack(compose_cmd)
-    todo = plan(stack)
+    mounts = mount_fingerprints(stack.specs()) if args.state else {}
+    prev = load_state(args.state) if args.state else None
+    if args.state and prev is None:
+        log("no previous mount state: recording it (nothing forced this time)")
+    forced = mounts_changed(prev, mounts)
+    if forced:
+        log(f"mounted config changed for: {', '.join(sorted(forced))}")
+    todo = plan(stack, forced)
+    handed = {svc for svc, _ in todo}
+    # Mount-changed services that aren't handed off: compose's hash says "unchanged",
+    # so `up -d` would leave them alone; recreate exactly these, in place.
+    recreate = sorted(s for s in forced if s not in handed)
     if args.dry_run:
         for svc, old in todo:
             log(f"would hand off {svc} (old: {', '.join(c[:12] for c in old)})")
+        for svc in recreate:
+            log(f"would recreate {svc} in place (mounted config changed)")
         return 0
 
     failed = [svc for svc, old in todo if not _safe_handoff(stack, svc, old, args)]
@@ -297,11 +368,19 @@ def main(argv=None):
         log(
             f"handoff failed for {', '.join(failed)}; NOT running `up -d` (it would recreate them in place)"
         )
-        return 1
+        return 1  # state NOT saved: the next reload sees the same mount change again
 
+    if recreate:
+        subprocess.run(
+            compose_cmd + ["up", "--detach", "--no-deps", "--force-recreate"] + recreate,
+            check=True,
+        )
     # Everything else that changed (restart-tier services, new/removed services). The
-    # handed-off services now match their desired hash, so `up` leaves them alone.
+    # handed-off and force-recreated services now match their desired hash, so `up`
+    # leaves them alone.
     subprocess.run(compose_cmd + ["up", "--detach", "--remove-orphans"], check=True)
+    if args.state:
+        save_state(args.state, mounts)
     return 0
 
 

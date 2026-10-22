@@ -16,6 +16,7 @@ MODULE_PATH = pathlib.Path(__file__).with_name("compose-reload.py")
 _spec = importlib.util.spec_from_file_location("compose_reload", MODULE_PATH)
 cr = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cr)
+REAL_STACK = cr.Stack  # captured before any test monkeypatches it
 
 HC = {"test": ["CMD", "true"]}
 HANDOFF = {cr.ROLLOUT_LABEL: "handoff"}
@@ -347,3 +348,120 @@ def test_unexpected_error_leaves_old_serving_and_removes_new(monkeypatch):
     assert cr._safe_handoff(stack(fake), "web", ["old1"], Args) is False
     assert list(fake.containers) == ["old1"]
     assert fake.containers["old1"]["state"] == "running"
+
+
+# ── bind-mounted config (#458): resolved mount sources as the change signal ─────
+
+
+def bind(src, target="/etc/app"):
+    return {"type": "bind", "source": str(src), "target": target}
+
+
+def retarget(link, dest):
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(dest)
+
+
+def test_fingerprint_resolves_symlinks_and_ignores_volumes(tmp_path):
+    store = tmp_path / "store-aaa-grafana"
+    store.mkdir()
+    link = tmp_path / "grafana"
+    link.symlink_to(store)
+    specs = {
+        "grafana": {
+            "volumes": [bind(link), {"type": "volume", "source": "grafana-data", "target": "/var"}]
+        },
+        "db": {"volumes": [bind(tmp_path / "data")]},  # a plain dir: resolves to itself
+        "bare": {},
+    }
+    fp = cr.mount_fingerprints(specs)
+    assert fp["grafana"] == [str(store)]
+    assert fp["db"] == [str(tmp_path / "data")]
+    assert fp["bare"] == []
+
+
+def test_mounts_changed():
+    assert cr.mounts_changed(None, {"a": ["/x"]}) == set()  # first run: record, don't force
+    prev = {"a": ["/s/1"], "b": ["/d"]}
+    cur = {"a": ["/s/2"], "b": ["/d"], "new": ["/s/9"]}
+    assert cr.mounts_changed(prev, cur) == {"a"}  # new services are just started by `up`
+
+
+def mount_stack(tmp_path, label=None):
+    """A restart-tier `cfg` service mounting a symlinked config dir, plus `web`."""
+    s1, s2 = tmp_path / "store-1", tmp_path / "store-2"
+    s1.mkdir()
+    s2.mkdir()
+    link = tmp_path / "cfg"
+    retarget(link, s1)
+    spec = {"volumes": [bind(link)], "healthcheck": HC}
+    if label:
+        spec["labels"] = label
+    fake = FakeDocker(
+        {"cfg": spec, "web": {"labels": HANDOFF, "healthcheck": HC}},
+        {"cfg": "c1", "web": "w1"},
+        {
+            "oldc": {"svc": "cfg", "hash": "c1", "state": "running", "health": ["healthy"]},
+            "oldw": {"svc": "web", "hash": "w1", "state": "running", "health": ["healthy"]},
+        },
+    )
+    return fake, link, s2
+
+
+def run_main(monkeypatch, fake, state):
+    orig = REAL_STACK
+    monkeypatch.setattr(cr, "Stack", lambda cmd: orig(cmd, runner=fake))
+    monkeypatch.setattr(cr.time, "sleep", no_sleep)
+    calls = []
+    monkeypatch.setattr(cr.subprocess, "run", lambda argv, **k: calls.append(argv))
+    rc = cr.main(["--drain", "0", "--state", str(state), "--", "docker", "compose"])
+    return rc, calls
+
+
+def test_first_run_records_state_and_forces_nothing(tmp_path, monkeypatch):
+    fake, _, _ = mount_stack(tmp_path)
+    state = tmp_path / "state.json"
+    rc, calls = run_main(monkeypatch, fake, state)
+    assert rc == 0
+    assert calls == [["docker", "compose", "up", "--detach", "--remove-orphans"]]
+    assert json.loads(state.read_text())["mounts"]["cfg"] == [str(tmp_path / "store-1")]
+
+
+def test_config_only_change_recreates_just_that_service(tmp_path, monkeypatch):
+    fake, link, s2 = mount_stack(tmp_path)
+    state = tmp_path / "state.json"
+    run_main(monkeypatch, fake, state)  # record
+    retarget(link, s2)  # a deploy moved the L+ symlink: compose's hash can't see it
+    rc, calls = run_main(monkeypatch, fake, state)
+    assert rc == 0
+    assert calls == [
+        ["docker", "compose", "up", "--detach", "--no-deps", "--force-recreate", "cfg"],
+        ["docker", "compose", "up", "--detach", "--remove-orphans"],
+    ]
+    assert json.loads(state.read_text())["mounts"]["cfg"] == [str(s2)]
+    rc, calls = run_main(monkeypatch, fake, state)  # nothing moved since: no recreate
+    assert calls == [["docker", "compose", "up", "--detach", "--remove-orphans"]]
+
+
+def test_config_only_change_on_a_handoff_service_hands_off(tmp_path, monkeypatch):
+    fake, link, s2 = mount_stack(tmp_path, label=HANDOFF)
+    state = tmp_path / "state.json"
+    run_main(monkeypatch, fake, state)
+    retarget(link, s2)
+    rc, calls = run_main(monkeypatch, fake, state)
+    assert rc == 0
+    assert "oldc" not in fake.containers  # handed off (compose hash unchanged)
+    assert any(c["svc"] == "cfg" and c["state"] == "running" for c in fake.containers.values())
+    assert not any("--force-recreate" in c for c in calls)  # not ALSO recreated in place
+
+
+def test_failed_handoff_keeps_old_state_so_the_change_is_retried(tmp_path, monkeypatch):
+    fake, link, s2 = mount_stack(tmp_path, label=HANDOFF)
+    state = tmp_path / "state.json"
+    run_main(monkeypatch, fake, state)
+    retarget(link, s2)
+    fake.new_health = ["unhealthy"]
+    rc, _ = run_main(monkeypatch, fake, state)
+    assert rc == 1
+    assert json.loads(state.read_text())["mounts"]["cfg"] == [str(tmp_path / "store-1")]
