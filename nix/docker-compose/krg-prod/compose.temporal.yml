@@ -29,7 +29,7 @@
 # Design + on-box validation gates: docs/temporal-mtls.md (UNVALIDATED).
 services:
   temporal-postgres:
-    image: postgres:16.14
+    image: postgres:16.14@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
     container_name: temporal-postgres
     restart: unless-stopped
     environment:
@@ -55,7 +55,7 @@ services:
     # (1.31.x); #465 bumped this to 1.31.2 (a server version), whose manifest is
     # unknown, so `docker compose up -d` crash-looped and exhausted the pull limit.
     # Bump only to tags confirmed on hub.docker.com/r/temporalio/auto-setup/tags.
-    image: temporalio/auto-setup:1.29.7
+    image: temporalio/auto-setup:1.29.7@sha256:f14912b699cf73015ad5c4fc18d522d4b014db90e794039214dfb7c022c2644f
     container_name: temporal
     restart: unless-stopped
     environment:
@@ -112,7 +112,7 @@ services:
       - prometheus_network
 
   temporal-ui:
-    image: temporalio/ui:2.52.0
+    image: temporalio/ui:2.57.0@sha256:d944f959d0923c35cd991a17a0edbe087770eff843724b181933e0cfdd563ab2
     # No container_name: updates are graceful handoffs (krg.rollout below). The
     # vault-agent TLS hook restarts it by compose service label, not by name.
     restart: unless-stopped

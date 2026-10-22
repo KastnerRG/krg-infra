@@ -21,13 +21,13 @@
 
 services:
   guacd:
-    image: guacamole/guacd:1.6.0
+    image: guacamole/guacd:1.6.0@sha256:8974eaa9ba32f713daf311e7cc8cd7e4cdfba1edea39eed75524e78ef4b08f4f
     container_name: guacd
     restart: unless-stopped
     networks: [guacamole_internal]
 
   guacamole:
-    image: guacamole/guacamole:1.6.0
+    image: guacamole/guacamole:1.6.0@sha256:f344085e618bb05e22b964b0208dbd06d3468275bac70206f93805245e067b40
     # No container_name: updates are graceful handoffs (krg.rollout below). New
     # sessions move to the new container; a remote session open on the old one ends
     # when it's retired (as it would on any restart) and the client reconnects.
@@ -104,7 +104,7 @@ services:
       - "traefik.http.services.guacamole.loadbalancer.server.port=8080"
 
   guacamole_postgres:
-    image: postgres:16
+    image: postgres:16@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97
     container_name: guacamole_postgres
     restart: unless-stopped
     environment:

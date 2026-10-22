@@ -34,7 +34,7 @@ services:
       - traefik_proxy
 
   outline_redis:
-    image: valkey/valkey:9.1
+    image: valkey/valkey:9.1@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
@@ -44,7 +44,7 @@ services:
       - outline
 
   outline_postgres:
-    image: postgres:18.4
+    image: postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
     # POSTGRES_PASSWORD is rendered from OpenBao to /run by krg.vaultAgent (its own
     # file, so the postgres image never sees a var it doesn't own). Fresh bring-up:
     # postgres initializes the data dir with this password on first start, so it must
