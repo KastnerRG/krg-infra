@@ -1,0 +1,177 @@
+// Renovate — automated dependency updates (ADR 0024 P2).
+//
+// Same model as the nightly flake update (.github/workflows/flake-update.yml): a
+// scheduled job (.github/workflows/renovate.yml) commits updates STRAIGHT TO MAIN, and
+// each host's 04:00 system.autoUpgrade applies them. On krg-prod that means: switch →
+// the stack RELOADS (compose-reload) → only the bumped service is recreated, and
+// `krg.rollout: handoff` services swap with no downtime; a new container that never
+// turns healthy is rolled back and the old one keeps serving.
+//
+//   handoff tier  (stateless web; graceful handoff)  patch + digest  → main, any night
+//   restart tier  (DBs, ingress, monitoring, …)      patch + minor + digest
+//                 (seconds of downtime per update)   → main, first Sunday of the month only
+//   minor of a handoff-tier app (DB migrations), any major, the one-time digest pinning,
+//   OpenTofu providers, Ansible collections           → a PR that waits for a human
+//
+// No CI runs before an automatic update lands (pushes with the workflow's token trigger
+// no workflows — the same as the flake update). For image bumps CI checks little anyway
+// (Nix never pulls images; Renovate only proposes tags that exist); the handoff
+// healthcheck is the real gate, which is why the restart tier waits for the window.
+//
+// Not managed here: Nix flake inputs (flake-update.yml owns nix/flake.lock), and GitHub
+// Actions (the workflow token may not push changes to .github/workflows/; that needs a
+// GitHub App token).
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended", "docker:pinDigests", ":semanticCommits"],
+  timezone: "America/Los_Angeles",
+  labels: ["dependencies"],
+
+  // Automatic updates are merged by pushing the branch to main (no PR), and they don't
+  // wait for status checks: none run on branches pushed with the workflow token.
+  automergeType: "branch",
+  ignoreTests: true,
+
+  // docs/handoff/** are copy-in drafts for OTHER repos (tenant interiors), updated in
+  // those repos; nix/templates/** is tenant scaffolding with placeholder images.
+  ignorePaths: ["docs/**", "nix/templates/**"],
+
+  // A merged image bump pulls on the host; keep bursts small (Docker Hub's anonymous
+  // pull limit has taken a deploy red before; mirror.gcr.io absorbs most of it).
+  prHourlyLimit: 4,
+  prConcurrentLimit: 10,
+
+  nix: { enabled: false },
+  "github-actions": { enabled: false },
+
+  // Authentik's three images are pinned once, in YAML anchors at the top of
+  // compose.authentik.yml (`x-authentik-image: &authentik-image ghcr.io/...:TAG`);
+  // the compose manager doesn't read anchor definitions, so match them directly.
+  customManagers: [
+    {
+      customType: "regex",
+      description: "compose YAML-anchor image pins (x-*-image: &anchor image:tag[@digest])",
+      managerFilePatterns: ["/(^|/)nix/docker-compose/.+\\.ya?ml$/"],
+      matchStrings: [
+        "x-[a-z0-9-]+-image: &[a-z0-9-]+ (?<depName>[^\\s:@]+(?::\\d+/[^\\s:@]+)?):(?<currentValue>[^\\s@]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?",
+      ],
+      datasourceTemplate: "docker",
+    },
+  ],
+
+  packageRules: [
+    // ── container images: the default is "a human merges it" ───────────────────
+    {
+      description: "All container images: one update per image, automatic only where a rule below says so",
+      matchDatasources: ["docker"],
+      automerge: false,
+    },
+    {
+      description: "Authentik server/proxy/ldap move together (one version, one update)",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["ghcr.io/goauthentik/{server,proxy,ldap}"],
+      groupName: "authentik",
+    },
+
+    // ── handoff tier: patch + digest, any night ─────────────────────────────────
+    {
+      description: "Handoff-tier images: patch and digest updates swap with no downtime → straight to main, any night",
+      matchDatasources: ["docker"],
+      matchPackageNames: [
+        "ghcr.io/goauthentik/{server,proxy,ldap}",
+        "docker.getoutline.com/outlinewiki/outline",
+        "fleetdm/fleet",
+        "guacamole/guacamole",
+        "temporalio/ui",
+      ],
+      matchUpdateTypes: ["patch", "digest"],
+      automerge: true,
+    },
+
+    {
+      description: "temporal-ui has no database behind it: minor updates swap like patches",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["temporalio/ui"],
+      matchUpdateTypes: ["minor"],
+      automerge: true,
+    },
+
+    // ── restart tier: patch + minor + digest, first Sunday of the month ────────
+    {
+      description: "Restart-tier images: recreated in place (seconds of downtime) → straight to main only on the first Sunday, applied at that morning's 04:00 autoUpgrade",
+      matchDatasources: ["docker"],
+      matchPackageNames: [
+        "postgres",
+        "mysql",
+        "valkey/valkey",
+        "traefik",
+        "prom/prometheus",
+        "grafana/loki",
+        "grafana/alloy",
+        "grafana/grafana-enterprise",
+        "quay.io/prometheus/blackbox-exporter",
+        "guacamole/guacd",
+        "vaultwarden/server",
+        "nvcr.io/nvidia/k8s/dcgm-exporter",
+      ],
+      matchUpdateTypes: ["patch", "minor", "digest"],
+      automerge: true,
+      // ADR 0024 §3. The job runs at 08:00 UTC (00:00 PST / 01:00 PDT), so this is
+      // the first Sunday's run, which lands before that morning's 04:00 autoUpgrade.
+      schedule: ["* 0-3 1-7 * 0"],
+      automergeSchedule: ["* 0-3 1-7 * 0"],
+    },
+
+    // ── never automatic ─────────────────────────────────────────────────────────
+    {
+      description: "Majors of anything: breaking changes and migrations — opened only when approved on the Dependency Dashboard, merged by a human in a planned window",
+      matchUpdateTypes: ["major"],
+      automerge: false,
+      dependencyDashboardApproval: true,
+      // Own branch: Renovate names branches by TARGET major, so e.g. guacamole's
+      // postgres 16 → 18 (needs pg_upgrade) would otherwise share `postgres-18.x` with
+      // the routine 18.4 → 18.6 of the other databases and hold it back.
+      additionalBranchPrefix: "major-",
+    },
+    {
+      description: "temporalio/auto-setup tags do NOT track Temporal server versions (it caps at 1.29.7); a human checks every bump",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["temporalio/auto-setup"],
+      automerge: false,
+    },
+    {
+      description: "The one-time `tag` → `tag@digest` pinning recreates nearly every service once (the image string changes) — a PR, merged deliberately in a window",
+      matchUpdateTypes: ["pin", "pinDigest"],
+      automerge: false,
+    },
+
+    {
+      description: "Fleet runs MySQL 8.4 LTS: stay on the 8.4 line (Docker Hub's newer tags are innovation releases)",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["mysql"],
+      allowedVersions: "/^8\\.4(\\.|$)/",
+    },
+
+    // ── tooling: weekly, grouped, reviewed ──────────────────────────────────────
+    {
+      description: "required_version constraints track Terraform releases; we run OpenTofu",
+      matchManagers: ["terraform"],
+      matchDepNames: ["hashicorp/terraform"],
+      enabled: false,
+    },
+    {
+      description: "OpenTofu providers: weekly, one PR",
+      matchManagers: ["terraform"],
+      groupName: "opentofu providers",
+      schedule: ["* 0-6 * * 1"],
+      automerge: false,
+    },
+    {
+      description: "Ansible collections: weekly, one PR",
+      matchManagers: ["ansible-galaxy"],
+      groupName: "ansible collections",
+      schedule: ["* 0-6 * * 1"],
+      automerge: false,
+    },
+  ],
+}
