@@ -14,7 +14,7 @@
 # config (DB/Redis addresses, names) stays in ./fleet/fleet.env (committed).
 services:
   fleet_mysql:
-    image: mysql:8.4
+    image: mysql:8.4@sha256:76f0358884cb92d9a086d24e5671c38048d3fef40f2588703d73eb55392d6b69
     env_file:
       - ./fleet/fleet.env
       - /run/krg/fleet/db.env
@@ -45,7 +45,7 @@ services:
   # cache, and it's the community/LF fork (Redis went SSPL) — same FOSS lean as the
   # repo's OpenTofu/Garage choices. Wire-compatible, so FLEET_REDIS_ADDRESS is unchanged.
   fleet_valkey:
-    image: valkey/valkey:9.1
+    image: valkey/valkey:9.1@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
@@ -58,7 +58,7 @@ services:
   # `fleet prepare db` is idempotent, so it's safe to run on every `up`. The server
   # waits on this completing successfully (depends_on condition below).
   fleet_migrate:
-    image: fleetdm/fleet:v4.88.1 # latest stable (2026-07; check github.com/fleetdm/fleet/releases at bring-up)
+    image: fleetdm/fleet:v4.88.1@sha256:867326788540ffcbb01c123d64f9c977b9b0ddf8115a40b00ec92599f327c7b2 # latest stable (2026-07; check github.com/fleetdm/fleet/releases at bring-up)
     command: ["fleet", "prepare", "db", "--no-prompt"]
     env_file:
       - ./fleet/fleet.env
@@ -71,7 +71,7 @@ services:
       - fleet
 
   fleet:
-    image: fleetdm/fleet:v4.88.1 # keep in lockstep with fleet_migrate above
+    image: fleetdm/fleet:v4.88.1@sha256:867326788540ffcbb01c123d64f9c977b9b0ddf8115a40b00ec92599f327c7b2 # keep in lockstep with fleet_migrate above
     command: ["fleet", "serve"]
     env_file:
       - ./fleet/fleet.env

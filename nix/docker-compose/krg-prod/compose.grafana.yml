@@ -1,6 +1,6 @@
 services:
   grafana:
-    image: grafana/grafana-enterprise:13.1.0
+    image: grafana/grafana-enterprise:13.1.0@sha256:68a7ee3dc2c726e54b2be3533a9e1ac6baaed0893334947a6378520de28a6a76
     container_name: grafana
     user: '1000'
     restart: unless-stopped
@@ -24,7 +24,7 @@ services:
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
 
   loki:
-    image: grafana/loki:3.7
+    image: grafana/loki:3.7@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
     user: '1000'
     ports:
       - 3100:3100
@@ -42,7 +42,7 @@ services:
   # promtail positions file). Runs as root so it can read the systemd journal +
   # root-owned files under /var/log; data dir is the only writable mount.
   alloy:
-    image: grafana/alloy:v1.17.1
+    image: grafana/alloy:v1.17.1@sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b
     volumes:
       - /var/log:/var/log:ro
       - /etc/machine-id:/etc/machine-id:ro
@@ -57,7 +57,7 @@ services:
       - loki_network
 
   prometheus:
-    image: prom/prometheus:v3.13.1
+    image: prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
     # NOTE: deliberately NO `user:` line. The prom/prometheus image already runs as
     # its built-in `nobody` (uid 65534), and the ./prometheus-data bind mount is
     # owned 65534 to match (see nix/hosts/krg-prod/default.nix tmpfiles). Pinning
@@ -106,7 +106,7 @@ services:
       - ./prometheus-data:/prometheus:rw
 
   blackbox_exporter:
-    image: quay.io/prometheus/blackbox-exporter:v0.28.0
+    image: quay.io/prometheus/blackbox-exporter:v0.28.0@sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc
     container_name: blackbox_exporter
     volumes:
       - ./blackbox-exporter:/config:ro
