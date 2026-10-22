@@ -50,7 +50,11 @@ class FakeDocker:
             args = args[2:]  # the stack's base-command flags, not part of the subcommand
         if args[:3] == ["config", "--format", "json"]:
             return json.dumps({"services": self.services})
+        if args[0] == "pull":
+            self.pulled = True
+            return ""
         if args[:2] == ["--dry-run", "up"]:
+            assert getattr(self, "pulled", False), "dry run before pulling missing images"
             # compose's own decision: a running container whose config differs from the
             # desired one is reported `Recreate`; the rest `Running`.
             return "".join(
@@ -561,6 +565,8 @@ def test_changed_services_parses_compose_dry_run():
     ps = "krg-prod-outline-3\toutline\nkrg-prod-fleet-3\tfleet\npostgres_authentik\tpostgres_authentik\n"
 
     def runner(argv, stderr=False):
+        if "pull" in argv:
+            return ""
         if "--dry-run" in argv:
             assert stderr, "dry-run results are on stderr; they must be captured"
             return out
@@ -580,4 +586,18 @@ def test_nothing_to_recreate_skips_the_ps_call():
         return " Container a-1 Running \n"
 
     assert cr.Stack(["docker", "compose"], runner=runner).changed_services() == set()
-    assert len(calls) == 1
+    assert [c[2] for c in calls] == ["pull", "--dry-run"]  # pull, dry run, and no ps
+
+
+def test_missing_images_are_pulled_before_the_dry_run():
+    """Production: a newly pinned digest wasn't on the host, so `--dry-run up` failed with
+    'No such image' and crashed the reload. Pull (missing only, skip buildable) first."""
+    calls = []
+
+    def runner(argv, stderr=False):
+        calls.append(argv[2:])
+        return ""
+
+    cr.Stack(["docker", "compose"], runner=runner).changed_services()
+    assert calls[0] == ["pull", "--quiet", "--policy", "missing", "--ignore-buildable"]
+    assert calls[1][:2] == ["--dry-run", "up"]
