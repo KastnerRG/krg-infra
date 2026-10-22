@@ -229,8 +229,18 @@ in {
     # the stack fails closed (no stale/empty secrets) if bao is down. This couples
     # the lab's ingress (Traefik) + SSO (Authentik) to krg-vault being unsealed at
     # boot — the deliberate cost of /run-only (never-on-durable-disk) secrets.
-    after = ["openbao-agent.service"];
-    requires = ["openbao-agent.service"];
+    #
+    # failClosedOn, NOT requires (ADR 0024 P1): `requires` made every openbao-agent
+    # restart (deploy-nixos.sh after each switch, the cert-renewal timer, any change
+    # to the agent's config) restart THIS unit = `compose down` of every lab service.
+    # failClosedOn keeps the ordering and the fail-closed START, without propagation.
+    # A re-rendered secret no longer reaches containers as a side effect of that
+    # bounce: each render's reloadCommand must deliver it (follow-up PR).
+    failClosedOn = ["openbao-agent.service"];
+    # A changed stack is RELOADED on switch, not restarted: compose-reload recreates
+    # (or hands off, for `krg.rollout: handoff` services) only the services whose
+    # config or bind-mounted (L+) config changed; the rest keep running.
+    reloadOnChange = true;
   };
 
   # Expose the prometheus config store path to `docker compose` for ${PROM_CONFIG_DIR}
