@@ -156,7 +156,9 @@ services:
     # not that DNS path, so a forward-auth call can still land on the old container in
     # its last seconds. Still far better than the in-place recreate it replaces.
     healthcheck:
-      test: ["CMD-SHELL", "test ! -f /tmp/krg-drain && /proxy healthcheck"]
+      # 2026.8 replaced /proxy with /authentik; keep the drain guard so a healthy
+      # old container can still be taken out of Traefik's rotation before stopping.
+      test: ["CMD-SHELL", "test ! -f /tmp/krg-drain && /authentik healthcheck proxy"]
       interval: 10s
       timeout: 5s
       retries: 3
