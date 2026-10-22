@@ -112,7 +112,7 @@ services:
       - prometheus_network
 
   temporal-ui:
-    image: temporalio/ui:2.52.0
+    image: temporalio/ui:2.57.0@sha256:d944f959d0923c35cd991a17a0edbe087770eff843724b181933e0cfdd563ab2
     # No container_name: updates are graceful handoffs (krg.rollout below). The
     # vault-agent TLS hook restarts it by compose service label, not by name.
     restart: unless-stopped
