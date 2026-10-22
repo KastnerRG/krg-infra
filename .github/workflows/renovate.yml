@@ -1,0 +1,81 @@
+name: Renovate
+
+# Nightly Renovate (ADR 0024 P2) — the image-update counterpart of flake-update.yml.
+# Policy lives in .github/renovate.json5: updates in the automatic tiers are committed
+# STRAIGHT TO MAIN (Renovate branch automerge, no PR); everything else becomes a PR or
+# waits for approval on the Dependency Dashboard issue.
+#
+# Like the flake update, pushes made with the default GITHUB_TOKEN trigger no other
+# workflows (GitHub's recursion guard), so an automatic update is NOT deployed by CD:
+# each host's 04:00 system.autoUpgrade builds main and switches, and on krg-prod the
+# stack reloads and hands off the bumped service. Running before 04:00 local also keeps
+# these pushes from landing mid-deploy.
+#
+# Timing: 08:00 UTC = 00:00 PST / 01:00 PDT — after flake-update (07:00 UTC) and well
+# before the hosts' 04:00 autoUpgrade. The restart-tier window in renovate.json5 is
+# written against this time.
+#
+# Renovate is our pinned nixpkgs build (same lock as the fleet), not a third-party
+# action. Manual dispatch with dry_run=true reports what it WOULD do without writing.
+#
+# SHIPS OFF: scheduled runs are report-only until the repository variable
+# RENOVATE_LIVE is "true" (Settings → Secrets and variables → Actions → Variables).
+# Automerge/schedule decisions can only be checked against the real platform, so: merge,
+# dispatch a dry run, read what it would commit/open, then set RENOVATE_LIVE=true.
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report only (RENOVATE_DRY_RUN=full): no branches, commits, PRs or issues"
+        type: boolean
+        default: true
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+# contents: branches + the push to main. pull-requests: the PRs for non-automatic
+# updates. issues: the Dependency Dashboard (approvals for majors).
+# id-token: magic-nix-cache-action.
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  renovate:
+    name: renovate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+        # v21+ defaults to Determinate Nix; keep upstream Nix (current behavior).
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+
+      - name: Build Renovate from the pinned nixpkgs
+        run: nix build ./nix#nixosConfigurations.krg-deploy.pkgs.renovate --out-link renovate-bin
+
+      - name: Run Renovate
+        env:
+          RENOVATE_PLATFORM: github
+          RENOVATE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_COM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          # The repo config is committed; never open an onboarding PR.
+          RENOVATE_ONBOARDING: "false"
+          RENOVATE_REQUIRE_CONFIG: required
+          RENOVATE_GIT_AUTHOR: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          LOG_LEVEL: info
+          # Report-only for a manual run with dry_run (the default), and for scheduled
+          # runs until RENOVATE_LIVE=true.
+          DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || (github.event_name == 'schedule' && vars.RENOVATE_LIVE != 'true') }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then export RENOVATE_DRY_RUN=full; fi
+          ./renovate-bin/bin/renovate
