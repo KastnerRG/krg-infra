@@ -149,12 +149,14 @@ services:
 
   authentik_proxy:
     image: *authentik-proxy-image
-    # No container_name (graceful handoff, see authentik_server). Traefik's
-    # forward-auth reaches it by service-name DNS (`authentik_proxy:9000`, below), which
-    # resolves to whichever containers exist, so it keeps working through a handoff;
-    # draining only covers Traefik's own routing (the /outpost.goauthentik.io/ router),
-    # not that DNS path, so a forward-auth call can still land on the old container in
-    # its last seconds. Still far better than the in-place recreate it replaces.
+    # NOT a handoff service (no krg.rollout label): it is recreated in place on updates
+    # (seconds of forward-auth outage). Two copies can't run side by side: TMPDIR is
+    # the SHARED bind mount ./authentik/proxy-tmp, which holds both the outpost's health
+    # socket (authentik-metrics.sock) and its filesystem session store. On 2026-10-22 a
+    # handoff's new container replaced the socket and, when removed, took it with it:
+    # the old (working) outpost reported unhealthy, Traefik dropped it and its
+    # forward-auth middleware, and Guacamole 404'd until the container was restarted.
+    # A per-container TMPDIR would fix the socket but log users out on every update.
     healthcheck:
       # 2026.8 replaced /proxy with /authentik; keep the drain guard so a healthy
       # old container can still be taken out of Traefik's rotation before stopping.
@@ -174,7 +176,6 @@ services:
     volumes:
       - ./authentik/proxy-tmp:/data/tmp
     labels:
-      krg.rollout: handoff
       traefik.enable: true
       traefik.port: 9000
       traefik.http.routers.authentik.rule: HostRegexp(`{host:[a-z-.]+}.ucsd.edu`) && PathPrefix(`/outpost.goauthentik.io/`)
