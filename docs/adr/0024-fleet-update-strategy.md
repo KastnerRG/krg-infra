@@ -231,8 +231,10 @@ Alternatives considered for the kernel and rejected as the primary mechanism:
 - **Patch and digest bumps auto-merge.** For `handoff` services, as soon as CI passes. For
   `restart`-tier services (databases, Prometheus, Traefik), Renovate's `schedule` holds them so
   they merge at the start of the monthly window and their seconds-long restart lands there.
-  **Minor/major bumps that migrate a database wait for an approval click** (with a Slack ping);
-  everything else auto-merges.
+  **Every minor and major version change is a PR that waits for a human** (with a Slack
+  ping), whether or not it migrates a database: automatic updates stay on the same release
+  line (same tag rebuilt, or x.y.Z). *(Clarified 2026-10-22 after a minor bump auto-applied
+  under the earlier "everything else auto-merges" wording.)*
 - The existing lint check that every referenced image tag exists (`scripts/lint.sh`) gates
   Renovate PRs as-is. Extend it to verify digests once images are digest-pinned.
 - Batch updates. An auto-merge storm can still hit Docker Hub's anonymous pull limit (it has

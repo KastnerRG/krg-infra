@@ -8,10 +8,15 @@
 // turns healthy is rolled back and the old one keeps serving.
 //
 //   handoff tier  (stateless web; graceful handoff)  patch + digest  → main, any night
-//   restart tier  (DBs, ingress, monitoring, …)      patch + minor + digest
+//   restart tier  (DBs, ingress, monitoring, …)      patch + digest
 //                 (seconds of downtime per update)   → main, first Sunday of the month only
-//   minor of a handoff-tier app (DB migrations), any major, the one-time digest pinning,
+//   every MINOR and MAJOR version change, the one-time digest pinning,
 //   OpenTofu providers, Ansible collections           → a PR that waits for a human
+//
+// Automatic = the same release line only: a rebuilt image of the same tag (digest) or a
+// patch release (x.y.Z). Anything that moves the minor or major version is a PR.
+// Authentik versions are YEAR.MONTH.PATCH, so its month bumps are treated as majors
+// (held for approval on the Dependency Dashboard).
 //
 // No CI runs before an automatic update lands (pushes with the workflow's token trigger
 // no workflows — the same as the flake update). For image bumps CI checks little anyway
@@ -88,15 +93,7 @@
       automerge: true,
     },
 
-    {
-      description: "temporal-ui has no database behind it: minor updates swap like patches",
-      matchDatasources: ["docker"],
-      matchPackageNames: ["temporalio/ui"],
-      matchUpdateTypes: ["minor"],
-      automerge: true,
-    },
-
-    // ── restart tier: patch + minor + digest, first Sunday of the month ────────
+    // ── restart tier: patch + digest, first Sunday of the month ────────────────
     {
       description: "Restart-tier images: recreated in place (seconds of downtime) → straight to main only on the first Sunday, applied at that morning's 04:00 autoUpgrade",
       matchDatasources: ["docker"],
@@ -114,7 +111,7 @@
         "vaultwarden/server",
         "nvcr.io/nvidia/k8s/dcgm-exporter",
       ],
-      matchUpdateTypes: ["patch", "minor", "digest"],
+      matchUpdateTypes: ["patch", "digest"],
       automerge: true,
       // ADR 0024 §3. The job runs at 08:00 UTC (00:00 PST / 01:00 PDT), so this is
       // the first Sunday's run, which lands before that morning's 04:00 autoUpgrade.
@@ -131,6 +128,15 @@
       // Own branch: Renovate names branches by TARGET major, so e.g. guacamole's
       // postgres 16 → 18 (needs pg_upgrade) would otherwise share `postgres-18.x` with
       // the routine 18.4 → 18.6 of the other databases and hold it back.
+      additionalBranchPrefix: "major-",
+    },
+    {
+      description: "Authentik versions are YEAR.MONTH.PATCH: each monthly release (2026.5 → 2026.8) carries migrations and breaking changes, so treat the month bump exactly like a major. Patch releases within a month still apply automatically.",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["ghcr.io/goauthentik/{server,proxy,ldap}"],
+      matchUpdateTypes: ["minor"],
+      automerge: false,
+      dependencyDashboardApproval: true,
       additionalBranchPrefix: "major-",
     },
     {
