@@ -74,8 +74,75 @@ with lib; let
         type = types.bool;
         default = false;
       };
+
+      # Apply a changed stack WITHOUT taking it down (ADR 0024 P1). By default a change
+      # to this unit (a compose file, an env line) makes `nixos-rebuild switch` RESTART
+      # it, and ExecStop is `compose down`: every service in the stack goes down and
+      # comes back, for any one-line change. With this on, the switch RELOADS instead,
+      # and ExecReload is compose-reload (compose-stack/compose-reload.py): services
+      # labelled `krg.rollout: handoff` get a graceful handoff (new container healthy
+      # before the old one stops), and every other CHANGED service is recreated in place
+      # by `up -d` exactly as before; unchanged services are not touched at all. A
+      # handoff whose new container never turns healthy is rolled back and fails the
+      # reload, leaving the old container serving.
+      #
+      # Off by default: turning it on changes how an already-running stack is updated,
+      # so it is enabled per stack, pilot first. Incompatible with recreateOnConfigChange
+      # (whole-stack --force-recreate is the opposite of a per-service handoff).
+      reloadOnChange = mkOption {
+        type = types.bool;
+        default = false;
+      };
+
+      # compose-reload's bounds for one handoff: how long a new container may take to
+      # turn healthy (and an old one to drain), and the pause between draining and
+      # stopping the old container so in-flight requests finish.
+      handoffTimeoutSec = mkOption {
+        type = types.ints.positive;
+        default = 180;
+      };
+      handoffDrainSec = mkOption {
+        type = types.ints.unsigned;
+        default = 5;
+      };
+
+      # Units that must be ACTIVE for this stack to start, without `requires`'
+      # restart propagation. systemd restarts a unit whenever a unit it `requires` is
+      # restarted, so `requires = ["openbao-agent.service"]` turns every agent re-render
+      # (deploy-nixos.sh after each switch, the cert-renewal timer) into a full stack
+      # `down`/`up`. Listing the unit here instead orders the stack after it and fails
+      # the stack's START closed if it isn't active (no stale/missing secrets), but a
+      # later restart of it leaves the running stack alone.
+      #
+      # CONSEQUENCE: a re-render no longer restarts the stack as a side effect, so any
+      # render whose consumer holds the value in memory must set its vaultAgent
+      # `reloadCommand` (most already do; check before switching a stack over).
+      failClosedOn = mkOption {
+        type = types.listOf types.str;
+        default = [];
+      };
     };
   };
+
+  # compose-reload as stdlib-only Python, packaged like the scratch tools (scratch.nix):
+  # writePython3Bin gives a build-time syntax + import check; flakeIgnore drops the
+  # style-only lints the repo-wide ruff gate (ruff.toml) already covers.
+  composeReload =
+    pkgs.writers.writePython3Bin "compose-reload" {
+      libraries = [];
+      flakeIgnore = ["E203" "E501" "E226" "W503" "W504"];
+    }
+    (builtins.readFile ./compose-stack/compose-reload.py);
+
+  # ExecStartPre for failClosedOn: refuse to start unless every listed unit is active.
+  failClosedCheck = name: units:
+    pkgs.writeShellScript "fail-closed-${name}" (concatMapStringsSep "\n" (u: ''
+        if ! ${config.systemd.package}/bin/systemctl is-active --quiet ${escapeShellArg u}; then
+          echo "${name}: ${u} is not active; refusing to start (fail closed)" >&2
+          exit 1
+        fi
+      '')
+      units);
 
   composeCmd = stack: let
     fileFlags = concatStringsSep " " (map (f: "-f ${f}") stack.composeFiles);
@@ -92,6 +159,13 @@ in {
   };
 
   config = mkIf (cfg != {}) {
+    assertions =
+      mapAttrsToList (name: stack: {
+        assertion = !(stack.reloadOnChange && stack.recreateOnConfigChange);
+        message = "krg.composeStacks.${name}: reloadOnChange and recreateOnConfigChange are mutually exclusive (a per-service handoff vs a whole-stack --force-recreate).";
+      })
+      cfg;
+
     # Ensure working directories and .secrets/ subdirectories exist
     systemd.tmpfiles.rules = flatten (mapAttrsToList (name: stack: [
         "d ${stack.workingDirectory}         0750 root docker -"
@@ -139,26 +213,39 @@ in {
           # pulls that target into the boot transaction. Without the wants, systemd
           # warns ("ordered after network-online.target but doesn't depend on it")
           # and the ordering is a no-op — the target may never activate.
-          wants = ["network-online.target"];
+          wants = ["network-online.target"] ++ stack.failClosedOn;
           after =
             ["docker.service" "network-online.target"]
             ++ map (n: "docker-network-${n}.service") stack.networks
-            ++ stack.after;
+            ++ stack.after
+            ++ stack.failClosedOn;
           requires =
             ["docker.service"]
             ++ map (n: "docker-network-${n}.service") stack.networks
             ++ stack.requires;
           wantedBy = ["multi-user.target"];
+          # reloadOnChange: a changed unit is RELOADED on switch (compose-reload), not
+          # restarted (compose down + up). See the option.
+          restartIfChanged = !stack.reloadOnChange;
+          reloadIfChanged = stack.reloadOnChange;
           serviceConfig = {
             Type = "oneshot";
             RemainAfterExit = true;
             WorkingDirectory = stack.workingDirectory;
+            ExecStartPre = mkIf (stack.failClosedOn != []) "${failClosedCheck name stack.failClosedOn}";
             ExecStart = "${composeCmd stack} up -d --remove-orphans${optionalString stack.recreateOnConfigChange " --force-recreate"}";
             ExecStop = "${composeCmd stack} down";
-            ExecReload = pkgs.writeShellScript "reload-${name}" ''
-              ${composeCmd stack} pull
-              ${composeCmd stack} up -d --remove-orphans
-            '';
+            # reloadOnChange stacks do NOT `pull` on reload: images change only when the
+            # committed compose file changes (a floating tag must not silently move on an
+            # unrelated reload). `up` still pulls any image that's missing.
+            ExecReload =
+              if stack.reloadOnChange
+              then "${composeReload}/bin/compose-reload --timeout ${toString stack.handoffTimeoutSec} --drain ${toString stack.handoffDrainSec} -- ${composeCmd stack}"
+              else
+                pkgs.writeShellScript "reload-${name}" ''
+                  ${composeCmd stack} pull
+                  ${composeCmd stack} up -d --remove-orphans
+                '';
             Restart = "on-failure";
             RestartSec = "30s";
           };
