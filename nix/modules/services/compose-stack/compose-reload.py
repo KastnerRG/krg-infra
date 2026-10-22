@@ -116,7 +116,15 @@ class Stack:
         with the container's config-hash label: for any service with an env_file, `up`
         stamps a different hash than `config --hash` reports (verified, compose 5.4), so
         every such service looked changed on every reload and was handed off nightly.
+
+        The dry run does NOT pull: an image the compose file references but the host
+        doesn't have yet (every image update) makes it fail with "No such image" — that
+        crashed the first production reload with image changes. So pull what's missing
+        first: downloads only, no running container changes, and a pull failure (rate
+        limit, auth) fails the reload before anything is touched. --ignore-buildable:
+        locally built services (e.g. mlflow) have nothing to pull.
         """
+        self.compose("pull", "--quiet", "--policy", "missing", "--ignore-buildable", stderr=True)
         out = self.compose("--dry-run", "up", "--detach", "--remove-orphans", stderr=True)
         names = {m.group(1) for m in re.finditer(r"Container (\S+)\s+Recreate\b", out)}
         if not names:
