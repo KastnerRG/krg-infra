@@ -113,8 +113,18 @@ services:
 
   temporal-ui:
     image: temporalio/ui:2.52.0
-    container_name: temporal-ui
+    # No container_name: updates are graceful handoffs (krg.rollout below). The
+    # vault-agent TLS hook restarts it by compose service label, not by name.
     restart: unless-stopped
+    # /healthz answers {"status":"OK"} without needing the Temporal backend (so a
+    # frontend blip doesn't fail the UI's liveness). Plus the drain clause.
+    healthcheck:
+      test: ["CMD-SHELL", "test ! -f /tmp/krg-drain && wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
       - TEMPORAL_CORS_ORIGINS=https://workflows.krg.ucsd.edu
@@ -151,6 +161,7 @@ services:
       - temporal_internal
       - traefik_proxy
     labels:
+      - "krg.rollout=handoff"
       - "traefik.enable=true"
       - "traefik.http.routers.temporal.rule=Host(`workflows.krg.ucsd.edu`)"
       - "traefik.http.routers.temporal.entrypoints=websecure"

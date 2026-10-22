@@ -10,9 +10,9 @@
 # one allowed to be empty at phase 2 (krg.vaultAgent … errorOnMissingKey = false),
 # and THIS step closes the loop: re-running openbao-agent after phase 3 re-renders
 # the now-present tokens (proxy + ldap outposts), and each render's reloadCommand
-# (`docker restart authentik_proxy` / `authentik_ldap`) fires because the content
-# changed empty → token — so a from-scratch deploy converges the outposts in a
-# single run.
+# (a krg-prod stack reload, which recreates the outposts with the new env_file)
+# fires because the content changed empty → token — so a from-scratch deploy
+# converges the outposts in a single run.
 #
 # Best-effort by design: a host that's down / has no krg.vaultAgent / whose agent
 # fails just WARNs (the next deploy re-renders). It never fails the deploy — every

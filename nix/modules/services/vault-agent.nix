@@ -113,10 +113,17 @@ with lib; let
           Optional command run ONLY when this render's content CHANGES — the OpenBao
           Agent fires the template `command` on a write (a rotation), not when the
           rendered value is unchanged. Use it to reload the consumer that holds the
-          secret in memory, e.g. `''${pkgs.docker}/bin/docker restart temporal-ui`,
-          because Docker Compose does NOT recreate a container when only an env_file's
-          CONTENTS change. The deploy re-runs the agent each switch
-          (deploy/deploy-nixos.sh), so a rotated secret propagates on the next deploy.
+          secret in memory. Which command depends on how the file is consumed:
+          - a compose `env_file`: reload the stack (`systemctl reload --no-block
+            <stack>.service`, with the stack on reloadOnChange). `docker restart`
+            does NOT re-read an env_file (it's baked in at create); compose's config
+            hash DOES include its contents, so the reload recreates exactly the
+            consumers. --no-block: this runs inside the agent's start.
+          - a mounted file (e.g. a TLS PEM): `docker restart` the consumer, which does
+            re-read it. Select it by compose labels, not container_name, so it still
+            works after a handoff renamed it.
+          The deploy re-runs the agent each switch (deploy/deploy-nixos.sh), so a
+          rotated secret propagates on the next deploy.
           Wrapped `|| true` so it can never fail the fail-closed agent. Give the full
           binary path — the agent's PATH is minimal.
         '';

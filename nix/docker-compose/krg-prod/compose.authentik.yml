@@ -49,9 +49,20 @@ services:
 
   authentik_server:
     image: *authentik-image
-    container_name: authentik_server
+    # No container_name: updates are graceful handoffs (krg.rollout below), which run
+    # the new container next to the old one. Address it by service name (DNS:
+    # `authentik_server`) or `docker compose ... exec authentik_server`.
     restart: unless-stopped
     command: server
+    # The image's own check (`ak healthcheck`), plus the drain clause compose-reload
+    # uses to take the old container out of Traefik's rotation before stopping it.
+    healthcheck:
+      test: ["CMD-SHELL", "test ! -f /tmp/krg-drain && ak healthcheck"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+      start_interval: 3s
     environment:
       AUTHENTIK_POSTGRESQL__HOST: postgres_authentik
       AUTHENTIK_POSTGRESQL__USER: authentik
@@ -86,6 +97,7 @@ services:
       # Prometheus scrapes authentik_* metrics on :9300 over this network.
       - prometheus_network
     labels:
+      - "krg.rollout=handoff"
       - "traefik.enable=true"
       - "traefik.http.routers.authentik_server.rule=Host(`auth.krg.ucsd.edu`)"
       - "traefik.http.routers.authentik_server.entrypoints=websecure"
@@ -137,7 +149,19 @@ services:
 
   authentik_proxy:
     image: *authentik-proxy-image
-    container_name: authentik_proxy
+    # No container_name (graceful handoff, see authentik_server). Traefik's
+    # forward-auth reaches it by service-name DNS (`authentik_proxy:9000`, below), which
+    # resolves to whichever containers exist, so it keeps working through a handoff;
+    # draining only covers Traefik's own routing (the /outpost.goauthentik.io/ router),
+    # not that DNS path, so a forward-auth call can still land on the old container in
+    # its last seconds. Still far better than the in-place recreate it replaces.
+    healthcheck:
+      test: ["CMD-SHELL", "test ! -f /tmp/krg-drain && /proxy healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
     environment:
       TMPDIR: /data/tmp
       AUTHENTIK_POSTGRESQL__HOST: postgres_authentik
@@ -148,6 +172,7 @@ services:
     volumes:
       - ./authentik/proxy-tmp:/data/tmp
     labels:
+      krg.rollout: handoff
       traefik.enable: true
       traefik.port: 9000
       traefik.http.routers.authentik.rule: HostRegexp(`{host:[a-z-.]+}.ucsd.edu`) && PathPrefix(`/outpost.goauthentik.io/`)

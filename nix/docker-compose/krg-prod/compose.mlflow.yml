@@ -61,10 +61,21 @@ services:
     depends_on:
       mlflow_postgres:
         condition: service_healthy
+    # Up = the server answers HTTP below 500 (python:3.12-slim has no curl/wget, so
+    # stdlib). The Host header matches MLFLOW_SERVER_ALLOWED_HOSTS, which rejects other
+    # hosts. Plus the drain clause compose-reload uses during a graceful handoff.
+    healthcheck:
+      test: ["CMD-SHELL", "test ! -f /tmp/krg-drain && python -c \"import http.client as h,sys; c=h.HTTPConnection('127.0.0.1',5000,timeout=4); c.request('GET','/health',headers={'Host':'mlflow.krg.ucsd.edu'}); sys.exit(c.getresponse().status>=500)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 3
+      start_period: 90s
+      start_interval: 3s
     networks:
       - mlflow_internal
       - traefik_proxy
     labels:
+      - "krg.rollout=handoff"
       - "traefik.enable=true"
       - "traefik.http.routers.mlflow.rule=Host(`mlflow.krg.ucsd.edu`)"
       - "traefik.http.routers.mlflow.entrypoints=websecure"

@@ -13,7 +13,17 @@ services:
     depends_on:
       - outline_postgres
       - outline_redis
+    # The image's own /_health check, plus the drain clause compose-reload uses to take
+    # the old container out of Traefik's rotation during a graceful handoff.
+    healthcheck:
+      test: ["CMD-SHELL", "test ! -f /tmp/krg-drain && wget -qO- http://127.0.0.1:3000/_health | grep -q OK"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
     labels:
+      - "krg.rollout=handoff"
       - "traefik.enable=true"
       - "traefik.http.routers.outline.rule=Host(`docs.krg.ucsd.edu`)"
       - "traefik.http.routers.outline.entrypoints=websecure"

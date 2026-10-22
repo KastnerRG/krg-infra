@@ -487,9 +487,13 @@ in {
         '';
         # Same 7d temporal-client role the fishsense worker died on — the UI just never
         # noticed because a fleet deploy re-rendered it inside every TTL. Restart on
-        # rotation so it does not depend on that. (ui.env carries the same command for
-        # the OIDC secret; the two rotate on different clocks, so both need it.)
-        reloadCommand = "${pkgs.docker}/bin/docker restart temporal-ui";
+        # rotation so it does not depend on that. A `docker restart` is right here (it
+        # re-reads a MOUNTED file; a reload wouldn't notice, the compose spec is
+        # unchanged). By compose service label, not container name: temporal-ui is
+        # handed off on updates, so its name changes (…-temporal-ui-2) and there can
+        # briefly be two. (ui.env, the OIDC secret, rotates on its own clock and is
+        # delivered by reloadStack.)
+        reloadCommand = "${pkgs.docker}/bin/docker restart $(${pkgs.docker}/bin/docker ps -q --filter label=com.docker.compose.project=krg-prod --filter label=com.docker.compose.service=temporal-ui)";
       }
 
       # ── Authentik ────────────────────────────────────────────────────────────
