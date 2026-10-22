@@ -465,3 +465,79 @@ def test_failed_handoff_keeps_old_state_so_the_change_is_retried(tmp_path, monke
     rc, _ = run_main(monkeypatch, fake, state)
     assert rc == 1
     assert json.loads(state.read_text())["mounts"]["cfg"] == [str(tmp_path / "store-1")]
+
+
+# ── content fingerprints for store-path mounts (found on the first production run:
+#    every L+ link points into ONE store path, so path identity recreated everything) ──
+
+
+def fake_store(tmp_path, monkeypatch):
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setattr(cr, "STORE", str(store) + "/")
+    return store
+
+
+def config_dir(store, name, files):
+    d = store / name
+    d.mkdir(parents=True)
+    for rel, body in files.items():
+        (d / rel).parent.mkdir(parents=True, exist_ok=True)
+        (d / rel).write_text(body)
+    return d
+
+
+def test_store_mount_is_fingerprinted_by_content(tmp_path, monkeypatch):
+    store = fake_store(tmp_path, monkeypatch)
+    a = config_dir(store, "aaa-krg-prod/grafana", {"grafana.ini": "x=1", "dash/d.json": "{}"})
+    b = config_dir(store, "bbb-krg-prod/grafana", {"grafana.ini": "x=1", "dash/d.json": "{}"})
+    c = config_dir(store, "ccc-krg-prod/grafana", {"grafana.ini": "x=2", "dash/d.json": "{}"})
+    fp = lambda d: cr.mount_fingerprints({"g": {"volumes": [bind(d)]}})["g"]  # noqa: E731
+    assert fp(a) == fp(b)  # different store path, same content: unchanged
+    assert fp(a) != fp(c)  # content changed
+    assert fp(a)[0].startswith("sha256:")
+
+
+def test_single_store_file_mount(tmp_path, monkeypatch):
+    store = fake_store(tmp_path, monkeypatch)
+    f1 = config_dir(store, "aaa-krg-prod/loki", {"loki-config.yaml": "a"}) / "loki-config.yaml"
+    f2 = config_dir(store, "bbb-krg-prod/loki", {"loki-config.yaml": "a"}) / "loki-config.yaml"
+    fps = [cr.mount_fingerprints({"l": {"volumes": [bind(f)]}})["l"] for f in (f1, f2)]
+    assert fps[0] == fps[1]
+
+
+def test_unrelated_compose_dir_change_recreates_nothing(tmp_path, monkeypatch):
+    """The production case: a new compose-dir store path, this service's config identical."""
+    store = fake_store(tmp_path, monkeypatch)
+    s1 = config_dir(store, "aaa-krg-prod/cfg", {"app.conf": "same"})
+    s2 = config_dir(store, "bbb-krg-prod/cfg", {"app.conf": "same"})
+    s3 = config_dir(store, "ccc-krg-prod/cfg", {"app.conf": "changed"})
+    fake, link, _ = mount_stack(tmp_path)
+    retarget(link, s1)
+    state = tmp_path / "state.json"
+    run_main(monkeypatch, fake, state)  # record
+    retarget(link, s2)  # deploy moved every L+ link; this config is byte-identical
+    _, calls = run_main(monkeypatch, fake, state)
+    assert calls == [["docker", "compose", "up", "--detach", "--remove-orphans"]]
+    retarget(link, s3)  # this service's config really changed
+    _, calls = run_main(monkeypatch, fake, state)
+    assert calls[0] == [
+        "docker",
+        "compose",
+        "up",
+        "--detach",
+        "--no-deps",
+        "--force-recreate",
+        "cfg",
+    ]
+
+
+def test_older_state_format_only_records(tmp_path, monkeypatch):
+    """Upgrading from version-1 state (paths) must not read as 'everything changed'."""
+    fake, link, s2 = mount_stack(tmp_path)
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"mounts": {"cfg": ["/nix/store/old-path/cfg"], "web": []}}))
+    rc, calls = run_main(monkeypatch, fake, state)
+    assert rc == 0
+    assert calls == [["docker", "compose", "up", "--detach", "--remove-orphans"]]
+    assert json.loads(state.read_text())["version"] == cr.STATE_VERSION

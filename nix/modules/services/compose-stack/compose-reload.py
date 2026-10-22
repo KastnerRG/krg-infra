@@ -36,14 +36,16 @@ exactly as before.
 Bind-mounted config (issue #458). Compose's config hash does not see a CHANGE TO THE
 CONTENT of a bind-mounted file or directory, and this repo mounts committed config via
 tmpfiles `L+` symlinks into the Nix store (./grafana, ./loki/loki-config.yaml, ...), so
-a config-only change would otherwise never reach the running container. Those symlinks
-resolve to content-addressed store paths, so a service's mounted config changed exactly
-when the RESOLVED path of one of its bind-mount sources changed. With --state, this
-records each service's resolved mount sources after every successful reload and treats
-a service whose sources moved as changed: a handoff for handoff services, and
-`up -d --no-deps --force-recreate` for the rest. Data dirs aren't symlinks, so they
-never trigger it. The first run (no state yet) only records: enabling this recreates
-nothing.
+a config-only change would otherwise never reach the running container. With --state,
+this records a fingerprint of each service's bind-mount sources after every successful
+reload and treats a service whose fingerprint changed as changed: a handoff for handoff
+services, and `up -d --no-deps --force-recreate` for the rest. A source that resolves
+into the Nix store is fingerprinted by its CONTENT, not its path: krg-prod's L+ links
+all point into ONE store path (the whole compose dir), so any edit anywhere moves every
+link — fingerprinting the path recreated every config-mounting service on every change
+(seen on the first production handoff). Other sources (data dirs) keep their resolved
+path, which doesn't change. The first run (no state, or an older state format) only
+records: enabling or upgrading this recreates nothing.
 
 FAIL SAFE, which is the point of doing this carefully: if a new container never
 becomes healthy, it is removed, the OLD container keeps serving, and this exits
@@ -63,6 +65,7 @@ Usage (from the unit; everything after `--` is the stack's base compose command)
 """
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -147,16 +150,60 @@ def ineligible(spec):
     return None
 
 
-def mount_fingerprints(specs, resolve=os.path.realpath):
-    """{service: sorted resolved bind-mount sources} — see "Bind-mounted config" above."""
+STATE_VERSION = 2  # 2: store-path mounts fingerprinted by CONTENT (see mount_fingerprints)
+STORE = "/nix/store/"
+
+
+def content_hash(path):
+    """sha256 over a file's bytes, or a directory tree's names, file bytes and symlink
+    targets (sorted, not following links). Only ever run on /nix/store paths: small,
+    immutable config."""
+    h = hashlib.sha256()
+    if os.path.isfile(path):
+        with open(path, "rb") as f:
+            h.update(f.read())
+        return h.hexdigest()
+    for root, dirs, files in os.walk(path):
+        dirs.sort()
+        for name in sorted(files) + sorted(
+            d for d in dirs if os.path.islink(os.path.join(root, d))
+        ):
+            p = os.path.join(root, name)
+            h.update(os.path.relpath(p, path).encode() + b"\0")
+            if os.path.islink(p):
+                h.update(b"L" + os.readlink(p).encode())
+            elif os.path.isfile(p):
+                with open(p, "rb") as f:
+                    h.update(b"F" + f.read())
+            h.update(b"\0")
+    return h.hexdigest()
+
+
+def mount_fingerprints(specs, resolve=os.path.realpath, store=None):
+    """{service: sorted fingerprints of its bind-mount sources} — see "Bind-mounted config".
+
+    A source that resolves into the Nix store is fingerprinted by CONTENT, not path:
+    krg-prod's L+ links all point into ONE store path (the whole compose directory), so
+    any change anywhere in it moves every link even when a service's own config is
+    byte-identical. Anything else (data dirs, sockets, /var/log) keeps its resolved
+    path, which doesn't change, so it never triggers a recreate.
+    """
+    store = store or STORE
+    cache = {}
     out = {}
     for svc, spec in specs.items():
-        srcs = [
-            resolve(v["source"])
-            for v in spec.get("volumes") or []
-            if isinstance(v, dict) and v.get("type") == "bind" and v.get("source")
-        ]
-        out[svc] = sorted(srcs)
+        fps = []
+        for v in spec.get("volumes") or []:
+            if not (isinstance(v, dict) and v.get("type") == "bind" and v.get("source")):
+                continue
+            real = resolve(v["source"])
+            if real.startswith(store) and os.path.exists(real):
+                if real not in cache:
+                    cache[real] = "sha256:" + content_hash(real)
+                fps.append(cache[real])
+            else:
+                fps.append(real)
+        out[svc] = sorted(fps)
     return out
 
 
@@ -171,17 +218,22 @@ def mounts_changed(prev, cur):
 
 
 def load_state(path):
+    """Previous fingerprints, or None if absent, unreadable, or from another VERSION
+    (a format change must re-record, not read as "everything changed")."""
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f).get("mounts")
+            state = json.load(f)
     except (OSError, ValueError):
         return None
+    if state.get("version") != STATE_VERSION:
+        return None
+    return state.get("mounts")
 
 
 def save_state(path, mounts):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"mounts": mounts}, f, indent=1, sort_keys=True)
+        json.dump({"version": STATE_VERSION, "mounts": mounts}, f, indent=1, sort_keys=True)
     os.replace(tmp, path)
 
 

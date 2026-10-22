@@ -239,12 +239,22 @@ in {
             # reloadOnChange stacks do NOT `pull` on reload: images change only when the
             # committed compose file changes (a floating tag must not silently move on an
             # unrelated reload). `up` still pulls any image that's missing.
-            # --state: per-service resolved bind-mount sources, so a config change that
-            # only retargets an L+ symlink (invisible to compose's hash, #458) still
+            # --state: per-service fingerprints of bind-mount sources, so a config change
+            # that only retargets an L+ symlink (invisible to compose's hash, #458) still
             # recreates/hands off exactly the services that mount it.
+            #
+            # The tmpfiles line first brings THIS stack's L+ links up to date. Don't rely
+            # on the switch having done it: when systemd-tmpfiles-resetup's own unit
+            # changes, switch-to-configuration stops it and starts it again only AFTER
+            # reloading units, so the reload would fingerprint the OLD links and miss the
+            # change (VM-reproduced). /etc/tmpfiles.d is already the new generation's by
+            # then; --prefix limits it to this working directory.
             ExecReload =
               if stack.reloadOnChange
-              then "${composeReload}/bin/compose-reload --timeout ${toString stack.handoffTimeoutSec} --drain ${toString stack.handoffDrainSec} --state ${stack.workingDirectory}/.compose-reload-state.json -- ${composeCmd stack}"
+              then [
+                "${config.systemd.package}/bin/systemd-tmpfiles --create --prefix=${stack.workingDirectory}"
+                "${composeReload}/bin/compose-reload --timeout ${toString stack.handoffTimeoutSec} --drain ${toString stack.handoffDrainSec} --state ${stack.workingDirectory}/.compose-reload-state.json -- ${composeCmd stack}"
+              ]
               else
                 pkgs.writeShellScript "reload-${name}" ''
                   ${composeCmd stack} pull
