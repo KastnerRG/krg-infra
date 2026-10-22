@@ -6,7 +6,7 @@
 # (OIDC_CLIENT_SECRET, SECRET_KEY, and the password-bearing MLFLOW_BACKEND_STORE_URI /
 # OIDC_USERS_DB_URI). Nothing secret is baked into this image.
 
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:cb33f7f771ecec2ef1225cf39b159591a040391bd73e4c01f00fdfc4c47611d2
 
 # Pinned for reproducibility. mlflow-oidc-auth 7.x requires mlflow>=3.10,<4 and
 # Python>=3.10. Bump all three together (the plugin tracks the mlflow major).

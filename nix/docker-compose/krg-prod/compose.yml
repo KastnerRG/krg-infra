@@ -16,7 +16,7 @@ include:
 
 services:
   traefik:
-    image: traefik:v3.7
+    image: traefik:v3.7@sha256:22a759fb803abb5c3a7ba5d5a55a201c5fb0fc8993d5c72c47a89075e64f1953
     container_name: traefik
     restart: always
     ports:
