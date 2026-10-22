@@ -68,12 +68,12 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 
 ROLLOUT_LABEL = "krg.rollout"
-HASH_LABEL = "com.docker.compose.config-hash"
 DRAIN_FILE = "/tmp/krg-drain"
 
 
@@ -81,9 +81,11 @@ def log(msg):
     print(f"compose-reload: {msg}", flush=True)
 
 
-def run(argv):
-    """Run a command and return its stdout; raise CalledProcessError on failure."""
-    return subprocess.run(argv, check=True, capture_output=True, text=True).stdout
+def run(argv, stderr=False):
+    """Run a command and return its stdout (+ stderr if asked: compose writes its
+    progress, including dry-run results, there); raise CalledProcessError on failure."""
+    p = subprocess.run(argv, check=True, capture_output=True, text=True)
+    return p.stdout + p.stderr if stderr else p.stdout
 
 
 class Stack:
@@ -94,7 +96,9 @@ class Stack:
         self.docker = self.compose_cmd[0]  # .../bin/docker; `compose` is a subcommand
         self.runner = runner
 
-    def compose(self, *args):
+    def compose(self, *args, stderr=False):
+        if stderr:
+            return self.runner(self.compose_cmd + list(args), stderr=True)
         return self.runner(self.compose_cmd + list(args))
 
     def docker_cmd(self, *args):
@@ -104,14 +108,25 @@ class Stack:
         """Resolved compose config: {service: spec}."""
         return json.loads(self.compose("config", "--format", "json")).get("services", {})
 
-    def desired_hashes(self):
-        """{service: config-hash} as compose would stamp it on a fresh container."""
-        hashes = {}
-        for line in self.compose("config", "--hash", "*").splitlines():
-            parts = line.split()
+    def changed_services(self):
+        """Services whose running containers `up -d` would recreate, asked of compose.
+
+        `docker compose --dry-run up -d` reports `Container <name> Recreate` for exactly
+        the containers a real `up` would replace. This is NOT `config --hash` compared
+        with the container's config-hash label: for any service with an env_file, `up`
+        stamps a different hash than `config --hash` reports (verified, compose 5.4), so
+        every such service looked changed on every reload and was handed off nightly.
+        """
+        out = self.compose("--dry-run", "up", "--detach", "--remove-orphans", stderr=True)
+        names = {m.group(1) for m in re.finditer(r"Container (\S+)\s+Recreate\b", out)}
+        if not names:
+            return set()
+        svc_of = {}
+        for line in self.compose("ps", "--all", "--format", "{{.Name}}\t{{.Service}}").splitlines():
+            parts = line.split("\t")
             if len(parts) == 2:
-                hashes[parts[0]] = parts[1]
-        return hashes
+                svc_of[parts[0]] = parts[1]
+        return {svc_of[n] for n in names if n in svc_of}
 
     def running(self, service):
         """IDs of the service's RUNNING containers."""
@@ -120,10 +135,6 @@ class Stack:
     def all_containers(self, service):
         """IDs of ALL the service's containers, including ones that already exited."""
         return self.compose("ps", "--all", "--quiet", service).split()
-
-    def container_hash(self, cid):
-        fmt = '{{index .Config.Labels "' + HASH_LABEL + '"}}'
-        return self.docker_cmd("inspect", "--format", fmt, cid).strip()
 
     def drains(self, cid):
         """Whether this container's healthcheck fails while DRAIN_FILE exists."""
@@ -243,7 +254,7 @@ def plan(stack, forced=frozenset()):
     `forced`: services whose mounted config changed (compose's hash can't see it).
     """
     specs = stack.specs()
-    desired = stack.desired_hashes()
+    changed = stack.changed_services()
     todo = []
     for svc in sorted(specs):
         spec = specs[svc]
@@ -253,7 +264,7 @@ def plan(stack, forced=frozenset()):
         if not old:
             log(f"{svc}: not running, `up -d` will start it")
             continue
-        if svc not in forced and all(stack.container_hash(c) == desired.get(svc) for c in old):
+        if svc not in forced and svc not in changed:
             continue  # unchanged: `up -d` leaves it alone
         if len(old) > 1:
             log(

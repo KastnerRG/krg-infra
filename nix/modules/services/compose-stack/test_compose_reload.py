@@ -39,7 +39,7 @@ class FakeDocker:
         self.calls = []
         self._seq = 0
 
-    def __call__(self, argv):
+    def __call__(self, argv, stderr=False):
         self.calls.append(argv)
         if argv[:2] == ["docker", "compose"]:
             return self._compose(argv[2:])
@@ -50,8 +50,16 @@ class FakeDocker:
             args = args[2:]  # the stack's base-command flags, not part of the subcommand
         if args[:3] == ["config", "--format", "json"]:
             return json.dumps({"services": self.services})
-        if args[:3] == ["config", "--hash", "*"]:
-            return "".join(f"{s} {h}\n" for s, h in self.desired.items())
+        if args[:2] == ["--dry-run", "up"]:
+            # compose's own decision: a running container whose config differs from the
+            # desired one is reported `Recreate`; the rest `Running`.
+            return "".join(
+                f" Container {c} {'Recreate' if v['hash'] != self.desired[v['svc']] else 'Running'} \n"
+                for c, v in self.containers.items()
+                if v["state"] == "running"
+            )
+        if args[:4] == ["ps", "--all", "--format", "{{.Name}}\t{{.Service}}"]:
+            return "".join(f"{c}\t{v['svc']}\n" for c, v in self.containers.items())
         if args[:2] == ["ps", "--quiet"]:
             svc = args[2]
             return "".join(
@@ -81,8 +89,6 @@ class FakeDocker:
         if args[0] == "inspect":
             fmt, cid = args[2], args[3]
             c = self.containers[cid]
-            if cr.HASH_LABEL in fmt:
-                return c["hash"] + "\n"
             if ".Config.Healthcheck" in fmt:
                 return json.dumps(c.get("hc")) + "\n"
             health = c["health"].pop(0) if len(c["health"]) > 1 else c["health"][0]
@@ -200,9 +206,7 @@ def test_old_container_is_not_stopped_before_new_one_is_healthy():
     cr.handoff(stack(fake), "web", ["old1"], timeout=60, drain=0, sleep=no_sleep)
     stop = next(i for i, c in enumerate(fake.calls) if c[1:3] == ["stop", "old1"])
     last_health_check = max(
-        i
-        for i, c in enumerate(fake.calls)
-        if c[1] == "inspect" and c[-1] == "new1" and cr.HASH_LABEL not in c[3]
+        i for i, c in enumerate(fake.calls) if c[1] == "inspect" and c[-1] == "new1"
     )
     assert last_health_check < stop
 
@@ -541,3 +545,39 @@ def test_older_state_format_only_records(tmp_path, monkeypatch):
     assert rc == 0
     assert calls == [["docker", "compose", "up", "--detach", "--remove-orphans"]]
     assert json.loads(state.read_text())["version"] == cr.STATE_VERSION
+
+
+# ── change detection = compose's own dry run (found in production: `config --hash`
+#    disagrees with the label `up` stamps for env_file services → nightly re-handoffs) ──
+
+
+def test_changed_services_parses_compose_dry_run():
+    out = (
+        " Container krg-prod-outline-3 Running \n"
+        " Container krg-prod-fleet-3 Recreate \n"
+        " Container krg-prod-fleet-3 Recreated \n"
+        " Container postgres_authentik Recreate \n"
+    )
+    ps = "krg-prod-outline-3\toutline\nkrg-prod-fleet-3\tfleet\npostgres_authentik\tpostgres_authentik\n"
+
+    def runner(argv, stderr=False):
+        if "--dry-run" in argv:
+            assert stderr, "dry-run results are on stderr; they must be captured"
+            return out
+        if "--format" in argv:
+            return ps
+        raise AssertionError(argv)
+
+    st = cr.Stack(["docker", "compose"], runner=runner)
+    assert st.changed_services() == {"fleet", "postgres_authentik"}
+
+
+def test_nothing_to_recreate_skips_the_ps_call():
+    calls = []
+
+    def runner(argv, stderr=False):
+        calls.append(argv)
+        return " Container a-1 Running \n"
+
+    assert cr.Stack(["docker", "compose"], runner=runner).changed_services() == set()
+    assert len(calls) == 1
