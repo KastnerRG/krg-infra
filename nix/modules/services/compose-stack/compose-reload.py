@@ -81,10 +81,18 @@ def log(msg):
     print(f"compose-reload: {msg}", flush=True)
 
 
-def run(argv, stderr=False):
+# Hard ceilings for compose calls that could otherwise block a reload forever (and, with
+# it, the switch and every later fleet deploy): a hang now fails the reload loudly instead.
+DRY_RUN_TIMEOUT = 300
+PULL_TIMEOUT = 1800
+CALL_TIMEOUT = 600
+
+
+def run(argv, stderr=False, timeout=CALL_TIMEOUT):
     """Run a command and return its stdout (+ stderr if asked: compose writes its
-    progress, including dry-run results, there); raise CalledProcessError on failure."""
-    p = subprocess.run(argv, check=True, capture_output=True, text=True)
+    progress, including dry-run results, there). Raises CalledProcessError on failure and
+    TimeoutExpired past `timeout` seconds."""
+    p = subprocess.run(argv, check=True, capture_output=True, text=True, timeout=timeout)
     return p.stdout + p.stderr if stderr else p.stdout
 
 
@@ -96,10 +104,13 @@ class Stack:
         self.docker = self.compose_cmd[0]  # .../bin/docker; `compose` is a subcommand
         self.runner = runner
 
-    def compose(self, *args, stderr=False):
+    def compose(self, *args, stderr=False, timeout=None):
+        kw = {}
         if stderr:
-            return self.runner(self.compose_cmd + list(args), stderr=True)
-        return self.runner(self.compose_cmd + list(args))
+            kw["stderr"] = True
+        if timeout:
+            kw["timeout"] = timeout
+        return self.runner(self.compose_cmd + list(args), **kw)
 
     def docker_cmd(self, *args):
         return self.runner([self.docker] + list(args))
@@ -108,8 +119,8 @@ class Stack:
         """Resolved compose config: {service: spec}."""
         return json.loads(self.compose("config", "--format", "json")).get("services", {})
 
-    def changed_services(self):
-        """Services whose running containers `up -d` would recreate, asked of compose.
+    def changed_services(self, services):
+        """Which of `services` `up -d` would recreate, asked of compose.
 
         `docker compose --dry-run up -d` reports `Container <name> Recreate` for exactly
         the containers a real `up` would replace. This is NOT `config --hash` compared
@@ -123,9 +134,24 @@ class Stack:
         first: downloads only, no running container changes, and a pull failure (rate
         limit, auth) fails the reload before anything is touched. --ignore-buildable:
         locally built services (e.g. mlflow) have nothing to pull.
+
+        The dry run is limited to `services` (the handoff-labelled ones; the restart tier
+        is left to the real `up`) with --no-deps. A whole-project dry run HUNG in
+        production: it simulates starting the exited one-shot fleet_migrate that `fleet`
+        depends on (service_completed_successfully), and a simulated container never
+        exits, so compose waited forever — blocking the reload, the switch, and CD. Scoped
+        + --no-deps never touches dependency chains; it also has a hard timeout.
         """
-        self.compose("pull", "--quiet", "--policy", "missing", "--ignore-buildable", stderr=True)
-        out = self.compose("--dry-run", "up", "--detach", "--remove-orphans", stderr=True)
+        if not services:
+            return set()
+        self.compose(
+            "pull", "--quiet", "--policy", "missing", "--ignore-buildable",
+            stderr=True, timeout=PULL_TIMEOUT,
+        )  # fmt: skip
+        out = self.compose(
+            "--dry-run", "up", "--detach", "--no-deps", *sorted(services),
+            stderr=True, timeout=DRY_RUN_TIMEOUT,
+        )  # fmt: skip
         names = {m.group(1) for m in re.finditer(r"Container (\S+)\s+Recreate\b", out)}
         if not names:
             return set()
@@ -262,7 +288,10 @@ def plan(stack, forced=frozenset()):
     `forced`: services whose mounted config changed (compose's hash can't see it).
     """
     specs = stack.specs()
-    changed = stack.changed_services()
+    labelled = [
+        s for s, v in specs.items() if (v.get("labels") or {}).get(ROLLOUT_LABEL) == "handoff"
+    ]
+    changed = stack.changed_services(labelled)
     todo = []
     for svc in sorted(specs):
         spec = specs[svc]
