@@ -88,6 +88,7 @@
   ansible.builtin.script: >-
     apply_certificate.py set-default
     --domain {{ item.domain | quote }}
+    --sans-json {{ (item.sans | default([])) | to_json | quote }}
     --on-duplicate {{ item.on_duplicate | default('newest') | quote }}
     {{ '--check' if ansible_check_mode else '' }}
   loop: "{{ cert_spec.letsencrypt | default([]) | selectattr('default', 'defined') | selectattr('default') | list }}"
@@ -105,10 +106,13 @@
 # the factory self-signed `synology` cert). bind-services explicitly
 # migrates the (service, subscriber) tuples named in `bindings:` to the
 # spec's cert. Idempotent: skips entries already on the target cert.
+# It also moves every ReverseProxy entry whose hostname the cert covers (their
+# service ids are DSM-minted UUIDs, so they cannot be listed in `bindings:`).
 - name: Bind certificates to DSM services (DSM web, FTPS, KMIP, ...)
   ansible.builtin.script: >-
     apply_certificate.py bind-services
     --domain {{ item.domain | quote }}
+    --sans-json {{ (item.sans | default([])) | to_json | quote }}
     --bindings-json {{ item.bindings | to_json | quote }}
     --on-duplicate {{ item.on_duplicate | default('newest') | quote }}
     {{ '--check' if ansible_check_mode else '' }}

@@ -1,0 +1,92 @@
+# Git LFS server on e4e-nas — giftless (github.com/datopian/giftless) — source of
+# truth for the `synology_git_lfs` Ansible role.
+#
+# WHAT IT IS. Git LFS is not a storage protocol: a client asks an HTTP "batch API"
+# where to upload/download each object, then transfers it. giftless answers that
+# API and (with the local-storage backend used here) also streams the bytes
+# itself, into `deployment.storage_dir` on the NAS. Repos stay on GitHub; a repo
+# opts in by committing a `.lfsconfig`:
+#
+#   [lfs]
+#     url = https://lfs.e4e.ucsd.edu/UCSD-E4E/<repo>.git/info/lfs
+#
+# AUTH = GITHUB. giftless's GitHub authenticator takes a GitHub token as the
+# PASSWORD of HTTP basic auth (username is ignored) and maps the token owner's
+# permission on the GitHub repo to LFS read/write: whoever can push to the repo
+# can push its LFS objects. No AD/Authentik involvement — the git CLI cannot
+# follow a browser SSO flow anyway. Classic PATs need `read:org`; fine-grained
+# PATs need `metadata:read`. Users store it with their normal git credential
+# helper.
+#
+# Local storage, NOT a Garage bucket (decided 2026-10-20): same disks either way
+# (Garage is single-replica on this NAS), and a plain directory gets per-share
+# Btrfs snapshots (snapshots.yml defaults apply to git-lfs-store) with per-file
+# restore. The cost is that every byte streams through giftless's Python workers;
+# if that proves too slow, switch the storage_class to
+# giftless.storage.amazon_s3:AmazonS3Storage + transfer basic_external (presigned
+# URLs straight to s3.e4e.ucsd.edu) — that's a config change, not a redesign.
+#
+# LIVE 2026-10-22. Brought up by hand before merge: the container, the
+# `lfs.e4e.ucsd.edu` SAN on the host cert (certificates.yml), and the AppPortal
+# reverse-proxy entry (app-portal.yml) were applied with ansible-playbook, and a
+# real `git lfs push` + pull round-tripped through the public URL. Gated by
+# `synology_git_lfs_enabled` (role defaults, now true).
+#
+# Bring-up gotcha: DSM pins a NEW reverse-proxy entry to whatever cert is
+# default when it's created. The entry existed before its SAN did, so it served
+# a cert without its name until synology_certificate learned to move covered
+# reverse-proxy entries onto the spec'd cert (bind-services).
+#
+# LEGACY DATA — DO NOT TOUCH. The pre-existing `git-lfs-store` share already holds
+# ~54 GiB of LFS objects from Dec 2024 (flat sha256-named files, some `.zstd`, a
+# `store/` subdir; owned by orphaned uids 1055/1224 — a pre-rebuild setup, server
+# unknown; found by a read-only probe 2026-10-20). giftless writes ONLY under its
+# own `giftless/` subdirectory, in its own `<org>/<repo>/<oid>` layout, so the
+# legacy objects are untouched. Migrating them needs the oid → repo mapping
+# nobody has recorded yet; until then they are just files on a share.
+
+deployment:
+  # ghcr, NOT docker.io/datopian/giftless: the Docker Hub image is deprecated
+  # (its entrypoint prints a deprecation banner) and has a DIFFERENT entrypoint
+  # (`docker-prerun.sh` exec "$@") that the uWSGI-args-only `command` the role
+  # renders does not fit — it exits 127. The ghcr image's entrypoint is
+  # `tini uwsgi --`, which the rendered command is written for.
+  image: ghcr.io/datopian/giftless
+  # v0.6.2 (2024-12-16) is the latest release and the first with the GitHub
+  # authenticator + `restrict_to`. Tag pulled and smoke-tested locally
+  # 2026-10-20 (a bad tag only fails at deploy time — nothing in CI pulls it).
+  image_tag: v0.6.2
+  container_name: giftless
+  restart_policy: unless-stopped
+  # Rendered files live beside garage's under the `docker` share.
+  compose_path: /volume2/docker/giftless/docker-compose.yml
+  config_path: /volume2/docker/giftless/giftless.yaml
+  middleware_path: /volume2/docker/giftless/krg_public_url.py
+  # Inside the existing `git-lfs-store` share (snapshotted by snapshots.yml
+  # defaults), in a subdir of its own so the legacy objects are left alone.
+  storage_dir: /volume2/git-lfs-store/giftless
+  # host networking + loopback bind, like garage-ui: only the DSM AppPortal
+  # reverse proxy (which terminates TLS) can reach it. 8090 was free on the box
+  # 2026-10-20; 5000/5001 are avoided (DSM's factory web ports).
+  bind_host: 127.0.0.1
+  port: 8090
+  # uWSGI workers. With local storage every transfer occupies a worker thread
+  # for its whole duration, so this is the concurrent-transfer ceiling (16).
+  processes: 2
+  threads: 8
+
+# Public origin. giftless puts absolute self-referencing URLs in its batch
+# responses (the upload/download/verify `href`s); behind the DSM proxy it would
+# otherwise build them from the proxied http://127.0.0.1:<port> request. The role
+# pins scheme + host to this value with a tiny WSGI middleware, so correctness
+# doesn't depend on which X-Forwarded-* headers DSM's nginx happens to send.
+public_url: https://lfs.e4e.ucsd.edu
+
+github:
+  # GitHub orgs whose repos may use this server (giftless `restrict_to`). This is
+  # the ONLY thing stopping any GitHub user from storing objects here under a repo
+  # of their own, so it is required (the role refuses an empty list). Matching is
+  # case-sensitive against the org in the URL — `.lfsconfig` must say `UCSD-E4E`.
+  # KastnerRG deliberately not included yet (2026-10-20).
+  orgs:
+    - UCSD-E4E

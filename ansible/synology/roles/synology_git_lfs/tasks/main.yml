@@ -1,0 +1,61 @@
+---
+# synology_git_lfs — giftless Git LFS server on e4e-nas, from
+# spec/e4e-nas/git-lfs.yml. Two steps, in order:
+#   1. render — giftless.yaml (GitHub auth, local storage) + the public-URL
+#               WSGI middleware. No secrets: auth is the caller's GitHub token.
+#   2. deploy — docker-compose.yml + `docker compose up -d` on drift; a
+#               config-only change restarts the container (giftless reads its
+#               config once at startup).
+# Public ingress is the AppPortal reverse-proxy entry for lfs.e4e.ucsd.edu
+# (app-portal.yml, synology_app_portal role) — this role only owns the
+# container on loopback.
+#
+# Logic in files/apply_git_lfs.py via the `script` module (DSM py3.8 is below
+# ansible's module floor — same pattern as every synology_* role).
+#
+# Gated by synology_git_lfs_enabled (defaults/main.yml) — see there.
+
+- name: Load the git-lfs spec
+  ansible.builtin.include_vars:
+    file: "{{ synology_git_lfs_spec }}"
+    name: git_lfs_spec
+  tags: [synology_git_lfs]
+
+- name: Git LFS (giftless)
+  when: synology_git_lfs_enabled | bool
+  tags: [synology_git_lfs]
+  block:
+    - name: Render giftless config + public-URL middleware
+      ansible.builtin.script: >-
+        apply_git_lfs.py render
+        --config-path {{ git_lfs_spec.deployment.config_path | quote }}
+        --middleware-path {{ git_lfs_spec.deployment.middleware_path | quote }}
+        --public-url {{ git_lfs_spec.public_url | quote }}
+        --github-orgs-json {{ git_lfs_spec.github.orgs | default([]) | to_json | quote }}
+        {{ '--check' if ansible_check_mode else '' }}
+      register: lfs_render
+      changed_when: "'CHANGED' in lfs_render.stdout or 'WOULD-CHANGE' in lfs_render.stdout"
+      failed_when: "lfs_render.rc != 0 or 'FAIL' in lfs_render.stdout"
+      check_mode: false
+
+    - name: Deploy giftless container (docker compose up -d on drift)
+      ansible.builtin.script: >-
+        apply_git_lfs.py deploy
+        --compose-path {{ git_lfs_spec.deployment.compose_path | quote }}
+        --container-name {{ git_lfs_spec.deployment.container_name | quote }}
+        --image {{ git_lfs_spec.deployment.image | quote }}
+        --image-tag {{ git_lfs_spec.deployment.image_tag | quote }}
+        --restart-policy {{ git_lfs_spec.deployment.restart_policy | quote }}
+        --config-path {{ git_lfs_spec.deployment.config_path | quote }}
+        --middleware-path {{ git_lfs_spec.deployment.middleware_path | quote }}
+        --storage-dir {{ git_lfs_spec.deployment.storage_dir | quote }}
+        --bind-host {{ git_lfs_spec.deployment.bind_host | quote }}
+        --port {{ git_lfs_spec.deployment.port }}
+        --processes {{ git_lfs_spec.deployment.processes }}
+        --threads {{ git_lfs_spec.deployment.threads }}
+        {{ '--config-changed' if (lfs_render is changed) else '' }}
+        {{ '--check' if ansible_check_mode else '' }}
+      register: lfs_deploy
+      changed_when: "'CHANGED' in lfs_deploy.stdout or 'WOULD-CHANGE' in lfs_deploy.stdout"
+      failed_when: "lfs_deploy.rc != 0 or 'FAIL' in lfs_deploy.stdout"
+      check_mode: false

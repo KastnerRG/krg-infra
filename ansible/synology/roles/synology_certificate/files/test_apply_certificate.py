@@ -828,3 +828,153 @@ def test_cert_sans_returns_none_for_missing_id(monkeypatch):
     monkeypatch.setattr(m.subprocess, "run", _openssl_stub(_OPENSSL_SAN_OUT))
     assert m._cert_sans(None) is None
     assert m._cert_sans("") is None
+
+
+# --- SAN-aware duplicate resolution + reverse-proxy rebinding (2026-10-22) ------
+# Live incident shape: adding lfs.e4e.ucsd.edu issued d6mvd5 (all four names);
+# DSM then minted GVDT4N with the OLD three names 11 s later, so plain "newest"
+# picked the wrong one.
+FOUR = {"e4e-nas.ucsd.edu", "s3-admin.e4e.ucsd.edu", "s3.e4e.ucsd.edu", "lfs.e4e.ucsd.edu"}
+THREE = FOUR - {"lfs.e4e.ucsd.edu"}
+SANS_JSON = '["s3-admin.e4e.ucsd.edu", "s3.e4e.ucsd.edu", "lfs.e4e.ucsd.edu"]'
+
+
+def _incident_certs():
+    right = _cert(
+        "e4e-nas.ucsd.edu",
+        cid="d6mvd5",
+        valid_till_dt=datetime(2027, 1, 20, 23, 41, 57, tzinfo=timezone.utc),
+    )
+    wrong = _cert(
+        "e4e-nas.ucsd.edu",
+        cid="GVDT4N",
+        default=True,
+        valid_till_dt=datetime(2027, 1, 20, 23, 42, 6, tzinfo=timezone.utc),
+    )
+    return right, wrong
+
+
+def _incident_sans(cid):
+    return {"d6mvd5": FOUR, "GVDT4N": THREE, "0FndQu": THREE}.get(cid)
+
+
+def test_find_by_domain_prefers_cert_with_wanted_sans_over_newer(monkeypatch):
+    right, wrong = _incident_certs()
+    monkeypatch.setattr(m, "_cert_sans", _incident_sans)
+    keeper, extras = m._find_by_domain_all([wrong, right], "e4e-nas.ucsd.edu", "newest", FOUR)
+    assert keeper["id"] == "d6mvd5"
+    assert [c["id"] for c in extras] == ["GVDT4N"]
+
+
+def test_find_by_domain_falls_back_to_newest_when_no_cert_has_wanted_sans(monkeypatch):
+    right, wrong = _incident_certs()
+    monkeypatch.setattr(m, "_cert_sans", lambda cid: THREE)
+    keeper, _ = m._find_by_domain_all([wrong, right], "e4e-nas.ucsd.edu", "newest", FOUR)
+    assert keeper["id"] == "GVDT4N"
+
+
+def test_letsencrypt_create_no_reissue_loop_after_dsm_mints_stale_duplicate(monkeypatch, capsys):
+    right, wrong = _incident_certs()
+    monkeypatch.setattr(m, "_list_certs", _stub_list([wrong, right]))
+    monkeypatch.setattr(m, "_cert_sans", _incident_sans)
+    monkeypatch.setattr(m, "_now_utc", lambda: datetime(2026, 10, 22, tzinfo=timezone.utc))
+    calls = []
+    monkeypatch.setattr(m, "_exec", lambda *args: calls.append(args) or {"success": True})
+    rc = m.do_letsencrypt_create(_le_args(sans_json=SANS_JSON))
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
+    assert calls == []
+
+
+def test_set_default_moves_default_onto_cert_with_wanted_sans(monkeypatch, capsys):
+    right, wrong = _incident_certs()
+    monkeypatch.setattr(m, "_list_certs", _stub_list([wrong, right]))
+    monkeypatch.setattr(m, "_cert_sans", _incident_sans)
+    calls = []
+    monkeypatch.setattr(m, "_exec", lambda *args: calls.append(args) or {"success": True})
+    rc = m.do_set_default(_sd_args(sans_json=SANS_JSON))
+    assert rc == 0 and "CHANGED" in capsys.readouterr().out
+    assert 'id="d6mvd5"' in calls[0]
+
+
+def _rp(fqdn, uuid):
+    return {
+        "display_name": fqdn,
+        "isPkg": False,
+        "multiple_cert": True,
+        "owner": "root",
+        "service": uuid,
+        "subscriber": "ReverseProxy",
+        "user_setable": True,
+    }
+
+
+def test_bind_services_moves_covered_reverse_proxies_only(monkeypatch, capsys):
+    target = _cert_with_services("e4e-nas.ucsd.edu", cid="d6mvd5", services=[])
+    target["valid_till"] = "Jan 20 23:41:57 2027 GMT"
+    old = _cert_with_services(
+        "e4e-nas.ucsd.edu",
+        cid="0FndQu",
+        services=[
+            {
+                "display_name": "FTPS",
+                "isPkg": False,
+                "owner": "root",
+                "service": "ftpd",
+                "subscriber": "smbftpd",
+            },
+            _rp("s3.e4e.ucsd.edu", "uuid-s3"),
+            _rp("lfs.e4e.ucsd.edu", "uuid-lfs"),
+            _rp("elsewhere.example.org", "uuid-other"),
+            {
+                "display_name": "DSM Desktop Service",
+                "isPkg": False,
+                "owner": "root",
+                "service": "default",
+                "subscriber": "system",
+            },
+        ],
+    )
+    old["valid_till"] = "Jan 19 20:03:28 2027 GMT"
+    monkeypatch.setattr(m, "_list_certs", _stub_list([old, target]))
+    monkeypatch.setattr(m, "_cert_sans", _incident_sans)
+    calls = []
+    monkeypatch.setattr(
+        m, "_exec", lambda *args: calls.append(args) or {"success": True, "data": {}}
+    )
+    rc = m.do_bind_services(_bs_args(sans_json=SANS_JSON))
+    assert rc == 0 and "CHANGED" in capsys.readouterr().out
+    settings = json.loads(calls[0][-1][len("settings=") :])
+    moved = sorted(s["service"]["service"] for s in settings)
+    # DSM web (spec binding) + the two covered RP entries; FTPS (not in spec)
+    # and the uncovered RP entry stay put.
+    assert moved == ["default", "uuid-lfs", "uuid-s3"]
+    assert all(s["old_id"] == "0FndQu" and s["id"] == "d6mvd5" for s in settings)
+    rp = next(s for s in settings if s["service"]["service"] == "uuid-lfs")
+    assert rp["service"] == {
+        "display_name": "lfs.e4e.ucsd.edu",
+        "isPkg": False,
+        "owner": "root",
+        "service": "uuid-lfs",
+        "subscriber": "ReverseProxy",
+    }
+
+
+def test_bind_services_no_change_when_reverse_proxies_already_on_target(monkeypatch, capsys):
+    target = _cert_with_services(
+        "e4e-nas.ucsd.edu",
+        cid="d6mvd5",
+        services=[
+            {
+                "display_name": "DSM Desktop Service",
+                "isPkg": False,
+                "owner": "root",
+                "service": "default",
+                "subscriber": "system",
+            },
+            _rp("lfs.e4e.ucsd.edu", "uuid-lfs"),
+        ],
+    )
+    monkeypatch.setattr(m, "_list_certs", _stub_list([target]))
+    monkeypatch.setattr(m, "_cert_sans", _incident_sans)
+    rc = m.do_bind_services(_bs_args(sans_json=SANS_JSON))
+    assert rc == 0 and "OK no-change" in capsys.readouterr().out
