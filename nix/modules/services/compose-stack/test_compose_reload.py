@@ -39,7 +39,7 @@ class FakeDocker:
         self.calls = []
         self._seq = 0
 
-    def __call__(self, argv, stderr=False):
+    def __call__(self, argv, stderr=False, timeout=None):
         self.calls.append(argv)
         if argv[:2] == ["docker", "compose"]:
             return self._compose(argv[2:])
@@ -55,12 +55,14 @@ class FakeDocker:
             return ""
         if args[:2] == ["--dry-run", "up"]:
             assert getattr(self, "pulled", False), "dry run before pulling missing images"
+            assert args[2:4] == ["--detach", "--no-deps"], args
+            wanted = set(args[4:])  # scoped to the listed (handoff-labelled) services
             # compose's own decision: a running container whose config differs from the
             # desired one is reported `Recreate`; the rest `Running`.
             return "".join(
                 f" Container {c} {'Recreate' if v['hash'] != self.desired[v['svc']] else 'Running'} \n"
                 for c, v in self.containers.items()
-                if v["state"] == "running"
+                if v["state"] == "running" and v["svc"] in wanted
             )
         if args[:4] == ["ps", "--all", "--format", "{{.Name}}\t{{.Service}}"]:
             return "".join(f"{c}\t{v['svc']}\n" for c, v in self.containers.items())
@@ -564,7 +566,7 @@ def test_changed_services_parses_compose_dry_run():
     )
     ps = "krg-prod-outline-3\toutline\nkrg-prod-fleet-3\tfleet\npostgres_authentik\tpostgres_authentik\n"
 
-    def runner(argv, stderr=False):
+    def runner(argv, stderr=False, timeout=None):
         if "pull" in argv:
             return ""
         if "--dry-run" in argv:
@@ -575,17 +577,17 @@ def test_changed_services_parses_compose_dry_run():
         raise AssertionError(argv)
 
     st = cr.Stack(["docker", "compose"], runner=runner)
-    assert st.changed_services() == {"fleet", "postgres_authentik"}
+    assert st.changed_services(["fleet", "outline"]) == {"fleet", "postgres_authentik"}
 
 
 def test_nothing_to_recreate_skips_the_ps_call():
     calls = []
 
-    def runner(argv, stderr=False):
+    def runner(argv, stderr=False, timeout=None):
         calls.append(argv)
         return " Container a-1 Running \n"
 
-    assert cr.Stack(["docker", "compose"], runner=runner).changed_services() == set()
+    assert cr.Stack(["docker", "compose"], runner=runner).changed_services(["a"]) == set()
     assert [c[2] for c in calls] == ["pull", "--dry-run"]  # pull, dry run, and no ps
 
 
@@ -594,10 +596,51 @@ def test_missing_images_are_pulled_before_the_dry_run():
     'No such image' and crashed the reload. Pull (missing only, skip buildable) first."""
     calls = []
 
-    def runner(argv, stderr=False):
+    def runner(argv, stderr=False, timeout=None):
         calls.append(argv[2:])
         return ""
 
-    cr.Stack(["docker", "compose"], runner=runner).changed_services()
+    cr.Stack(["docker", "compose"], runner=runner).changed_services(["web"])
     assert calls[0] == ["pull", "--quiet", "--policy", "missing", "--ignore-buildable"]
     assert calls[1][:2] == ["--dry-run", "up"]
+
+
+# ── dry run scoped to the handoff services, --no-deps, bounded (production: a
+#    whole-project dry run hung on the exited one-shot fleet_migrate) ───────────────
+
+
+def test_dry_run_is_scoped_no_deps_and_bounded():
+    seen = []
+
+    def runner(argv, stderr=False, timeout=None):
+        seen.append((argv[2:], timeout))
+        return ""
+
+    cr.Stack(["docker", "compose"], runner=runner).changed_services(["web", "app"])
+    (pull, pull_t), (dry, dry_t) = seen
+    assert pull[0] == "pull" and pull_t == cr.PULL_TIMEOUT
+    assert dry == ["--dry-run", "up", "--detach", "--no-deps", "app", "web"]
+    assert "--remove-orphans" not in dry
+    assert dry_t == cr.DRY_RUN_TIMEOUT
+
+
+def test_no_handoff_services_means_no_compose_calls():
+    calls = []
+    st = cr.Stack(["docker", "compose"], runner=lambda argv, **kw: calls.append(argv) or "")
+    assert st.changed_services([]) == set()
+    assert calls == []
+
+
+def test_a_hung_dry_run_fails_the_reload_instead_of_blocking(monkeypatch):
+    def runner(argv, stderr=False, timeout=None):
+        if "--dry-run" in argv:
+            raise cr.subprocess.TimeoutExpired(argv, timeout)
+        return ""
+
+    st = cr.Stack(["docker", "compose"], runner=runner)
+    try:
+        st.changed_services(["web"])
+    except cr.subprocess.TimeoutExpired:
+        pass
+    else:
+        raise AssertionError("a hung dry run must raise, not wait")
