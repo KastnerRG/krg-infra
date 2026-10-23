@@ -1,6 +1,6 @@
 services:
   grafana:
-    image: grafana/grafana-enterprise:13.1.0@sha256:68a7ee3dc2c726e54b2be3533a9e1ac6baaed0893334947a6378520de28a6a76
+    image: grafana/grafana-enterprise:13.2.4@sha256:18b723df0d73f5861f8079afd4b31d22c68b9d1babc7b55c2dace57bde49b6ba
     container_name: grafana
     user: '1000'
     restart: unless-stopped
