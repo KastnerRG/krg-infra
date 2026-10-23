@@ -67,9 +67,18 @@ services:
   # The schema steps temporalio/auto-setup ran on every boot (its setup_postgres_schema),
   # verbatim: idempotent — on a database already at the target version they log
   # "found zero updates" and exit 0. `temporal` itself is created by the postgres
-  # container (POSTGRES_USER), so only the visibility database is created here.
+  # container (POSTGRES_USER), so only the visibility database is created here;
+  # `create` on an existing database exits 0 (auto-setup ran it every boot, and it
+  # was re-run on an existing database at every hop 1.29.7 → 1.32.1 in testing).
   # update-schema is the step that migrates on a version bump; if it fails, this
   # exits non-zero and the server is never started against a half-migrated schema.
+  #
+  # Like fleet_migrate, compose re-runs this exited one-shot on every `up` of the
+  # krg-prod project (a few seconds of no-op queries), and a non-zero exit fails that
+  # `up`. Hence the bounded retry on the first connection: on a FRESH volume the
+  # postgres image's init runs a socket-only temporary server, so the pg_isready
+  # healthcheck (unix socket) can pass before :5432 accepts TCP. auto-setup waited
+  # for the port; this waits up to ~60s, then fails loudly.
   temporal-schema:
     # 1.29 admin-tools tags carry the CLI versions; from 1.30 they're plain (1.30.8).
     image: temporalio/admin-tools:1.29.7-tctl-1.18.4-cli-1.7.2@sha256:4a17b5be706c56a9238fb7b5b32a36966cee14939658b20597837b2443b277c8
@@ -83,7 +92,12 @@ services:
         export SQL_PASSWORD="$$POSTGRES_PWD"
         sql() { temporal-sql-tool --plugin postgres12 --ep temporal-postgres -p 5432 -u temporal "$$@"; }
         dir=/etc/temporal/schema/postgresql/v12
-        sql --db temporal setup-schema -v 0.0
+        tries=0
+        until sql --db temporal setup-schema -v 0.0; do
+          tries=$$((tries + 1))
+          [ "$$tries" -lt 30 ] || { echo "temporal-postgres unreachable over TCP" >&2; exit 1; }
+          sleep 2
+        done
         sql --db temporal update-schema -d "$$dir/temporal/versioned"
         sql --db temporal_visibility create
         sql --db temporal_visibility setup-schema -v 0.0
@@ -124,7 +138,11 @@ services:
       # roles unless told otherwise, and HOW changed at 1.30: the 1.29 image's
       # start-temporal.sh reads SERVICES (colon list); 1.30+ dropped that script and
       # temporal-server reads TEMPORAL_SERVICES (comma list) itself. Both are set so
-      # the 1.30 bump is a pure tag change; drop SERVICES once past 1.29.
+      # the 1.30 bump is a pure tag change; drop SERVICES once past 1.29. (1.30+
+      # renders its config from a template embedded in the binary, which reads the
+      # same env vars as the 1.29 dockerize template: DB/POSTGRES_*, BIND_ON_IP,
+      # USE_INTERNAL_FRONTEND, PROMETHEUS_ENDPOINT, TEMPORAL_TLS_*. 1.30.8–1.32.1
+      # were run with exactly this env: mTLS on :7233, internal-frontend on :7236.)
       - SERVICES=frontend:internal-frontend:history:matching:worker
       - TEMPORAL_SERVICES=frontend,internal-frontend,history,matching,worker
       - BIND_ON_IP=0.0.0.0 # frontend must bind all ifaces so temporal-ui reaches :7233 cross-container (the image default 127.0.0.1 is container-local)

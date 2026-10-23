@@ -126,10 +126,11 @@ them after any change to the TLS env, certs, or image tags:
 1. **Certs render.** `/run/krg/temporal/tls/{frontend.pem,ca.crt,ui-client.pem}`
    exist, `frontend.pem` contains both a CERTIFICATE and a PRIVATE KEY block, and
    `openssl x509 -in frontend.pem -noout -text` shows SAN `DNS:temporal`.
-2. **Server starts.** `docker logs temporal` shows no TLS load error and the
-   bootstrap completes (`Registering default namespace` succeeds via `:7236`).
-   This confirms `TEMPORAL_ADDRESS=127.0.0.1:7236` routes the CLI correctly and
-   the CLI does **not** spuriously try TLS.
+2. **Server starts.** `docker logs temporal-schema` ends with `UpdateSchemaTask
+   done` (exit 0), and `docker logs temporal` shows no TLS load error, a
+   `Created gRPC listener` for `internal-frontend` on `0.0.0.0:7236`, and
+   `Starting server for services` listing all five roles (internal-frontend
+   included). This confirms `TEMPORAL_SERVICES` + `USE_INTERNAL_FRONTEND` took.
 3. **UI connects.** `temporal-ui` reaches the frontend (workflows list loads),
    confirming the UI's TLS env var names (`TEMPORAL_TLS_CA/CERT/KEY/SERVER_NAME/
    ENABLE_HOST_VERIFICATION`) are correct for `temporalio/ui:2.51.0` and that
@@ -139,9 +140,10 @@ them after any change to the TLS env, certs, or image tags:
 5. **Metrics intact.** Prometheus still scrapes `temporal:8000` (the metrics port
    is unrelated to frontend TLS, but confirm it didn't regress).
 
-If gate 2 or 3 fails, the most likely culprits are the `temporal` CLI attempting
-TLS against `:7236` (set the CLI's TLS-disable env explicitly) or the UI env var
-names differing in this image tag (check `temporalio/ui` docs for the tag).
+If gate 2 fails, the most likely culprits are internal-frontend missing from the
+run list (`TEMPORAL_SERVICES`; the 1.29 image read `SERVICES`) or a missing
+dynamic config file (fatal from 1.30). If gate 3 fails, check the UI env var names
+for this `temporalio/ui` tag.
 
 ## Renewal
 
