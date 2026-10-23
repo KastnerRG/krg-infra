@@ -4,10 +4,25 @@
 # service shares the single openbao-agent oneshot's fate), so it rides the one
 # krg-prod project + bao dependency alongside authentik/grafana/vaultwarden/guacamole.
 #
-# Three containers:
+# Four containers:
 #   temporal-postgres  — dedicated persistence (docker-managed named volume)
-#   temporal           — the Temporal server (auto-setup creates/upgrades schema)
+#   temporal-schema    — one-shot: creates/upgrades the schema, then exits
+#   temporal           — the Temporal server (temporalio/server), started only after
+#                        temporal-schema exits 0
 #   temporal-ui        — the Web UI, gated by Authentik OIDC (login federation)
+#
+# temporalio/auto-setup (server + schema setup + default-namespace create in one
+# image) was discontinued at 1.29.7. This is its replacement, Temporal's own
+# samples-server/compose shape: admin-tools runs the schema steps auto-setup ran on
+# every boot, the plain server image runs the server. Namespaces are terraform/temporal's
+# (the `default` namespace + its Custom*Field search attributes auto-setup created
+# already live in the DB; nothing creates them on a FRESH database any more).
+#
+# UPGRADING: one MINOR version at a time (1.29 → 1.30 → 1.31 → …), the latest patch of
+# each, with the server actually running on every hop. Temporal only guarantees
+# compatibility between successive minors; skipping one can leave data unreadable.
+# temporal-schema and temporal stay in LOCKSTEP (same version): the schema dir in
+# admin-tools is what the matching server expects.
 #
 # Auth is the UI's native OIDC client (like grafana/vaultwarden) — Traefik
 # terminates TLS, then temporal-ui itself bounces unauthenticated users through
@@ -49,13 +64,39 @@ services:
       retries: 5
     networks: [temporal_internal]
 
+  # The schema steps temporalio/auto-setup ran on every boot (its setup_postgres_schema),
+  # verbatim: idempotent — on a database already at the target version they log
+  # "found zero updates" and exit 0. `temporal` itself is created by the postgres
+  # container (POSTGRES_USER), so only the visibility database is created here.
+  # update-schema is the step that migrates on a version bump; if it fails, this
+  # exits non-zero and the server is never started against a half-migrated schema.
+  temporal-schema:
+    # 1.29 admin-tools tags carry the CLI versions; from 1.30 they're plain (1.30.8).
+    image: temporalio/admin-tools:1.29.7-tctl-1.18.4-cli-1.7.2@sha256:4a17b5be706c56a9238fb7b5b32a36966cee14939658b20597837b2443b277c8
+    restart: "no"
+    env_file:
+      - /run/krg/temporal/server.env # POSTGRES_PWD
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        export SQL_PASSWORD="$$POSTGRES_PWD"
+        sql() { temporal-sql-tool --plugin postgres12 --ep temporal-postgres -p 5432 -u temporal "$$@"; }
+        dir=/etc/temporal/schema/postgresql/v12
+        sql --db temporal setup-schema -v 0.0
+        sql --db temporal update-schema -d "$$dir/temporal/versioned"
+        sql --db temporal_visibility create
+        sql --db temporal_visibility setup-schema -v 0.0
+        sql --db temporal_visibility update-schema -d "$$dir/visibility/versioned"
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    networks: [temporal_internal]
+
   temporal:
-    # NOTE: pin to a tag that EXISTS on Docker Hub. The `temporalio/auto-setup`
-    # IMAGE tops out at 1.29.7 — it does NOT track the Temporal *server* release
-    # (1.31.x); #465 bumped this to 1.31.2 (a server version), whose manifest is
-    # unknown, so `docker compose up -d` crash-looped and exhausted the pull limit.
-    # Bump only to tags confirmed on hub.docker.com/r/temporalio/auto-setup/tags.
-    image: temporalio/auto-setup:1.29.7@sha256:f14912b699cf73015ad5c4fc18d522d4b014db90e794039214dfb7c022c2644f
+    # Pin to a tag that EXISTS on Docker Hub (#465 pinned a nonexistent one and
+    # crash-looped into the pull limit). Keep in lockstep with temporal-schema above.
+    image: temporalio/server:1.29.7@sha256:688da708d0daca6ff8083334a4a7fbbdbc7e70d1cca8e2eda8c05b21fdbd601e
     container_name: temporal
     restart: unless-stopped
     environment:
@@ -73,18 +114,20 @@ services:
       # validation gates in docs/temporal-mtls.md before trusting this.
       #
       # requireClientAuth is SHARED with internode TLS, and the internal system
-      # worker + the auto-setup bootstrap (health check, default-namespace create)
-      # talk to the frontend — so enabling it naively wedges first boot. Fixed with
-      # the internal-frontend: internal traffic uses plaintext :7236, leaving the
-      # PUBLIC :7233 free to require client certs.
+      # worker talks to the frontend — so enabling it naively wedges first boot.
+      # Fixed with the internal-frontend: internal traffic uses plaintext :7236,
+      # leaving the PUBLIC :7233 free to require client certs.
       - USE_INTERNAL_FRONTEND=true # render the internal-frontend config block (:7236)
       # USE_INTERNAL_FRONTEND only renders the *config*; the server still has to be
-      # ASKED to run the role. start-temporal.sh starts only the default 4 roles
-      # unless SERVICES lists them — without this, internal-frontend is configured
-      # but "not requested", :7236 never listens, and the bootstrap waits forever.
+      # ASKED to run the role — without it internal-frontend is configured but "not
+      # requested" and :7236 never listens. The server starts only the default 4
+      # roles unless told otherwise, and HOW changed at 1.30: the 1.29 image's
+      # start-temporal.sh reads SERVICES (colon list); 1.30+ dropped that script and
+      # temporal-server reads TEMPORAL_SERVICES (comma list) itself. Both are set so
+      # the 1.30 bump is a pure tag change; drop SERVICES once past 1.29.
       - SERVICES=frontend:internal-frontend:history:matching:worker
-      - TEMPORAL_ADDRESS=127.0.0.1:7236 # point the in-container setup CLI at :7236, not mTLS :7233
-      - BIND_ON_IP=0.0.0.0 # frontend must bind all ifaces so temporal-ui reaches :7233 cross-container (auto-setup default 127.0.0.1 is container-local — a latent pre-TLS bug)
+      - TEMPORAL_SERVICES=frontend,internal-frontend,history,matching,worker
+      - BIND_ON_IP=0.0.0.0 # frontend must bind all ifaces so temporal-ui reaches :7233 cross-container (the image default 127.0.0.1 is container-local)
       - TEMPORAL_TLS_REQUIRE_CLIENT_AUTH=true
       - TEMPORAL_TLS_FRONTEND_CERT=/etc/temporal/tls/frontend.pem
       - TEMPORAL_TLS_FRONTEND_KEY=/etc/temporal/tls/frontend.pem # combined cert+key PEM (atomic pair)
@@ -93,12 +136,17 @@ services:
     env_file:
       - /run/krg/temporal/server.env # POSTGRES_PWD
     depends_on:
-      temporal-postgres:
-        condition: service_healthy
+      temporal-schema:
+        condition: service_completed_successfully
     volumes:
       # mTLS material rendered by vault-agent (read-only). uid 1000 reads it; the
       # /run/krg/temporal/tls dir is 0750 root on the host, so it's gated there.
       - /run/krg/temporal/tls:/etc/temporal/tls:ro
+      # The dynamic config file the server polls (DYNAMIC_CONFIG_FILE_PATH default).
+      # The 1.29 image shipped an empty one; from 1.30 the image ships none, and a
+      # missing file is FATAL ("unable to create dynamic config client"). Committed,
+      # symlinked into the working dir by default.nix.
+      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
     ports:
       # PUBLIC gRPC frontend — external workers (NRP) + the terraform/temporal
       # provider connect here. Explicit 0.0.0.0 (overriding krg.docker.defaultPublishAddress's

@@ -1,0 +1,3 @@
+# Temporal dynamic config (polled every 60s by the server; see compose.temporal.yml).
+# Empty = every setting at its default, which is what auto-setup's image shipped.
+# Format: https://docs.temporal.io/references/dynamic-configuration

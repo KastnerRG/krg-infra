@@ -191,9 +191,10 @@ in {
     # Guacamole: symlink its committed DB schema dir into the krg-prod working dir
     # so the postgres init mount (./guacamole/initdb) resolves to the Nix store.
     # Postgres data is a docker-managed named volume; the DB secret is rendered to
-    # /run by krg.vaultAgent. (Temporal needs no working-dir symlink — its only
-    # mounts are docker volumes + /run-rendered env files.)
+    # /run by krg.vaultAgent.
     "L+ /var/lib/krg/krg-prod/guacamole                     - - - - ${composeDir}/guacamole"
+    # Temporal: its committed dynamic config (./temporal/dynamicconfig).
+    "L+ /var/lib/krg/krg-prod/temporal                      - - - - ${composeDir}/temporal"
   ];
 
   environment.systemPackages = with pkgs; [openbao];

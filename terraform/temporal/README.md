@@ -1,7 +1,7 @@
 # terraform/temporal — Temporal namespaces
 
 One target of the [`terraform/`](../README.md) OpenTofu layer. Manages
-**namespaces** on the lab-wide Temporal cluster (the `temporalio/auto-setup` stack
+**namespaces** on the lab-wide Temporal cluster (the `temporalio/server` stack
 on krg-prod, surfaced at `workflows.krg.ucsd.edu`). Temporal's *deployment* lives in
 `nix/docker-compose/krg-prod/`; this target owns its namespaces.
 

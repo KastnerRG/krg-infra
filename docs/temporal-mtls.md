@@ -26,7 +26,7 @@
 ## Why
 
 The Temporal gRPC frontend (`:7233`) is a cluster-admin surface: anyone who can
-reach it can create/delete namespaces and start/terminate workflows. `auto-setup`
+reach it can create/delete namespaces and start/terminate workflows. The server image
 ships it **unauthenticated** (only the *UI* is gated, by Authentik OIDC). The
 frontend is **published to the internet** (`:7233`) so off-site workers — e.g. the
 NRP cluster — and the `terraform/temporal` provider can reach it, so it needs real
@@ -49,40 +49,41 @@ are machine endpoints. See `terraform/openbao/pki.tf` for the CA.
 | **Provider** | `terraform/temporal` issues itself a `temporal-client` cert and manages namespaces | `terraform/temporal/` |
 | **Public ingress** | `:7233` published to the internet (mTLS-gated) for off-site workers + the provider | `compose.temporal.yml` (`ports`), `ansible/.../krg-prod.fw` |
 
-## The auto-setup gotcha (and the fix)
+## The internal-caller gotcha (and the fix)
 
 `requireClientAuth` is a single switch shared by the **internode** and **frontend**
-TLS configs. Two internal callers hit the frontend and would be locked out:
+TLS configs. Internal callers hit the frontend and would be locked out:
 
 1. The **system Worker** role (in-process, but connects to the frontend over gRPC).
-2. The **`auto-setup` bootstrap** — `register_default_namespace` and the
-   `cluster health` wait both shell out to the `temporal` CLI against the frontend
-   (`auto-setup.sh`).
+2. (Historical) the **`auto-setup` bootstrap**, whose `register_default_namespace`
+   and `cluster health` wait shelled out to the `temporal` CLI against the frontend.
+   auto-setup was discontinued at 1.29.7 and replaced by the plain server image + a
+   `temporal-schema` admin-tools one-shot that talks to Postgres, not the frontend.
 
 Naively enabling `requireClientAuth` therefore **wedges first boot**. The fix is
 the **internal-frontend**: a second frontend on `:7236` for internal traffic, with
 no TLS on the internode path, so `:7236` is **plaintext, localhost-only inside the
 container**. Enabling it is a **two-part** requirement (this bit us — getting only
 one half leaves internal-frontend "configured but not requested", `:7236` never
-listens, and the bootstrap waits forever):
+listens, and internal callers wait forever):
 
 - `USE_INTERNAL_FRONTEND=true` renders the internal-frontend **config block**.
-- `SERVICES=frontend:internal-frontend:history:matching:worker` adds the role to
-  the server's **run list** (`start-temporal.sh` starts only the default 4 roles
-  otherwise — `internal-frontend` is not a default).
+- The role must be in the server's **run list** (only the default 4 roles start
+  otherwise — `internal-frontend` is not a default). The 1.29 image's
+  `start-temporal.sh` reads `SERVICES=frontend:internal-frontend:history:matching:worker`;
+  from 1.30 that script is gone and `temporal-server` reads
+  `TEMPORAL_SERVICES=frontend,internal-frontend,history,matching,worker` itself.
 
 Then:
 
-- `TEMPORAL_ADDRESS=127.0.0.1:7236` points the bootstrap CLI at the plaintext
-  internal-frontend, so health/namespace setup never touches the mTLS `:7233`.
-- The system Worker likewise uses the internal-frontend (`publicClient` is dropped
+- The system Worker uses the internal-frontend (`publicClient` is dropped
   when `USE_INTERNAL_FRONTEND` is set — see the config template).
 - The **public** `:7233` is left to require client certs from external callers
   (the UI, the tofu provider, future workers).
 
 ### `BIND_ON_IP=0.0.0.0` (latent pre-TLS bug)
 
-`auto-setup` defaults `bindOnIP` to `127.0.0.1` — **container-local**. With that
+The server's config template defaults `bindOnIP` to `127.0.0.1` — **container-local**. With that
 default `temporal-ui` (a separate container) can't reach `temporal:7233` *at all*,
 TLS or not. We set `BIND_ON_IP=0.0.0.0` so the frontend binds all container
 interfaces. Ports aren't published to the host (`krg.docker.defaultPublishAddress`
