@@ -97,6 +97,8 @@ class FakeDocker:
             c = self.containers[cid]
             if ".Config.Healthcheck" in fmt:
                 return json.dumps(c.get("hc")) + "\n"
+            if ".Config.Image" in fmt:
+                return c.get("image", "") + "\n"
             health = c["health"].pop(0) if len(c["health"]) > 1 else c["health"][0]
             return f"{c['state']} {health}\n"
         if args[0] == "stop":
@@ -183,6 +185,52 @@ def test_interrupted_handoff_with_two_containers_is_not_planned():
         "health": ["healthy"],
     }
     assert cr.plan(stack(fake)) == []
+
+
+def fleet_like(migrate_image_now):
+    """A handoff service gated on a migration one-shot (krg-prod's fleet + fleet_migrate)."""
+    after_migrate = {"migrate": {"condition": "service_completed_successfully"}}
+    fake = FakeDocker(
+        {
+            "app": {
+                "labels": HANDOFF,
+                "healthcheck": HC,
+                "image": "app:2",
+                "depends_on": after_migrate,
+            },
+            "migrate": {"image": "app:2", "restart": "no"},
+        },
+        {"app": "h2", "migrate": "m"},
+        {"old1": {"svc": "app", "hash": "h1", "state": "running", "health": ["healthy"]}},
+    )
+    if migrate_image_now:
+        fake.containers["mig1"] = {
+            "svc": "migrate",
+            "hash": "m",
+            "state": "exited",
+            "image": migrate_image_now,
+        }
+    return fake
+
+
+def test_service_whose_migration_changed_is_recreated_in_place():
+    # Handing off would start app:2 against the unmigrated schema (production: Fleet
+    # 4.93 exited on 90 missing migrations); `up -d` runs the migration first.
+    assert cr.plan(stack(fleet_like("app:1"))) == []
+
+
+def test_service_whose_migration_never_ran_is_recreated_in_place():
+    assert cr.plan(stack(fleet_like(None))) == []
+
+
+def test_service_whose_migration_is_unchanged_is_still_handed_off():
+    assert cr.plan(stack(fleet_like("app:2"))) == [("app", ["old1"])]
+
+
+def test_ordinary_dependencies_do_not_block_a_handoff():
+    fake = fleet_like("app:1")
+    fake.services["app"]["depends_on"] = {"migrate": {"condition": "service_healthy"}}
+    assert cr.plan(stack(fake)) == [("app", ["old1"])]
 
 
 # ── handoff ─────────────────────────────────────────────────────────────────────
