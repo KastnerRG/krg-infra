@@ -57,7 +57,8 @@ A handoff service must have: a healthcheck, no container_name, no host `ports:`
 (two containers can't share a name or a host port), and old + new versions able to
 run against the same database at once (true for patch/digest bumps, not for upgrades
 that migrate a schema). A service that is labelled but ineligible falls back to the
-in-place recreate, with the reason logged.
+in-place recreate, with the reason logged. So does one whose migration one-shot
+(a `service_completed_successfully` dependency) changed image: see changed_oneshots.
 
 Usage (from the unit; everything after `--` is the stack's base compose command):
 
@@ -181,6 +182,35 @@ class Stack:
         fmt = "{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"
         out = self.docker_cmd("inspect", "--format", fmt, cid).split()
         return (out[0], out[1]) if len(out) == 2 else ("unknown", "unknown")
+
+    def image(self, cid):
+        """The image reference the container was created from, as the compose file wrote it."""
+        return self.docker_cmd("inspect", "--format", "{{.Config.Image}}", cid).strip()
+
+
+def changed_oneshots(stack, spec, specs):
+    """The run-to-completion dependencies of `spec` whose image changed (sorted).
+
+    A `service_completed_successfully` dependency is a one-shot that must finish before
+    the service starts, in practice a schema migration (fleet_migrate runs
+    `fleet prepare db`). When its image changes, the new service version needs the
+    migrated schema, but a handoff starts the new container BEFORE anything runs the
+    migration: in production the new Fleet saw 90 missing migrations, exited, and the
+    aborted handoff blocked the whole reload. Such a service is recreated in place by
+    `up -d` instead, which runs the one-shot first. Compared by image reference, which
+    is how migrations arrive here (Renovate bumps the pair in lockstep).
+    """
+    pending = []
+    for dep, cond in (spec.get("depends_on") or {}).items():
+        if (cond or {}).get("condition") != "service_completed_successfully":
+            continue
+        want = (specs.get(dep) or {}).get("image")
+        if not want:
+            continue  # locally built: no reference to compare
+        have = {stack.image(c) for c in stack.all_containers(dep)}
+        if have != {want}:
+            pending.append(dep)
+    return sorted(pending)
 
 
 def ineligible(spec):
@@ -311,6 +341,13 @@ def plan(stack, forced=frozenset()):
         reason = ineligible(spec)
         if reason:
             log(f"{svc}: changed, but {reason}; recreating in place")
+            continue
+        pending = changed_oneshots(stack, spec, specs)
+        if pending:
+            log(
+                f"{svc}: changed along with its one-shot {', '.join(pending)} (a migration); "
+                "recreating in place after it runs"
+            )
             continue
         todo.append((svc, old))
     return todo
