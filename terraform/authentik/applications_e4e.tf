@@ -234,6 +234,7 @@ resource "authentik_application" "fishsense_mobile" {
 resource "authentik_provider_oauth2" "e4e_roster" {
   name                  = "KRG Roster"
   client_id             = "e4e-roster"
+  client_secret         = data.vault_kv_secret_v2.roster_oidc.data["client_secret"]
   authorization_flow    = data.authentik_flow.default_authorization.id
   invalidation_flow     = data.authentik_flow.default_invalidation.id
   allowed_redirect_uris = [{ matching_mode = "strict", redirect_uri_type = "authorization", url = "https://roster.krg.ucsd.edu/auth/callback" }]

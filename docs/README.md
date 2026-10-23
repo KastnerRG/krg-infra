@@ -6,6 +6,9 @@ build/deploy basics live in the top-level [README](../README.md),
 [CLAUDE.md](../CLAUDE.md); the runbooks and references here are the "how do I
 actually operate / recover this" layer.
 
+For the integrated roster secret cutover and OpenBao reconnection steps, see
+[Roster: OpenBao cutover](roster-openbao.md).
+
 ## Runbooks
 
 | Doc | When you need it |
