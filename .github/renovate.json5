@@ -157,6 +157,13 @@
       matchPackageNames: ["mysql"],
       allowedVersions: "/^8\\.4(\\.|$)/",
     },
+    {
+      description: "MLflow's base image stays on Python 3.12: newer Pythons lack wheels for its pinned deps (pandas<3), and the build fails (#591)",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["python"],
+      matchFileNames: ["nix/docker-compose/krg-prod/mlflow/config/Dockerfile"],
+      allowedVersions: "/^3\\.12(\\.|-|$)/",
+    },
 
     // ── tooling: weekly, grouped, reviewed ──────────────────────────────────────
     {
