@@ -1,0 +1,12 @@
+---
+synology_git_lfs_spec: "{{ nas_spec_dir }}/git-lfs.yml"
+
+# ON. Reconciled against the real NAS 2026-10-22: the lfs.e4e.ucsd.edu CNAME
+# resolves, its SAN is on the host cert (certificates.yml), and the container
+# was applied by hand and a real `git lfs push` round-tripped before this
+# flipped. Set false to stop managing the container (it does NOT remove it —
+# `docker compose -f <compose_path> down` on the NAS does).
+#
+# Target this role alone:
+#   ansible-playbook playbook.yml --tags=synology_git_lfs --check --diff
+synology_git_lfs_enabled: true

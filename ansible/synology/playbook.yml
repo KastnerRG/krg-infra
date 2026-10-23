@@ -70,3 +70,8 @@
     # Tagged so an operator can target this role alone:
     #   ansible-playbook playbook.yml --tags=synology_garage -e garage_…=…
     - { role: synology_garage, tags: ['synology_garage', 'workload'] }
+
+    # Git LFS server (giftless) for UCSD-E4E GitHub repos — spec/e4e-nas/git-lfs.yml.
+    # No secrets (auth is the caller's GitHub token). OFF until
+    # synology_git_lfs_enabled is flipped — see the role's defaults/main.yml.
+    - { role: synology_git_lfs, tags: ['synology_git_lfs', 'workload'] }

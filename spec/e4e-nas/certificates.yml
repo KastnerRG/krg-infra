@@ -36,6 +36,7 @@ letsencrypt:
     sans:
       - s3-admin.e4e.ucsd.edu          # Garage admin UI (garage-ui)
       - s3.e4e.ucsd.edu                # Garage S3 API
+      - lfs.e4e.ucsd.edu               # Git LFS (giftless, git-lfs.yml) — CNAME live 2026-10-22
 
     # Re-issuance window: if a cert exists but expires within this many days
     # the role triggers a new LE issuance regardless of DSM auto-renew
