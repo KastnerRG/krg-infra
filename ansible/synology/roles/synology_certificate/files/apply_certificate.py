@@ -130,8 +130,19 @@ def _find_by_domain(certs, domain, on_duplicate="newest"):
     return keeper
 
 
-def _find_by_domain_all(certs, domain, on_duplicate="newest"):
-    """(keeper, extras) for `domain`. See _find_by_domain for the policy."""
+def _find_by_domain_all(certs, domain, on_duplicate="newest", want_names=None):
+    """(keeper, extras) for `domain`. See _find_by_domain for the policy.
+
+    `want_names` (the spec's CN + SANs, lowercased) refines "newest": among
+    duplicates, a cert whose REAL SANs equal it beats any that don't, and only
+    then does valid_till decide. Plain newest is not enough. Seen on e4e-nas
+    2026-10-22: adding a SAN issued d6mvd5 (all four names), and DSM minted
+    GVDT4N with the OLD three names 11 s later. GVDT4N expired 9 s later, so it
+    won. It became the default and took the new reverse-proxy entry with it,
+    and SAN drift would have reissued on every deploy. When no duplicate
+    carries the wanted names, fall back to newest so letsencrypt-create sees
+    the drift and issues one.
+    """
     matches = [c for c in certs if _domain_matches(c, domain)]
     if not matches:
         return None, []
@@ -148,7 +159,14 @@ def _find_by_domain_all(certs, domain, on_duplicate="newest"):
     # datetime.min is TZ-naive and cannot be compared against the TZ-aware
     # values _parse_valid_till returns, so use an explicitly UTC sentinel.
     oldest = datetime.min.replace(tzinfo=timezone.utc)
-    ordered = sorted(matches, key=lambda c: _parse_valid_till(c.get("valid_till")) or oldest)
+
+    def rank(c):
+        expiry = _parse_valid_till(c.get("valid_till")) or oldest
+        if not want_names:
+            return (False, expiry)
+        return (_cert_sans(c.get("id")) == want_names, expiry)
+
+    ordered = sorted(matches, key=rank)
     keeper = ordered[-1]
     return keeper, ordered[:-1]
 
@@ -205,14 +223,21 @@ def _warn(payload):
     sys.stderr.write("WARN " + json.dumps(payload, sort_keys=True) + "\n")
 
 
-def _resolve_domain(certs, domain, on_duplicate):
+def _wanted_names(a):
+    """The spec's CN + SANs as a lowercased set. Every subcommand takes
+    --sans-json so they all resolve duplicates onto the SAME cert."""
+    sans = json.loads(getattr(a, "sans_json", None) or "[]")
+    return {n.strip().lower() for n in [a.domain] + list(sans)}
+
+
+def _resolve_domain(certs, domain, on_duplicate, want_names=None):
     """_find_by_domain, but the extras are REPORTED rather than discarded.
 
     Keeping the duplicate visible is the whole point — the previous hard
     failure existed to stop a duplicate being masked, and dropping to a silent
     pick would have traded a too-loud failure for a too-quiet one.
     """
-    keeper, extras = _find_by_domain_all(certs, domain, on_duplicate)
+    keeper, extras = _find_by_domain_all(certs, domain, on_duplicate, want_names)
     if extras:
         _warn(
             {
@@ -225,8 +250,9 @@ def _resolve_domain(certs, domain, on_duplicate):
                 "note": (
                     "DSM holds >1 cert with this CN (its cron LE renewal mints a "
                     "new object instead of updating in place). Converging onto the "
-                    "newest; the superseded cert(s) are now unused once "
-                    "bind-services runs and can be deleted in the DSM UI."
+                    "newest cert carrying the spec's SANs (else the newest); the "
+                    "superseded cert(s) are now unused once bind-services runs and "
+                    "can be deleted in the DSM UI."
                 ),
             }
         )
@@ -282,14 +308,14 @@ def do_letsencrypt_create(a):
     if certs is None:
         return _fail({"reason": "%s.list failed (auth/api error)" % CRT_API})
 
-    try:
-        existing = _resolve_domain(certs, a.domain, a.on_duplicate)
-    except RuntimeError as e:
-        return _fail({"reason": str(e), "domain": a.domain})
-
     sans = json.loads(a.sans_json or "[]")
     if not isinstance(sans, list) or not all(isinstance(s, str) for s in sans):
         return _fail({"reason": "--sans-json must be a JSON array of strings", "got": a.sans_json})
+
+    try:
+        existing = _resolve_domain(certs, a.domain, a.on_duplicate, _wanted_names(a))
+    except RuntimeError as e:
+        return _fail({"reason": str(e), "domain": a.domain})
 
     # DSM encodes a multi-domain (SAN) LE cert as ONE semicolon-joined
     # `domain_name` with the CN first — there is no `SAN_list` param (captured
@@ -397,7 +423,7 @@ def do_set_default(a):
         return _fail({"reason": "%s.list failed (auth/api error)" % CRT_API})
 
     try:
-        existing = _resolve_domain(certs, a.domain, a.on_duplicate)
+        existing = _resolve_domain(certs, a.domain, a.on_duplicate, _wanted_names(a))
     except RuntimeError as e:
         return _fail({"reason": str(e), "domain": a.domain})
 
@@ -463,6 +489,25 @@ def do_set_default(a):
 SERVICE_API = "SYNO.Core.Certificate.Service"
 
 
+def _service_setting(cur, target_id):
+    """One Service.set `settings` element moving `cur` onto `target_id`."""
+    svc_obj = cur["service_obj"]
+    # Trim to the keys the wizard sends, in the order it sends them.
+    # (Extra keys like display_name_i18n / multiple_cert / user_setable
+    # are derived; not required on the wire.)
+    return {
+        "service": {
+            "display_name": svc_obj.get("display_name", ""),
+            "isPkg": bool(svc_obj.get("isPkg", False)),
+            "owner": svc_obj.get("owner", ""),
+            "service": svc_obj["service"],
+            "subscriber": svc_obj["subscriber"],
+        },
+        "old_id": cur["cert_id"],
+        "id": target_id,
+    }
+
+
 def do_bind_services(a):
     """Bind the cert identified by --domain to the (service, subscriber)
     tuples in --bindings-json. Idempotent: only POST entries where the
@@ -494,7 +539,7 @@ def do_bind_services(a):
         return _fail({"reason": "%s.list failed (auth/api error)" % CRT_API})
 
     try:
-        target = _resolve_domain(certs, a.domain, a.on_duplicate)
+        target = _resolve_domain(certs, a.domain, a.on_duplicate, _wanted_names(a))
     except RuntimeError as e:
         return _fail({"reason": str(e), "domain": a.domain})
     if target is None:
@@ -544,23 +589,22 @@ def do_bind_services(a):
             continue
         if cur["cert_id"] == target_id:
             continue  # already bound to target — no-op
+        settings_to_set.append(_service_setting(cur, target_id))
+
+    # Reverse-proxy entries (app-portal.yml) bind too, but they can't be listed
+    # in spec: their service id is a UUID DSM mints at create time. DSM pins
+    # each one to whatever cert was DEFAULT when it was created and never moves
+    # it. So an entry created before its SAN existed (lfs.e4e.ucsd.edu,
+    # 2026-10-22) keeps serving a cert without its name, and older entries stay
+    # on a superseded cert. Move every entry whose hostname the target cert
+    # actually covers onto it.
+    target_names = _cert_sans(target_id) or set()
+    for _key, cur in sorted(current.items(), key=lambda kv: str(kv[0])):
         svc_obj = cur["service_obj"]
-        # Trim to the keys the wizard sends, in the order it sends them.
-        # (Extra keys like display_name_i18n / multiple_cert / user_setable
-        # are derived; not required on the wire.)
-        settings_to_set.append(
-            {
-                "service": {
-                    "display_name": svc_obj.get("display_name", ""),
-                    "isPkg": bool(svc_obj.get("isPkg", False)),
-                    "owner": svc_obj.get("owner", ""),
-                    "service": svc_obj["service"],
-                    "subscriber": svc_obj["subscriber"],
-                },
-                "old_id": cur["cert_id"],
-                "id": target_id,
-            }
-        )
+        if svc_obj.get("subscriber") != "ReverseProxy" or cur["cert_id"] == target_id:
+            continue
+        if (svc_obj.get("display_name") or "").strip().lower() in target_names:
+            settings_to_set.append(_service_setting(cur, target_id))
 
     if not settings_to_set:
         # Everything's either already bound or missing-and-skipped. Either
@@ -637,6 +681,7 @@ def main(argv):
 
     sd = sub.add_parser("set-default")
     sd.add_argument("--domain", required=True)
+    sd.add_argument("--sans-json", default="[]", help="Same as letsencrypt-create")
     sd.add_argument("--on-duplicate", choices=["newest", "fail"], default="newest")
     sd.add_argument("--check", action="store_true")
     sd.set_defaults(fn=do_set_default)
@@ -646,6 +691,7 @@ def main(argv):
     bs.add_argument(
         "--bindings-json", required=True, help="JSON array of {service, subscriber} dicts"
     )
+    bs.add_argument("--sans-json", default="[]", help="Same as letsencrypt-create")
     bs.add_argument("--on-duplicate", choices=["newest", "fail"], default="newest")
     bs.add_argument("--check", action="store_true")
     bs.set_defaults(fn=do_bind_services)
