@@ -81,7 +81,7 @@ services:
   # for the port; this waits up to ~60s, then fails loudly.
   temporal-schema:
     # 1.29 admin-tools tags carry the CLI versions; from 1.30 they're plain (1.30.8).
-    image: temporalio/admin-tools:1.29.7-tctl-1.18.4-cli-1.7.2@sha256:4a17b5be706c56a9238fb7b5b32a36966cee14939658b20597837b2443b277c8
+    image: temporalio/admin-tools:1.30.8@sha256:22d417fd0d541da6b18486912a546b3203f516f0bf9f8b2f27611506fca2507c
     restart: "no"
     env_file:
       - /run/krg/temporal/server.env # POSTGRES_PWD
@@ -110,7 +110,7 @@ services:
   temporal:
     # Pin to a tag that EXISTS on Docker Hub (#465 pinned a nonexistent one and
     # crash-looped into the pull limit). Keep in lockstep with temporal-schema above.
-    image: temporalio/server:1.29.7@sha256:688da708d0daca6ff8083334a4a7fbbdbc7e70d1cca8e2eda8c05b21fdbd601e
+    image: temporalio/server:1.30.8@sha256:54c59485b185ad787061f9a2ed72bd31c8efeae2d4144c61f22873df52c3c781
     container_name: temporal
     restart: unless-stopped
     environment:
