@@ -32,7 +32,7 @@ services:
     # The deploy runs `up` without --build, so it builds only when this tag is new to
     # the host: bump it (= MLFLOW_VERSION, plus a -N suffix for other Dockerfile
     # changes) with every Dockerfile change, or the old image keeps running.
-    image: krg-prod-mlflow:3.15.0
+    image: krg-prod-mlflow:3.15.0-1
     restart: unless-stopped
     # Secret-bearing env (rendered by krg.vaultAgent to /run): the password-embedding
     # MLFLOW_BACKEND_STORE_URI + OIDC_USERS_DB_URI, plus SECRET_KEY and
