@@ -152,7 +152,7 @@ variable "tenants" {
       zone      = "krg"             # fronted by the krg-prod edge (*.krg.ucsd.edu)
       cpu       = 6                 # Ollama CPU inference + GROBID
       memory    = "12GiB"           # GROBID ~4G, Ollama (qwen2.5:3b + nomic-embed) ~4G, Postgres, api
-      disk      = "60GiB"           # GROBID + Ollama images (~12G) + models (~2.5G); PDFs live in Garage
+      disk      = "150GiB"          # GROBID + Ollama images (~12G) + models + image churn; 60GiB filled up. PDFs live in Garage
       isolation = "virtual-machine" # developed code = separate kernel (ADR 0017 §4)
       image     = "krg-golden"      # boot the slot from the hardened template
       nat_ip    = "10.100.0.11"     # pinned NAT target for the ingress forward (fishsense is .10)
