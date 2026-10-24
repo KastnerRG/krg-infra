@@ -46,7 +46,7 @@
 #   frontend.pem  → frontend SERVER cert+key (temporal-frontend role)
 #   ca.crt        → intermediate CA (frontend client-CA + UI server-CA)
 #   ui-client.pem → temporal-ui CLIENT cert+key (temporal-client role)
-# Design + on-box validation gates: docs/temporal-mtls.md (UNVALIDATED).
+# Design + on-box validation gates: docs/temporal-mtls.md (validated on-box 2026-06-16).
 services:
   temporal-postgres:
     image: postgres:16.15@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97
@@ -96,12 +96,18 @@ services:
         export SQL_PASSWORD="$$POSTGRES_PWD"
         sql() { temporal-sql-tool --plugin postgres12 --ep temporal-postgres -p 5432 -u temporal "$$@"; }
         dir=/etc/temporal/schema/postgresql/v12
+        # Retry ONLY connectivity failures: temporal-sql-tool reports both a refused
+        # port and an unresolvable host as `dial tcp …` (1.29.7 and 1.30.8). Anything
+        # else (auth, a schema conflict) prints its own error and fails at once.
         tries=0
-        until sql --db temporal setup-schema -v 0.0; do
+        until out=$$(sql --db temporal setup-schema -v 0.0 2>&1); do
+          echo "$$out" >&2
+          case "$$out" in *"dial tcp"*) ;; *) exit 1 ;; esac
           tries=$$((tries + 1))
-          [ "$$tries" -lt 30 ] || { echo "temporal-postgres unreachable over TCP" >&2; exit 1; }
+          [ "$$tries" -lt 30 ] || { echo "temporal-postgres not accepting TCP after ~60s" >&2; exit 1; }
           sleep 2
         done
+        echo "$$out"
         sql --db temporal update-schema -d "$$dir/temporal/versioned"
         sql --db temporal_visibility create
         sql --db temporal_visibility setup-schema -v 0.0
@@ -128,8 +134,8 @@ services:
       - PROMETHEUS_ENDPOINT=0.0.0.0:8000
       # ── Frontend mTLS ─────────────────────────────────────────────────────────
       # Lab-internal CA (terraform/openbao/pki.tf); certs rendered by vault-agent
-      # to /run/krg/temporal/tls (mounted below). UNVALIDATED — see the bring-up +
-      # validation gates in docs/temporal-mtls.md before trusting this.
+      # to /run/krg/temporal/tls (mounted below). Re-run the validation gates in
+      # docs/temporal-mtls.md after any change to the TLS env, certs or image tags.
       #
       # requireClientAuth is SHARED with internode TLS, and the internal system
       # worker talks to the frontend — so enabling it naively wedges first boot.
@@ -207,7 +213,7 @@ services:
       # The frontend now requires client auth, so the UI must present a client cert
       # (temporal-client role) and verify the server against the lab-internal CA.
       # server_name MUST match the frontend cert's SAN (`temporal`). Cert+key in one
-      # PEM (atomic pair, see the host render). docs/temporal-mtls.md, UNVALIDATED.
+      # PEM (atomic pair, see the host render). docs/temporal-mtls.md.
       - TEMPORAL_TLS_CA=/etc/temporal/tls/ca.crt
       - TEMPORAL_TLS_CERT=/etc/temporal/tls/ui-client.pem
       - TEMPORAL_TLS_KEY=/etc/temporal/tls/ui-client.pem

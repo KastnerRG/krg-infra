@@ -62,6 +62,7 @@ run "shellcheck" nix run nixpkgs#shellcheck -- "${sh_files[@]}"
 # deploy-time `docker compose up` (see scripts/check-image-tags.sh). skopeo is
 # put on PATH for the whole script (it loops over the refs internally).
 run "docker image tags exist" nix shell nixpkgs#skopeo --command "$root/scripts/check-image-tags.sh"
+run "temporal server/admin-tools lockstep" "$root/scripts/check-temporal-lockstep.sh"
 
 if [ "$fail" -ne 0 ]; then
   printf '\n\033[1;31mLINT FAILED\033[0m\n'

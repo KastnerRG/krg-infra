@@ -6,12 +6,6 @@
 > client cert, and a no-cert/plaintext probe to `:7233` is rejected. This was also the
 > base Temporal stack's first real deploy.
 >
-> **Stale code comments:** the in-code comments still say `UNVALIDATED`
-> (`nix/docker-compose/krg-prod/compose.temporal.yml` lines 29/67/120,
-> `nix/hosts/krg-prod/default.nix` ~line 339) — they predate this bring-up and are a
-> pending comment cleanup, **not** a signal that validation is outstanding. Drop them
-> when next touching those files.
->
 > Two bugs were found and fixed during bring-up:
 >
 > 1. **Cert dir not traversable.** `/run/krg/temporal/tls` was `0750 root`, so the
@@ -22,7 +16,7 @@
 >    renders the config block; the server logged `Service is not requested ...
 >    internal-frontend` and `:7236` never listened, so the bootstrap waited forever.
 >    Fixed by adding it to the server's run list (see below; then `SERVICES`, from
-   server 1.30 `TEMPORAL_SERVICES`).
+>    server 1.30 `TEMPORAL_SERVICES`).
 
 ## Why
 
@@ -134,7 +128,7 @@ them after any change to the TLS env, certs, or image tags:
    included). This confirms `TEMPORAL_SERVICES` + `USE_INTERNAL_FRONTEND` took.
 3. **UI connects.** `temporal-ui` reaches the frontend (workflows list loads),
    confirming the UI's TLS env var names (`TEMPORAL_TLS_CA/CERT/KEY/SERVER_NAME/
-   ENABLE_HOST_VERIFICATION`) are correct for `temporalio/ui:2.51.0` and that
+   ENABLE_HOST_VERIFICATION`) are correct for the pinned `temporalio/ui` tag (2.57.0 today) and that
    `BIND_ON_IP=0.0.0.0` fixed cross-container reachability.
 4. **mTLS is enforced.** A plaintext / no-cert gRPC probe to `:7233` is rejected;
    a probe presenting a `temporal-client` cert succeeds.
