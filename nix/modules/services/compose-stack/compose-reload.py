@@ -92,8 +92,18 @@ CALL_TIMEOUT = 600
 def run(argv, stderr=False, timeout=CALL_TIMEOUT):
     """Run a command and return its stdout (+ stderr if asked: compose writes its
     progress, including dry-run results, there). Raises CalledProcessError on failure and
-    TimeoutExpired past `timeout` seconds."""
-    p = subprocess.run(argv, check=True, capture_output=True, text=True, timeout=timeout)
+    TimeoutExpired past `timeout` seconds.
+
+    A failure logs the command's own output first: the exception carries it, but the
+    unit's traceback doesn't print it, so a failed reload used to say only "returned
+    non-zero exit status 1" (production, #608's build: the reason was lost)."""
+    try:
+        p = subprocess.run(argv, check=True, capture_output=True, text=True, timeout=timeout)
+    except subprocess.CalledProcessError as e:
+        log(f"command failed ({e.returncode}): {' '.join(argv[-6:])}")
+        for line in ((e.stdout or "") + (e.stderr or "")).strip().splitlines()[-40:]:
+            log(f"  | {line}")
+        raise
     return p.stdout + p.stderr if stderr else p.stdout
 
 
@@ -162,6 +172,36 @@ class Stack:
             if len(parts) == 2:
                 svc_of[parts[0]] = parts[1]
         return {svc_of[n] for n in names if n in svc_of}
+
+    def build_missing(self, specs):
+        """Build every locally built image the host doesn't have yet (sorted services).
+
+        The counterpart of the pull above, for `build:` services: `up` builds an image
+        only when its tag is new to the host (that is how a Dockerfile change deploys:
+        bump the tag), and the change-detection dry run would otherwise attempt that
+        build itself, inside a 300 s timeout, with its output discarded. That is how
+        #608's mlflow 3.15.0 failed every reload. Building first means a broken build
+        fails here, with its log in the journal, before any container is touched.
+        Images that already exist are left alone: rebuilding them would re-resolve
+        unpinned dependencies and recreate the service on every reload.
+        """
+        todo = sorted(
+            svc
+            for svc, spec in specs.items()
+            if spec.get("build") and not self.has_image(spec.get("image"))
+        )
+        if todo:
+            log(f"building missing image(s) for: {', '.join(todo)}")
+            self.compose("build", *todo, stderr=True, timeout=PULL_TIMEOUT)
+        return todo
+
+    def has_image(self, image):
+        """Whether the image reference exists locally (no image name → compose's default; build it)."""
+        if not image:
+            return False
+        # `image ls` exits 0 either way (empty when missing), so a missing image isn't
+        # logged as a failed command.
+        return bool(self.docker_cmd("image", "ls", "--quiet", image).strip())
 
     def running(self, service):
         """IDs of the service's RUNNING containers."""
@@ -321,6 +361,7 @@ def plan(stack, forced=frozenset()):
     labelled = [
         s for s, v in specs.items() if (v.get("labels") or {}).get(ROLLOUT_LABEL) == "handoff"
     ]
+    stack.build_missing(specs)
     changed = stack.changed_services(labelled)
     todo = []
     for svc in sorted(specs):

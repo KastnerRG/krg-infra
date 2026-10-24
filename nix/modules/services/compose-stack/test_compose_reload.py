@@ -53,6 +53,12 @@ class FakeDocker:
         if args[0] == "pull":
             self.pulled = True
             return ""
+        if args[0] == "build":
+            self.built = getattr(self, "built", []) + list(args[1:])
+            self.images = getattr(self, "images", set()) | {
+                self.services[s].get("image") for s in args[1:]
+            }
+            return ""
         if args[:2] == ["--dry-run", "up"]:
             assert getattr(self, "pulled", False), "dry run before pulling missing images"
             assert args[2:4] == ["--detach", "--no-deps"], args
@@ -92,6 +98,8 @@ class FakeDocker:
         raise AssertionError(f"unexpected compose call: {args}")
 
     def _docker(self, args):
+        if args[:3] == ["image", "ls", "--quiet"]:
+            return "sha256:1\n" if args[3] in getattr(self, "images", set()) else ""
         if args[0] == "inspect":
             fmt, cid = args[2], args[3]
             c = self.containers[cid]
@@ -637,6 +645,36 @@ def test_nothing_to_recreate_skips_the_ps_call():
 
     assert cr.Stack(["docker", "compose"], runner=runner).changed_services(["a"]) == set()
     assert [c[2] for c in calls] == ["pull", "--dry-run"]  # pull, dry run, and no ps
+
+
+def test_missing_built_image_is_built_before_the_dry_run():
+    """Production (#608): mlflow's tag was bumped to a locally built image the host didn't
+    have; the dry run attempted the build itself and failed every reload, reason unlogged.
+    Build exactly the missing ones first; leave existing images alone."""
+    fake = one("web", {"labels": HANDOFF, "healthcheck": HC}, "h1", "h2")
+    fake.services["ml"] = {"build": {"context": "./ml"}, "image": "ml:3.15.0"}
+    fake.services["old"] = {"build": {"context": "./old"}, "image": "old:1"}
+    fake.images = {"old:1"}
+    assert cr.plan(stack(fake)) == [("web", ["old1"])]
+    assert fake.built == ["ml"]
+
+
+def test_failed_command_logs_its_output(monkeypatch, capsys):
+    """The reason a compose call failed must reach the journal, not just the exit code."""
+
+    def boom(argv, **kw):
+        raise cr.subprocess.CalledProcessError(
+            1, argv, output="", stderr="failed to solve: pip install\n"
+        )
+
+    monkeypatch.setattr(cr.subprocess, "run", boom)
+    try:
+        cr.run(["docker", "compose", "build", "ml"])
+    except cr.subprocess.CalledProcessError:
+        pass
+    else:
+        raise AssertionError("should re-raise")
+    assert "failed to solve: pip install" in capsys.readouterr().out  # log() → stdout → journal
 
 
 def test_missing_images_are_pulled_before_the_dry_run():
