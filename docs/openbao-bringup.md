@@ -172,6 +172,13 @@ obsolete `authentik_traefik_token.env` — the proxy outpost token is IaC-minted
 are dead and can be removed (keep `outline_secrets.env` + `mlflow.env` until those
 stacks are migrated).
 
+## Roster cutover
+
+For the integrated roster backend, use [Roster: OpenBao cutover](roster-openbao.md).
+It covers reconnecting to the existing server, preserving generated values when
+moving them into the early secrets phase, and seeding the roster encryption key.
+Seed and validate these fields before deploying the new shared Agent templates.
+
 ## Backup & recovery
 
 - **Raft snapshot** (the whole datastore, encrypted): `bao operator raft snapshot

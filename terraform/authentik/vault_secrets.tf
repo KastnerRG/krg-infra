@@ -61,14 +61,17 @@ data "vault_kv_secret_v2" "mlflow_oidc" {
   name  = "krg-prod/authentik-managed/mlflow-oidc"
 }
 
-resource "vault_kv_secret_v2" "roster_oidc" {
+# Roster OIDC is generated early; preserve the live value on migration.
+removed {
+  from = vault_kv_secret_v2.roster_oidc
+  lifecycle {
+    destroy = false
+  }
+}
+
+data "vault_kv_secret_v2" "roster_oidc" {
   mount = "secret"
   name  = "krg-prod/authentik-managed/roster-oidc"
-  data_json = jsonencode({
-    client_id     = authentik_provider_oauth2.e4e_roster.client_id
-    client_secret = authentik_provider_oauth2.e4e_roster.client_secret
-    issuer_url    = "${var.authentik_url}/application/o/e4e-roster/"
-  })
 }
 
 # Vaultwarden's OIDC client secret is now MINTED by the early terraform/secrets

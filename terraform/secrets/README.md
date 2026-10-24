@@ -32,7 +32,8 @@ Only the secrets a **fail-closed P2 consumer** (the krg-prod `krg.vaultAgent`) r
 need to be generated early — those are the ones that can fail-close the stack. Today:
 **temporal** (db + oidc), **guacamole** (db; its OIDC is implicit-flow, no secret),
 **vaultwarden** (oidc), **mlflow** (db + secret_key + oidc), **outline** (db +
-secret_key + utils_secret + oidc), and the Incus tenant **fishsense** (its five v2 DB
+secret_key + utils_secret + oidc), **roster** (db + session + LDAP + OIDC;
+[cutover procedure](../../docs/roster-openbao.md)), and the Incus tenant **fishsense** (its five v2 DB
 passwords, `tenants/fishsense/generated/services_db` — read by the TENANT's fail-closed
 in-VM vault-agent; written under krg-deploy's `tenants/+/generated` glob), and the
 Incus tenant **reference-manager** (`tenants/reference-manager/generated/app`: its
@@ -40,7 +41,7 @@ Postgres password + API session secret, same shape and glob). One DERIVED (not g
 `tenants/fishsense/generated/object_stores` (`fishsense_object_stores.tf`) — the per-tenant
 Garage credentials the control node provisions in Phase 1, re-assembled into the one
 `stores_json` the tenant API reads; it holds no value of its own, so the generate-once
-invariant below does not bind it (recreating it re-derives the same JSON). The rest (`grafana-oidc`, roster, `guacamole-oidc`,
+invariant below does not bind it (recreating it re-derives the same JSON). The rest (`grafana-oidc`, `guacamole-oidc`,
 the e4e-nas pair, `proxmox-ldap-bind`) are consumed at tofu-time or by graceful
 ansible — they can't fail-close the stack, so they stay in `terraform/authentik`.
 **Rule:** when a secret becomes a vault-agent (P2) consumer, move it here.
