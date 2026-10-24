@@ -66,6 +66,15 @@ in {
     }
   ];
 
+  # The root filesystem follows its virtual disk: after the zvol is grown on fabricant
+  # (`qm resize 103 scsi0 <size>`; grow-only), growpart extends sda1 and
+  # systemd-growfs-root extends the ext4 to fill it. Both run at boot and are
+  # idempotent (no-op when there's nothing to grow); to apply a resize without a
+  # reboot: `systemctl restart growpart.service systemd-growfs-root.service`.
+  # 64 → 128 GB on 2026-10-24: Temporal's Postgres alone is 19 GB and growing.
+  boot.growPartition = true;
+  fileSystems."/".autoResize = true;
+
   networking = {
     hostName = "krg-prod";
     domain = "ucsd.edu";
