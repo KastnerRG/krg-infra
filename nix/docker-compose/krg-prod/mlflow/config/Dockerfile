@@ -6,16 +6,22 @@
 # (OIDC_CLIENT_SECRET, SECRET_KEY, and the password-bearing MLFLOW_BACKEND_STORE_URI /
 # OIDC_USERS_DB_URI). Nothing secret is baked into this image.
 
-FROM python:3.15-slim@sha256:044d5bd747976e21f8bc4d746c3479b19a84bb8ae6261b802acdd26b29036c93
+# Held on 3.12 (renovate.json5): mlflow requires pandas<3, which ships no wheel for
+# 3.15, so pip falls back to a source build the slim image can't compile.
+FROM python:3.12-slim@sha256:cb33f7f771ecec2ef1225cf39b159591a040391bd73e4c01f00fdfc4c47611d2
 
 # Pinned for reproducibility. mlflow-oidc-auth 7.x requires mlflow>=3.10,<4 and
 # Python>=3.10. Bump all three together (the plugin tracks the mlflow major).
-ARG MLFLOW_VERSION=3.14.0
+# Changing anything in this file? Bump the `image:` tag in compose.mlflow.yml too:
+# the deploy only builds an image tag the host doesn't have yet.
+ARG MLFLOW_VERSION=3.15.0
 ARG MLFLOW_OIDC_AUTH_VERSION=7.3.1
 
+# psycopg (v3), not psycopg2: SQLAlchemy 2.1 resolves the plain `postgresql://` URIs
+# vault-agent renders to the psycopg driver. mlflow 3.15 migrates its schema on start.
 RUN pip install --no-cache-dir \
     mlflow==${MLFLOW_VERSION} \
-    psycopg2-binary \
+    "psycopg[binary]" \
     mlflow-oidc-auth==${MLFLOW_OIDC_AUTH_VERSION}
 
 EXPOSE 5000
