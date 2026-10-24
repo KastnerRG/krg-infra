@@ -24,6 +24,11 @@
 # temporal-schema and temporal stay in LOCKSTEP (same version): the schema dir in
 # admin-tools is what the matching server expects.
 #
+# NO ROLLBACK past a hop that migrated the schema (1.30: visibility 1.9 → 1.13; 1.31:
+# main 1.18 → 1.19): reverting the tag starts the OLDER server on a NEWER schema,
+# which Temporal does not support. Don't revert; roll FORWARD with a fix, or
+# restore the databases from a backup taken before the hop.
+#
 # Auth is the UI's native OIDC client (like grafana/vaultwarden) — Traefik
 # terminates TLS, then temporal-ui itself bounces unauthenticated users through
 # Authentik. No proxy outpost needed.
@@ -41,7 +46,7 @@
 #   frontend.pem  → frontend SERVER cert+key (temporal-frontend role)
 #   ca.crt        → intermediate CA (frontend client-CA + UI server-CA)
 #   ui-client.pem → temporal-ui CLIENT cert+key (temporal-client role)
-# Design + on-box validation gates: docs/temporal-mtls.md (UNVALIDATED).
+# Design + on-box validation gates: docs/temporal-mtls.md (validated on-box 2026-06-16).
 services:
   temporal-postgres:
     image: postgres:16.15@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97
@@ -80,8 +85,7 @@ services:
   # healthcheck (unix socket) can pass before :5432 accepts TCP. auto-setup waited
   # for the port; this waits up to ~60s, then fails loudly.
   temporal-schema:
-    # 1.29 admin-tools tags carry the CLI versions; from 1.30 they're plain (1.30.8).
-    image: temporalio/admin-tools:1.29.7-tctl-1.18.4-cli-1.7.2@sha256:4a17b5be706c56a9238fb7b5b32a36966cee14939658b20597837b2443b277c8
+    image: temporalio/admin-tools:1.30.8@sha256:22d417fd0d541da6b18486912a546b3203f516f0bf9f8b2f27611506fca2507c
     restart: "no"
     env_file:
       - /run/krg/temporal/server.env # POSTGRES_PWD
@@ -92,12 +96,18 @@ services:
         export SQL_PASSWORD="$$POSTGRES_PWD"
         sql() { temporal-sql-tool --plugin postgres12 --ep temporal-postgres -p 5432 -u temporal "$$@"; }
         dir=/etc/temporal/schema/postgresql/v12
+        # Retry ONLY connectivity failures: temporal-sql-tool reports both a refused
+        # port and an unresolvable host as `dial tcp …` (1.29.7 and 1.30.8). Anything
+        # else (auth, a schema conflict) prints its own error and fails at once.
         tries=0
-        until sql --db temporal setup-schema -v 0.0; do
+        until out=$$(sql --db temporal setup-schema -v 0.0 2>&1); do
+          echo "$$out" >&2
+          case "$$out" in *"dial tcp"*) ;; *) exit 1 ;; esac
           tries=$$((tries + 1))
-          [ "$$tries" -lt 30 ] || { echo "temporal-postgres unreachable over TCP" >&2; exit 1; }
+          [ "$$tries" -lt 30 ] || { echo "temporal-postgres not accepting TCP after ~60s" >&2; exit 1; }
           sleep 2
         done
+        echo "$$out"
         sql --db temporal update-schema -d "$$dir/temporal/versioned"
         sql --db temporal_visibility create
         sql --db temporal_visibility setup-schema -v 0.0
@@ -110,7 +120,7 @@ services:
   temporal:
     # Pin to a tag that EXISTS on Docker Hub (#465 pinned a nonexistent one and
     # crash-looped into the pull limit). Keep in lockstep with temporal-schema above.
-    image: temporalio/server:1.29.7@sha256:688da708d0daca6ff8083334a4a7fbbdbc7e70d1cca8e2eda8c05b21fdbd601e
+    image: temporalio/server:1.30.8@sha256:54c59485b185ad787061f9a2ed72bd31c8efeae2d4144c61f22873df52c3c781
     container_name: temporal
     restart: unless-stopped
     environment:
@@ -124,8 +134,8 @@ services:
       - PROMETHEUS_ENDPOINT=0.0.0.0:8000
       # ── Frontend mTLS ─────────────────────────────────────────────────────────
       # Lab-internal CA (terraform/openbao/pki.tf); certs rendered by vault-agent
-      # to /run/krg/temporal/tls (mounted below). UNVALIDATED — see the bring-up +
-      # validation gates in docs/temporal-mtls.md before trusting this.
+      # to /run/krg/temporal/tls (mounted below). Re-run the validation gates in
+      # docs/temporal-mtls.md after any change to the TLS env, certs or image tags.
       #
       # requireClientAuth is SHARED with internode TLS, and the internal system
       # worker talks to the frontend — so enabling it naively wedges first boot.
@@ -135,15 +145,17 @@ services:
       # USE_INTERNAL_FRONTEND only renders the *config*; the server still has to be
       # ASKED to run the role — without it internal-frontend is configured but "not
       # requested" and :7236 never listens. The server starts only the default 4
-      # roles unless told otherwise, and HOW changed at 1.30: the 1.29 image's
-      # start-temporal.sh reads SERVICES (colon list); 1.30+ dropped that script and
-      # temporal-server reads TEMPORAL_SERVICES (comma list) itself. Both are set so
-      # the 1.30 bump is a pure tag change; drop SERVICES once past 1.29. (1.30+
-      # renders its config from a template embedded in the binary, which reads the
-      # same env vars as the 1.29 dockerize template: DB/POSTGRES_*, BIND_ON_IP,
-      # USE_INTERNAL_FRONTEND, PROMETHEUS_ENDPOINT, TEMPORAL_TLS_*. 1.30.8–1.32.1
-      # were run with exactly this env: mTLS on :7233, internal-frontend on :7236.)
-      - SERVICES=frontend:internal-frontend:history:matching:worker
+      # roles unless told otherwise; temporal-server reads the list from
+      # TEMPORAL_SERVICES (the 1.29 image's start-temporal.sh read SERVICES instead).
+      # Verified on 1.30.8: "Starting server for services" lists all five, and
+      # internal-frontend logs "Created gRPC listener" on 0.0.0.0:7236.
+      #
+      # Every env var here is read by the config template EMBEDDED in the 1.30+
+      # binary (common/config/config_template_embedded.yaml in the temporal repo),
+      # which replaced the 1.29 image's dockerize template with the same names:
+      # DB/POSTGRES_*, BIND_ON_IP, USE_INTERNAL_FRONTEND, PROMETHEUS_ENDPOINT,
+      # TEMPORAL_TLS_*. On a version bump, check that file at the new tag for a
+      # renamed var; a dropped TLS var would silently turn off mTLS on :7233.
       - TEMPORAL_SERVICES=frontend,internal-frontend,history,matching,worker
       - BIND_ON_IP=0.0.0.0 # frontend must bind all ifaces so temporal-ui reaches :7233 cross-container (the image default 127.0.0.1 is container-local)
       - TEMPORAL_TLS_REQUIRE_CLIENT_AUTH=true
@@ -178,6 +190,9 @@ services:
       - prometheus_network
 
   temporal-ui:
+    # 2.57.0 is held deliberately (not bumped with the server). Verified against server
+    # 1.30.8 over mTLS: cluster-info, namespace list, workflow list + count (the
+    # migrated visibility schema) all answer. Re-check on each server hop.
     image: temporalio/ui:2.57.0@sha256:d944f959d0923c35cd991a17a0edbe087770eff843724b181933e0cfdd563ab2
     # No container_name: updates are graceful handoffs (krg.rollout below). The
     # vault-agent TLS hook restarts it by compose service label, not by name.
@@ -198,7 +213,7 @@ services:
       # The frontend now requires client auth, so the UI must present a client cert
       # (temporal-client role) and verify the server against the lab-internal CA.
       # server_name MUST match the frontend cert's SAN (`temporal`). Cert+key in one
-      # PEM (atomic pair, see the host render). docs/temporal-mtls.md, UNVALIDATED.
+      # PEM (atomic pair, see the host render). docs/temporal-mtls.md.
       - TEMPORAL_TLS_CA=/etc/temporal/tls/ca.crt
       - TEMPORAL_TLS_CERT=/etc/temporal/tls/ui-client.pem
       - TEMPORAL_TLS_KEY=/etc/temporal/tls/ui-client.pem
