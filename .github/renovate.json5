@@ -140,10 +140,18 @@
       additionalBranchPrefix: "major-",
     },
     {
-      description: "temporalio/auto-setup tags do NOT track Temporal server versions (it caps at 1.29.7); a human checks every bump",
+      description: "Temporal server + admin-tools (temporal-schema) move in LOCKSTEP — admin-tools carries the schema the server expects. Temporal only supports successive-minor upgrades, so each minor gets its OWN PR (minor-1.30-…, minor-1.31-…); when several are open at once, a human merges them oldest first, letting each deploy. Never automatic.",
       matchDatasources: ["docker"],
-      matchPackageNames: ["temporalio/auto-setup"],
+      matchPackageNames: ["temporalio/server", "temporalio/admin-tools"],
+      groupName: "temporal server",
+      separateMultipleMinor: true,
       automerge: false,
+    },
+    {
+      description: "admin-tools 1.29 tags carry a CLI suffix (1.29.7-tctl-1.18.4-cli-1.7.2) that docker versioning treats as a compatibility tag, so it would never move to the plain 1.30+ tags and the server would be bumped ALONE. Compare MAJOR.MINOR.PATCH only; 4-part tags (1.29.4.1-…) don't match and are ignored.",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["temporalio/admin-tools"],
+      versioning: "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?:-tctl-.*)?$",
     },
     {
       description: "The one-time `tag` → `tag@digest` pinning recreates nearly every service once (the image string changes) — a PR, merged deliberately in a window",

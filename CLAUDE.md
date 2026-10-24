@@ -229,7 +229,7 @@ krg-infra/
     authentik/                     # BUILT (goauthentik/authentik): SSO apps/providers/flows/groups/LDAP-outpost (applications_{krg,e4e}.tf, data.tf, groups.tf, ldap.tf, outpost.tf) + writes generated OIDC client secrets to OpenBao (vault_secrets.tf, roster_secrets.tf)
     openbao/                       # BUILT (was "vault/"; openbao provider): KV-v2 mount + AppRole auth + per-role policies (krg-deploy, krg-prod) — structure not values (main.tf)
     grafana/                       # BUILT (grafana/grafana): dashboards/datasources/folders/teams/SSO — reads grafana-oidc from OpenBao (sso.tf)
-    temporal/                      # BUILT (temporal provider): namespaces/config on the lab-wide Temporal cluster (temporalio/auto-setup on krg-prod, workflows.krg.ucsd.edu) — declared here, not via one-off tctl
+    temporal/                      # BUILT (temporal provider): namespaces/config on the lab-wide Temporal cluster (temporalio/server on krg-prod, workflows.krg.ucsd.edu) — declared here, not via one-off tctl
     secrets/                       # BUILT (openbao provider): mints the OIDC client-secrets + DB passwords krg-prod services need at startup into OpenBao (secret/krg-prod/authentik-managed/*) — runs early (before P2 vault-agent renders consume them); fixes the deploy-DAG ordering
   spec/e4e-nas/                     # declarative DSM source of truth (shares/groups/smb-globals/nfs-exports/acls/users/garage/git-lfs) — consumed by ansible synology_* roles; seeded from docs/e4e-nas-dsm.md
   docs/
