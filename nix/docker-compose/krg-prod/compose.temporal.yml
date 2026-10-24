@@ -24,6 +24,11 @@
 # temporal-schema and temporal stay in LOCKSTEP (same version): the schema dir in
 # admin-tools is what the matching server expects.
 #
+# NO ROLLBACK past a hop that migrated the schema (1.30: visibility 1.9 → 1.13; 1.31:
+# main 1.18 → 1.19): reverting the tag starts the OLDER server on a NEWER schema,
+# which Temporal does not support. Don't revert; roll FORWARD with a fix, or
+# restore the databases from a backup taken before the hop.
+#
 # Auth is the UI's native OIDC client (like grafana/vaultwarden) — Traefik
 # terminates TLS, then temporal-ui itself bounces unauthenticated users through
 # Authentik. No proxy outpost needed.
@@ -136,6 +141,15 @@ services:
       # requested" and :7236 never listens. The server starts only the default 4
       # roles unless told otherwise; temporal-server reads the list from
       # TEMPORAL_SERVICES (the 1.29 image's start-temporal.sh read SERVICES instead).
+      # Verified on 1.30.8: "Starting server for services" lists all five, and
+      # internal-frontend logs "Created gRPC listener" on 0.0.0.0:7236.
+      #
+      # Every env var here is read by the config template EMBEDDED in the 1.30+
+      # binary (common/config/config_template_embedded.yaml in the temporal repo),
+      # which replaced the 1.29 image's dockerize template with the same names:
+      # DB/POSTGRES_*, BIND_ON_IP, USE_INTERNAL_FRONTEND, PROMETHEUS_ENDPOINT,
+      # TEMPORAL_TLS_*. On a version bump, check that file at the new tag for a
+      # renamed var; a dropped TLS var would silently turn off mTLS on :7233.
       - TEMPORAL_SERVICES=frontend,internal-frontend,history,matching,worker
       - BIND_ON_IP=0.0.0.0 # frontend must bind all ifaces so temporal-ui reaches :7233 cross-container (the image default 127.0.0.1 is container-local)
       - TEMPORAL_TLS_REQUIRE_CLIENT_AUTH=true
@@ -170,6 +184,9 @@ services:
       - prometheus_network
 
   temporal-ui:
+    # 2.57.0 is held deliberately (not bumped with the server). Verified against server
+    # 1.30.8 over mTLS: cluster-info, namespace list, workflow list + count (the
+    # migrated visibility schema) all answer. Re-check on each server hop.
     image: temporalio/ui:2.57.0@sha256:d944f959d0923c35cd991a17a0edbe087770eff843724b181933e0cfdd563ab2
     # No container_name: updates are graceful handoffs (krg.rollout below). The
     # vault-agent TLS hook restarts it by compose service label, not by name.

@@ -21,7 +21,8 @@
 > 2. **internal-frontend configured but not run.** `USE_INTERNAL_FRONTEND` only
 >    renders the config block; the server logged `Service is not requested ...
 >    internal-frontend` and `:7236` never listened, so the bootstrap waited forever.
->    Fixed by adding it to the `SERVICES` run list (see below).
+>    Fixed by adding it to the server's run list (see below; then `SERVICES`, from
+   server 1.30 `TEMPORAL_SERVICES`).
 
 ## Why
 
