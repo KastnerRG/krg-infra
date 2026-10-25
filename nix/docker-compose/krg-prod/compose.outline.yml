@@ -34,7 +34,7 @@ services:
       - traefik_proxy
 
   outline_redis:
-    image: valkey/valkey:9.1@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
+    image: valkey/valkey:9.2@sha256:247b5e730bdc9dc29fddb8274d1731b203a1a1a46af63eae3a9d55b4bf74853f
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
