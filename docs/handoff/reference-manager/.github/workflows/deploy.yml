@@ -77,7 +77,7 @@ jobs:
           # store path; /nix/store is world-readable). Not `docker ps` (the runner
           # isn't in the docker group, by design).
           deployed_compose=$("$SYSTEMCTL" show reference-manager.service -p ExecStart --value \
-            | grep -oE '/nix/store/[a-z0-9]{32}-source/deploy/incus/compose.yml' \
+            | grep -oE '/nix/store/[a-z0-9]{32}-[^/ ]+(/deploy/incus)?/compose\.yml' \
             | head -1)
           if [ -z "$deployed_compose" ] || [ ! -r "$deployed_compose" ]; then
             echo "::error title=Deploy verify::could not read the deployed compose spec from reference-manager.service ExecStart"
