@@ -153,6 +153,9 @@
           sys.config.networking.hostName
           == "example"
           && (sys.config.krg.composeStacks ? "example")
+          # the compose file must be a store path the closure REFERENCES (string context),
+          # else nix.gc deletes it from under the running stack (fishsense, 2026-10-26)
+          && builtins.hasContext (builtins.head sys.config.krg.composeStacks.example.composeFiles)
           && sys.config.krg.vaultAgent.roleName == "tenant-example"
           && builtins.isString "${sys.config.systemd.services.openbao-agent.serviceConfig.ExecStart}"
           && sys.config.services.github-runners.example.url == "https://github.com/UCSD-E4E/example"
