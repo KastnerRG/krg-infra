@@ -19,9 +19,6 @@ in {
     ../modules/security/firewall.nix
     ../modules/security/crowdsec.nix
     ../modules/security/crowdsec-bouncer.nix
-    # Interim CVE-2026-111497 brotli patch until the nixos-26.05 channel ships 1.2.1
-    # (self-retiring; see the module header).
-    ../modules/security/brotli-cve-2026-111497.nix
     ../modules/sssd-ad-client.nix
     # Managed time (chrony) on every host, with the AD DC as the domain clock.
     # Sits next to sssd-ad-client for a reason: AD auth is what makes clock skew
