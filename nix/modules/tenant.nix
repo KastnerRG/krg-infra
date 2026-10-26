@@ -35,6 +35,14 @@ with lib; let
   hasCompose = hasTenant && (t.interior.compose or null) != null;
   hasRepo = hasTenant && (t.interior.repo or null) != null;
   hasTemporal = hasTenant && (t.boundary.temporal or null) != null;
+
+  # The compose file as a store path the system closure REFERENCES. `toString ./x`
+  # yields the flake's `/nix/store/…-source/…` path with NO string context, so nothing
+  # roots it: the unit names a path the weekly nix.gc deletes, and the running stack
+  # can't be restarted until the next converge re-fetches the source (hit on fishsense,
+  # 2026-10-26). Interpolating the parent directory copies it (siblings included, so a
+  # same-dir `include:` still resolves) and carries the reference.
+  composeFile = "${dirOf t.interior.compose}/${baseNameOf t.interior.compose}";
 in {
   imports = [
     ../profiles/server.nix # the lab baseline (base + monitoring)
@@ -129,7 +137,7 @@ in {
       tReloadCmd = concatStringsSep " " ([
           "${pkgs.docker}/bin/docker compose"
           "--project-directory ${config.krg.composeStacks.${t.name}.workingDirectory}"
-          "-f ${toString t.interior.compose}"
+          "-f ${composeFile}"
           "restart"
         ]
         ++ tReload);
@@ -164,7 +172,7 @@ in {
       # so the <tenant>.vm cert is on /run before the inner Traefik starts — fail-closed if
       # bao is sealed/unreachable (the stack never starts with a missing/stale cert).
       krg.composeStacks.${t.name} = {
-        composeFiles = [(toString t.interior.compose)];
+        composeFiles = [composeFile];
         after = ["openbao-agent.service"];
         requires = ["openbao-agent.service"];
         # repo-owns-deploy REQUIRES committed config to apply on converge. Without this,
