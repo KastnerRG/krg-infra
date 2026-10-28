@@ -22,3 +22,6 @@ dictionary-attacked. The NixOS guests were already hardened, so `ansible/` bring
 the hypervisors under the same baseline (key-only SSH, CrowdSec, `krg-admin`),
 and the breached Active Directory is being rebuilt clean as a new Samba AD forest
 on krg-ldap.
+
+## Times shutdown
+1
