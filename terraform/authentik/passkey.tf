@@ -30,9 +30,6 @@ resource "authentik_stage_authenticator_webauthn" "passkey_enroll" {
   # MUST be a discoverable (resident) credential, otherwise the passwordless flow has
   # no username to look the key up by and the "Use a passkey" button finds nothing.
   resident_key_requirement = "required"
-  # Authentik 2026.8 removed this option; override the older provider's true
-  # default to avoid a perpetual diff against the API's false/absent value.
-  prevent_duplicate_devices = false
   # "preferred" avoids locking out authenticators that can't do user-verification.
   # For true passwordless, "required" is stronger (a stolen security key alone can't
   # log in) — flip both this and webauthn_user_verification below to tighten.
