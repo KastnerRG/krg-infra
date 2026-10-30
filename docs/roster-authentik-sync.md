@@ -2,7 +2,10 @@
 
 The roster queues an Authentik reconciliation after successful LDAP writes.
 This uses the same `ak ldap_sync krg-samba-ad` command as
-`deploy/deploy-authentik-sync.sh`, against the existing `authentik_worker` container.
+`deploy/deploy-authentik-sync.sh`. The installed `krg-authentik-ldap-sync` helper finds
+the existing worker using Compose project `krg-prod` and service `authentik_worker`
+labels, requires exactly one running match and executes by container ID. It does
+not assume a fixed generated container name.
 Authentik's normal schedule remains enabled as a fallback. No Terraform changes,
 new API tokens, OpenBao secrets, or public webhook endpoints are needed.
 

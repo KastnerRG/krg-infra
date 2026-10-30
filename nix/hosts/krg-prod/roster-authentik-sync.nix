@@ -1,11 +1,17 @@
 {pkgs, ...}: let
   queueRoot = "/run/krg/authentik-ldap-sync";
+  sync = pkgs.writeShellApplication {
+    name = "krg-authentik-ldap-sync";
+    runtimeInputs = [pkgs.docker];
+    text = builtins.readFile ../../modules/services/authentik-ldap-sync/sync-authentik.sh;
+  };
   worker = pkgs.writeShellApplication {
     name = "roster-authentik-sync";
     runtimeInputs = [pkgs.coreutils pkgs.docker];
     text = builtins.readFile ../../modules/services/authentik-ldap-sync/worker.sh;
   };
 in {
+  environment.systemPackages = [sync];
   # UID 1001 is the roster image's appuser. Only this isolated queue is writable;
   # the backend never receives the Docker socket, sudo, or an Authentik admin token.
   systemd.tmpfiles.rules = [
@@ -32,7 +38,7 @@ in {
       Type = "oneshot";
       # Coalesce edits made together (e.g. profile + groups), and limit sync rate.
       ExecStartPre = "${pkgs.coreutils}/bin/sleep 5";
-      ExecStart = "${worker}/bin/roster-authentik-sync ${queueRoot}/requests ${queueRoot}/processing docker --host unix:///var/run/docker.sock exec authentik_worker ak ldap_sync krg-samba-ad";
+      ExecStart = "${worker}/bin/roster-authentik-sync ${queueRoot}/requests ${queueRoot}/processing ${sync}/bin/krg-authentik-ldap-sync";
       Restart = "on-failure";
       RestartSec = "30s";
       TimeoutStartSec = "15min";

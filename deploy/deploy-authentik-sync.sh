@@ -36,29 +36,32 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source-path=SCRIPTDIR source=lib.sh
 source "${REPO_ROOT}/deploy/lib.sh"
 
-# The Authentik stack + its LDAP source both live on krg-prod. The worker
-# container name is pinned in nix/docker-compose/krg-prod/compose.authentik.yml
-# (container_name: authentik_worker); the source slug in terraform/authentik/ldap.tf
-# (authentik_source_ldap.samba_ad.slug = "krg-samba-ad"). Override for a differently
-# named stack/source without editing this script.
+# The installed host helper discovers the worker using its Compose labels, just
+# like roster-triggered syncs. An explicit container override remains available
+# for a differently named stack; the source slug is declared in ldap.tf.
 host="${DEPLOY_AUTHENTIK_HOST:-krg-prod}"
-container="${DEPLOY_AUTHENTIK_WORKER:-authentik_worker}"
+container="${DEPLOY_AUTHENTIK_WORKER:-}"
 slug="${DEPLOY_AUTHENTIK_LDAP_SLUG:-krg-samba-ad}"
 target="$(target_for "$host")"
+if [[ -n "$container" ]]; then
+  sync_command="sudo docker exec ${container} ak ldap_sync ${slug}"
+else
+  sync_command="sudo /run/current-system/sw/bin/krg-authentik-ldap-sync ${slug}"
+fi
 
 echo "::group::Authentik LDAP sync (${slug}) on ${host} (${target})"
 # krg-admin is not in the docker group; it has passwordless sudo (see lib.sh) — go
 # through sudo so the exec works without widening the break-glass account.
 # container/slug are in-script constants; expanding them client-side is intended (SC2029).
 # shellcheck disable=SC2029
-if ssh "${sshopts[@]}" "$target" "sudo docker exec ${container} ak ldap_sync ${slug}"; then
+if ssh "${sshopts[@]}" "$target" "$sync_command"; then
   echo "OK: Authentik LDAP sync completed — new AD groups are now visible to tofu."
 else
   rc=$?
   echo "WARN: Authentik LDAP sync did not complete cleanly on ${host} (exit ${rc})." >&2
   echo "      Continuing — the tofu authentik apply that follows will fail loudly if" >&2
   echo "      a referenced AD group is still missing. If it does, check the source:" >&2
-  echo "        ssh ${target} sudo docker exec ${container} ak ldap_sync ${slug}" >&2
+  echo "        ssh ${target} ${sync_command}" >&2
 fi
 printf '\n::endgroup::\n'
 
