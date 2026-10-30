@@ -14,6 +14,21 @@ on:
   workflow_dispatch:
 
 jobs:
+  outline-group-sync:
+    name: Outline group sync worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install locked worker dependencies and pytest
+        run: |
+          pip install --require-hashes -r nix/docker-compose/outline-group-sync/requirements.lock
+          pip install pytest
+      - name: Test reconciliation and Temporal workflow
+        run: python -m pytest nix/docker-compose/outline-group-sync -q
+
   pytest:
     name: pytest (python helpers + drift detector + scratch)
     runs-on: ubuntu-latest

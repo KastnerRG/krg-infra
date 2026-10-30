@@ -59,6 +59,11 @@ variable "namespaces" {
     retention   = optional(number, 30)
   }))
   default = {
+    outline = {
+      description = "Internal docs LDAP group reconciliation"
+      owner_email = "e4e@ucsd.edu"
+      retention   = 30
+    }
     fishsense = {
       description = "FishSense project workflows (NRP cluster workers)"
       owner_email = "fishsense@ucsd.edu"

@@ -34,7 +34,11 @@ is verified against, so it works before the public DNS record lands.
 ## What's managed (`main.tf`)
 
 - `temporal_namespace.this` (for_each `var.namespaces`) — one per namespace.
-  `retention` is in **days**. Default set: **`fishsense`**.
+  `retention` is in **days**. Default set: **`fishsense`**, **`outline`**.
+- `outline` hosts the internal docs group sync worker and its five-minute schedule
+  ([runbook](../../docs/outline-group-sync.md)). It uses the existing Temporal service;
+  no additional Temporal server is deployed. Apply this namespace before enabling
+  the worker. If overriding `var.namespaces`, include `outline` in that map too.
 
 ## Run
 

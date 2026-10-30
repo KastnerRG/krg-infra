@@ -28,6 +28,7 @@ in {
   imports = [
     ../../profiles/services.nix
     ../../modules/services/vault-agent.nix
+    ../../modules/services/outline-group-sync.nix # opt-in; see docs/outline-group-sync.md
     ../../modules/edge.nix # krg.edge — the *.krg zone edge's tenant routes (ADR 0017 §5)
     ./hardware-configuration.nix
   ];
