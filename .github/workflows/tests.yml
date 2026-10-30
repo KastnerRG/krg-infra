@@ -30,4 +30,4 @@ jobs:
         run: pip install pytest pyyaml
 
       - name: Run unit tests
-        run: pytest ansible/ drift/ nix/modules/scratch/ nix/modules/security/cve-scan/ nix/modules/services/compose-stack/ security/claude-extension/ -q
+        run: pytest ansible/ drift/ nix/modules/scratch/ nix/modules/security/cve-scan/ nix/modules/services/compose-stack/ nix/modules/services/authentik-ldap-sync/ security/claude-extension/ -q
