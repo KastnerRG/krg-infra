@@ -14,6 +14,12 @@ enable: 1
 {% endfor %}
 [RULES]
 
+{% if proxmox_malware_egress_enabled | default(false) %}
+# Incident C2: host-originated SSH tunnel and HTTP beacon. Guest policy is separate.
+OUT DROP -dest 134.209.82.225 -p tcp -dport 22 -log nolog
+OUT DROP -dest 134.209.82.225 -p tcp -dport 8099 -log nolog
+{% endif %}
+
 # Host management restricted to UCSD (was +dc/public — that open SSH was the
 # breach vector). Exporters restricted to the monitoring host.
 IN ACCEPT -source +dc/ucsd -p tcp -dport 8006 -log nolog # Proxmox web UI

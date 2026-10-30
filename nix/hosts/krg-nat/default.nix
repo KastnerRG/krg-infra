@@ -1,4 +1,7 @@
 {inputs, ...}: {
+  # Incident C2 block: validated with nft --check on waiter.
+  krg.malwareEgress.enable = true;
+
   imports = [
     # Hypervisor role (server tier + the guest-hosting substrate). Host-specifics below.
     ../../profiles/hypervisor.nix

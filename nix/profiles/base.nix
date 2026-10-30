@@ -17,6 +17,7 @@ in {
   imports = [
     ../modules/security/oec-qualys-trellix.nix
     ../modules/security/firewall.nix
+    ../modules/security/malware-egress.nix
     ../modules/security/crowdsec.nix
     ../modules/security/crowdsec-bouncer.nix
     ../modules/sssd-ad-client.nix

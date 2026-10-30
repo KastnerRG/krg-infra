@@ -1,4 +1,7 @@
 {inputs, ...}: {
+  # Incident C2 block: validated with nft --check on waiter.
+  krg.malwareEgress.enable = true;
+
   imports = [
     ../../profiles/services.nix
     ../../modules/edge.nix # krg.edge — the *.e4e zone public edge (ADR 0017 §5)

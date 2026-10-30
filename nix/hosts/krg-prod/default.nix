@@ -25,6 +25,9 @@
   # `|| true`); the stack's own start then reads the fresh files.
   reloadStack = "${config.systemd.package}/bin/systemctl reload --no-block krg-prod.service";
 in {
+  # Incident C2 block: validated with nft --check on waiter.
+  krg.malwareEgress.enable = true;
+
   imports = [
     ../../profiles/services.nix
     ../../modules/services/vault-agent.nix

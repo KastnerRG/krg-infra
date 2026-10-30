@@ -13,3 +13,6 @@ proxmox_host_fw_rules: []
 # PVE node name (the host.fw lives under /etc/pve/nodes/<this>/). Defaults to the
 # inventory hostname; override if the inventory name and PVE node name differ.
 proxmox_node_name: "{{ inventory_hostname }}"
+
+# Opt in after canary validation; applies to hypervisor host OUTPUT only.
+proxmox_malware_egress_enabled: false
