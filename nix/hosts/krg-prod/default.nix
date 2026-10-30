@@ -33,6 +33,7 @@ in {
     ../../modules/services/vault-agent.nix
     ../../modules/edge.nix # krg.edge — the *.krg zone edge's tenant routes (ADR 0017 §5)
     ./hardware-configuration.nix
+    ./roster-authentik-sync.nix
   ];
 
   # KRG lab-wide production host (the old "fabricant" services). E4E
