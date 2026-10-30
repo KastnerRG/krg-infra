@@ -3,6 +3,9 @@
   pkgs,
   ...
 }: {
+  # Incident C2 block: validated with nft --check on waiter.
+  krg.malwareEgress.enable = true;
+
   imports = [
     ../../profiles/compute.nix
     ./hardware-configuration.nix

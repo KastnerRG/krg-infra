@@ -1,6 +1,9 @@
 _: let
   trusted = builtins.fromJSON (builtins.readFile ../../networks/trusted.json);
 in {
+  # Incident C2 block: validated with nft --check on waiter.
+  krg.malwareEgress.enable = true;
+
   imports = [
     # server tier (= old base + node-exporter): an always-on monitored infra VM.
     # krg.users + the break-glass admin now come via base.nix (imported by server).

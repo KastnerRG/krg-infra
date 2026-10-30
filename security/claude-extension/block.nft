@@ -1,0 +1,13 @@
+# Review with: sudo nft --check --file security/claude-extension/block.nft
+# A dedicated table: never flush the host firewall. IPv4 IOC only.
+# Delete/rollback: sudo nft delete table inet krg_malware_egress
+ table inet krg_malware_egress {
+  chain output {
+    type filter hook output priority -10; policy accept;
+    ip daddr 134.209.82.225 tcp dport { 22, 8099 } counter drop
+  }
+  chain forward {
+    type filter hook forward priority -10; policy accept;
+    ip daddr 134.209.82.225 tcp dport { 22, 8099 } counter drop
+  }
+}
