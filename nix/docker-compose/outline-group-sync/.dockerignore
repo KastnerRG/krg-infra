@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!requirements.lock
+!sync.py
+!workflow.py
+!worker.py
