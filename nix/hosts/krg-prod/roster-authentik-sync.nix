@@ -3,7 +3,11 @@
   sync = pkgs.writeShellApplication {
     name = "krg-authentik-ldap-sync";
     runtimeInputs = [pkgs.docker];
-    text = builtins.readFile ../../modules/services/authentik-ldap-sync/sync-authentik.sh;
+    text =
+      ''
+        export SYNC_PROGRAM=${../../modules/services/authentik-ldap-sync/run-sync.py}
+      ''
+      + builtins.readFile ../../modules/services/authentik-ldap-sync/sync-authentik.sh;
   };
   worker = pkgs.writeShellApplication {
     name = "roster-authentik-sync";

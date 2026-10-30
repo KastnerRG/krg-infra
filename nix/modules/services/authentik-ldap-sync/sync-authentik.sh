@@ -11,4 +11,5 @@ if [[ ! "$container" =~ ^[a-f0-9]{12,64}$ ]]; then
   echo 'Expected exactly one running krg-prod Authentik worker; sync will retry.' >&2
   exit 1
 fi
-docker --host "$docker_host" exec "$container" ak ldap_sync "${1:-krg-samba-ad}"
+docker --host "$docker_host" exec -i --env "ROSTER_LDAP_SOURCE=${1:-krg-samba-ad}" "$container" \
+  ak shell --command 'exec(__import__("sys").stdin.read(), {"__name__": "__main__"})' < "$SYNC_PROGRAM"

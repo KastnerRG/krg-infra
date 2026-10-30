@@ -29,6 +29,7 @@ def invoke(tmp_path, containers, ps_status="0", exec_status="0"):
             "CONTAINERS": containers,
             "PS_STATUS": ps_status,
             "EXEC_STATUS": exec_status,
+            "SYNC_PROGRAM": str(SYNC.with_name("run-sync.py")),
         },
         check=False,
         capture_output=True,
@@ -42,8 +43,8 @@ def test_finds_worker_by_project_and_service_labels(tmp_path):
     assert result.returncode == 0
     assert "label=com.docker.compose.project=krg-prod" in calls[0]
     assert "label=com.docker.compose.service=authentik_worker" in calls[0]
-    assert (
-        calls[1] == "--host unix:///var/run/docker.sock exec abcdef123456 ak ldap_sync krg-samba-ad"
+    assert calls[1].startswith(
+        "--host unix:///var/run/docker.sock exec -i --env ROSTER_LDAP_SOURCE=krg-samba-ad abcdef123456 ak shell --command "
     )
 
 
