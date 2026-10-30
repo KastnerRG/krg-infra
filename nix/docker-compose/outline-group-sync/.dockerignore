@@ -1,6 +1,7 @@
 *
 !Dockerfile
-!requirements.lock
+!pyproject.toml
+!uv.lock
 !sync.py
 !workflow.py
 !worker.py

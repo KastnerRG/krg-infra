@@ -49,9 +49,9 @@ Python 3.11+ is required. From the repository root:
 
 ```bash
 cd nix/docker-compose/outline-group-sync
-uv sync --frozen
-uv run --frozen pytest -q
-uv run --frozen python sync.py
+uv sync --locked
+uv run --locked pytest -q
+uv run --locked python sync.py
 ```
 
 The one-shot command defaults to **dry run** and needs these environment variables
@@ -117,10 +117,19 @@ krg.outlineGroupSync = {
 ```
 
 This starts a separate `outline-group-sync` compose project. Its image is built
-from the committed source and hash-locked Python dependencies; a source change gets
+from the committed source and `uv.lock`; a source change gets
 a new image tag. A one-shot container registers the five-minute schedule, preserving
 an existing schedule's configuration and paused state. The worker logs operation
 counts; API tokens and full plans never enter Temporal workflow history.
+
+Docker installs production dependencies with `uv sync --locked --no-dev`; CI uses
+`uv sync --locked` for production and development dependencies from the same lockfile.
+Both reject an outdated lockfile. There is no separately exported requirements file.
+Renovate updates `pyproject.toml` and `uv.lock` together and refreshes transitive
+dependencies weekly. Worker dependencies and runtime image updates require review;
+the Python image stays on the tested 3.13 line. For a manual dependency update, run
+`uv lock --upgrade` in the worker directory and commit the resulting `uv.lock` with
+any changes to `pyproject.toml`.
 
 Review the `outline-group-sync` schedule in Temporal and the worker logs. Confirm
 one existing user's expected memberships, an account that has never logged in

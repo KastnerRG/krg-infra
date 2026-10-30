@@ -22,12 +22,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Install locked worker dependencies and pytest
-        run: |
-          pip install --require-hashes -r nix/docker-compose/outline-group-sync/requirements.lock
-          pip install pytest
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - name: Install locked worker and test dependencies
+        working-directory: nix/docker-compose/outline-group-sync
+        run: uv sync --locked
       - name: Test reconciliation and Temporal workflow
-        run: python -m pytest nix/docker-compose/outline-group-sync -q
+        working-directory: nix/docker-compose/outline-group-sync
+        run: uv run --locked pytest -q
 
   pytest:
     name: pytest (python helpers + drift detector + scratch)

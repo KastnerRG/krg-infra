@@ -167,6 +167,35 @@
       allowedVersions: "/^3\\.12(\\.|-|$)/",
     },
 
+    // ── Outline worker: uv owns the one Python lockfile ─────────────────────────
+    {
+      description: "Outline worker Python dependencies and transitive lockfile refreshes: weekly, reviewed",
+      matchManagers: ["pep621"],
+      matchFileNames: ["nix/docker-compose/outline-group-sync/pyproject.toml"],
+      groupName: "outline worker dependencies",
+      schedule: ["* 0-6 * * 1"],
+      automerge: false,
+      lockFileMaintenance: {
+        enabled: true,
+        schedule: ["* 0-6 * * 1"],
+      },
+    },
+    {
+      description: "Outline worker runtime images: weekly, reviewed; keep Python on the tested 3.13 line",
+      matchDatasources: ["docker"],
+      matchFileNames: ["nix/docker-compose/outline-group-sync/Dockerfile"],
+      groupName: "outline worker runtime",
+      schedule: ["* 0-6 * * 1"],
+      automerge: false,
+    },
+    {
+      description: "Outline worker Python base stays on its tested 3.13 release line",
+      matchDatasources: ["docker"],
+      matchPackageNames: ["python"],
+      matchFileNames: ["nix/docker-compose/outline-group-sync/Dockerfile"],
+      allowedVersions: "/^3\\.13(\\.|-|$)/",
+    },
+
     // ── tooling: weekly, grouped, reviewed ──────────────────────────────────────
     {
       description: "required_version constraints track Terraform releases; we run OpenTofu",
