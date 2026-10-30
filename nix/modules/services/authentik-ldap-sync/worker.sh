@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Invoked by the host unit, never with arguments supplied by the roster.
 # Queue contents are ignored; the marker grants only one fixed reconciliation.
 set -euo pipefail

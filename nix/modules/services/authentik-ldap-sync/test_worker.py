@@ -1,4 +1,5 @@
 """Exercise queue handling around the real worker with a fake sync command."""
+
 import pathlib
 import subprocess
 
