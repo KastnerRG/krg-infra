@@ -34,7 +34,15 @@ is verified against, so it works before the public DNS record lands.
 ## What's managed (`main.tf`)
 
 - `temporal_namespace.this` (for_each `var.namespaces`) — one per namespace.
-  `retention` is in **days**. Default set: **`fishsense`**.
+  `retention` is in **days**. Default set: **`fishsense`**, **`infrastructure`**.
+- `infrastructure` hosts shared infrastructure workflows, starting with the internal
+  docs group sync worker and its five-minute schedule
+  ([runbook](../../docs/outline-group-sync.md)). It uses the existing Temporal service;
+  no additional Temporal server is deployed. Apply this namespace before enabling
+  the worker. If overriding `var.namespaces`, include `infrastructure` in that map too.
+- Namespace deletion is protected with `prevent_destroy`. If the old `outline`
+  namespace was already applied, preserve its entry in your `var.namespaces` override
+  alongside `fishsense` and `infrastructure` during migration; see the runbook.
 
 ## Run
 
