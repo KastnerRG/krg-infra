@@ -1,8 +1,11 @@
 # Outline group sync via Temporal
 
 Implementation: `nix/docker-compose/outline-group-sync/`. Deployment module:
-`nix/modules/services/outline-group-sync.nix`, imported by krg-prod but **disabled
-by default**. No existing service, user, group, or collection changes until enabled.
+`nix/modules/services/outline-group-sync.nix`. krg-prod declares the worker **enabled
+with writes on**, following a successful authenticated dry run and provisioning of
+the API credentials and `infrastructure` namespace. This takes effect through the
+normal IaC deployment. The reusable module still defaults to disabled, with writes
+off, for hosts that do not explicitly opt in.
 
 ## Behavior
 

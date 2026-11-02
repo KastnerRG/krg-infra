@@ -31,7 +31,7 @@ in {
   imports = [
     ../../profiles/services.nix
     ../../modules/services/vault-agent.nix
-    ../../modules/services/outline-group-sync.nix # opt-in; see docs/outline-group-sync.md
+    ../../modules/services/outline-group-sync.nix # infrastructure namespace; see docs/outline-group-sync.md
     ../../modules/edge.nix # krg.edge — the *.krg zone edge's tenant routes (ADR 0017 §5)
     ./hardware-configuration.nix
     ./roster-authentik-sync.nix
@@ -40,6 +40,13 @@ in {
   # KRG lab-wide production host (the old "fabricant" services). E4E
   # project-specific services live on the separate e4e-prod host.
   krg.adminAccount = "krg-admin";
+
+  # Credentials and the infrastructure namespace are provisioned. The live dry run
+  # passed; reconcile LDAP-backed groups and memberships for existing Outline users.
+  krg.outlineGroupSync = {
+    enable = true;
+    apply = true;
+  };
 
   # Put the break-glass admin in the docker group on this host so it can drive
   # the compose stacks (docker compose ps/logs/restart) without sudo. Merges with
