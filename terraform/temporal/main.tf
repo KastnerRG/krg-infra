@@ -9,4 +9,10 @@ resource "temporal_namespace" "this" {
   description = each.value.description
   owner_email = each.value.owner_email
   retention   = each.value.retention
+
+  # Removing a namespace also removes its workflow history. Require an explicit
+  # migration decision rather than deleting history when a map key is renamed.
+  lifecycle {
+    prevent_destroy = true
+  }
 }

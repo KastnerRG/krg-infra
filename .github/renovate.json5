@@ -181,7 +181,7 @@
       },
     },
     {
-      description: "Outline worker runtime images: weekly, reviewed; keep Python on the tested 3.13 line",
+      description: "Outline worker runtime images: weekly, reviewed; keep Python on the tested 3.15 line",
       matchDatasources: ["docker"],
       matchFileNames: ["nix/docker-compose/outline-group-sync/Dockerfile"],
       groupName: "outline worker runtime",
@@ -189,11 +189,11 @@
       automerge: false,
     },
     {
-      description: "Outline worker Python base stays on its tested 3.13 release line",
+      description: "Outline worker Python base stays on its tested 3.15 release line",
       matchDatasources: ["docker"],
       matchPackageNames: ["python"],
       matchFileNames: ["nix/docker-compose/outline-group-sync/Dockerfile"],
-      allowedVersions: "/^3\\.13(\\.|-|$)/",
+      allowedVersions: "/^3\\.15(\\.|-|$)/",
     },
 
     // ── tooling: weekly, grouped, reviewed ──────────────────────────────────────

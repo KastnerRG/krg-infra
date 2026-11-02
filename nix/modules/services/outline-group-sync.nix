@@ -16,7 +16,7 @@
   environment = {
     TEMPORAL_ADDRESS = "workflows.krg.ucsd.edu:7233";
     # Created by terraform/temporal, independent of the retired auto-setup image.
-    TEMPORAL_NAMESPACE = "outline";
+    TEMPORAL_NAMESPACE = "infrastructure";
     TEMPORAL_TLS_SERVER_NAME = "workflows.krg.ucsd.edu";
     TEMPORAL_TLS_CERT = "/tls/client.pem";
     TEMPORAL_TLS_CA = "/tls/ca.crt";

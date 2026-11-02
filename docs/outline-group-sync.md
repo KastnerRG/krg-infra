@@ -45,7 +45,8 @@ requests per minute. Run one worker deployment and avoid simultaneous one-shot
 
 ## Validate locally
 
-Python 3.11+ is required. From the repository root:
+Python 3.15+ is required. The container and CI use Python 3.15 (currently 3.15.2
+in the container). From the repository root:
 
 ```bash
 cd nix/docker-compose/outline-group-sync
@@ -94,17 +95,32 @@ Temporal client certificate to `/run/krg/outline-sync/`; tokens go only to the w
 not the schedule registration container. The client certificate's renewal hook
 restarts only this worker stack. The worker connects over mTLS to the **existing**
 Temporal service at `workflows.krg.ucsd.edu:7233`; it does not deploy a Temporal
-server, database, or UI. The dedicated `outline` namespace is declared in
+server, database, or UI. The shared `infrastructure` namespace is declared in
 `terraform/temporal/variables.tf`. This avoids relying on the legacy `default`
 namespace, which the replacement `temporalio/server` deployment does not create
 on a fresh database. Namespace separation in this cluster is by convention, not
 an authorization boundary.
 
 Apply `terraform/temporal` through the existing `deploy/deploy-tofu.sh` workflow
-(`TOFU_TARGETS=temporal`) **before enabling the worker**. Confirm that the `outline`
+(`TOFU_TARGETS=temporal`) **before enabling the worker**. Confirm that the `infrastructure`
 namespace exists in Temporal. If your deployment overrides `var.namespaces`, add
-the `outline` entry to that map as well. Worker containers retry if the Temporal
+the `infrastructure` entry to that map as well. Worker containers retry if the Temporal
 service or namespace is temporarily unavailable, but they do not create namespaces.
+The namespace is shared by infrastructure workflows; the Outline workflow, task
+queue, schedule ID, and API credentials retain their specific `outline-group-sync`
+names so future jobs can use separate queues and schedules in the same namespace.
+
+If the old `outline` namespace was already provisioned, Temporal does not rename
+it in place. Keep its original entry (description `Internal docs LDAP group
+reconciliation`, owner `e4e@ucsd.edu`, retention 30 days) in a `var.namespaces`
+override alongside `fishsense` and `infrastructure` while migrating. Namespace
+resources use `prevent_destroy` so omitting that entry fails planning instead of
+deleting workflow history. Pause the old namespace's `outline-group-sync` schedule
+and let any active run finish before enabling the schedule in `infrastructure`;
+otherwise both namespaces can run the same reconciliation concurrently. The
+registration container creates the new schedule; history stays in the old namespace.
+If the worker was never enabled and the old namespace was never applied, no
+migration is needed.
 
 After seeding credentials and reviewing a real one-shot dry run, enable scheduled
 dry runs in `nix/hosts/krg-prod/default.nix` through the usual IaC deployment:
@@ -127,11 +143,12 @@ Docker installs production dependencies with `uv sync --locked --no-dev`; CI use
 Both reject an outdated lockfile. There is no separately exported requirements file.
 Renovate updates `pyproject.toml` and `uv.lock` together and refreshes transitive
 dependencies weekly. Worker dependencies and runtime image updates require review;
-the Python image stays on the tested 3.13 line. For a manual dependency update, run
+the Python image stays on the tested 3.15 line. For a manual dependency update, run
 `uv lock --upgrade` in the worker directory and commit the resulting `uv.lock` with
 any changes to `pyproject.toml`.
 
-Review the `outline-group-sync` schedule in Temporal and the worker logs. Confirm
+Review the `outline-group-sync` schedule in the `infrastructure` namespace in
+Temporal and the worker logs. Confirm
 one existing user's expected memberships, an account that has never logged in
 (must remain absent), and the handling of existing same-name Outline groups.
 Then change `apply = true` through IaC. Verify a second run reports zero changes,

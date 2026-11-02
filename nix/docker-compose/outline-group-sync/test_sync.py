@@ -354,7 +354,7 @@ def test_client_uses_managed_namespace_and_existing_service(monkeypatch, tmp_pat
     monkeypatch.setattr("worker.Client.connect", fake_connect)
     assert asyncio.run(connect()) == "client"
     assert captured["address"] == "workflows.krg.ucsd.edu:7233"
-    assert captured["namespace"] == (namespace or "outline")
+    assert captured["namespace"] == (namespace or "infrastructure")
     assert captured["tls"].domain == "workflows.krg.ucsd.edu"
     assert captured["tls"].client_cert == b"test-client-pem"
     assert captured["tls"].client_private_key == b"test-client-pem"

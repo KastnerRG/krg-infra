@@ -59,8 +59,8 @@ variable "namespaces" {
     retention   = optional(number, 30)
   }))
   default = {
-    outline = {
-      description = "Internal docs LDAP group reconciliation"
+    infrastructure = {
+      description = "Shared infrastructure workflows, including internal docs LDAP group reconciliation"
       owner_email = "e4e@ucsd.edu"
       retention   = 30
     }

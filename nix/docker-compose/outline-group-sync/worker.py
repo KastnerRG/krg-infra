@@ -62,7 +62,7 @@ async def connect():
     cert = Path(os.environ["TEMPORAL_TLS_CERT"]).read_bytes()
     return await Client.connect(
         os.environ.get("TEMPORAL_ADDRESS", "workflows.krg.ucsd.edu:7233"),
-        namespace=os.environ.get("TEMPORAL_NAMESPACE", "outline"),
+        namespace=os.environ.get("TEMPORAL_NAMESPACE", "infrastructure"),
         tls=TLSConfig(
             server_root_ca_cert=Path(os.environ["TEMPORAL_TLS_CA"]).read_bytes(),
             domain=os.environ.get("TEMPORAL_TLS_SERVER_NAME", "workflows.krg.ucsd.edu"),
