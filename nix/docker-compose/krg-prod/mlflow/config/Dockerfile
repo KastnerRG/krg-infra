@@ -8,7 +8,7 @@
 
 # Held on 3.12 (renovate.json5): mlflow requires pandas<3, which ships no wheel for
 # 3.15, so pip falls back to a source build the slim image can't compile.
-FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
 # Pinned for reproducibility. mlflow-oidc-auth 7.x requires mlflow>=3.10,<4 and
 # Python>=3.10. Bump all three together (the plugin tracks the mlflow major).
