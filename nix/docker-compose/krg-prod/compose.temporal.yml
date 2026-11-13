@@ -85,7 +85,7 @@ services:
   # healthcheck (unix socket) can pass before :5432 accepts TCP. auto-setup waited
   # for the port; this waits up to ~60s, then fails loudly.
   temporal-schema:
-    image: temporalio/admin-tools:1.32.1@sha256:9ef0dc5b063bf4ffd5c1512de72e0e73e225bd2c7006a18ce69bd592a8862a83
+    image: temporalio/admin-tools:1.32.2@sha256:4a95866efba29d7e17ab012df5232795e8b0ad0f7d5f9d1ec4df321f7792a754
     restart: "no"
     env_file:
       - /run/krg/temporal/server.env # POSTGRES_PWD
@@ -120,7 +120,7 @@ services:
   temporal:
     # Pin to a tag that EXISTS on Docker Hub (#465 pinned a nonexistent one and
     # crash-looped into the pull limit). Keep in lockstep with temporal-schema above.
-    image: temporalio/server:1.32.1@sha256:acecbab5b0b8ae9cf4012b508866ca97feda3709577bf157b537239f40029049
+    image: temporalio/server:1.32.2@sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670
     container_name: temporal
     restart: unless-stopped
     environment:
