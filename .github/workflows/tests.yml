@@ -32,7 +32,9 @@ jobs:
 
   pytest:
     name: pytest (python helpers + drift detector + scratch)
-    runs-on: ubuntu-latest
+    # Keep the DSM compatibility test on a runner with Python 3.8 builds.
+    # ubuntu-latest now selects 26.04, which setup-python cannot provision 3.8 on.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
 
