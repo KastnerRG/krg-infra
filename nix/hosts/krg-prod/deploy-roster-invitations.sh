@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Packaged as krg-roster-invitations-deploy; never edits runtime secrets.
 : "${ROSTER_RUNTIME_OVERRIDE:?Runtime Compose override is required}"
 directory=/var/lib/krg/e4e-roster
