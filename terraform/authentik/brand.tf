@@ -29,6 +29,10 @@ resource "authentik_brand" "default" {
 
   # The new addition — everything else above matches live state exactly.
   flow_recovery = authentik_flow.recovery.uuid
+
+  # Roster fetches this catalog from Authentik; identifiers and application links
+  # only. Never include invitation tokens or credentials in brand attributes.
+  attributes = jsonencode({ roster_collaborators = local.roster_collaborator_catalog })
 }
 
 # The default LOGIN flow's identification stage — also pre-existing, brought under
