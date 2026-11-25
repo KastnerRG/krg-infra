@@ -75,8 +75,9 @@ resource "authentik_token" "roster_invitations" {
   description  = "Backend-only roster single-use collaborator invitations"
 }
 
-# Seed before adding this path to the shared runtime secret renderer. The
-# krg-prod/authentik-managed writer/read policies already cover the path.
+# Phase 1.5 bootstraps this path create-only; this resource alone owns the final
+# value. Phase 3.5 rerenders it into the roster. Existing writer/read policies
+# already cover krg-prod/authentik-managed.
 resource "vault_kv_secret_v2" "roster_invitations" {
   mount = "secret"
   name  = "krg-prod/authentik-managed/roster-invitations"

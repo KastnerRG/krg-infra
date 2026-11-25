@@ -249,6 +249,7 @@ jobs:
         env:
           TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
           TOFU_TARGETS: "secrets"
+          TOFU_REQUIRED_TARGETS: "secrets"
         run: ./deploy/deploy-tofu.sh
 
       # ── phase 1.9: control-node self-update (BUILD + schedule; never switch inline)
@@ -390,16 +391,21 @@ jobs:
         env:
           TOFU_STATE_PASSPHRASE: ${{ secrets.TOFU_STATE_PASSPHRASE }}
           TOFU_TARGETS: "authentik grafana e4e-nas temporal incus"
+          TOFU_REQUIRED_TARGETS: "authentik"
         run: ./deploy/deploy-tofu.sh
 
       # ── phase 3.5: reconcile phase-3-generated secrets into their consumers ────
-      # The lone secret that can only exist after phase 3 is an Authentik OUTPOST
-      # token (Authentik mints it). This re-runs openbao-agent on krg-prod so the
-      # now-present tokens render and the reloadCommands restart the outpost
-      # containers — a from-scratch deploy converges both outposts in ONE run.
-      # Best-effort (warns, never fails): steady state is a no-op.
-      - name: Phase 3.5 — reconcile generated secrets (outpost tokens)
+      # Authentik mints the outpost and roster invitation tokens in phase 3.
+      # The roster path is bootstrapped create-only in phase 1.5, then rendered
+      # with blank feature settings in phase 2. Require the final rerender and
+      # verify that the running roster has the token and accepts it at Authentik.
+      - name: Phase 3.5 — reconcile generated secrets
+        env:
+          DEPLOY_RERENDER_REQUIRED_HOSTS: "krg-prod"
         run: ./deploy/deploy-rerender-secrets.sh
+
+      - name: Phase 3.5 — activate and verify roster invitations
+        run: ./deploy/deploy-roster-invitations.sh
 
       # ── phase 3.6: stage tenant provision creds (Incus) ───────────────────────
       # Pushes two bootstrap creds into each tenant instance that the tenant can't

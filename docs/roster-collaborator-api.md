@@ -56,51 +56,61 @@ list existing invitations is granted. The add-invitation permission itself does
 not constrain fixed data, lifetime, or single use: those restrictions are
 enforced by the roster backend. Protect the service token accordingly.
 
-## Apply and activate in stages
+## Merge and automatic deployment order
 
-1. Review and apply the Authentik workspace through the normal deployment.
-   The current PR does not add an unseeded secret reference to the shared runtime
-   renderer, so deploying the resources first cannot break unrelated renderers.
-2. Verify that the dedicated account can read the configured brand and create a
-   disposable test invitation for an approved tenant/org. Confirm single use,
-   email binding, and the expected flow. An Authentik operator should remove an
-   unused test invite: the service account has no list/delete permission.
-3. After successful verification and OpenBao write-back, add the following block
-   to the existing `/run/krg/roster/backend.env` template in
-   [`nix/hosts/krg-prod/default.nix`](../nix/hosts/krg-prod/default.nix) as a
-   separate staged infrastructure change:
+Merge [roster PR #88](https://github.com/UCSD-E4E/E4E-Roster-V3/pull/88) before
+this infrastructure PR. The next normal fleet deploy performs the complete
+rollout; no manual token creation, template edit, or credential copy is needed.
 
-   ```text
-   {{ with secret "secret/data/krg-prod/authentik-managed/roster-invitations" }}
-   AUTHENTIK_URL={{ .Data.data.url }}
-   AUTHENTIK_BRAND_ID={{ .Data.data.brand_id }}
-   AUTHENTIK_API_TOKEN={{ .Data.data.token }}
-   {{ end }}
-   ```
+1. **Phase 1.5:** apply the early secrets workspace, then create the invitation
+   secret path with `bao kv put -cas=0` only if absent. This placeholder contains
+   no token. Existing values are never overwritten, including concurrent writes.
+   Missing credentials or a failed bootstrap stops deployment before NixOS.
+2. **Phase 2:** the shared agent renders the existing required roster secrets
+   normally. A separate root-only `/run/krg/roster/invitations.env` contains blank
+   API settings until Authentik supplies all three values. Compose loads it in
+   raw mode after the existing backend environment file. Only invitations are
+   temporarily unavailable; required roster secrets remain fail-closed.
+3. **Phase 3:** the required Authentik target creates the catalog, service
+   identity, role assignments, token, and OpenBao write-back. A skipped target or
+   failed assignment fails the deploy; no superuser fallback is used.
+4. **Phase 3.5:** require a successful agent rerender on krg-prod. The generated
+   API URL, brand UUID, and token now populate the separate environment file.
+   Its reload hook recreates affected Compose services instead of merely
+   restarting a container with its old environment. The roster stack uses
+   `failClosedOn`, so restarting the shared agent does not take down its database.
+5. **Activate the roster:** require a clean `main` checkout at
+   `/var/lib/krg/e4e-roster`; fetch the public roster main, reject local commits,
+   fast-forward, build the backend, and reload the stack. A missing collaborator
+   implementation, dirty checkout, wrong branch, or divergence fails explicitly;
+   the deploy never resets or stashes local work.
+6. **Verify:** compare the running backend's three API environment values with
+   the rendered file internally, then check that the new route returns 403 to
+   an anonymous caller and that the backend token can fetch the Authentik
+   catalog. No token, Docker environment dump, or provider response is logged.
+   A failure stops the deploy rather than deferring activation to another run.
 
-4. Rerender through the existing agent and recreate/restart the roster backend
-   through the normal deployment. Keep the root-only environment file and raw
-   Compose env-file handling; do not put the token in the checkout `.env`.
-5. Have a roster system administrator explicitly grant themselves `collab-admins`
-   at `/system/v2/collab-admins`, then check `/collab-manage` end to end. Without
-   the grant, even a system administrator must receive 403.
+After deployment, a roster system administrator must explicitly grant themselves
+`collab-admins` at `/system/v2/collab-admins`. Then check `/collab-manage` and
+create the first intended invitation. The deploy's API check is read-only; it
+never creates production test invitations. Check single use, email binding, and
+application access on that first intended enrollment.
 
-The shared OpenBao renderer fails closed on missing fields. Do not combine
-runtime activation with an unverified/unseeded token path. Until configuration
-is supplied, the new roster page reports it is unavailable; other roster
-features remain usable.
+The CAS bootstrap is orchestration, not a second Terraform owner: the Authentik
+workspace alone manages the final secret. During a plan-only OpenTofu run the
+bootstrap does not execute. A soft-deleted or unreadable path is an error rather
+than permission to replace an existing token.
 
 Historical RBAC assignment failures are recorded in
-[`proxmox_ldap.tf`](../terraform/authentik/proxmox_ldap.tf). Provider schema
-validation does not prove those endpoints work on the deployed Authentik
-version. If assignment fails, diagnose that failure rather than granting the
-service account superuser access.
+[`proxmox_ldap.tf`](../terraform/authentik/proxmox_ldap.tf). Provider validation
+alone cannot prove live assignment works. Phase 3 and the catalog check surface
+failures without granting the service account superuser access.
 
 ## Rotation and revocation
 
 The token follows the existing infrastructure pattern and is non-expiring.
 Rotate by replacing `authentik_token.roster_invitations` through OpenTofu, then
-rerender the updated OpenBao value and recreate/restart the backend. Verify
+run the normal deploy, which rerenders the updated OpenBao value, recreates the backend, and checks that its running token matches. Verify
 using API behavior rather than printing the key. Revoking the token stops API
 use but does not revoke invitations or external users already created; handle
 those separately in Authentik. Revoking a roster collab-admin grant also does

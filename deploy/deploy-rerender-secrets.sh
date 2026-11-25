@@ -4,7 +4,7 @@
 #
 # Most generated secrets are self-minted early (terraform/secrets, phase 1.5) and
 # so already exist when the fail-closed vault-agent renders in phase 2. The lone
-# exception is an Authentik OUTPOST token: authentik_token.key is provider-read-only
+# examples are Authentik outpost and roster invitation tokens: authentik_token.key is provider-read-only
 # (Authentik mints it), so it can only exist once the outpost does — i.e. when
 # terraform/authentik applies in phase 3, AFTER phase 2. Its render is therefore the
 # one allowed to be empty at phase 2 (krg.vaultAgent … errorOnMissingKey = false),
@@ -14,7 +14,7 @@
 # fires because the content changed empty → token — so a from-scratch deploy
 # converges the outposts in a single run.
 #
-# Best-effort by design: a host that's down / has no krg.vaultAgent / whose agent
+# Best-effort unless listed in DEPLOY_RERENDER_REQUIRED_HOSTS: a host that's down / has no krg.vaultAgent / whose agent
 # fails just WARNs (the next deploy re-renders). It never fails the deploy — every
 # fail-closed secret already rendered in phase 2; this only fills the post-phase-3
 # gap. Idempotent: in steady state the token already exists, the render is
@@ -28,12 +28,34 @@ source "${REPO_ROOT}/deploy/lib.sh"
 # Hosts to re-render (default: krg-prod, the only krg.vaultAgent host that consumes
 # an OpenTofu-generated outpost token). Override with DEPLOY_RERENDER_HOSTS.
 read -r -a HOSTS <<< "${DEPLOY_RERENDER_HOSTS:-krg-prod}"
+read -r -a REQUIRED_HOSTS <<< "${DEPLOY_RERENDER_REQUIRED_HOSTS:-}"
+for required in "${REQUIRED_HOSTS[@]}"; do
+  found=false
+  for host in "${HOSTS[@]}"; do
+    [[ "$host" != "$required" ]] || found=true
+  done
+  if [[ "$found" != true ]]; then
+    echo "ERROR: required rerender host ${required} is not selected" >&2
+    exit 1
+  fi
+done
+required_host() {
+  local required
+  for required in "${REQUIRED_HOSTS[@]}"; do
+    [[ "$required" != "$1" ]] || return 0
+  done
+  return 1
+}
 
 rc=0
 for host in "${HOSTS[@]}"; do
   target="$(target_for "$host")"
   enabled="$(nix eval "${FLAKE}#nixosConfigurations.${host}.config.krg.vaultAgent.enable" 2>/dev/null || echo false)"
   if [[ "$enabled" != "true" ]]; then
+    if required_host "$host"; then
+      echo "ERROR: required host ${host} has no usable vault-agent configuration" >&2
+      exit 1
+    fi
     echo "skip: ${host} does not use krg.vaultAgent"
     continue
   fi
@@ -41,6 +63,10 @@ for host in "${HOSTS[@]}"; do
   if ssh "${sshopts[@]}" "$target" sudo systemctl restart openbao-agent; then
     echo "OK: re-rendered vault-agent secrets on ${host} (outpost token converged if phase 3 minted it)"
   else
+    if required_host "$host"; then
+      echo "ERROR: required vault-agent rerender failed on ${host}" >&2
+      exit 1
+    fi
     echo "WARN: vault-agent re-render failed on ${host} — outpost token will land on the next deploy; check 'systemctl status openbao-agent'" >&2
   fi
   printf '\n::endgroup::\n'

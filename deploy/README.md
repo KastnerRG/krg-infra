@@ -30,7 +30,8 @@ push to main
             deploy-self-verify.sh  assert /run/current-system == the target Job 1 built
  phase 2    deploy-nixos.sh   DEPLOY_NIXOS_HOSTS="krg-prod e4e-prod waiter kastner-ml"  (systems: services + compute)
  phase 3    deploy-tofu.sh    tofu apply per target  (config; creds from OpenBao, opt-in via TOFU_TARGETS)
- phase 3.5  deploy-rerender-secrets.sh  reconcile Authentik outpost tokens (best-effort)
+ phase 3.5  deploy-rerender-secrets.sh  reconcile Authentik tokens (required on krg-prod)
+            deploy-roster-invitations.sh  fast-forward/build roster main, reload, verify effective API credentials
  phase 3.6  stage-tenant-secret-zero.sh  push each Incus tenant's provision creds — vault-agent secret-zero (ADR 0021 §3) + github-runner registration token (ADR 0022 §3); best-effort
             (mint-runner-token.sh  helper: GitHub App → runner registration token, ADR 0022 §2)
  phase 4    deploy-verify.sh  OEC + AD membership, whole fleet  (the ONLY gates; fatal here)
@@ -273,3 +274,8 @@ TOFU_TARGETS=openbao TOFU_OPENBAO_TOKEN="<privileged token>" \
 `TOFU_TARGETS` (empty — explicit opt-in) · `TOFU_OPENBAO_TOKEN` (openbao bootstrap) ·
 `TOFU_STATE_ROOT` (`/var/lib/krg-admin/tofu-state`) · `VAULT_ADDR`
 (`https://krg-vault.ucsd.edu:8200`) · `OPENBAO_ROLE_ID_FILE` / `OPENBAO_SECRET_ID_FILE`.
+
+For the collaborator invitation token bootstrap, runtime wiring, and merge order,
+see [Roster collaborator API](../docs/roster-collaborator-api.md). Required
+OpenTofu targets use `TOFU_REQUIRED_TARGETS`; a missing credential is an error
+for those targets rather than a successful skip.

@@ -88,7 +88,7 @@ with lib; let
           dependent stack down rather than starting it with an empty value (no
           silent drift). Set FALSE only for a secret that is structurally
           GENERATED AFTER this render runs and whose absence fails LOUDLY at the
-          consumer (not silently) — the lone case is an Authentik OUTPOST token:
+          consumer (not silently) — examples are Authentik outpost and roster invitation tokens:
           authentik_token.key is minted in phase 3 (terraform/authentik), AFTER
           this phase-2 render, so on a from-scratch deploy the path is briefly
           empty; an empty outpost token makes the outpost visibly fail to connect
