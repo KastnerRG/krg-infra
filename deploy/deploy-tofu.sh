@@ -50,6 +50,24 @@ secret_id_file="${OPENBAO_SECRET_ID_FILE:-/var/lib/krg-admin/.secrets/openbao-se
 # WHICH targets to apply — explicit opt-in (default: none). openbao first when
 # listed (it provisions the AppRoles the others authenticate with), then configs.
 read -r -a TARGETS <<< "${TOFU_TARGETS:-}"
+read -r -a REQUIRED_TARGETS <<< "${TOFU_REQUIRED_TARGETS:-}"
+required_target() {
+  local required
+  for required in "${REQUIRED_TARGETS[@]}"; do
+    [[ "$required" != "$1" ]] || return 0
+  done
+  return 1
+}
+for required in "${REQUIRED_TARGETS[@]}"; do
+  found=false
+  for selected in "${TARGETS[@]}"; do
+    [[ "$selected" != "$required" ]] || found=true
+  done
+  if [[ "$found" != true ]]; then
+    echo "ERROR: required target ${required} is not selected in TOFU_TARGETS" >&2
+    exit 1
+  fi
+done
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
   echo "no TOFU_TARGETS set — nothing to apply (set e.g. TOFU_TARGETS=\"authentik grafana e4e-nas\")"
   exit 0
@@ -254,6 +272,10 @@ materialize() { # <target>
 for t in "${TARGETS[@]}"; do
   dir="${TF_DIR}/${t}"
   if [[ ! -d "$dir" ]]; then
+    if required_target "$t"; then
+      echo "ERROR: required target ${t} has no terraform directory" >&2
+      exit 1
+    fi
     echo "skip ${t}: no terraform/${t}/ target"
     continue
   fi
@@ -266,6 +288,10 @@ for t in "${TARGETS[@]}"; do
     # Materialize creds from OpenBao; a non-zero return here is a SKIP (exit 0),
     # not a deploy failure. Everything after this point is a real apply.
     if ! materialize "$t"; then
+      if required_target "$t"; then
+        echo "ERROR: required target ${t} cannot apply; credentials are unavailable" >&2
+        exit 1
+      fi
       echo "skip ${t}: creds not available (see notice above)"
       exit 0
     fi
@@ -383,7 +409,10 @@ for t in "${TARGETS[@]}"; do
         for addr in $TOFU_REPLACE; do replace_args+=("-replace=${addr}"); done
       fi
       tofu -chdir="$dir" apply -auto-approve -input=false \
-           -state="${state_dir}/terraform.tfstate" "${replace_args[@]}"
+           -state="${state_dir}/terraform.tfstate" "${replace_args[@]}" || exit $?
+      if [[ "$t" == "secrets" ]]; then
+        bash "${REPO_ROOT}/deploy/ensure-roster-invitation-secret.sh" || exit $?
+      fi
     fi
   ) || rc=$?
   printf '\n::endgroup::\n'

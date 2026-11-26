@@ -32,7 +32,9 @@ jobs:
 
   pytest:
     name: pytest (python helpers + drift detector + scratch)
-    runs-on: ubuntu-latest
+    # Keep the DSM compatibility test on a runner with Python 3.8 builds.
+    # ubuntu-latest now selects 26.04, which setup-python cannot provision 3.8 on.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
 
@@ -46,4 +48,4 @@ jobs:
         run: pip install pytest pyyaml
 
       - name: Run unit tests
-        run: pytest ansible/ drift/ nix/modules/scratch/ nix/modules/security/cve-scan/ nix/modules/services/compose-stack/ nix/modules/services/authentik-ldap-sync/ security/claude-extension/ -q
+        run: pytest ansible/ drift/ deploy/tests/ nix/modules/scratch/ nix/modules/security/cve-scan/ nix/modules/services/compose-stack/ nix/modules/services/authentik-ldap-sync/ security/claude-extension/ -q

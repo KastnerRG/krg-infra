@@ -13,6 +13,19 @@
   # every krg-prod change. Bind-mounted into the prometheus container by store path
   # (compose.grafana.yml ${PROM_CONFIG_DIR}) so config edits actually go live.
   promConfig = ../../docker-compose/krg-prod/prometheus;
+  reloadRoster = "${config.systemd.package}/bin/systemctl reload --no-block e4e-roster.service";
+  rosterInvitationsCheck = pkgs.writers.writePython3Bin "krg-roster-invitations-check" {
+    flakeIgnore = ["E501"];
+  } (builtins.readFile ./roster-invitations-check.py);
+  rosterInvitationsDeploy = pkgs.writeShellApplication {
+    name = "krg-roster-invitations-deploy";
+    runtimeInputs = [pkgs.git pkgs.docker config.systemd.package];
+    text =
+      ''
+        export ROSTER_RUNTIME_OVERRIDE=${../../docker-compose/e4e-roster/runtime-secrets.override.yml}
+      ''
+      + builtins.readFile ./deploy-roster-invitations.sh;
+  };
   # reloadCommand for every vault-agent render consumed as a compose `env_file`.
   # `docker restart` does NOT re-read a changed env_file (compose bakes it into the
   # container at create), so the old per-container `docker restart` hooks never
@@ -218,7 +231,7 @@ in {
     "L+ /var/lib/krg/krg-prod/temporal                      - - - - ${composeDir}/temporal"
   ];
 
-  environment.systemPackages = with pkgs; [openbao];
+  environment.systemPackages = with pkgs; [openbao rosterInvitationsCheck rosterInvitationsDeploy];
   environment.variables.VAULT_ADDR = "https://krg-vault.ucsd.edu:8200";
 
   # krg-prod runs as a single compose project (compose.yml uses `include:` to
@@ -358,8 +371,8 @@ in {
     ];
     workingDirectory = "/var/lib/krg/e4e-roster";
     networks = ["traefik_proxy"];
-    after = ["openbao-agent.service"];
-    requires = ["openbao-agent.service"];
+    reloadOnChange = true;
+    failClosedOn = ["openbao-agent.service"];
   };
   # DB_PASSWORD is also required by HOST Compose interpolation for PostgreSQL.
   systemd.services.e4e-roster.serviceConfig.EnvironmentFile = "/run/krg/roster/compose.env";
@@ -406,6 +419,7 @@ in {
           ENCRYPTION_KEY={{ .Data.data.encryption_key }}
           {{ end }}
         '';
+        reloadCommand = reloadRoster;
       }
       {
         destination = "/run/krg/roster/compose.env";
@@ -416,6 +430,30 @@ in {
           DB_PASSWORD={{ .Data.data.db_password }}
           {{ end }}
         '';
+        reloadCommand = reloadRoster;
+      }
+      # The API token cannot exist until Authentik applies in phase 3. Phase 1.5
+      # creates an empty path with CAS=0; only this feature may be unconfigured
+      # in phase 2. Phase 3.5 rerenders, reloads, and checks the running backend.
+      {
+        destination = "/run/krg/roster/invitations.env";
+        perms = "0600";
+        dirPerms = "0700";
+        errorOnMissingKey = false;
+        contents = ''
+          {{ with secret "secret/data/krg-prod/authentik-managed/roster-invitations" }}
+          {{ if and .Data.data.token .Data.data.url .Data.data.brand_id }}
+          AUTHENTIK_URL={{ .Data.data.url }}
+          AUTHENTIK_BRAND_ID={{ .Data.data.brand_id }}
+          AUTHENTIK_API_TOKEN={{ .Data.data.token }}
+          {{ else }}
+          AUTHENTIK_URL=
+          AUTHENTIK_BRAND_ID=
+          AUTHENTIK_API_TOKEN=
+          {{ end }}
+          {{ end }}
+        '';
+        reloadCommand = reloadRoster;
       }
       # ── Guacamole Postgres password ──────────────────────────────────────────
       # TWO env files, same value — the webapp and postgres MUST NOT share one.
