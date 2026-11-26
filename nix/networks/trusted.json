@@ -27,7 +27,8 @@
     ],
     "ops": [
       { "cidr": "97.190.199.148", "comment": "admin remote (chris) — refreshed 2026-10-19" },
-      { "cidr": "107.132.34.148", "comment": "admin remote (sean) — unverified since 2026-08-19; may also be stale"}
+      { "cidr": "107.132.34.148", "comment": "admin remote (sean) — unverified since 2026-08-19; may also be stale"},
+      { "cidr": "76.93.133.169", "comment": "admin remote (sean / s.perry.543) — added 2026-11-26" }
     ],
     "machines": [
       { "cidr": "137.110.161.67",  "comment": "waiter.ucsd.edu (compute; domain member)" },
