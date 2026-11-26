@@ -38,9 +38,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          # The DSM apply_*.py helpers run on DSM's Python 3.8; keep the floor there so
-          # the tests catch any accidentally-newer syntax.
-          python-version: "3.8"
+          python-version: "3.15"
 
       - name: Install test deps
         run: pip install pytest pyyaml
