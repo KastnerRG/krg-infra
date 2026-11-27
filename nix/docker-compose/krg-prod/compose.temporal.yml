@@ -49,7 +49,7 @@
 # Design + on-box validation gates: docs/temporal-mtls.md (validated on-box 2026-06-16).
 services:
   temporal-postgres:
-    image: postgres:16.15@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97
+    image: postgres:16.16@sha256:ce81150802644ddfac1db4da9e63be6f2a3818aa6ee98a7a28838aeea65dc37a
     container_name: temporal-postgres
     restart: unless-stopped
     environment:
